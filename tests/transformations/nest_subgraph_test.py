@@ -1038,6 +1038,31 @@ def test_a_container_only_an_ordering_node_names_goes_into_the_nest():
     assert np.array_equal(A, np.full(4, 2.0))
 
 
+def test_nesting_a_block_ahead_of_a_symbol_binding_does_not_free_the_symbol():
+    """``for i: a[i] = 0`` then ``k = N`` then ``b[0:k] = 1``, with ``k`` declared as the Python frontend declares it."""
+    sdfg = dace.SDFG("late_symbol")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_array("a", ["N"], dace.float64)
+    sdfg.add_array("b", ["N"], dace.float64)
+    loop = LoopRegion("zero_a", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    body.add_edge(body.add_tasklet("z", {}, {"o"}, "o = 0.0"), "o", body.add_write("a"), None, dace.Memlet("a[i]"))
+    bind, use = sdfg.add_state("bind"), sdfg.add_state("use")
+    sdfg.add_edge(loop, bind, dace.InterstateEdge())
+    sdfg.add_edge(bind, use, dace.InterstateEdge(assignments={"k": "N"}))
+    use.add_mapped_tasklet("one", {"j": "0:k"}, {}, "o = 1.0", {"o": dace.Memlet("b[j]")}, external_edges=True)
+
+    nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loop]))
+
+    nested = next(n for s in sdfg.states() for n in s.nodes() if isinstance(n, nodes.NestedSDFG))
+    assert "k" not in nested.symbol_mapping
+    assert {str(s) for s in sdfg.free_symbols} == {"N"}
+    assert "k" not in sdfg.arglist()
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -1077,3 +1102,4 @@ if __name__ == "__main__":
     test_inlining_the_nest_back_keeps_the_declared_type()
     test_inlining_keeps_the_declared_type_of_a_loop_variable()
     test_a_container_only_an_ordering_node_names_goes_into_the_nest()
+    test_nesting_a_block_ahead_of_a_symbol_binding_does_not_free_the_symbol()

@@ -517,10 +517,6 @@ def test_maps_writing_one_access_node_are_not_split_off():
     assert np.array_equal(_run(sdfg, g=1), expected)
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
-
 def test_guard_on_a_value_the_map_body_stages_is_not_hoisted():
     """``map i: c = a[i]; if c > 0: b[i] = 1`` with ``c`` staged into the body by a copy: the connector's memlet
     ``c[0]`` names no map parameter, but the body writes ``c`` per element, so the guard stays inside."""
@@ -556,3 +552,61 @@ def test_guard_on_a_value_the_map_body_stages_is_not_hoisted():
     a, b = np.array([1.0, -1.0] * (N // 2)), np.zeros(N)
     sdfg(a=a, b=b)
     assert np.array_equal(b, (a > 0).astype(np.float64))
+
+
+def test_apply_to_map_hoists_only_the_given_maps_guard():
+    """Two maps under liftable guards in one state: ``apply_to_map`` lifts the first one's guard, not the other's."""
+
+    @dace.program
+    def kern_two_guarded_maps(g: dace.int64, b: dace.float64[N], c: dace.float64[N]):
+        for i in dace.map[0:N]:
+            if g > 0:
+                b[i] = 1.0
+        for i in dace.map[0:N]:
+            if g > 0:
+                c[i] = 2.0
+
+    sdfg = kern_two_guarded_maps.to_sdfg(simplify=True)
+    sdutil.fuse_states(sdfg)
+    state = next(s for s in sdfg.states() if sum(isinstance(n, nodes.MapEntry) for n in s.nodes()) == 2)
+    first, second = sorted((n for n in state.nodes() if isinstance(n, nodes.MapEntry)), key=lambda n: n.map.label)
+    reference = copy.deepcopy(sdfg)
+
+    assert MoveMapInvariantIfUp().apply_to_map(state, first)
+
+    sdfg.validate()
+    assert len([b for b in sdfg.nodes() if isinstance(b, ConditionalBlock)]) == 1
+    (still_guarded,) = [st for st in sdfg.states() if second in st.nodes()]
+    assert still_guarded.parent_graph is sdfg
+    assert MoveMapInvariantIfUp().apply_to_map(still_guarded, second)
+    assert len([b for b in sdfg.nodes() if isinstance(b, ConditionalBlock)]) == 2
+    for g in (0, 1):
+        expected_b, expected_c, b, c = np.zeros(N), np.zeros(N), np.zeros(N), np.zeros(N)
+        reference(g=g, b=expected_b, c=expected_c)
+        sdfg(g=g, b=b, c=c)
+        assert np.array_equal(b, expected_b) and np.array_equal(c, expected_c)
+
+
+if __name__ == "__main__":
+    test_chain_guard_lands_between_maps()
+    test_chain_guard_value_preserving_both_branches()
+    test_symbolic_condition_leaves_every_map()
+    test_inner_param_dependent_guard_is_not_hoisted()
+    test_two_dimensional_guard_is_not_hoisted()
+    test_collapsed_map_checks_every_parameter()
+    test_collapsed_map_invariant_condition_hoists()
+    test_no_match_leaves_graph_untouched()
+    test_guard_whose_branch_holds_a_map_is_value_preserving()
+    test_body_defined_condition_symbol_is_never_stranded()
+    test_require_full_hoist_refuses_a_partial_hoist()
+    test_require_full_hoist_takes_a_whole_chain_hoist()
+    test_does_not_ping_pong_with_move_if_into_map()
+    test_partial_hoist_over_a_branch_with_maps_is_refused()
+    test_unrelated_dataflow_in_the_state_blocks_the_hoist()
+    test_idempotent()
+    test_hoisting_through_every_map_level_keeps_the_cfg_list_of_a_fresh_reset(pytest.MonkeyPatch())
+    test_guard_lifted_between_maps_keeps_the_type_of_its_symbol()
+    test_swapped_symbols_resolve_simultaneously()
+    test_maps_writing_one_access_node_are_not_split_off()
+    test_guard_on_a_value_the_map_body_stages_is_not_hoisted()
+    test_apply_to_map_hoists_only_the_given_maps_guard()
