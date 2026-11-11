@@ -11,13 +11,16 @@ from dace.libraries.standard.nodes.copy.common import (
     MEMORY_ENGINE_DESC_INPUT_NAME,
     MEMORY_ENGINE_DESC_OUTPUT_NAME,
     MEMORY_ENGINE_GLOBAL_INPUT_NAME,
+    MEMORY_ENGINE_TOKEN_OUTPUT_NAME,
     OUTPUT_CONNECTOR_NAME,
     CUtensorMap,
+    MemoryEngineAsyncMode,
     MemoryEngineGeometry,
     _build_memory_engine_barrier_init_code,
     _build_memory_engine_bulk_copy_code,
     _build_memory_engine_desc_code,
     mark_memory_engine_shared_static,
+    memory_engine_async_mode,
     memory_engine_bulk_reason,
     memory_engine_geometry,
 )
@@ -39,7 +42,8 @@ class ExpandMemoryEngineBulk(ExpandTransformation):
     adds the support graph:
     - a host tasklet in the closest CPU scope that encodes the ``CUtensorMap``, which reaches the kernel
       as a ``const __grid_constant__`` parameter.
-    - for loads, a ``GPU_Shared`` mbarrier and a tasklet initializing it once at the top of the kernel.
+    - for loads, a ``GPU_Shared`` mbarrier and a tasklet initializing it once at the top of the kernel, unless
+      ``InsertAsyncWaits`` already wired the barrier of an asynchronous load (see ``memory_engine_async_mode``).
 
     The shared side is pinned to static shared memory (``GPU_Shared(dynamic=False)``), because currently
     only static shared memory is aligned to 128B as the memory engine requires.
@@ -65,13 +69,17 @@ class ExpandMemoryEngineBulk(ExpandTransformation):
             # By value through a dynamic memlet: a const reference to the kernel parameter, never a copy
             MEMORY_ENGINE_DESC_INPUT_NAME: CUtensorMap,
         }
+        outputs = {OUTPUT_CONNECTOR_NAME: dtypes.pointer(geometry.global_desc.dtype)}
+        async_mode = memory_engine_async_mode(node, parent_state) if geometry.is_load else None
         if geometry.is_load:
             inputs[MEMORY_ENGINE_BARRIER_INPUT_NAME] = dtypes.pointer(dtypes.uint64)
+        if async_mode == MemoryEngineAsyncMode.TOKEN:
+            outputs[MEMORY_ENGINE_TOKEN_OUTPUT_NAME] = dtypes.uint64
         return nodes.Tasklet(
             node.name,
             inputs=inputs,
-            outputs={OUTPUT_CONNECTOR_NAME: dtypes.pointer(geometry.global_desc.dtype)},
-            code=_build_memory_engine_bulk_copy_code(node, geometry),
+            outputs=outputs,
+            code=_build_memory_engine_bulk_copy_code(node, geometry, async_mode),
             language=dace.Language.CPP,
         )
 
@@ -82,8 +90,9 @@ class ExpandMemoryEngineBulk(ExpandTransformation):
             raise ValueError(f"Cannot expand {expansion} with MemoryEngineBulk: {reason}")
         mark_memory_engine_shared_static(expansion, state, geometry)
         _add_tensor_map(sdfg, state, expansion, geometry)
-        if geometry.is_load:
-            _add_barrier(sdfg, state, expansion)
+        has_barrier = any(e.dst_conn == MEMORY_ENGINE_BARRIER_INPUT_NAME for e in state.in_edges(expansion))
+        if geometry.is_load and not has_barrier:
+            add_memory_engine_barrier(sdfg, state, expansion)
 
 
 def _scope_chain(state: SDFGState, node: nodes.Node) -> list[nodes.EntryNode]:
@@ -290,8 +299,16 @@ def _add_tensor_map(sdfg: SDFG, state: SDFGState, tasklet: nodes.Tasklet, geomet
         )
 
 
-def _add_barrier(sdfg: SDFG, state: SDFGState, tasklet: nodes.Tasklet):
-    """Add a ``GPU_Shared`` mbarrier for ``tasklet``, initialized once at the top of its kernel."""
+def add_memory_engine_barrier(sdfg: SDFG, state: SDFGState, tasklet: nodes.Node) -> None:
+    """Add a ``GPU_Shared`` mbarrier for the ``_tma_bar`` input of ``tasklet`` (a memory engine copy, expanded or
+    not), initialized once at the top of its kernel so that every thread of the block arrives once per phase.
+
+    :param sdfg: The SDFG holding ``state``.
+    :param state: The state holding ``tasklet``.
+    :param tasklet: The node that gets the barrier. Its ``_tma_bar`` in-connector is added if missing.
+    """
+    if MEMORY_ENGINE_BARRIER_INPUT_NAME not in tasklet.in_connectors:
+        tasklet.add_in_connector(MEMORY_ENGINE_BARRIER_INPUT_NAME, dtypes.pointer(dtypes.uint64))
     inner_desc = data.Array(dtypes.uint64, [1], storage=dtypes.StorageType.GPU_Shared, transient=False)
     route = _route_input(sdfg, state, tasklet, MEMORY_ENGINE_BARRIER_INPUT_NAME, inner_desc, "tma_bar", stop="kernel")
     kernel_sdfg, kernel_state = route.sdfg, route.state

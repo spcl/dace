@@ -204,6 +204,47 @@ __device__ __forceinline__ void tma_load(void* smem, const CUtensorMap* desc,
   }
 }
 
+/// Issue a block-collective global -> shared tensor copy without waiting for
+/// it. Called by all threads, on a barrier initialized for every thread of the
+/// block: the leader issues the copy and arrives expecting ``bytes``, the
+/// others only arrive. Returns the arrival token, which
+/// ``mbarrier_wait_token`` waits on before the shared buffer is read.
+template <int Rank>
+__device__ __forceinline__ uint64_t tma_load_async(void* smem,
+                                                   const CUtensorMap* desc,
+                                                   const int32_t (&coords)[Rank],
+                                                   const uint64_t* barrier,
+                                                   uint32_t bytes) {
+  uint64_t* bar = const_cast<uint64_t*>(barrier);
+  if (is_leader_thread()) {
+    ::cuda::ptx::cp_async_bulk_tensor(::cuda::ptx::space_shared,
+                                      ::cuda::ptx::space_global, smem, desc,
+                                      coords, bar);
+    return ::cuda::ptx::mbarrier_arrive_expect_tx(
+        ::cuda::ptx::sem_release, ::cuda::ptx::scope_cta,
+        ::cuda::ptx::space_shared, bar, bytes);
+  }
+  return ::cuda::ptx::mbarrier_arrive(bar);
+}
+
+/// Issue a global -> shared tensor copy from the leader thread only, without
+/// waiting for it. The barrier counts one arrival per copy issued on it per
+/// phase: Threads wait with ``mbarrier_wait_parity``. Called by all threads.
+template <int Rank>
+__device__ __forceinline__ void tma_load_async_leader(
+    void* smem, const CUtensorMap* desc, const int32_t (&coords)[Rank],
+    const uint64_t* barrier, uint32_t bytes) {
+  if (is_leader_thread()) {
+    uint64_t* bar = const_cast<uint64_t*>(barrier);
+    ::cuda::ptx::cp_async_bulk_tensor(::cuda::ptx::space_shared,
+                                      ::cuda::ptx::space_global, smem, desc,
+                                      coords, bar);
+    ::cuda::ptx::mbarrier_arrive_expect_tx(
+        ::cuda::ptx::sem_release, ::cuda::ptx::scope_cta,
+        ::cuda::ptx::space_shared, bar, bytes);
+  }
+}
+
 /// Block-collective shared -> global tensor copy. Called by all threads;
 /// returns once the copy completed.
 template <int Rank>

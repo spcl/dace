@@ -34,6 +34,7 @@ MEMORY_ENGINE_DESC_OUTPUT_NAME = "_tma_desc_out"
 MEMORY_ENGINE_GLOBAL_INPUT_NAME = "_tma_global"
 MEMORY_ENGINE_BARRIER_INPUT_NAME = "_tma_bar"
 MEMORY_ENGINE_BARRIER_OUTPUT_NAME = "_tma_bar_out"
+MEMORY_ENGINE_TOKEN_OUTPUT_NAME = "_tma_token"
 
 CUtensorMap = dace.dtypes.opaque("CUtensorMap")
 
@@ -809,26 +810,70 @@ def mark_memory_engine_shared_static(node: nodes.Node, state: dace.SDFGState, ge
         desc.storage = dtypes.StorageType.GPU_Shared(dynamic=False)
 
 
-def _build_memory_engine_bulk_copy_code(node: "CopyLibraryNode", geometry: MemoryEngineGeometry) -> str:
+class MemoryEngineAsyncMode:
+    """How an asynchronous ``MemoryEngineBulk`` load signals its completion (see ``InsertAsyncWaits``)."""
+
+    TOKEN = "token"
+    """Every thread arrives on the copy's barrier and keeps the token, which ``MemoryEngineWait`` waits on."""
+    PARITY = "parity"
+    """Only the leader arrives: Threads wait on a known phase parity of the barrier (multiple buffering)."""
+
+
+def memory_engine_async_mode(node: nodes.Node, state: dace.SDFGState) -> str | None:
+    """How the ``MemoryEngineBulk`` copy ``node`` (or its expanded tasklet) completes asynchronously, or ``None`` if
+    it is synchronous.
+
+    A load is asynchronous only if its ``asynchronous`` property is set and ``InsertAsyncWaits`` placed its wait:
+    it wired the ``_tma_token`` output (:attr:`MemoryEngineAsyncMode.TOKEN`) or, without a token, the ``_tma_bar``
+    input (:attr:`MemoryEngineAsyncMode.PARITY`). Anything else, stores included, is synchronous.
+
+    :param node: the copy node or expanded tasklet.
+    :param state: state containing ``node``.
+    """
+    if not getattr(node, "asynchronous", True):
+        return None
+    if any(e.src_conn == MEMORY_ENGINE_TOKEN_OUTPUT_NAME for e in state.out_edges(node)):
+        return MemoryEngineAsyncMode.TOKEN
+    if any(e.dst_conn == MEMORY_ENGINE_BARRIER_INPUT_NAME for e in state.in_edges(node)):
+        return MemoryEngineAsyncMode.PARITY
+    return None
+
+
+def _build_memory_engine_bulk_copy_code(
+    node: "CopyLibraryNode", geometry: MemoryEngineGeometry, async_mode: str | None = None
+) -> str:
     """Build the C++ code for ``ExpandMemoryEngineBulk``.
 
-    The tasklet runs on every thread of the block. A load issues ``cp.async.bulk.tensor`` from the leader
-    thread and waits on the mbarrier at ``_tma_bar`` until all bytes have arrived. A store fences the shared
-    memory writes, issues the copy and waits for its completion. ``node.sync`` adds a leading
-    ``__syncthreads()`` so the shared buffer is no longer read (load) or written (store) by other threads.
+    The tasklet runs on every thread of the block. A synchronous load issues ``cp.async.bulk.tensor`` from the leader
+    thread and waits on the mbarrier at ``_tma_bar`` until all bytes have arrived. A store fences the shared memory
+    writes, issues the copy and waits for its completion. ``node.sync`` adds a leading ``__syncthreads()`` so the
+    shared buffer is no longer read (load) or written (store) by other threads.
+
+    An asynchronous load (``async_mode``, see :func:`memory_engine_async_mode`) only issues the copy and arrives on
+    the barrier; a separate ``MemoryEngineWait`` waits. In token mode ``node.sync`` still adds the leading barrier.
+    In parity mode the slot-reuse barrier of the multiple-buffered loop takes its place (``InsertAsyncWaits`` clears
+    ``sync``), so there is none.
 
     :param node: the :class:`CopyLibraryNode` being expanded.
     :param geometry: the copy geometry from :func:`memory_engine_geometry`.
+    :param async_mode: ``None`` for a synchronous copy, else a :class:`MemoryEngineAsyncMode` value.
     :returns: the tasklet body.
     """
     coords = ", ".join(f"static_cast<int32_t>({sym2cpp(c)})" for c in geometry.coords)
-    code = "__syncthreads();\n" if node.sync else ""
+    leading_barrier = node.sync and async_mode != MemoryEngineAsyncMode.PARITY
+    code = "__syncthreads();\n" if leading_barrier else ""
     code += f"int32_t const _tma_coords[{geometry.rank}] = {{{coords}}};\n"
+    args = (
+        f"{OUTPUT_CONNECTOR_NAME}, &{MEMORY_ENGINE_DESC_INPUT_NAME}, _tma_coords, {MEMORY_ENGINE_BARRIER_INPUT_NAME}, "
+        f"{sym2cpp(geometry.bytes)}"
+    )
     if geometry.is_load:
-        code += (
-            f"dace::cuda::tma_load<{geometry.rank}>({OUTPUT_CONNECTOR_NAME}, &{MEMORY_ENGINE_DESC_INPUT_NAME}, "
-            f"_tma_coords, {MEMORY_ENGINE_BARRIER_INPUT_NAME}, {sym2cpp(geometry.bytes)});\n"
-        )
+        if async_mode == MemoryEngineAsyncMode.TOKEN:
+            code += f"{MEMORY_ENGINE_TOKEN_OUTPUT_NAME} = dace::cuda::tma_load_async<{geometry.rank}>({args});\n"
+        elif async_mode == MemoryEngineAsyncMode.PARITY:
+            code += f"dace::cuda::tma_load_async_leader<{geometry.rank}>({args});\n"
+        else:
+            code += f"dace::cuda::tma_load<{geometry.rank}>({args});\n"
     else:
         code += (
             f"dace::cuda::tma_store<{geometry.rank}>(&{MEMORY_ENGINE_DESC_INPUT_NAME}, _tma_coords, "
