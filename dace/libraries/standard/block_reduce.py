@@ -141,6 +141,8 @@ def gpu_block_implementation(node: nodes.Node, state: SDFGState | None = None, s
     does not satisfy. Most specific first is what picks the general one. Given the node's ``state``
     and ``sdfg``, a lowering that would refuse the node's shape is not offered.
     """
+    from dace.libraries.fft.nodes.fft import FourierTransform
+    from dace.libraries.fft.nodes.fft import block_refusal as fft_block_refusal
     from dace.libraries.standard.nodes.reduce import Reduce, block_strided_refusal
     from dace.libraries.standard.nodes.scan import Scan, block_refusal
     from dace.libraries.standard.nodes.state_scan import StateScan, block_chunks
@@ -156,6 +158,11 @@ def gpu_block_implementation(node: nodes.Node, state: SDFGState | None = None, s
     ):
         return None
     if isinstance(node, Scan) and block_refusal(node, state, sdfg if sdfg is not None else state.sdfg) is not None:
+        return None
+    if (
+        isinstance(node, FourierTransform)
+        and fft_block_refusal(node, state, sdfg if sdfg is not None else state.sdfg) is not None
+    ):
         return None
     if isinstance(node, StateScan) and block_chunks(node) is None:
         return None
