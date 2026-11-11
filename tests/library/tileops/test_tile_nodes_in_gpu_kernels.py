@@ -70,7 +70,10 @@ def scattered() -> dace.SDFG:
     state.add_node(node)
     state.add_edge(src, None, node, "_src", dace.Memlet(f"src[0:{W}]"))
     state.add_edge(idx, None, node, "_idx_1", dace.Memlet(f"idx[0:{W}]"))
-    state.add_memlet_path(node, exit_node, state.add_write("O"), src_conn="_dst", memlet=dace.Memlet(f"O[r, 0:{W}]"))
+    # A scatter writes only the elements its indices name: a may-write, so the untouched ones keep their values
+    state.add_memlet_path(
+        node, exit_node, state.add_write("O"), src_conn="_dst", memlet=dace.Memlet(f"O[r, 0:{W}]", dynamic=True)
+    )
     return sdfg
 
 
