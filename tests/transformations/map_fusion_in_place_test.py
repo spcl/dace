@@ -45,6 +45,19 @@ def reader_of_the_row_above(p0: dace.float64[N], q: dace.float64[N, N]):
             q[i, j] = q[i, j - 1] + p[i - 1, j]
 
 
+@dace.program
+def recurrence_after_its_first_column(p0: dace.float64[N], q: dace.float64[N, N]):
+    p = np.empty((N, N), dtype=np.float64)
+    for i in dace.map[0:N]:
+        p[i, 0] = p0[i]
+    for i in dace.map[0:N]:
+        for j in range(1, N):
+            p[i, j] = 0.5 * p[i, j - 1] + 1.0
+    for k in dace.map[0:N]:
+        for j in range(1, N):
+            q[k, j] = q[k, j - 1] + p[k, j - 1]
+
+
 def rows_reference(p0: np.ndarray, q: np.ndarray) -> None:
     p = np.empty((len(p0), len(p0)))
     p[:, 0] = p0
@@ -60,6 +73,22 @@ def test_a_row_recurrence_and_its_reader_fuse_in_place():
     assert top_level_maps(sdfg) == 1
     # Not privatized: the fused body reads and writes the original ``p``
     assert not any(name.startswith("__map_fusion_") for name in sdfg.arrays)
+    sdfg.validate()
+    rng = np.random.default_rng(0)
+    p0, q = rng.random(SIZE), rng.random((SIZE, SIZE))
+    expected = q.copy()
+    rows_reference(p0, expected)
+    sdfg(p0=p0, q=q, N=SIZE)
+    assert np.allclose(q, expected)
+
+
+def test_a_reader_of_elements_another_map_wrote_fuses_in_place():
+    """The recurrence writes ``p[i, 1:N]``, the reader reads ``p[i, 0:N-1]``: no producer covers the read, but in place
+    the first column comes from memory, which no other iteration writes (NestForge #27)."""
+    sdfg = recurrence_after_its_first_column.to_sdfg(simplify=True)
+    # The recurrence and its reader; the first column stays its own map
+    assert sdfg.apply_transformations_repeated(MapFusionVertical) == 1
+    assert top_level_maps(sdfg) == 2
     sdfg.validate()
     rng = np.random.default_rng(0)
     p0, q = rng.random(SIZE), rng.random((SIZE, SIZE))
@@ -184,6 +213,7 @@ def test_a_piece_computed_from_an_earlier_piece_fuses_without_a_cycle():
 
 if __name__ == "__main__":
     test_a_row_recurrence_and_its_reader_fuse_in_place()
+    test_a_reader_of_elements_another_map_wrote_fuses_in_place()
     test_a_reader_of_another_iterations_row_is_refused()
     test_maps_whose_bodies_are_nested_sdfgs_fuse_through_an_array_the_first_updates_point_wise()
     test_two_updates_of_one_container_fuse_in_place()

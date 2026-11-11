@@ -1165,7 +1165,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         for producer_subset in producer_subsets
                         if producer_subset.covers(consumer_subset, facts)
                     ]
-                    if len(prospective_producers) != 1:
+                    # In place, the consumer reads the container itself: what no producer of this iteration covers
+                    #  is right as long as no other iteration writes it (NestForge #27, a recurrence whose row 0
+                    #  another map wrote).
+                    if len(prospective_producers) != 1 and not (
+                        intermediate_node.data in in_place
+                        and self.other_iterations_miss(
+                            first_map_exit.map, list(producer_subsets), [consumer_subset], facts
+                        )
+                    ):
                         return None
 
                     # As for the producer we have to check if the reduction of the memory
