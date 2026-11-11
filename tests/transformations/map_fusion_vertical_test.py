@@ -4531,7 +4531,12 @@ def test_an_ordering_edge_into_a_node_another_reader_shares_keeps_that_reader_af
 
     ref, res = make_sdfg_args(sdfg)
     compile_and_run_sdfg(sdfg, **ref)
-    assert MapFusionVertical(relaxed_dataflow=False).can_be_applied_to(sdfg, first_map_exit=first_exit, array=t, second_map_entry=entry) is False
+    assert (
+        MapFusionVertical(relaxed_dataflow=False).can_be_applied_to(
+            sdfg, first_map_exit=first_exit, array=t, second_map_entry=entry
+        )
+        is False
+    )
     assert sdfg.apply_transformations_repeated(MapFusionVertical(relaxed_dataflow=True), validate_all=True) == 1
     assert count_nodes(sdfg, nodes.MapEntry) == 1 and "t" not in sdfg.arrays
     fused_exit = next(n for n in state.nodes() if isinstance(n, nodes.MapExit))
