@@ -126,7 +126,8 @@ def test_greedy_enumerator_is_linear_in_map_count():
 
 def test_greedy_enumerator_scales_linearly():
     """Doubling the map count must not more than double the cost."""
-    _enumerate(_clique_state_sdfg(4))
+    # Warm up at the larger size: a cache first filled during the large run would count against it alone
+    _enumerate(_clique_state_sdfg(N_MAPS))
 
     _, small_calls, small_peak = _enumerate(_clique_state_sdfg(N_MAPS // 2), measure=True)
     _, large_calls, large_peak = _enumerate(_clique_state_sdfg(N_MAPS), measure=True)
