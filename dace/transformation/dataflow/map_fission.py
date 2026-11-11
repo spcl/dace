@@ -638,15 +638,17 @@ class MapFission(transformation.SingleStateTransformation):
 
         Fission nests each top-level region of the body whole, so a ``ConditionalBlock`` lands in one map with all
         its branches and no component is split across it. That is only sound while its conditions mean the same in
-        that map: they must read neither a map parameter nor a symbol the body assigns on an interstate edge (the
-        assignment would end up in another map). Both are followed into nested SDFGs through their symbol mappings.
+        that map: they must read neither a map parameter, nor a symbol the body assigns on an interstate edge, nor a
+        container the body writes (the assignment or write would end up in another map). All are followed into nested
+        SDFGs through their symbol mappings and connectors.
 
         :param body: The nested SDFG that is the body of the map (or a nested SDFG inside it).
         :param blocked: The names in ``body`` whose value may differ between the fissioned maps: the map parameters,
-                        and for a nested SDFG the symbols mapped from them.
-        :returns: ``False`` if a conditional in ``body`` reads a blocked symbol.
+                        and for a nested SDFG the symbols and connectors mapped from them.
+        :returns: ``False`` if a conditional in ``body`` reads a blocked name.
         """
         blocked = set(blocked) | {name for edge in body.all_interstate_edges() for name in edge.data.assignments}
+        blocked |= {node.data for state in body.states() for node in state.data_nodes() if state.in_degree(node) > 0}
         for block in body.all_control_flow_blocks():
             if isinstance(block, ConditionalBlock) and any(
                 {str(sym) for sym in cond.get_free_symbols()} & blocked for cond, region in block.branches if cond
@@ -660,6 +662,7 @@ class MapFission(transformation.SingleStateTransformation):
                         for inner, outer in node.symbol_mapping.items()
                         if {str(sym) for sym in pystr_to_symbolic(str(outer)).free_symbols} & blocked
                     }
+                    mapped |= {e.dst_conn for e in state.in_edges(node) if e.dst_conn and e.data.data in blocked}
                     if not MapFission.conditionals_stay_whole(node.sdfg, mapped):
                         return False
         return True
