@@ -10,6 +10,7 @@ import dace.sdfg.nodes
 from dace import Memlet
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import environments
+from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock, copy_code, mat, order, scratch_code
 from dace.libraries.lapack.nodes import Getrf, Getri, Getrs
 from dace.libraries.linalg.nodes.solve import gesv_core_program, restride
 from dace.libraries.standard.helper import (
@@ -293,6 +294,30 @@ class ExpandInvHipSolverDn(ExpandTransformation):
         return _make_sdfg_getrs(node, parent_state, parent_sdfg, "hipSolverDn")
 
 
+@dace.library.expansion
+class ExpandInvBlock(ExpandLapackBlock):
+    """In-kernel inverse by one thread block: ``block_lapack::getrf`` then ``getri`` on the output, the pivots in
+    shared memory."""
+
+    matrix = "_ain"
+    inverts = True
+
+    @classmethod
+    def scratch_bytes(cls, node, ops, n):
+        return 4 * n
+
+    @classmethod
+    def body(cls, node, ops, uid):
+        n = order(ops, "_ain")
+        pivots = f"__inv_pivots_{uid}"
+        return (
+            scratch_code("int", pivots, int(ops["_ain"].shape[0]))
+            + copy_code(ops, "_ain", "_aout")
+            + f"dace::block_lapack::getrf({mat(ops, '_aout')}, {n}, {n}, {pivots}, 1L);\n"
+            + f"dace::block_lapack::getri({mat(ops, '_aout')}, {n}, {pivots}, 1L);\n"
+        )
+
+
 @dace.library.node
 class Inv(dace.sdfg.nodes.LibraryNode):
     # Global properties
@@ -302,6 +327,7 @@ class Inv(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandInvMKL,
         "cuSolverDn": ExpandInvCuSolverDn,
         "hipSolverDn": ExpandInvHipSolverDn,
+        BLOCK_LAPACK: ExpandInvBlock,
     }
     default_implementation = None
 

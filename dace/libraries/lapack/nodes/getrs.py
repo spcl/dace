@@ -9,6 +9,17 @@ from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import environments
+from dace.libraries.lapack.block import (
+    BLOCK_LAPACK,
+    ExpandLapackBlock,
+    columns,
+    copy_code,
+    cpp,
+    info_code,
+    mat,
+    order,
+    pointer,
+)
 from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
 
@@ -143,6 +154,23 @@ ExpandGetrsHipSolverDn = hip_dialect.hip_expansion(
 )
 
 
+@dace.library.expansion
+class ExpandGetrsBlock(ExpandLapackBlock):
+    """In-kernel LU solve by one thread block (``block_lapack::getrs``). Unlike the vendor GPU solvers, which read
+    column-major ``[nrhs, n]`` right-hand sides, it reads them ``[n, nrhs]`` as the CPU expansions do."""
+
+    matrix = "_a"
+
+    @classmethod
+    def body(cls, node, ops, uid):
+        return (
+            copy_code(ops, "_rhs_in", "_rhs_out")
+            + f"dace::block_lapack::getrs({mat(ops, '_a', True)}, {order(ops, '_a')}, {pointer('_ipiv', True)}, "
+            + f"{cpp(ops['_ipiv'].strides[0])}, {mat(ops, '_rhs_out')}, {columns(ops, '_rhs_in')});\n"
+            + info_code(ops, "0")
+        )
+
+
 @dace.library.node
 class Getrs(dace.sdfg.nodes.LibraryNode):
     # Global properties
@@ -151,6 +179,7 @@ class Getrs(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandGetrsMKL,
         "cuSolverDn": ExpandGetrsCuSolverDn,
         "hipSolverDn": ExpandGetrsHipSolverDn,
+        BLOCK_LAPACK: ExpandGetrsBlock,
     }
     default_implementation = None
 

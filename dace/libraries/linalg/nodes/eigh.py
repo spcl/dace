@@ -18,6 +18,7 @@ import dace.sdfg.nodes
 from dace import SDFG, Memlet, SDFGState, dtypes, symbolic
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import environments
+from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock, scratch_code, syevj_code
 from dace.libraries.lapack.nodes.syevd import Syevd
 from dace.libraries.linalg.nodes.cholesky import GPU_SOLVERS, SOLVER_BLAS, device_solver_implementation
 from dace.libraries.linalg.nodes.solve import restride
@@ -278,6 +279,24 @@ class ExpandEighHipSolverDn(ExpandTransformation):
         return make_vendor_sdfg(node, parent_state, parent_sdfg, "hipSolverDn")
 
 
+@dace.library.expansion
+class ExpandEighBlock(ExpandLapackBlock):
+    """In-kernel ``eigh`` by one thread block: cyclic Jacobi (``block_lapack::syevj``) on a shared copy of ``_a``.
+    Real matrices of a literal order only."""
+
+    matrix = "_a"
+
+    @classmethod
+    def scratch_bytes(cls, node, ops, n):
+        return n * n * ops["_a"].desc.dtype.bytes
+
+    @classmethod
+    def body(cls, node, ops, uid):
+        n = int(ops["_a"].shape[0])
+        work = f"__eigh_work_{uid}"
+        return scratch_code(ops["_a"].ctype, work, n * n) + syevj_code(ops, "_a", "_w", "_v", node.lower, work)
+
+
 @dace.library.node
 class Eigh(dace.sdfg.nodes.LibraryNode):
     """``w, v = numpy.linalg.eigh(a, UPLO)``: ``_a`` in, ``_w`` and ``_v`` out."""
@@ -288,6 +307,7 @@ class Eigh(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandEighMKL,
         "cuSolverDn": ExpandEighCuSolverDn,
         "hipSolverDn": ExpandEighHipSolverDn,
+        BLOCK_LAPACK: ExpandEighBlock,
     }
     default_implementation = None
 
