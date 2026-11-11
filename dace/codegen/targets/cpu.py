@@ -3925,11 +3925,10 @@ class CPUCodeGen(TargetCodeGenerator):
             else:
                 continue
 
-            # Complex element types have no built-in OpenMP reduction; under the flag emit
-            # a ``#pragma omp declare reduction`` (only ``+`` / ``*`` have a defined identity
-            # + combiner). Off the flag, preserve the exact prior scalar behavior (no dtype
-            # special-casing) so a disabled flag is a codegen no-op.
-            if array_reductions_enabled(sdfg) and desc.dtype in _COMPLEX_TYPES:
+            # Complex element types have no built-in OpenMP reduction: a plain clause does not
+            # compile, so emit a ``#pragma omp declare reduction`` (only ``+`` / ``*`` have a
+            # defined identity + combiner) whatever the flag says.
+            if desc.dtype in _COMPLEX_TYPES:
                 named = _complex_declare_reduction(op_str, desc.dtype.ctype)
                 if named is None:
                     continue

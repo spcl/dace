@@ -20,16 +20,16 @@ import dace
 N = dace.symbol("N")
 
 
-def _build_wcr_scalar_sum() -> dace.SDFG:
+def _build_wcr_scalar_sum(dtype=dace.float64) -> dace.SDFG:
     """Hand-built SDFG: scalar 'acc' accumulated via WCR from a parallel map.
 
     Done by hand (rather than from a @dace.program) so the accumulator is a
     true Scalar descriptor -- the shape the OMP reduction clause requires.
     """
-    sdfg = dace.SDFG("wcr_scalar_sum")
-    sdfg.add_array("src", [N], dace.float64)
-    sdfg.add_array("out", [1], dace.float64)
-    sdfg.add_scalar("acc", dace.float64, transient=True)
+    sdfg = dace.SDFG("wcr_scalar_sum_" + dtype.to_string())
+    sdfg.add_array("src", [N], dtype)
+    sdfg.add_array("out", [1], dtype)
+    sdfg.add_scalar("acc", dtype, transient=True)
 
     # init: acc = 0
     init = sdfg.add_state("init", is_start_block=True)
@@ -103,6 +103,19 @@ def test_scalar_wcr_numerically_correct():
     out = np.array([0.0])
     csdfg(src=src, out=out, N=n)
     assert np.isclose(float(out[0]), float(src.sum()))
+
+
+def test_complex_scalar_wcr_declares_reduction_without_flag():
+    """A complex scalar accumulator takes the ``declare reduction`` with ``openmp_array_reductions`` off: a plain
+    ``reduction(+:acc)`` on ``dace::complex128`` does not compile (NestForge newdxx_g)."""
+    sdfg = _build_wcr_scalar_sum(dace.complex128)
+    assert not sdfg.openmp_array_reductions
+    csdfg, src = _compile_and_read_src(sdfg)
+    assert "declare reduction(cpf_cadd : dace::complex128" in src
+    src_in = np.random.default_rng(0).random(64) * (1 + 2j)
+    out = np.zeros(1, np.complex128)
+    csdfg(src=src_in, out=out, N=64)
+    assert np.isclose(out[0], src_in.sum())
 
 
 def test_multiple_omp_reducible_targets_emit_multiple_clauses():
@@ -859,6 +872,7 @@ if __name__ == "__main__":
     test_scalar_wcr_emits_omp_reduction_clause()
     test_scalar_wcr_does_not_emit_atomic_for_covered_target()
     test_scalar_wcr_numerically_correct()
+    test_complex_scalar_wcr_declares_reduction_without_flag()
     test_multiple_omp_reducible_targets_emit_multiple_clauses()
     for case in PER_OP_CASES:
         test_per_operator_emits_correct_omp_reduction_clause(*case)
