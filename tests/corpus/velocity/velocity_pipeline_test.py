@@ -31,6 +31,18 @@ MAPS = {(0, 1): 34, (0, 2): 26, (1, 1): 27, (1, 2): 19}
 OFFLOADED = {(0, 1): (8, 24), (0, 2): (7, 18), (1, 1): (6, 19), (1, 2): (5, 13)}
 
 
+def launches(sdfg: dace.SDFG, host: dace.nodes.MapEntry) -> bool:
+    """Whether a kernel lies in the scope of the block map ``host``, nested SDFGs included."""
+    state = next(state for node, state in sdfg.all_nodes_recursive() if node is host)
+    for node in state.scope_subgraph(host).nodes():
+        inner = node.sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.NestedSDFG) else [(node, state)]
+        if any(
+            isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.ScheduleType.GPU_Device for n, parent in inner
+        ):
+            return True
+    return False
+
+
 def dace_fortran_root() -> Path:
     root = Path(os.environ.get("DACE_FORTRAN_ROOT", ""))
     assert (root / "dace_fortran").is_dir(), "DACE_FORTRAN_ROOT must name a dace-fortran checkout"
@@ -131,7 +143,12 @@ def test_gpu_offload_launches_from_the_block_loops(lvn_only, istep, tmp_path):
 
     hosts = block_maps(sdfg)
     assert (len(hosts), kernels(sdfg)) == OFFLOADED[lvn_only, istep]
-    assert all(entry.map.schedule in (dace.ScheduleType.Sequential, dace.ScheduleType.CPU_Multicore) for entry in hosts)
+    # A block loop that launches kernels runs them one block at a time; one left with host work only is threaded
+    schedules = {entry.map.label: (entry.map.schedule, launches(sdfg, entry)) for entry in hosts}
+    assert all(
+        schedule == (dace.ScheduleType.Sequential if launched else dace.ScheduleType.CPU_Multicore)
+        for schedule, launched in schedules.values()
+    ), schedules
     assert any(code.title == "CUDA" for code in sdfg.generate_code())
 
 

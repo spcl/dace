@@ -216,8 +216,8 @@ def test_a_device_element_bound_through_a_taskloop_is_staged_once_outside_it():
     assert sdfg.arrays[staged].storage == dtypes.StorageType.Default, staged
     (root,) = [edge for edge in state.in_edges(entry) if edge.data.data == staged]
     assert isinstance(root.src, dace.nodes.AccessNode), "the copy sits outside the map"
-    assert [edge.src.data for edge in state.in_edges(root.src)] == ["t"], "copied from the device element"
-    assert not any(edge.data.data == "t" for edge in state.in_edges(entry)), "no device scalar enters the host map"
+    assert [edge.src.data for edge in state.in_edges(root.src)] == ["t_gpu"], "copied from the device element"
+    assert not any(edge.data.data == "t_gpu" for edge in state.in_edges(entry)), "no device scalar enters the host map"
 
 
 @pytest.mark.gpu
