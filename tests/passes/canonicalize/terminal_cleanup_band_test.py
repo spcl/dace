@@ -98,9 +98,28 @@ def _is_reclaim_stage(unit: ppl.Pass) -> bool:
 CLEANUP_TYPES = frozenset(type(p).__name__ for label, p in canon_pipeline._structural_cleanup("probe"))
 
 
+def _members(unit: ppl.Pass) -> list[ppl.Pass]:
+    """The units a stage runs: a ``_ThenIfChanged``'s leading units, or the stage itself."""
+    if isinstance(unit, canon_pipeline._ThenIfChanged):
+        return [member for member, watched in unit.first]
+    return [unit]
+
+
+def _without_reclaim(unit: ppl.Pass) -> ppl.Pass | None:
+    """``unit`` with its reclaiming members dropped, ``None`` when it is one."""
+    if isinstance(unit, canon_pipeline._ThenIfChanged):
+        unit.first = [(member, watched) for member, watched in unit.first if not _is_reclaim_stage(member)]
+        return unit
+    return None if _is_reclaim_stage(unit) else unit
+
+
 def _reclaim_slots() -> list[int]:
-    """Recipe indices of every array-reclaiming stage, in order."""
-    at = [i for i, (label, p) in enumerate(canon_pipeline.build_stages()) if _is_reclaim_stage(p)]
+    """Recipe indices of every stage that reclaims arrays, or holds a unit that does, in order."""
+    at = [
+        i
+        for i, (label, p) in enumerate(canon_pipeline.build_stages())
+        if any(_is_reclaim_stage(member) for member in _members(p))
+    ]
     assert at, "the recipe no longer reclaims arrays at all"
     return at
 
@@ -165,7 +184,9 @@ def _canonicalize(
     try:
         for index, (label, unit) in enumerate(canon_pipeline.build_stages()):
             if not with_reclaim and index in reclaim_slots:
-                continue
+                unit = _without_reclaim(unit)
+                if unit is None:
+                    continue
             if not with_cleanup and index in cleanup_slots:
                 continue
             if not with_optional and isinstance(unit, OptionalArrayInference):
@@ -277,7 +298,9 @@ def test_the_stage_is_idempotent():
     """Re-entering the stage must find nothing -- canonicalize's output is already its fixed point."""
     sdfg = _canonicalize(_fuse_diamond.to_sdfg(simplify=False))
     before = (_transients(sdfg), _access_nodes(sdfg), _tasklets(sdfg))
-    stage = [unit for label, unit in canon_pipeline.build_stages() if _is_reclaim_stage(unit)][0]
+    stage = [
+        member for label, unit in canon_pipeline.build_stages() for member in _members(unit) if _is_reclaim_stage(member)
+    ][0]
     stage.apply_pass(sdfg, {})
     assert (_transients(sdfg), _access_nodes(sdfg), _tasklets(sdfg)) == before
     sdfg.validate()
