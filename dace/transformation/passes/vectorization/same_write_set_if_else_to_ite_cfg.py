@@ -14,6 +14,7 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
+import networkx as nx
 import sympy
 
 import dace
@@ -690,11 +691,21 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # A predicated WCR write (``c[i] += s`` under ``if``) redirected to ``_then`` would accumulate onto
         # the identity and drop ``c[i]``; capture it here and rebuild as an explicit base-read accumulate.
         wcr_escapes: list = []  # (edge, base_name, base_subset)
+        # A node reads the arm's value when the arm writes it or a write of its container reaches it; an empty edge
+        # from another container's read only orders it
+        writes = [
+            (n, n.data)
+            for n in node_map.values()
+            if isinstance(n, dace.nodes.AccessNode)
+            and n.data in rename
+            and any(not ie.data.is_empty() for ie in dst.in_edges(n))
+        ]
         for new in node_map.values():
             if not isinstance(new, dace.nodes.AccessNode):
                 continue
-            # An empty ordering edge into a read node writes nothing
-            if new.data in rename and any(not ie.data.is_empty() for ie in dst.in_edges(new)):
+            if new.data in rename and any(
+                w is new or (name == new.data and nx.has_path(dst._nx, w, new)) for w, name in writes
+            ):
                 base_name = new.data
                 wcr_escapes.extend(
                     (ie, base_name, copy.deepcopy(ie.data.subset))
