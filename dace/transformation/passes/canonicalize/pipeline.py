@@ -912,17 +912,24 @@ def derive_parallelism(
     s += [(label, first_lift())]
     # Rescue: each rewrite acts only on a loop LoopToMap refuses.
     segments: list = []
+    rescue: list[tuple[ppl.Pass, bool]] = []
     if peel_limit > 0:
-        s += [
-            (label, LoopCarriedRotationSubstitution(peel_limit)),
-            (label, BestEffortLoopPeeling(peel_limit, segments=segments, validate=validate)),
+        rescue = [
+            (LoopCarriedRotationSubstitution(peel_limit), True),
+            (BestEffortLoopPeeling(peel_limit, segments=segments, validate=validate), True),
         ]
-    s += [(label, unit) for unit in dead_dataflow_units()]
-    s += [(label, PrivatizeScalarsAndArrays())]
-    s += [(label, PropagateSymbols())]
-    # Peeling copies a loop with the symbols its body assigns; SSA names each copy's apart, or the lifted copy's
-    # inner symbols shadow the other's and memlet propagation carries them out of the nested SDFG.
-    s += [(label, CascadeInterstateEdgeAssignmentsUp()), (label, UniqueLoopIterators()), (label, SymbolSSA())]
+    # The symbol units tidy what a rotation or peel left: they run only when one happened.
+    s += [
+        (
+            label,
+            _ThenIfChanged(
+                [*rescue, *((unit, False) for unit in dead_dataflow_units()), (PrivatizeScalarsAndArrays(), False)],
+                # Peeling copies a loop with the symbols its body assigns; SSA names each copy's apart, or the lifted
+                # copy's inner symbols shadow the other's and memlet propagation carries them out of the nested SDFG.
+                [PropagateSymbols(), CascadeInterstateEdgeAssignmentsUp(), UniqueLoopIterators(), SymbolSSA()],
+            ),
+        )
+    ]
     # A split or peel can leave a plain recurrence the lifting segment never saw (``y[i] = s[i] + y[i - 1]`` on the
     # ``[K:N)`` half of an ``if i < K`` body); lift it, on the split's segments only, before the levels below
     # settle it as sequential.
