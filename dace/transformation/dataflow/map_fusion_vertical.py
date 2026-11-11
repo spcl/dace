@@ -694,6 +694,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         ordered: set[str] = set()
         for edge in list(pure_outputs):
             if edge.data.is_empty() and any(e.dst is second_map_entry for e in graph.out_edges(edge.dst)):
+                # The node's other readers ran after the first Map: they stay after the fused one
+                for reader in OrderedSet(e.dst for e in graph.out_edges(edge.dst)) - {second_map_entry}:
+                    graph.add_nedge(second_map_exit, reader, dace.Memlet())
                 graph.remove_edge(edge)
                 pure_outputs.remove(edge)
             for ordering in graph.edges_between(edge.dst, second_map_entry) if not edge.data.is_empty() else ():
@@ -933,13 +936,20 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             # Empty Memlets are only allowed if they are in `\mathbb{P}`, which
             #  is also the only place they really make sense (for a MapExit).
             #  Thus if we now found an empty Memlet we reject it.
-            #  One that only orders the first Map before the second, the sole reader of the node, says what the
-            #  fused body does anyway: the fused Map runs in place of both, and `apply()` drops the edge.
+            #  One that orders the first Map before the readers of a node the second Map reads says, for the second
+            #  Map, what the fused body does anyway: the fused Map runs in place of both, and `apply()` drops the
+            #  edge. The node's other readers stay behind the fused Map (`apply()` orders them after its exit),
+            #  unless one leads back into the second Map: that order would be a cycle.
             if out_edge.data.is_empty():
+                readers = [e.dst for e in state.out_edges(intermediate_node)]
                 if (
                     self.relaxed_dataflow
-                    and all(e.dst is second_map_entry for e in state.out_edges(intermediate_node))
+                    and any(reader is second_map_entry for reader in readers)
                     and all(e.data.is_empty() for e in state.edges_between(first_map_exit, intermediate_node))
+                    and not any(
+                        reader is not second_map_entry and probe.reaches(state, reader, second_map_entry)
+                        for reader in readers
+                    )
                 ):
                     pure_outputs.add(out_edge)
                     continue

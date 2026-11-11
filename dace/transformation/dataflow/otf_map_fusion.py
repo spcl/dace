@@ -155,6 +155,9 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         # An empty memlet only orders the consumer after the producer; it reads nothing the consumer could recompute
         if produce_edge.data.is_empty() or any(edge.data.is_empty() for edge in consume_edges):
             return False
+        # A dynamic write (a map ranging over a value it reads, ``0:Min(n, ngw[0])``) may leave part of its subset alone
+        if produce_edge.data.dynamic:
+            return False
         facts = SymbolResolver().facts_at(graph, self.array)
         for edge in consume_edges:
             read_memlet = edge.data

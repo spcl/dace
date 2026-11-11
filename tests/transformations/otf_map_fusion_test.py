@@ -1027,6 +1027,38 @@ def test_an_empty_memlet_into_the_consumer_is_not_fused():
     assert not OTFMapFusion.can_be_applied_to(sdfg, **where)
 
 
+def test_a_producer_ranging_over_a_value_it_reads_is_not_fused():
+    """``T[i] = A[i] + 1`` for ``i < m``, ``m`` read from ``L[0]``, then ``B = 2 T`` over all 16 elements. The produced
+    subset ``T[0:16]`` is dynamic: elements past ``m`` keep what ``T`` held, which the recomputing copy would overwrite
+    (vloc_psi_k_acc on the GPU parallel column, where the copy also lost the map's range input)."""
+    sdfg = dace.SDFG("otf_dynamic_range_producer")
+    for name in ("A", "B"):
+        sdfg.add_array(name, [16], dace.float64)
+    sdfg.add_array("L", [1], dace.int64)
+    sdfg.add_transient("T", [16], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("produce", dict(i="0:m"))
+    entry.add_in_connector("m")
+    state.add_edge(state.add_read("L"), None, entry, "m", dace.Memlet("L[0]"))
+    tasklet = state.add_tasklet("add", {"a"}, {"o"}, "o = a + 1.0")
+    state.add_memlet_path(state.add_read("A"), entry, tasklet, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    t = state.add_access("T")
+    state.add_memlet_path(tasklet, exit_, t, src_conn="o", memlet=dace.Memlet("T[i]"))
+    _, consume_entry, _ = state.add_mapped_tasklet(
+        "consume",
+        dict(j="0:16"),
+        {"x": dace.Memlet("T[j]")},
+        "y = 2.0 * x",
+        {"y": dace.Memlet("B[j]")},
+        external_edges=True,
+        input_nodes={"T": t},
+        output_nodes={"B": state.add_write("B")},
+    )
+    state.in_edges(t)[0].data = dace.Memlet("T[0:16]", dynamic=True)
+    sdfg.validate()
+    assert not OTFMapFusion.can_be_applied_to(sdfg, first_map_exit=exit_, array=t, second_map_entry=consume_entry)
+
+
 def producer_reading_its_own_output() -> dace.SDFG:
     """A nested-SDFG producer updates ``T[i] = max(T[i], A[i])`` through one in/out connector, feeding ``B = 2 T``."""
     inner = dace.SDFG("otf_inout_producer_body")
@@ -1346,6 +1378,7 @@ def test_a_copy_adds_no_argument_for_a_global_the_producer_reads():
 
 
 if __name__ == "__main__":
+    test_a_producer_ranging_over_a_value_it_reads_is_not_fused()
     # Solver
     test_solve()
     test_solve_permute()

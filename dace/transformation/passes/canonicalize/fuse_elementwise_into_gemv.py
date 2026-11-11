@@ -21,7 +21,7 @@ GEMM (both operands matrices) is compute-bound and stays a library node.
 
 from typing import Any
 
-from dace import SDFG, data, properties, subsets
+from dace import SDFG, data, properties, subsets, symbolic
 from dace.libraries.blas.nodes.matmul import MatMul
 from dace.memlet import Memlet
 from dace.sdfg import nodes
@@ -116,8 +116,18 @@ class FuseElementwiseIntoGemv(ppl.Pass):
         mat_node, vec_node, out_node = src, vec.src, out.dst
         if not isinstance(vec_node, nodes.AccessNode):
             return 0
-        # ``y = (a * y) @ v``: the init below would zero ``y`` unordered with the read that builds the matrix
-        if any(n.data == out_name and n is not out_node for n in state.data_nodes()):
+        # ``y = (a * y) @ v``: the init below would zero ``y`` unordered with the read that builds the matrix. Another
+        # part of the container is no such read (``acc[:, 0]``, ``acc[:, 1]``: one product per column)
+        if any(
+            n.data == out_name
+            and n is not out_node
+            and any(
+                e.data.data == out_name
+                and subsets.intersects(e.data.subset, out_subset, sdfg.facts()) is not symbolic.Truth.FALSE
+                for e in state.all_edges(n)
+            )
+            for n in state.data_nodes()
+        ):
             return 0
         state.remove_node(node)
         # A connector may not take the name of a container, symbol or constant of the SDFG

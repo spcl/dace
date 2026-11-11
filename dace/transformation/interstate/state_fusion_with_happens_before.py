@@ -760,6 +760,17 @@ class StateFusionExtended(StateFusion):
                             self.connections_to_make.append(("war", consumers, [wnode]))
                         break
 
+            def war_ordered(writers: list[nodes.AccessNode]) -> bool:
+                """Whether a recorded edge orders every one of ``writers`` after the first state's reads of its container:
+                the writer's own, or that of an earlier writer of the container it follows in the second state."""
+                return self.aggressive_merges and all(
+                    any(
+                        kind == "war" and any(n.data == w.data and nx.has_path(second_state._nx, n, w) for n in seconds)
+                        for kind, _, seconds in self.connections_to_make
+                    )
+                    for w in writers
+                )
+
             # Find source/sink (data) nodes by connected component
             first_cc_input = [[n for n in cc if n in first_input_set] for cc in first_cc]
             first_cc_output = [[n for n in cc if n in first_output_set] for cc in first_cc]
@@ -923,7 +934,7 @@ class StateFusionExtended(StateFusion):
                                 #                                     \-> (c)  |
                                 # in the first state, and the same memory is inout in the second state
                                 # All paths need to lead to `src`
-                                if not self._check_all_paths(
+                                if not war_ordered(nodes_second) and not self._check_all_paths(
                                     first_state, second_state, match_nodes, nodes_first, nodes_second, True, False
                                 ):
                                     return False
@@ -994,7 +1005,10 @@ class StateFusionExtended(StateFusion):
                     if not self._check_paths(
                         first_state, second_state, match_nodes, nodes_first, nodes_second, True, False
                     ):
-                        return False
+                        # The first state only reads what the second rewrites (a step's ``vel += acc * dt`` ahead of
+                        # the next ``acc``): the recorded write-after-read edges order it
+                        if not all(first_state.in_degree(n) == 0 for n in nodes_first) or not war_ordered(nodes_second):
+                            return False
 
                 # End of read-write hazard check
 
