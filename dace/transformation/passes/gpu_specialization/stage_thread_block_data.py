@@ -30,6 +30,7 @@ its cell (no dynamic or write-conflict-resolved memlet), so the copy back never 
 
 import copy
 import numbers
+from collections.abc import Collection
 from typing import Any
 
 import sympy
@@ -206,13 +207,22 @@ class StageThreadBlockData(ppl.Pass):
         desc.storage = dtypes.StorageType.GPU_Shared
         desc.lifetime = dtypes.AllocationLifetime.Scope
 
-    def stage_reads(self, state: SDFGState, kernel: nodes.MapEntry, block: nodes.MapEntry, budget: list[int]) -> list:
-        """Stage the regions ``block`` reads; returns the arrays staged."""
+    def stage_reads(
+        self,
+        state: SDFGState,
+        kernel: nodes.MapEntry,
+        block: nodes.MapEntry,
+        budget: list[int],
+        names: Collection[str] | None = None,
+    ) -> list:
+        """Stage the regions ``block`` reads, of the arrays ``names`` only if given; returns the arrays staged."""
         sdfg = state.sdfg
         written = written_arrays(state, kernel)
         candidates = []
         for edge in state.in_edges(block):
             if edge.src is not kernel or edge.data.is_empty() or edge.data.data in written:
+                continue
+            if names is not None and edge.data.data not in names:
                 continue
             found = self.region(sdfg, edge.data)
             if found is not None and found[1] <= budget[0]:
