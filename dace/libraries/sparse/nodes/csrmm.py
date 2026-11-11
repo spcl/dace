@@ -10,6 +10,8 @@ from dace import data as dt
 from dace import memlet as mm
 from dace.libraries.blas.blas_helpers import check_access, to_blastype, to_cublas_computetype
 from dace.libraries.sparse import environments, sparse_dialect
+from dace.libraries.sparse.block import csr_block_sdfg
+from dace.libraries.standard.environments.cuda import CUDA
 from dace.ordered import OrderedSet
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
@@ -582,6 +584,19 @@ class ExpandCSRMMHipSPARSE(ExpandCSRMMGPUSparse):
     dialect = sparse_dialect.HIPSPARSE
 
 
+@dace.library.expansion
+class ExpandCSRMMBlock(ExpandTransformation):
+    """In-kernel CSRMM by ONE thread block (:mod:`dace.libraries.sparse.block`)."""
+
+    runs_inside_kernel = True
+    environments = [CUDA]
+
+    @staticmethod
+    def expansion(node, state: SDFGState, sdfg: SDFG):
+        node.validate(sdfg, state)
+        return csr_block_sdfg(node, state, sdfg, node.transB)
+
+
 @dace.library.node
 class CSRMM(dace.sdfg.nodes.LibraryNode):
     """
@@ -595,6 +610,7 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandCSRMMMKL,
         "cuSPARSE": ExpandCSRMMCuSPARSE,
         "hipSPARSE": ExpandCSRMMHipSPARSE,
+        "CUDA (block strided)": ExpandCSRMMBlock,
     }
     # The ``sparse`` library has no config-schema entry, so an unset node resolved to nothing and
     # raised "No implementation or default implementation specified" at codegen. ``pure`` is the
