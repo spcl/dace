@@ -191,9 +191,23 @@ def _sympy_to_z3(expr: sp.Basic, sym_cache: dict[str, Any], arr_cache: dict[str,
         return out
 
     if isinstance(expr, (sp.floor, sp.ceiling)):
-        # Rational inner expressions fail translation above, so the argument is already an
-        # integer term and floor (ceiling) is the identity on it.
+        # ``i // 2`` arrives as ``floor(i / 2)``: an integer numerator over a positive integer denominator floors
+        # with SMT-LIB ``div``; an argument that is already an integer term is its own floor and ceiling.
+        num, den = sp.fraction(sp.together(expr.args[0]))
+        if den != 1:
+            a = _sympy_to_z3(num, sym_cache, arr_cache)
+            if a is None or not den.is_Integer or den <= 0 or not required(z3).is_int(_z3_int(a)):
+                return None
+            a = _z3_int(a)
+            return a / int(den) if isinstance(expr, sp.floor) else -((-a) / int(den))
         return _sympy_to_z3(expr.args[0], sym_cache, arr_cache)
+
+    if isinstance(expr, (symbolic.IfExpr, symbolic.ITE)) and len(expr.args) == 3:
+        cond = _bool_to_z3(expr.args[0], sym_cache, arr_cache)
+        then, other = (_sympy_to_z3(a, sym_cache, arr_cache) for a in expr.args[1:])
+        if cond is None or cond is True or then is None or other is None:
+            return then if cond is True else None
+        return required(z3).If(cond, _z3_int(then), _z3_int(other))
 
     if not isinstance(expr, sp.Function):
         return None

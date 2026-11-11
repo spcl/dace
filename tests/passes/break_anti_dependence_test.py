@@ -290,18 +290,24 @@ def test_break_anti_dependence_data_indirected_offset_via_runtime_check():
     assert np.allclose(out, ref)
 
 
-def test_break_anti_dependence_symbolic_offset_uses_iter_var_refused():
-    """A carried offset that DEPENDS on the iteration variable (``a[2*i+1]``) is
-    not a simple positive constant; the pass must refuse it."""
+def test_break_anti_dependence_read_ahead_by_the_iteration_variable():
+    """``a[2*i+1]`` is written by iteration ``2*i+1`` only, after ``i`` read it: a pure anti-dependence over
+    ``i < N // 2``, which the snapshot breaks, the values unchanged."""
 
     @dace.program
-    def bad(a: dace.float64[N], b: dace.float64[N]):
+    def ahead(a: dace.float64[N], b: dace.float64[N]):
         for i in range(N // 2):
             a[i] = a[2 * i + 1] + b[i]
 
-    sdfg = bad.to_sdfg(simplify=True)
-    # Either refused outright OR classified as complex -- in both cases nothing is renamed.
-    assert BreakAntiDependence().apply_pass(sdfg, {}) is None
+    sdfg = ahead.to_sdfg(simplify=True)
+    assert BreakAntiDependence().apply_pass(sdfg, {})
+    rng = np.random.default_rng(0)
+    a, b = rng.random(17), rng.random(17)
+    ref = a.copy()
+    for i in range(17 // 2):
+        ref[i] = ref[2 * i + 1] + b[i]
+    sdfg(a=a, b=b, N=17)
+    assert np.allclose(a, ref)
 
 
 def test_break_anti_dependence_post_normalize_negative_stride_reverse_scan():
@@ -788,7 +794,7 @@ if __name__ == "__main__":
     test_break_anti_dependence_versions_a_difference_offset_on_its_sign()
     test_break_anti_dependence_sum_of_symbols_offset_renames()
     test_break_anti_dependence_data_indirected_offset_via_runtime_check()
-    test_break_anti_dependence_symbolic_offset_uses_iter_var_refused()
+    test_break_anti_dependence_read_ahead_by_the_iteration_variable()
     test_break_anti_dependence_post_normalize_negative_stride_reverse_scan()
     test_break_anti_dependence_alpha_minus_one_with_larger_offset()
     test_break_anti_dependence_cast_wrapped_iterator_in_indirected_chain()

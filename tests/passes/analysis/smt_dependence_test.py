@@ -267,6 +267,9 @@ EXACT = {
     "py_mod": (sp.Function("py_mod")(A, B), lambda a, b: a % b),
     "CMod": (symbolic.CMod(A, B), lambda a, b: int(math.fmod(a, b))),
     "Abs": (sp.Abs(A - B), lambda a, b: abs(a - b)),
+    "floor": (sp.floor(A / 3), lambda a, b: a // 3),
+    "ceiling": (sp.ceiling((A + B) / 4), lambda a, b: -(-(a + b) // 4)),
+    "IfExpr": (symbolic.IfExpr(A < B, A, B), lambda a, b: min(a, b)),
 }
 
 

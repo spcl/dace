@@ -253,20 +253,19 @@ def test_loop_range_direction_from_stride_sign():
 
 
 def test_refuses_pow_under_unknown_sign_stride():
-    """The stride sign is the only thing that changes between these two loops: ``K - p`` is
-    provably >= 0 over an ascending sweep, so it relaxes; under an unknown-sign stride there is
-    no trusted range, so it must stay ``pow`` (if the stride were negative it would go negative)."""
+    """``K - p`` is >= 1 wherever the body runs while the condition is ``p < K``, whatever the stride; under
+    ``p != K`` an unknown-sign stride leaves no range, so it must stay ``pow`` (``p`` may pass ``K``)."""
     R = dace.symbol("R", positive=True, integer=True)
     K = dace.symbol("K", positive=True, integer=True)
     p = dace.symbol("p", integer=True)
     sstep = dace.symbol("sstep", integer=True)  # unknown sign
 
-    def count(name, update):
+    def count(name, update, condition="p < K"):
         sdfg = dace.SDFG(name)
         sdfg.add_array("x", [100], dace.float64)  # constant shape -> only the subscript carries a power
         sdfg.add_symbol(R)
         sdfg.add_symbol(K)
-        loop = LoopRegion("L", condition_expr="p < K", loop_var="p", initialize_expr="p = 0", update_expr=update)
+        loop = LoopRegion("L", condition_expr=condition, loop_var="p", initialize_expr="p = 0", update_expr=update)
         sdfg.add_node(loop, is_start_block=True)
         body = loop.add_state("body", is_start_block=True)
         t = body.add_tasklet("set", {}, {"o"}, "o = 1.0")
@@ -275,7 +274,8 @@ def test_refuses_pow_under_unknown_sign_stride():
         return ipow_count(sdfg)
 
     assert count("ascending", "p = p + 1") > 0  # p in [0, K-1] -> K-p in [1, K] -> relax
-    assert count("unknown", "p = p + sstep") == 0  # unknown-sign stride -> stays pow
+    assert count("unknown", "p = p + sstep") > 0  # the condition bounds p in the body
+    assert count("unbounded", "p = p + sstep", "p != K") == 0  # unknown-sign stride, no bound -> stays pow
 
 
 def test_descending_loop_still_relaxes():
