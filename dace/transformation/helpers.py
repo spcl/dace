@@ -378,7 +378,8 @@ def nest_sdfg_subgraph(
         # mapping one makes it free at the PARENT boundary, where nothing defines it. Do NOT also drop
         # the rest of ``defined_symbols``: an inter-state assignment target still crosses the boundary
         # (nest-forge stages a float read as exactly such a symbol and needs it in the ABI).
-        fsymbols = sdfg.symbols.keys() | nsdfg.free_symbols
+        # Only what the nest reads or assigns: a declared parent symbol it never touches would become free above it
+        fsymbols = set(nsdfg.free_symbols)
         fsymbols.update(defined_symbols)
         fsymbols = fsymbols - strictly_defined_symbols - outright_counters - outright_assigned
         mapping = {s: s for s in fsymbols}
