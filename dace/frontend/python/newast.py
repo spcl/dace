@@ -4547,6 +4547,27 @@ class ProgramVisitor(ExtNodeVisitor):
                 return result[0]
         return result
 
+    def parse_call_argument(self, arg: ast.AST, as_shape: bool, element_copies: list[tuple[ast.Subscript, str]]):
+        """One call argument, parsed as by ``_parse_function_arg``. An array element (``A[i]``) becomes a scalar
+        holding a copy of its value; the pair of its subscript and that scalar is appended to ``element_copies``."""
+        if not isinstance(arg, ast.Subscript):
+            return self._parse_function_arg(arg, as_shape=as_shape)
+        target, known = copy.deepcopy(arg), len(self.sdfg.arrays)
+        result = self._parse_function_arg(arg, as_shape=as_shape)
+        # Only a scalar this argument created is a copy (a subscripted tuple may name an existing scalar)
+        if isinstance(result, str) and result in itertools.islice(self.sdfg.arrays, known, None):
+            desc = self.sdfg.arrays[result]
+            if isinstance(desc, data.Scalar) and not isinstance(desc, data.View):
+                element_copies.append((target, result))
+        return result
+
+    def written_after_copy(self, name: str) -> bool:
+        """Whether the scalar ``name``, which holds a copy of an array element, is written again after that copy."""
+        writes = 0
+        for state in self.sdfg.states():
+            writes += sum(1 for n in state.data_nodes() if n.data == name and state.in_degree(n) > 0)
+        return writes > 1
+
     def parse_window_argument(self, arg: ast.AST, written: bool):
         """One argument of a call to a replacement that takes windows.
 
@@ -5555,6 +5576,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     self, node, f'Function "{funcname}" is not registered with an SDFG implementation'
                 )
 
+        element_copies: list[tuple[ast.Subscript, str]] = []
         # Parsing the arguments with `_parse_function_arg` will generate
         # slices even for the output arguments. A replacement that wires the
         # slices itself (see `oprepo.replaces_windows`) gets the containers and
@@ -5592,12 +5614,12 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             args.extend(
                 [
-                    self._parse_function_arg(arg, as_shape=shape_call and index == 0)
+                    self.parse_call_argument(arg, shape_call and index == 0, element_copies)
                     for index, arg in enumerate(node.args)
                 ]
             )
         keywords = {
-            arg.arg: self._parse_function_arg(arg.value, as_shape=shape_call and arg.arg == "shape")
+            arg.arg: self.parse_call_argument(arg.value, shape_call and arg.arg == "shape", element_copies)
             for arg in node.keywords
         }
 
@@ -5621,6 +5643,15 @@ class ProgramVisitor(ExtNodeVisitor):
             nc: nested_call.NestedCall = result[0]
             self.last_block = nc.last_state
             result = result[1]
+
+        # An element passed as an output reaches the callee as a copy of its value: write the copy back
+        for target, element in element_copies:
+            if self.written_after_copy(element):
+                target.ctx = ast.Store()
+                write_back = ast.copy_location(
+                    ast.Assign(targets=[target], value=ast.Name(id=element, ctx=ast.Load())), node
+                )
+                self._visit_assign(write_back, target, None)
 
         if not isinstance(result, (tuple, list)):
             result = [result]
