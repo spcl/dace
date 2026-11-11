@@ -130,7 +130,7 @@ def fold_self_referential_iedge_ivs(
         # Only fold when the counter is dead after the loop. If its post-loop
         # value is consumed, InductionVariableSubstitution owns the rewrite (it
         # materialises the exit value); folding here would drop the update.
-        if not symbol_is_dead_outside_loop(loop, name):
+        if not symbol_is_dead_outside_loop(loop, name) or shared_container_uses_symbol(loop, name):
             continue
         # Determine whether the increment is before or after the body reads.
         # Post-increment (edge from empty start block): body sees ``sym + (t+1)*step``.
@@ -164,6 +164,8 @@ def fold_self_referential_iedge_ivs(
         closed = symbolic.symstr(symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(name)) + body_offset * step))
         edge.data.assignments.pop(name, None)
         loop.replace_dict({name: closed}, replace_keys=False)
+        # A temporary the body sizes by the counter grows with it (``res[:n] + 1.0`` under ``n = n + 1``)
+        fold_into_loop_local_descriptors(loop, name, closed)
 
         trip = loop_trip_count(loop)
         if trip is not None:
@@ -198,13 +200,16 @@ def fold_nested_carried_symbols(
             continue
         # Refuse if the symbol is still assigned on an interstate edge of this loop;
         # that would be a direct outer-loop increment (s126) and double-counting.
-        if any(name in e.data.assignments for e in loop.all_interstate_edges()):
+        if any(name in e.data.assignments for e in loop.all_interstate_edges()) or shared_container_uses_symbol(
+            loop, name
+        ):
             continue
         # The symbol's value at the start of this loop is a derived IV: substitute
         # its closed form inside the loop body. The symbol still names the pre-loop
         # value; constant propagation downstream folds the initializer (e.g. ``k = -1``).
         closed = symbolic.symstr(symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(name)) + norm_iter * per_iter))
         loop.replace_dict({name: closed}, replace_keys=False)
+        fold_into_loop_local_descriptors(loop, name, closed)
         nested_carries.pop(name, None)
         applied += 1
 
@@ -318,6 +323,27 @@ def simplify_loop(loop: LoopRegion, nested_carries: dict[str, tuple[LoopRegion, 
     return applied
 
 
+def loop_local_containers(loop: LoopRegion) -> OrderedSet[str]:
+    """The containers only ``loop`` accesses."""
+    inside = OrderedSet(loop.states())
+    accessed = OrderedSet(node.data for state in inside for node in state.data_nodes())
+    for state in loop.sdfg.states():
+        if state not in inside:
+            accessed -= OrderedSet(node.data for node in state.data_nodes())
+    return accessed
+
+
+def shared_container_uses_symbol(loop: LoopRegion, name: str) -> bool:
+    """Whether a container ``loop`` shares with code outside it names ``name`` in its descriptor: one descriptor
+    cannot hold the closed form inside the loop and the symbol outside it."""
+    local = loop_local_containers(loop)
+    return any(
+        node.data not in local and name in {str(s) for s in node.desc(loop.sdfg).used_symbols(all_symbols=True)}
+        for state in loop.states()
+        for node in state.data_nodes()
+    )
+
+
 def fold_into_loop_local_descriptors(loop: LoopRegion, name: str, replacement: str) -> bool:
     """Substitute ``name`` in the descriptors of the transients only ``loop`` accesses, which it allocates.
 
@@ -327,13 +353,8 @@ def fold_into_loop_local_descriptors(loop: LoopRegion, name: str, replacement: s
     :returns: whether a descriptor named ``name``.
     """
     sdfg = loop.sdfg
-    inside = OrderedSet(loop.states())
-    accessed = OrderedSet(node.data for state in inside for node in state.data_nodes())
-    for state in sdfg.states():
-        if state not in inside:
-            accessed -= OrderedSet(node.data for node in state.data_nodes())
     folded = False
-    for container in accessed:
+    for container in loop_local_containers(loop):
         desc = sdfg.arrays[container]
         if desc.transient and name in {str(sym) for sym in desc.free_symbols}:
             replace_properties_dict(desc, {name: replacement}, sdfg=sdfg)
