@@ -3698,7 +3698,8 @@ class LoopRegion(ControlFlowRegion):
         default=0,
         category="Scheduling",
         desc="Number of buffers the staged loads of this loop rotate through (multiple buffering). 0 or 1 disables "
-        "it. ``LowerMultipleBuffering`` lowers loops with a depth of 2 or more.",
+        "it. ``LowerMultipleBuffering`` lowers loops with a depth of 2 or more, and ``InsertAsyncWaits`` pipelines their "
+        "asynchronous memory engine (TMA) loads.",
     )
 
     def __init__(

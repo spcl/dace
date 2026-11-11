@@ -911,3 +911,14 @@ def _build_memory_engine_desc_code(
 def _build_memory_engine_barrier_init_code() -> str:
     """Build the device code initializing the mbarrier of a ``MemoryEngineBulk`` load (once per kernel)."""
     return f"dace::cuda::tma_barrier_init({MEMORY_ENGINE_BARRIER_OUTPUT_NAME});\n"
+
+
+def build_mbarrier_array_init_code(count: int, arrivals: str | int) -> str:
+    """Build the device code initializing ``count`` mbarriers at ``_tma_bar_out``, each completing a phase after
+    ``arrivals`` arrivals. Called by every thread of the block; ends with a block barrier."""
+    return f"dace::cuda::mbarrier_init_array({MEMORY_ENGINE_BARRIER_OUTPUT_NAME}, {count}, {arrivals});\n"
+
+
+def build_mbarrier_array_inval_code(count: int) -> str:
+    """Build the device code invalidating ``count`` mbarriers at ``_tma_bar_out`` (after a block barrier)."""
+    return f"dace::cuda::mbarrier_inval_array({MEMORY_ENGINE_BARRIER_OUTPUT_NAME}, {count});\n"
