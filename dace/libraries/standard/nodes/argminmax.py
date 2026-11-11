@@ -161,7 +161,7 @@ class ExpandExtremeIndexCUDABlock(ExpandTransformation):
             )
             no_match = -1 if node.back else count
             decode = "\n".join(
-                f"__b_idx[{d} * ({sym2cpp(idx.strides[0])})] = "
+                f"{linear_element('__b_idx', idx, str(d))} = "
                 f"(__xi_pos / ({sym2cpp(prod(x.shape[d + 1 :]))})) % ({sym2cpp(x.shape[d])}) + {int(node.one_based)};"
                 for d in range(len(x.shape))
             )
