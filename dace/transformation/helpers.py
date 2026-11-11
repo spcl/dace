@@ -526,6 +526,33 @@ def drop_folded_boundary_edge(
         state.add_nedge(anchor, path_end, Memlet())
 
 
+def nodes_between(state: SDFGState, subgraph_nodes: Iterable[nodes.Node]) -> list[nodes.Node]:
+    """The nodes of ``state`` outside ``subgraph_nodes`` that lie on a path leaving the set and coming back into it.
+
+    A set with such a node is not convex. Nesting it as it is leaves the path outside the new nested SDFG, so the
+    nest both feeds the node and is fed by it: a cycle. The node set closed over these nodes is the smallest convex
+    superset.
+
+    :param state: The state holding the nodes.
+    :param subgraph_nodes: The nodes of the subgraph.
+    :return: The nodes to add, in the order of ``state.nodes()``.
+    """
+    inside = set(subgraph_nodes)
+
+    def reach(edges_of, end_of) -> set[nodes.Node]:
+        seen: set[nodes.Node] = set()
+        pending = list(inside)
+        while pending:
+            for edge in edges_of(pending.pop()):
+                if end_of(edge) not in seen:
+                    seen.add(end_of(edge))
+                    pending.append(end_of(edge))
+        return seen
+
+    between = (reach(state.out_edges, lambda e: e.dst) & reach(state.in_edges, lambda e: e.src)) - inside
+    return [node for node in state.nodes() if node in between]
+
+
 def nest_state_subgraph(
     sdfg: SDFG,
     state: SDFGState,
@@ -537,7 +564,8 @@ def nest_state_subgraph(
 
     :param sdfg: The SDFG containing the state subgraph.
     :param state: The state containing the subgraph.
-    :param subgraph: Subgraph to nest.
+    :param subgraph: Subgraph to nest. Nodes on a path that leaves it and comes back (see :func:`nodes_between`) are
+                     nested with it.
     :param name: An optional name for the nested SDFG.
     :param bound_inside: Symbols the caller binds inside the nested SDFG next; they are neither mapped nor
                          declared (see ``SDFGState.add_nested_sdfg``).
@@ -551,6 +579,13 @@ def nest_state_subgraph(
         raise KeyError("State does not belong to given SDFG")
     if subgraph is not state and subgraph.graph is not state:
         raise KeyError("Subgraph does not belong to given state")
+
+    # A path that leaves the subgraph and comes back (a read-after-write through an access node the caller left out)
+    # would stay outside the nest and close a cycle with it: nest the nodes on it too.
+    if subgraph is not state:
+        between = nodes_between(state, subgraph.nodes())
+        if between:
+            subgraph = SubgraphView(state, [*subgraph.nodes(), *between])
 
     # Find the top-level scope
     scope_tree = state.scope_tree()
