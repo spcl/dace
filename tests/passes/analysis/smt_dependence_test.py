@@ -256,6 +256,15 @@ def test_the_solver_budget_is_resource_units_not_wall_clock(monkeypatch: pytest.
     assert "timeout" not in option_names
 
 
+@pytest.mark.parametrize("a, b", [(7, 2), (-7, 2), (7, -2), (-7, -2)])
+def test_int_floor_floors_for_either_divisor_sign(a, b):
+    """``int_floor`` is ``floor(a / b)``; SMT-LIB ``div`` floors for a positive divisor only."""
+    value = smt_dependence._sympy_to_z3(symbolic.int_floor(sp.Symbol("a"), sp.Symbol("b")), {}, {})
+    solver = z3.Solver()
+    solver.add(z3.Int("a") == a, z3.Int("b") == b, value != a // b)
+    assert solver.check() == z3.unsat
+
+
 if __name__ == "__main__":
     test_injective_writes_are_proven()
     test_colliding_write_is_refused()
@@ -282,3 +291,5 @@ if __name__ == "__main__":
     test_a_starved_solver_budget_abstains_on_every_call()
     with pytest.MonkeyPatch.context() as monkeypatch:
         test_the_solver_budget_is_resource_units_not_wall_clock(monkeypatch)
+    for a, b in [(7, 2), (-7, 2), (7, -2), (-7, -2)]:
+        test_int_floor_floors_for_either_divisor_sign(a, b)

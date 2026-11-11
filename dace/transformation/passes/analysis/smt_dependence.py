@@ -196,6 +196,15 @@ def _sympy_to_z3(expr: sp.Basic, sym_cache: dict[str, Any], arr_cache: dict[str,
         # dividends and let the solver certify a false disjointness.
         return _z3_int(a) % _z3_int(b)
 
+    if isinstance(expr, symbolic.int_floor):
+        a = _sympy_to_z3(expr.args[0], sym_cache, arr_cache)
+        b = _sympy_to_z3(expr.args[1], sym_cache, arr_cache)
+        if a is None or b is None:
+            return None
+        # SMT-LIB `div` floors for a positive divisor only; floor(a / b) = floor(-a / -b) covers a negative one
+        a, b = _z3_int(a), _z3_int(b)
+        return required(z3).If(b < 0, (-a) / (-b), a / b)
+
     if isinstance(expr, sp.Function):
         # Opaque functions are not modeled.
         return None

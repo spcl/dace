@@ -291,6 +291,45 @@ def test_inlining_keeps_the_assumptions_proofs_took():
     assert relation in outer.symbol_repo.runtime_assumptions
 
 
+def halving_loop() -> tuple[dace.SDFG, LoopRegion, dace.SDFGState, dace.SDFGState]:
+    """``while s > 0: (first) ; s = s // 2 ; (second)``; returns the loop and its two body states."""
+    sdfg = dace.SDFG("facts_at_while")
+    sdfg.add_symbol("s", dace.int64)
+    loop = LoopRegion("halve", "s > 0")
+    sdfg.add_node(loop, is_start_block=True)
+    first = loop.add_state("first", is_start_block=True)
+    second = loop.add_state("second")
+    loop.add_edge(first, second, dace.InterstateEdge(assignments={"s": "s // 2"}))
+    return sdfg, loop, first, second
+
+
+def test_while_body_start_knows_the_condition():
+    """The condition holds where the body starts: ``0 < s`` in ``first``."""
+    _, _, first, _ = halving_loop()
+    facts = SymbolResolver().facts_at(first)
+    assert symbolic.ask(le("1", "s"), facts) is symbolic.Truth.TRUE
+
+
+def test_a_block_after_the_condition_symbol_is_reassigned_does_not_know_it():
+    """``s // 2`` may be 0: after the assignment nothing says ``0 < s``."""
+    _, _, _, second = halving_loop()
+    facts = SymbolResolver().facts_at(second)
+    assert symbolic.ask(le("1", "s"), facts) is symbolic.Truth.UNKNOWN
+
+
+def test_an_inner_loop_reassigning_the_condition_symbol_does_not_know_it():
+    """A loop at the body's start that halves ``s`` itself: its later iterations see ``s`` changed."""
+    sdfg, loop, first, _ = halving_loop()
+    inner = LoopRegion("inner", "j < 4", "j", "j = 0", "j = j + 1")
+    loop.add_node(inner, is_start_block=True)
+    loop.add_edge(inner, first, dace.InterstateEdge())
+    body = inner.add_state("body", is_start_block=True)
+    after = inner.add_state("after")
+    inner.add_edge(body, after, dace.InterstateEdge(assignments={"s": "s - 1"}))
+    facts = SymbolResolver().facts_at(body)
+    assert symbolic.ask(le("1", "s"), facts) is symbolic.Truth.UNKNOWN
+
+
 if __name__ == "__main__":
     test_loop_body_knows_the_iterator_range()
     test_loop_header_does_not_know_the_iterator_range()
@@ -321,3 +360,6 @@ if __name__ == "__main__":
     test_a_float_iterator_gives_no_integer_range()
     test_a_loop_header_ends_a_fact_on_entry()
     test_inlining_keeps_the_assumptions_proofs_took()
+    test_while_body_start_knows_the_condition()
+    test_a_block_after_the_condition_symbol_is_reassigned_does_not_know_it()
+    test_an_inner_loop_reassigning_the_condition_symbol_does_not_know_it()

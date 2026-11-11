@@ -763,7 +763,6 @@ def ingest(target: str) -> Stages:
         (INGEST, EliminateTrivialTasklets()),
         (INGEST, FoldScalarReadCopies()),
         (INGEST, CollapseNoOpCast()),
-        (INGEST, RewriteModuloToPyMod()),
         (INGEST, NormalizeNegativeStride()),
         (INGEST, UniqueLoopIterators()),
         (INGEST, ContinueToCondition()),
@@ -1099,6 +1098,9 @@ def finish() -> Stages:
         (FINISH, InlineControlFlowRegions()),
         (FINISH, AssumeSymbolConstraints()),
         (FINISH, NormalizeFloorDivision()),
+        # Spelled for the code generator once nothing analyzes the form any more: the runtime call is opaque to the
+        # symbolic and SMT reasoning that sees a floored ``Mod`` through
+        (FINISH, RewriteModuloToPyMod()),
         # Fusion leaves plain copies through its intermediates
         (FINISH, EliminateTrivialTasklets()),
         (FINISH, FoldScalarReadCopies()),
