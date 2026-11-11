@@ -503,7 +503,8 @@ def test_a_block_row_read_inside_the_block_loops_is_noted_once():
     positive): the pre-pass reads it once per ``k`` and counts the ``K * K`` writes, with no loop of its own."""
     sdfg, code = _specialize(scatter_block_loop, "block_loop")
     _assert_range_privatized(sdfg, code)
-    prepass = code[code.index("__rp0_lo[0] = std") : code.index("__rp0_order.note(")]
+    noted = code.index("__rp0_order.note(")
+    prepass = code[code.rindex("__rp0_lo[0] = std", 0, noted) : noted]  # the sample ahead of it visits alike
     assert "for (" not in prepass, prepass
     k = 3
     idx = _indices("sorted", NV, MV)
