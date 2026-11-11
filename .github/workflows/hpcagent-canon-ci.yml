@@ -110,7 +110,6 @@ jobs:
         HWLOC_COMPONENTS: '-gl'
         DACE_cache: unique
         DACE_compiler_cpu_implementation: experimental_readable
-        OMP_NUM_THREADS: '4'
       # ``-r 1``: a correctness gate, not a measurement -- a timing repeat on a shared runner
       # measures the runner. A non-zero exit is deliberately not fatal here (unlike the gate step
       # below): the sweep must run to completion so every kernel reaches its DB, even if some
@@ -135,7 +134,11 @@ jobs:
       #
       # env.sh + ``ulimit -s`` are the bench's documented launch (README quick start): grading refuses a
       # process started without OMP_STACKSIZE/OMP_THREAD_LIMIT and the stack at its hard limit.
+      #
+      # The grading width is the physical core count: the bench pins a timed child to one SMT thread per
+      # core and refuses OMP_NUM_THREADS above that (ubuntu-latest: 4 logical CPUs on 2 cores).
       run: |
+        export OMP_NUM_THREADS="$(lscpu -p=socket,core | grep -v '^#' | sort -u | wc -l)"
         . hpcagent_bench/cluster/env.sh
         ulimit -s "$(ulimit -H -s)"
         set +e
