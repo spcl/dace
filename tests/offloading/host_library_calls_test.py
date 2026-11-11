@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A map around library calls no kernel can run stays on the host whole, as in the CPU form (quatrex_rgf's energy map)."""
+"""A map around library calls no kernel can run stays on the host whole, as in the CPU form (quatrex_rgf's energy map);
+one around a call a kernel can run is that kernel (polybench doitgen's matrix-vector product per ``(r, q)``)."""
 
 import numpy as np
 import pytest
@@ -11,6 +12,7 @@ from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 N = dace.symbol("N")
 BS = 8
+NR, NQ, NP = (dace.symbol(s) for s in ("NR", "NQ", "NP"))
 
 
 @dace.program
@@ -19,8 +21,14 @@ def inverse_products(A: dace.float64[N, BS, BS], B: dace.float64[N, BS, BS], C: 
         C[i] = np.linalg.inv(A[i]) @ B[i]
 
 
-def gpu_final(name: str) -> dace.SDFG:
-    sdfg = inverse_products.to_sdfg(simplify=True)
+@dace.program
+def doitgen_rows(A: dace.float64[NR, NQ, NP], C4: dace.float64[NP, NP]):
+    for r, q in dace.map[0:NR, 0:NQ]:
+        A[r, q, :] = A[r, q, :] @ C4
+
+
+def gpu_final(name: str, program=inverse_products) -> dace.SDFG:
+    sdfg = program.to_sdfg(simplify=True)
     sdfg.name = name
     canonicalize(sdfg, target="gpu")
     offload_to_gpu(sdfg)
@@ -54,6 +62,27 @@ def test_a_map_around_an_inverse_computes_what_numpy_computes():
     assert np.allclose(cupy.asnumpy(C), np.linalg.inv(A) @ B)
 
 
+def test_a_map_around_a_matrix_vector_product_is_a_kernel():
+    sdfg = gpu_final("doitgen_rows_structure", doitgen_rows)
+    libraries = [n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.LibraryNode)]
+
+    assert [m.map.schedule for m in outer_maps(sdfg)] == [dace.ScheduleType.GPU_Device]
+    assert libraries and not {n.implementation for n in libraries} & {"cuBLAS", "hipBLAS", "rocBLAS", "OpenBLAS"}
+
+
+@pytest.mark.gpu
+def test_a_kernel_around_a_matrix_vector_product_computes_what_numpy_computes():
+    import cupy
+
+    rng = np.random.default_rng(0)
+    A, C4 = rng.random((3, 4, 5)), rng.random((5, 5))
+    out = cupy.asarray(A)
+    gpu_final("doitgen_rows_numerics", doitgen_rows)(A=out, C4=cupy.asarray(C4), NR=3, NQ=4, NP=5)
+    np.testing.assert_allclose(cupy.asnumpy(out), A @ C4, rtol=1e-13)
+
+
 if __name__ == "__main__":
     test_a_map_around_an_inverse_is_threaded_on_the_host_with_the_cpu_library()
     test_a_map_around_an_inverse_computes_what_numpy_computes()
+    test_a_map_around_a_matrix_vector_product_is_a_kernel()
+    test_a_kernel_around_a_matrix_vector_product_computes_what_numpy_computes()

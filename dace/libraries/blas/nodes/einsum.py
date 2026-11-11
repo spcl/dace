@@ -10,6 +10,8 @@ from copy import deepcopy
 from dace import SDFG, Memlet, SDFGState, library, nodes, properties, symbolic
 from dace import transformation as xf
 from dace.frontend.common import einsum
+from dace.libraries.blas import block
+from dace.libraries.standard.environments.cuda import CUDA
 
 
 def _is_dot_einsum(einsum_str: str, num_tensor_inputs: int) -> bool:
@@ -171,3 +173,49 @@ class SpecializeEinsum(xf.ExpandTransformation):
             beta=coeffs["beta"],
         )
         return sdfg
+
+
+@library.register_expansion(Einsum, "CUDA (block strided)")
+class ExpandEinsumCUDABlock(xf.ExpandTransformation):
+    """In-kernel contraction by ONE thread block: each lane computes elements of the output, strided over the block,
+    summing the product of the operands over every index the output does not name. Runtime coefficients
+    (``_alpha`` / ``_beta``) and operands whose rank the subscripts do not match take ``specialize`` instead."""
+
+    runs_inside_kernel = True
+    environments = [CUDA]
+
+    @staticmethod
+    def expansion(node: Einsum, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
+        parsed = einsum.EinsumParser(node.einsum_str)
+        sdfg = SDFG(node.label + "_block")
+        inputs = sorted(c for c in node.in_connectors if c not in ("_alpha", "_beta"))
+        outputs = list(node.out_connectors)
+        if len(inputs) != len(node.in_connectors) or len(inputs) != len(parsed.inputs) or len(outputs) != 1:
+            return SpecializeEinsum.expansion(node, parent_state, parent_sdfg)
+        extents = {}
+        for conn, term in zip(inputs + outputs, parsed.inputs + [parsed.output]):
+            edge = next(e for e in parent_state.all_edges(node) if conn in (e.dst_conn, e.src_conn))
+            desc = parent_sdfg.arrays[edge.data.data]
+            subset = deepcopy(edge.data.subset)
+            dims = subset.squeeze()
+            shape, strides = subset.size(), [desc.strides[d] * edge.data.subset[d][2] for d in dims]
+            if len(shape) != len(term) or desc.dtype.veclen > 1:
+                return SpecializeEinsum.expansion(node, parent_state, parent_sdfg)
+            sdfg.add_array(conn, shape, desc.dtype, strides=strides, storage=desc.storage)
+            for letter, extent in zip(term, shape):
+                extents.setdefault(letter, extent)
+        index = {letter: f"__e{letter}" for letter in extents}
+        reduced = [letter for letter in extents if letter not in parsed.output]
+        term = " * ".join(block.at(sdfg, c, *(index[x] for x in t)) for c, t in zip(inputs, parsed.inputs))
+        out = block.at(sdfg, outputs[0], *(index[x] for x in parsed.output))
+        zero = symbolic.equal_valued(0, node.beta)
+        values = {"alpha": node.alpha} if zero else {"alpha": node.alpha, "beta": node.beta}
+        dtype = sdfg.arrays[outputs[0]].dtype
+        code = block.coefficients(dtype, **values) + block.block_contraction_code(
+            [(index[x], extents[x]) for x in parsed.output],
+            [(index[x], extents[x]) for x in reduced],
+            term,
+            f"{out} = __alpha * __acc;" if zero else f"{out} = __alpha * __acc + __beta * {out};",
+            dtype.ctype,
+        )
+        return block.block_sdfg(node, parent_state, sdfg, code, tuple(values.values()))

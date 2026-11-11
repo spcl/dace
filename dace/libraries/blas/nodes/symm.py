@@ -4,9 +4,10 @@ from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
 from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, gpu_dialect, vendor
+from dace.libraries.blas import blas_helpers, block, gpu_dialect, vendor
 from dace.libraries.blas.blas_helpers import operand
 from dace.libraries.blas.nodes.symv import symmetric_element
+from dace.libraries.standard.environments.cuda import CUDA
 from dace.sdfg import nodes
 from dace.symbolic import equal_valued
 from dace.transformation.transformation import ExpandTransformation
@@ -91,6 +92,37 @@ def symm_call(node, state, sdfg, environment=None) -> SDFG:
     )
 
 
+@library.expansion
+class ExpandSymmCUDABlock(ExpandTransformation):
+    """In-kernel SYMM by ONE thread block: each lane computes elements of ``_Cout``, strided over the block."""
+
+    runs_inside_kernel = True
+    environments = [CUDA]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        sdfg = blas_helpers.connector_sdfg(node, parent_state, parent_sdfg)
+        if block.vector_types(sdfg):
+            return ExpandSymmPure.expansion(node, parent_state, parent_sdfg)
+        dtype = sdfg.arrays["_Cout"].dtype
+        m, n = sdfg.arrays["_Cout"].shape
+        # Left: C += A[i, k] * B[k, j]; right: C += B[i, k] * A[k, j]
+        if node.side:
+            term = f"{block.at(sdfg, '_B', '__i', '__k')} * {block.symmetric_at(sdfg, '_A', node.uplo, '__k', '__j')}"
+        else:
+            term = f"{block.symmetric_at(sdfg, '_A', node.uplo, '__i', '__k')} * {block.at(sdfg, '_B', '__k', '__j')}"
+        result, values = block.scaled_sum(sdfg, "_Cin", node.alpha, node.beta, "__i", "__j")
+        code = block.coefficients(dtype, **values) + block.block_contraction_code(
+            [("__i", m), ("__j", n)],
+            [("__k", n if node.side else m)],
+            term,
+            f"{block.at(sdfg, '_Cout', '__i', '__j')} = {result};",
+            dtype.ctype,
+        )
+        return block.block_sdfg(node, parent_state, sdfg, code, tuple(values.values()))
+
+
 @library.node
 class Symm(nodes.LibraryNode):
     """BLAS ``?symm``: ``_Cout = alpha * _A @ _B + beta * _Cin``, or ``alpha * _B @ _A + beta * _Cin`` with ``side``,
@@ -99,6 +131,7 @@ class Symm(nodes.LibraryNode):
     implementations = {
         "pure": ExpandSymmPure,
         **vendor.vendor_expansions("Symm", symm_call),
+        "CUDA (block strided)": ExpandSymmCUDABlock,
     }
     default_implementation = None
 
