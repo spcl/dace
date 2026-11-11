@@ -26,6 +26,7 @@ import re
 
 import numpy as np
 import pytest
+import sympy
 
 import dace
 from dace import dtypes
@@ -264,10 +265,10 @@ def test_the_team_is_sized_to_the_work_one_trip_shares_out():
         for n, _ in sdfg.all_nodes_recursive()
         if isinstance(n, nd.MapEntry) and n.map.schedule == dtypes.ScheduleType.CPU_Persistent
     ]
-    assert team.map.omp_team_work == N
+    assert team.map.omp_team_work == sympy.Max(0, N)
     with dace.config.set_temporary("compiler", "cpu", "parallel_min_work_per_thread", value=1024):
         code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
-    assert "#pragma omp parallel num_threads(((N) / 1024) < 1 ? 1 : (" in code, code
+    assert "#pragma omp parallel num_threads(((Max(0, N)) / 1024) < 1 ? 1 : (" in code, code
     with dace.config.set_temporary("compiler", "cpu", "parallel_min_work_per_thread", value=0):
         code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
     assert "num_threads" not in code

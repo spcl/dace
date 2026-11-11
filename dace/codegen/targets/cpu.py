@@ -4300,6 +4300,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 work, share = node.map.omp_team_work, int(Config.get("compiler", "cpu", "parallel_min_work_per_thread"))
                 if share > 0 and node.map.omp_num_threads <= 0 and (symbolic.issymbolic(work) or int(work) > 0):
                     team = f"(({sym2cpp(work)}) / {share})"
+                    function_stream.write("#include <omp.h>", cfg, state_id, node)
                     map_header += (
                         f" num_threads({team} < 1 ? 1 : ({team} < omp_get_max_threads() ? (int){team} : "
                         "omp_get_max_threads()))"

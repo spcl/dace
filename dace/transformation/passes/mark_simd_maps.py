@@ -134,13 +134,12 @@ def reduces_into_fixed_elements(state: SDFGState, map_entry: nodes.MapEntry) -> 
     innermost = map_entry.map.params[-1]
     for edge in exit_wcrs:
         redtype = operations.detect_reduction_type(edge.data.wcr)
+        dtype = state.sdfg.arrays[edge.data.data].dtype
         # An integer minimum or maximum is exact in any order; a floating-point one orders NaN by its operands
-        exact_minmax = (
-            redtype in (dtypes.ReductionType.Min, dtypes.ReductionType.Max)
-            and state.sdfg.arrays[edge.data.data].dtype in dtypes.INT_TYPES
-        )
+        exact_minmax = redtype in (dtypes.ReductionType.Min, dtypes.ReductionType.Max) and dtype in dtypes.INT_TYPES
         if (
-            edge.data.subset.num_elements() != 1
+            dtype not in dtypes.INT_TYPES | {dtypes.bool_, dtypes.float32, dtypes.float64}  # the clause's own types
+            or edge.data.subset.num_elements() != 1
             or innermost in {str(s) for s in edge.data.subset.free_symbols}
             or not (redtype in SIMD_REDUCTIONS or exact_minmax)
             or not isinstance(state.memlet_path(edge)[0].src, nodes.Tasklet)

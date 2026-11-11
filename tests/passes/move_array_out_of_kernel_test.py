@@ -1102,7 +1102,13 @@ def test_an_extent_read_below_a_nest_whose_edge_names_one_element_is_folded_at_t
         for node in state.nodes()
         if isinstance(node, dace.nodes.Tasklet) and node.label == "fold_n_max"
     ]
-    assert [node.code.as_string.strip() for node in folds] == ["o = __read_counts[b]"]
+    reads = [
+        str(edge.data.subset)
+        for state in sdfg.states()
+        for edge in state.edges()
+        if edge.dst in folds and edge.data.data == "counts"
+    ]
+    assert reads == ["b"], reads
 
 
 @pytest.mark.gpu
