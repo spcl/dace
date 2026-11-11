@@ -42,6 +42,8 @@ def norm_rows(schedule: dtypes.ScheduleType, storage: dtypes.StorageType) -> dac
     state = sdfg.add_state()
     entry, exit_node = state.add_map("rows", {"i": "0:N"}, schedule=schedule)
     node = Norm2("norm")
+    # In a kernel ``Auto`` picks the block lowering; the pure expansion is what this file checks
+    node.implementation = "pure"
     node.schedule = dtypes.ScheduleType.Sequential
     state.add_node(node)
     state.add_memlet_path(state.add_read("a"), entry, node, dst_conn="_x", memlet=dace.Memlet("a[i, 0:16]"))

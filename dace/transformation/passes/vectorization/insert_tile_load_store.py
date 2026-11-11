@@ -128,7 +128,8 @@ def _side_of(memlet: Memlet, name: str) -> Memlet:
 
 def _libnode_boundary_memlet(other_memlet: Memlet) -> Memlet:
     # Memlet for an edge adjacent to a tile lib node (AN -> Load._src, TileScatter._dst -> AN, etc.).
-    return Memlet(data=other_memlet.data, subset=copy.deepcopy(other_memlet.subset))
+    # ``dynamic`` survives: a may-write must not become a definite write of the whole subset
+    return Memlet(data=other_memlet.data, subset=copy.deepcopy(other_memlet.subset), dynamic=other_memlet.dynamic)
 
 
 # Legacy ``_topo_sort_access_nodes`` deleted: two-phase staging + classifier-side
@@ -433,7 +434,10 @@ def stage_tile_store(
         mask_subset_str = ", ".join(f"0:{w}" for w in widths)
         state.add_edge(mask_an, None, store, "_mask", Memlet(f"{mask_an.data}[{mask_subset_str}]"))
     # ``store -> AN`` is a lib-node-boundary edge (symmetric to the read side at stage_tile_load).
-    state.add_edge(store, store.OUTPUT_CONNECTOR_NAME, an, None, _libnode_boundary_memlet(dst_subset))
+    written = _libnode_boundary_memlet(dst_subset)
+    # Lanes addressed through index tiles touch only the elements they name, not the whole subset
+    written.dynamic = written.dynamic or bool(gather_dims)
+    state.add_edge(store, store.OUTPUT_CONNECTOR_NAME, an, None, written)
     return bridge_name, store
 
 
