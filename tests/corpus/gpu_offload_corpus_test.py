@@ -24,6 +24,7 @@ from dace.transformation.passes.canonicalize.finalize import (
     recompute_fuse_for_gpu,
     select_gpu_device_block_size,
 )
+from dace.transformation.passes.offloading.taskloop import encloses_device_wide_libnode, is_kernel_refused_libnode
 from tests.corpus import corpus_suite as suite
 
 
@@ -38,7 +39,25 @@ def canon_gpu(sdfg: dace.SDFG) -> None:
         recompute_fuse_for_gpu(sdfg)
         sdfg.apply_gpu_transformations()
         select_gpu_device_block_size(sdfg)
-    finalize_for_target(sdfg, "gpu", validate=False)
+    # A map around a library call no kernel can run stays host code whole; one with nothing else stays a CPU program
+    finalize_for_target(sdfg, "gpu" if offloaded(sdfg) or not host_calls_only(sdfg) else "cpu", validate=False)
+
+
+def offloaded(sdfg: dace.SDFG) -> bool:
+    return any(
+        isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.ScheduleType.GPU_Device
+        for node, parent in sdfg.all_nodes_recursive()
+    )
+
+
+def host_calls_only(sdfg: dace.SDFG) -> bool:
+    """Every top-level map holds a library call no kernel can run, which the offload keeps on the host."""
+    top = [(state, node) for state in sdfg.states() for node in state.scope_children()[None]]
+    maps = [(state, node) for state, node in top if isinstance(node, dace.nodes.MapEntry)]
+    return bool(maps) and all(
+        encloses_device_wide_libnode(state, node, state.scope_children(), is_kernel_refused_libnode)
+        for state, node in maps
+    )
 
 
 def offloaded_sdfg(ctx: dict) -> dace.SDFG:
