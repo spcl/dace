@@ -3302,7 +3302,7 @@ class SymbolResolver:
                 # A branch runs from its condition, a start block that nothing enters again from its graph's start
                 parent = region.parent_graph
                 entered = isinstance(parent, ConditionalBlock) or (
-                    parent is not None and parent.start_block is region and parent.in_degree(region) == 0
+                    parent is not None and parent.in_degree(region) == 0 and parent.source_nodes() == [region]
                 )
                 chain = [*chain, region] if entered else None
             if isinstance(region, LoopRegion) and region.loop_variable:
