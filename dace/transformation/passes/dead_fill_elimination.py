@@ -327,8 +327,11 @@ def narrow_fill_map(state: SDFGState, entry: nodes.MapEntry, zeroed: nodes.Acces
         return
     exit_node = state.exit_node(entry)
     inner = next(iter(state.in_edges(exit_node)))
-    param = str(inner.data.subset.ranges[axis][0])
-    entry.map.range[entry.map.params.index(param)] = kept
+    # The write is ``p + c`` (:func:`covers_every_element`): ``kept`` is in array coordinates, ``p`` runs ``c`` lower.
+    index = symbolic.pystr_to_symbolic(inner.data.subset.ranges[axis][0])
+    param = next(s for s in index.free_symbols if str(s) in entry.map.params)
+    offset = symbolic.simplify(index - param)
+    entry.map.range[entry.map.params.index(str(param))] = (kept[0] - offset, kept[1] - offset, 1)
     outer = state.out_edges(exit_node)[0]
     outer.data.subset[axis] = kept
 
