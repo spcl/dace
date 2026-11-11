@@ -99,9 +99,33 @@ def test_a_product_into_a_vector_its_matrix_reads_keeps_the_library_node():
     np.testing.assert_allclose(y, expected)
 
 
+@dace.program
+def one_product_per_column(x: dace.float64[N], y: dace.float64[N], mass: dace.float64[N], acc: dace.float64[N, 2]):
+    dx = np.reshape(x, (1, N)) - np.reshape(x, (N, 1))
+    dy = np.reshape(y, (1, N)) - np.reshape(y, (N, 1))
+    acc[:, 0] = (dx * dx) @ mass
+    acc[:, 1] = (dy * dy) @ mass
+
+
+def test_products_into_two_columns_of_one_array_both_fuse_away_their_matrix():
+    """nbody's ``ax``, ``ay``, ``az`` are columns of one array. The second product names a column the first does not
+    touch, so it is no read of what its own init zeroes: both lower, and no ``N x N`` matrix is left."""
+    sdfg = one_product_per_column.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    assert not _square_transients(sdfg), _square_transients(sdfg)
+    finalize_for_target(sdfg, "cpu")
+    rng = np.random.default_rng(10)
+    x, y, mass = rng.random(7), rng.random(7), rng.random(7)
+    acc = np.zeros((7, 2))
+    sdfg(x=x, y=y, mass=mass, acc=acc, N=7)
+    dx, dy = x[None, :] - x[:, None], y[None, :] - y[:, None]
+    np.testing.assert_allclose(acc, np.stack(((dx * dx) @ mass, (dy * dy) @ mass), axis=1))
+
+
 if __name__ == "__main__":
     test_a_gemv_over_a_private_elementwise_matrix_fuses_away_the_matrix()
     test_a_gemm_keeps_its_library_node()
     test_a_matrix_with_another_reader_keeps_the_library_node()
     test_the_lowered_gemv_avoids_the_names_of_the_sdfg()
     test_a_product_into_a_vector_its_matrix_reads_keeps_the_library_node()
+    test_products_into_two_columns_of_one_array_both_fuse_away_their_matrix()
