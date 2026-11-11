@@ -84,14 +84,21 @@ def pipelined(program, depth: int, n_depth: int = 0) -> dace.SDFG:
 
 
 def test_shared_tiles_code_structure():
-    """The kernel holds a ring of 3 tiles in shared memory, and the main loop consumes before it produces, so the
-    barrier after each copy also guards the slot the next copy overwrites. Generating the code needs no GPU."""
+    """The kernel holds a ring of 3 tiles in shared memory, and the main loop produces before it consumes. The 1-D
+    block-collective copy has no leading barrier of its own, so the main loop starts with the slot-reuse barrier: the
+    next copy overwrites the slot every thread read in the previous iteration. Generating the code needs no GPU."""
     sdfg = pipelined(tiled_add, 3)
     (code,) = [obj.clean_code for obj in sdfg.generate_code() if obj.language == "cu"]
     assert f"__shared__ __align__(128) double buf[{3 * TILE}];" in code
     main = code[code.index("for (t = 0;") :]
     main = main[: main.index("for (t = ", 1)]  # up to the epilogue
-    assert main.index("% 3)") < main.index("GlobalToShared")
+    assert (
+        main.index("__syncthreads()")
+        < main.index("GlobalToShared")
+        < main.index(f"buf[(j + ({TILE} * ((t / {TILE}) % 3)))]")
+    )
+    # Plain copies stay synchronous
+    assert "mbarrier" not in code
 
 
 @pytest.mark.gpu
@@ -105,6 +112,33 @@ def test_tiled_add(depth: int):
     B = cp.zeros(n)
     sdfg(A=A, B=B, N=n)
     assert np.allclose(B.get(), 2 * A.get() + 1)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("depth", [2, 3, 4])
+def test_tiled_add_slot_reuse(depth: int):
+    """Many tiles per block and random data: a copy that refills a slot before every thread finished reading it
+    (missing slot-reuse barrier) shows up as wrong results."""
+    import cupy as cp
+
+    @dace.program
+    def long_tiled_add(
+        A: dace.float64[N] @ dace.StorageType.GPU_Global, B: dace.float64[N] @ dace.StorageType.GPU_Global
+    ):
+        for blk in dace.map[0:N:1024] @ dace.ScheduleType.GPU_Device:
+            buf = dace.define_local([TILE], dace.float64, storage=dace.StorageType.GPU_Shared)
+            for t in range(0, 1024, TILE):
+                buf[:] = A[blk + t : blk + t + TILE]
+                for j in dace.map[0:TILE] @ dace.ScheduleType.GPU_ThreadBlock:
+                    B[blk + t + j] = 2 * buf[TILE - 1 - j] + 1
+
+    sdfg = pipelined(long_tiled_add, depth)
+    n = 64 * 1024
+    A = cp.random.rand(n)
+    B = cp.zeros(n)
+    sdfg(A=A, B=B, N=n)
+    expected = 2 * A.reshape(-1, TILE)[:, ::-1].reshape(-1) + 1
+    assert cp.array_equal(B, expected)
 
 
 @pytest.mark.gpu
@@ -265,6 +299,9 @@ if __name__ == "__main__":
     test_shared_tiles_code_structure()
     for d in (2, 3):
         test_tiled_add(d)
+    for d in (2, 3, 4):
+        test_tiled_add_slot_reuse(d)
+    for d in (2, 3):
         for kk in (BK, 2 * BK, 7 * BK):
             test_tiled_gemm(d, kk)
             test_blocked_gemm_k_tiles(d, kk)

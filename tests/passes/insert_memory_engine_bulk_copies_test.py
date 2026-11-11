@@ -521,7 +521,10 @@ def test_codegen_selects_memory_engine_copies(kernel):
             dace.config.set_temporary("compiler", "cuda", "memory_engine_copies", value=enabled),
         ):
             code = {obj.title: obj.clean_code for obj in sdfg.generate_code()}
-        assert (f"dace::cuda::tma_{'load' if is_load else 'store'}<2>" in code["CUDA"]) == enabled
+        # Loads are asynchronous by default: ``InsertAsyncWaits`` waits on their arrival token
+        call = "dace::cuda::tma_load_async<2>" if is_load else "dace::cuda::tma_store<2>"
+        assert (call in code["CUDA"]) == enabled
+        assert ("dace::cuda::mbarrier_wait_token" in code["CUDA"]) == (enabled and is_load)
 
 
 @pytest.mark.gpu
@@ -581,10 +584,10 @@ def _run_and_compare(program, init_fn, check_arrays, sizes, name, backend):
     sdfg_pass.expand_library_nodes()
     pass_exe = sdfg_pass.compile()
 
-    ref_exe(**{k: v for k, v in ref_arrays.items()}, **sizes)
+    ref_exe(**dict(ref_arrays.items()), **sizes)
     ref_values = {k: ref_arrays[k].copy() for k in check_arrays}
     pass_arrays = init_fn(**sizes)
-    pass_exe(**{k: v for k, v in pass_arrays.items()}, **sizes)
+    pass_exe(**dict(pass_arrays.items()), **sizes)
 
     for arr_name in check_arrays:
         backend.testing.assert_allclose(
