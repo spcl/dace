@@ -231,6 +231,17 @@ def test_a_scalar_that_may_no_longer_hold_its_symbol_keeps_its_own_value(program
     assert np.array_equal(res, expected), res
 
 
+def test_a_temporary_sized_by_a_loop_carried_scalar_grows_with_it():
+    """``res[:n] + 1.0`` under ``n = n + 1``: once the loop's uses of ``n`` read its closed form, so does the
+    temporary's size. Left at ``n``, which then names the value on entry, the buffer held ``N`` elements while the
+    third trip wrote ``N + 2``."""
+    sdfg = carried_through_a_loop.to_sdfg(simplify=True)
+    temporaries = [desc for desc in sdfg.arrays.values() if desc.transient and isinstance(desc, dace.data.Array)]
+    assert temporaries
+    for desc in temporaries:
+        assert dace.symbolic.simplify(desc.shape[0] - dace.symbolic.pystr_to_symbolic("N + it")) == 0, desc.shape
+
+
 @dace.program
 def alias_bounds_an_update(hc: dace.float64[M, M]):
     n_iter = N
