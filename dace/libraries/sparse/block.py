@@ -4,10 +4,10 @@ product with the dense operand, so no lane waits on another until the closing ba
 
 from typing import Any
 
-from dace import SDFG, Memlet, SDFGState, dtypes, nodes
+from dace import SDFG, SDFGState, dtypes, nodes
 from dace.codegen.common import sym2cpp
 from dace.libraries.blas.blas_helpers import connector_sdfg
-from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS, add_block_lane_map
+from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS, add_lane_tasklet
 
 
 def scalar_text(value: Any, dtype: dtypes.typeclass) -> str:
@@ -59,24 +59,5 @@ def csr_block_sdfg(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, transp
     """A ``GPU_ThreadBlock`` lane map around the CSR product of :func:`csr_block_code`."""
     nsdfg = connector_sdfg(node, state, sdfg)
     code = csr_block_code(node, nsdfg, transposed)
-    nstate = nsdfg.add_state(f"{node.label}_block_state")
-    tasklet = nstate.add_tasklet(
-        f"{node.label}_block_csr",
-        {f"_{name}": dtypes.pointer(nsdfg.arrays[name].dtype) for name in node.in_connectors},
-        {"__c": dtypes.pointer(nsdfg.arrays["_c"].dtype)},
-        code,
-        language=dtypes.Language.CPP,
-    )
-    entry, exit_node = add_block_lane_map(nstate, f"{node.label}_block_lanes")
-    for name in node.in_connectors:
-        nstate.add_memlet_path(
-            nstate.add_read(name),
-            entry,
-            tasklet,
-            dst_conn=f"_{name}",
-            memlet=Memlet.from_array(name, nsdfg.arrays[name]),
-        )
-    nstate.add_memlet_path(
-        tasklet, exit_node, nstate.add_write("_c"), src_conn="__c", memlet=Memlet.from_array("_c", nsdfg.arrays["_c"])
-    )
+    add_lane_tasklet(nsdfg, node.label, code, {f"_{name}": name for name in node.in_connectors}, {"__c": "_c"})
     return nsdfg

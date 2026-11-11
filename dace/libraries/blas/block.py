@@ -10,10 +10,9 @@ CUDA and HIP both provide.
 
 from collections.abc import Sequence
 
-import dace
 from dace import SDFG, SDFGState, dtypes, symbolic
 from dace.libraries.blas.blas_helpers import scalar_arguments
-from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS, add_block_lane_map
+from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS, add_lane_tasklet
 from dace.sdfg import nodes
 
 #: An index of the emitted loops: its C++ variable and its extent.
@@ -111,18 +110,10 @@ def block_sdfg(
     if wanted:
         defined = state.symbols_defined_at(node)
         for name in sorted(wanted):
-            nested.add_symbol(name, defined.get(name, dtypes.int64))
-    body = nested.add_state(f"{node.label}_block_state")
-    pointers = {conn: dace.pointer(nested.arrays[name].dtype.base_type) for conn, name in reads.items()}
-    outputs = {conn: dace.pointer(nested.arrays[name].dtype.base_type) for conn, name in writes.items()}
-    tasklet = body.add_tasklet(f"{node.label}_block", pointers, outputs, code, language=dace.Language.CPP)
-    entry, exit_node = add_block_lane_map(body, f"{node.label}_block_lanes")
-    for conn, name in reads.items():
-        memlet = dace.Memlet.from_array(name, nested.arrays[name])
-        body.add_memlet_path(body.add_read(name), entry, tasklet, dst_conn=conn, memlet=memlet)
-    for conn, name in writes.items():
-        memlet = dace.Memlet.from_array(name, nested.arrays[name])
-        body.add_memlet_path(tasklet, exit_node, body.add_write(name), src_conn=conn, memlet=memlet)
+            if name not in defined:
+                raise ValueError(f"{node.label}: coefficient symbol {name} is not defined at the node")
+            nested.add_symbol(name, defined[name])
+    add_lane_tasklet(nested, node.label, code, reads, writes)
     return nested
 
 

@@ -3,13 +3,12 @@
 
 Neither CUDA nor HIP has a block-level solver, so the ``'CUDA (block)'`` expansion of every LAPACK and dense
 ``linalg`` node is one tasklet calling the unblocked kernels of ``dace/cuda/block_lapack.cuh`` under a lane map
-(:func:`~dace.libraries.standard.block_reduce.add_block_lane_map`). Registering it is what lets the GPU offloader
+(:func:`~dace.libraries.standard.block_reduce.add_lane_tasklet`). Registering it is what lets the GPU offloader
 put the node inside a kernel -- a batch of small factorizations under a parallel map, one per block. Matrices are
 read through their strides as the CPU (row-major LAPACKE) expansions read them, not column-major as the vendor GPU
 solvers do. Scratch a node needs beyond its operands is static shared memory, so it needs a literal order.
 """
 
-import copy
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -17,10 +16,9 @@ import numpy as np
 from dace import SDFG, SDFGState, data, dtypes, symbolic
 from dace.codegen.common import global_code_id, sym2cpp
 from dace.libraries.lapack.environments.block_lapack import BlockLapack
-from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS, add_block_lane_map
+from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS, add_lane_tasklet
 from dace.libraries.standard.environments.cuda import CUDA
 from dace.libraries.standard.pure_components import operand_view
-from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
@@ -128,26 +126,10 @@ class ExpandLapackBlock(ExpandTransformation):
         sdfg = SDFG(node.label + "_block")
         for conn, op in ops.items():
             sdfg.add_array(conn, op.shape, op.desc.dtype, strides=op.strides, storage=op.desc.storage)
-        state = sdfg.add_state(node.label + "_block_state")
-        inputs = {pointer(c, True): dtypes.pointer(op.desc.dtype.base_type) for c, op in ops.items() if op.is_input}
-        outputs = {
-            pointer(c, False): dtypes.pointer(op.desc.dtype.base_type)
-            for c, op in ops.items()
-            if not op.is_input or c in node.out_connectors
-        }
+        reads = {pointer(c, True): c for c, op in ops.items() if op.is_input}
+        writes = {pointer(c, False): c for c, op in ops.items() if not op.is_input or c in node.out_connectors}
         code = cls.body(node, ops, global_code_id(parent_sdfg, parent_state, node))
-        tasklet = state.add_tasklet(node.label + "_block", inputs, outputs, code, language=dtypes.Language.CPP)
-        entry, exit_node = add_block_lane_map(state, node.label + "_block_lanes")
-        for conn in ops:
-            full = Memlet.from_array(conn, sdfg.arrays[conn])
-            if pointer(conn, True) in inputs:
-                state.add_memlet_path(state.add_read(conn), entry, tasklet, dst_conn=pointer(conn, True), memlet=full)
-            if pointer(conn, False) in outputs:
-                state.add_memlet_path(
-                    tasklet, exit_node, state.add_write(conn), src_conn=pointer(conn, False), memlet=copy.deepcopy(full)
-                )
-        if not inputs:
-            state.add_nedge(entry, tasklet, Memlet())
+        add_lane_tasklet(sdfg, node.label, code, reads, writes)
         return sdfg
 
 

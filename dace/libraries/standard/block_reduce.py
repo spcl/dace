@@ -401,36 +401,42 @@ def linear_element(pointer: str, desc: data.Array, index: str) -> str:
     return f"{pointer}[{' + '.join(reversed(terms))}]"
 
 
+def add_lane_tasklet(sdfg: SDFG, label: str, code: str, reads: dict[str, str], writes: dict[str, str]) -> nodes.Tasklet:
+    """A state of ``sdfg`` holding one C++ tasklet under a lane map; each connector of ``reads`` / ``writes`` names
+    the array of ``sdfg`` it accesses whole through a pointer. The map supplies threads, it does not partition data."""
+    state = sdfg.add_state(f"{label}_block_state")
+
+    def pointers(conns: dict[str, str]) -> dict[str, dtypes.typeclass]:
+        return {conn: dtypes.pointer(sdfg.arrays[name].dtype.base_type) for conn, name in conns.items()}
+
+    tasklet = state.add_tasklet(f"{label}_block", pointers(reads), pointers(writes), code, language=dtypes.Language.CPP)
+    entry, exit_node = add_block_lane_map(state, f"{label}_block_lanes")
+    for conn, name in reads.items():
+        whole = Memlet.from_array(name, sdfg.arrays[name])
+        state.add_memlet_path(state.add_read(name), entry, tasklet, dst_conn=conn, memlet=whole)
+    for conn, name in writes.items():
+        whole = Memlet.from_array(name, sdfg.arrays[name])
+        state.add_memlet_path(tasklet, exit_node, state.add_write(name), src_conn=conn, memlet=whole)
+    if not reads:
+        state.add_nedge(entry, tasklet, Memlet())
+    return tasklet
+
+
 def block_tasklet_sdfg(
     node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, code: Callable[[dict[str, data.Data]], str]
 ) -> SDFG:
-    """One C++ tasklet in a lane map, reading and writing each connector ``c`` of ``node`` whole through the pointer
+    """:func:`add_lane_tasklet` over each connector ``c`` of ``node``, read or written whole through the pointer
     ``__b<c>``; ``code`` spells its body given the connectors' containers. Every lane writes the same answer."""
     from dace.libraries.standard.helper import connector_array
 
     nsdfg = SDFG(f"{node.label}_block")
-    nstate = nsdfg.add_state(f"{node.label}_block_state")
-    ins = [e for e in state.in_edges(node) if e.dst_conn is not None]
-    outs = [e for e in state.out_edges(node) if e.src_conn is not None]
-    for edge in ins:
-        connector_array(nsdfg, edge.dst_conn, edge.data, sdfg)
-    for edge in outs:
-        connector_array(nsdfg, edge.src_conn, edge.data, sdfg)
-    tasklet = nstate.add_tasklet(
-        f"{node.label}_block_tasklet",
-        {f"__b{e.dst_conn}": dtypes.pointer(nsdfg.arrays[e.dst_conn].dtype) for e in ins},
-        {f"__b{e.src_conn}": dtypes.pointer(nsdfg.arrays[e.src_conn].dtype) for e in outs},
-        code(nsdfg.arrays),
-        language=dtypes.Language.CPP,
-    )
-    entry, exit_node = add_block_lane_map(nstate, f"{node.label}_block_lanes")
-    # Every lane sees the whole operand: the map supplies threads, it does not partition the data.
-    for edge in ins:
-        conn = edge.dst_conn
-        whole = Memlet.from_array(conn, nsdfg.arrays[conn])
-        nstate.add_memlet_path(nstate.add_read(conn), entry, tasklet, dst_conn=f"__b{conn}", memlet=whole)
-    for edge in outs:
-        conn = edge.src_conn
-        whole = Memlet.from_array(conn, nsdfg.arrays[conn])
-        nstate.add_memlet_path(tasklet, exit_node, nstate.add_write(conn), src_conn=f"__b{conn}", memlet=whole)
+    ins = [e.dst_conn for e in state.in_edges(node) if e.dst_conn is not None]
+    outs = [e.src_conn for e in state.out_edges(node) if e.src_conn is not None]
+    for edge in state.in_edges(node):
+        if edge.dst_conn is not None:
+            connector_array(nsdfg, edge.dst_conn, edge.data, sdfg)
+    for edge in state.out_edges(node):
+        if edge.src_conn is not None:
+            connector_array(nsdfg, edge.src_conn, edge.data, sdfg)
+    add_lane_tasklet(nsdfg, node.label, code(nsdfg.arrays), {f"__b{c}": c for c in ins}, {f"__b{c}": c for c in outs})
     return nsdfg
