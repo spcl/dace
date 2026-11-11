@@ -30,5 +30,5 @@ from .eliminate_branches import EliminateBranches
 from .util import available_passes
 from .canonicalize import CanonicalizationPipeline, canonicalize
 from .break_anti_dependence import BreakAntiDependence
-from .parallelization_prep import BestEffortLoopPeeling, ShortLoopUnroll
+from .parallelization_prep import BestEffortLoopPeeling, ModuloBandSplit, ShortLoopUnroll
 from .parallelize import ParallelizePipeline, parallelize

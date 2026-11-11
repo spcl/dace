@@ -138,6 +138,7 @@ from dace.transformation.passes.parallelization_prep import (
     DEFAULT_PEEL_LIMIT,
     DEFAULT_UNROLL_LIMIT,
     BestEffortLoopPeeling,
+    ModuloBandSplit,
     ShortLoopUnroll,
 )
 from dace.transformation.passes.pattern_matching import (
@@ -908,9 +909,12 @@ def derive_parallelism(
     # Before the lift: a workspace whose pre-loop fill no iteration observes is then the loop's own, privatized per
     # iteration
     s += [(label, DeadFillElimination())]
+    # Before the lift: a wrapping modulo the dependence proof would map as a modular scatter maps as its affine bands
+    segments: list = []
+    if peel_limit > 0:
+        s += [(label, ModuloBandSplit(peel_limit, segments=segments, validate=validate))]
     s += [(label, first_lift())]
     # Rescue: each rewrite acts only on a loop LoopToMap refuses.
-    segments: list = []
     if peel_limit > 0:
         s += [
             (label, LoopCarriedRotationSubstitution(peel_limit)),
