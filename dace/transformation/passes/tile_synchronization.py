@@ -334,9 +334,13 @@ def accesses(state: SDFGState, node: nodes.CodeNode) -> tuple[list[Token], list[
 
 
 def kernel_level(state: SDFGState, node: nodes.Node) -> nodes.Node:
-    """``node``, or the outermost scope around it inside the kernel: a barrier inside a divergent scope deadlocks."""
+    """``node``, or the outermost scope around it inside the kernel: a barrier inside a divergent scope deadlocks.
+    Every thread runs every iteration of a sequential map, so a barrier stays inside one."""
     scope = state.entry_node(node)
-    while scope is not None and scope.map.schedule != dtypes.ScheduleType.GPU_Device:
+    while scope is not None and scope.map.schedule not in (
+        dtypes.ScheduleType.GPU_Device,
+        dtypes.ScheduleType.Sequential,
+    ):
         node, scope = scope, state.entry_node(scope)
     return node
 

@@ -60,7 +60,27 @@ def test_a_barrier_orders_only_the_nodes_of_its_own_kernel():
     sdfg.validate()
 
 
+@dace.program
+def row_sums_per_slice(A: dace.float64[L, 4, 64], S: dace.float64[L, 4]):
+    for r in dace.map[0:L]:
+        for k in dace.map[0:4]:
+            S[r, k : k + 1] = dace.tile.sum(dace.tile.exp(A[r, k, :]))
+
+
+def test_a_barrier_stays_inside_a_sequential_map_of_the_kernel():
+    """Every thread runs each iteration of the inner sequential map, so the barrier before each reduction is inside it;
+    one barrier before the whole map left the iterations unsynchronized."""
+    sdfg = row_sums_per_slice.to_sdfg()
+    sdfg.apply_gpu_transformations()
+    sync = InsertTileSync()
+    assert sync.apply_pass(sdfg, {}) == 2
+    for state, barrier in sync.inserted:
+        assert state.entry_node(barrier).map.schedule == dace.ScheduleType.Sequential
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_an_elementwise_chain_keeps_every_element_on_its_thread()
     test_the_slots_of_a_circular_buffer_carry_their_own_tokens()
     test_a_barrier_orders_only_the_nodes_of_its_own_kernel()
+    test_a_barrier_stays_inside_a_sequential_map_of_the_kernel()
