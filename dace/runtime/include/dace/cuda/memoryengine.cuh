@@ -123,15 +123,59 @@ __device__ __forceinline__ bool is_leader_thread() {
   return linear_thread_index() == 0;
 }
 
-/// Initialize ``bar`` so that every thread of the block arrives once per phase.
-/// Called by all threads.
-__device__ __forceinline__ void tma_barrier_init(uint64_t* bar) {
+/// Number of threads in the block.
+__device__ __forceinline__ uint32_t block_thread_count() {
+  return blockDim.x * blockDim.y * blockDim.z;
+}
+
+/// Initialize the ``n`` mbarriers at ``bar`` so that ``count`` arrivals
+/// complete a phase. Called by all threads; returns once every thread can use
+/// the barriers.
+__device__ __forceinline__ void mbarrier_init_array(uint64_t* bar, int n,
+                                                    uint32_t count) {
   if (is_leader_thread()) {
-    ::cuda::ptx::mbarrier_init(bar, blockDim.x * blockDim.y * blockDim.z);
-    // Make the initialized barrier visible to the memory engine (async proxy)
+    for (int i = 0; i < n; ++i) {
+      ::cuda::ptx::mbarrier_init(bar + i, count);
+    }
+    // Make the initialized barriers visible to the memory engine (async proxy)
     ::cuda::ptx::fence_proxy_async(::cuda::ptx::space_shared);
   }
   __syncthreads();
+}
+
+/// Invalidate the ``n`` mbarriers at ``bar``, so their memory can be
+/// initialized again. Called by all threads after every thread is done with
+/// the barriers (the caller places a block barrier before).
+__device__ __forceinline__ void mbarrier_inval_array(uint64_t* bar, int n) {
+  if (is_leader_thread()) {
+    for (int i = 0; i < n; ++i) {
+      ::cuda::ptx::mbarrier_inval(bar + i);
+    }
+  }
+}
+
+/// Initialize ``bar`` so that every thread of the block arrives once per phase.
+/// Called by all threads.
+__device__ __forceinline__ void tma_barrier_init(uint64_t* bar) {
+  mbarrier_init_array(bar, 1, block_thread_count());
+}
+
+/// Wait until the phase that ``token`` was taken in completes.
+__device__ __forceinline__ void mbarrier_wait_token(const uint64_t* barrier,
+                                                    uint64_t token) {
+  uint64_t* bar = const_cast<uint64_t*>(barrier);
+  while (!::cuda::ptx::mbarrier_try_wait(bar, token)) {
+  }
+}
+
+/// Wait until the phase of ``bar`` with the given ``parity`` (0 or 1)
+/// completes. The ``k``-th phase of a barrier (counting from 0 after
+/// initialization) has parity ``k & 1``.
+__device__ __forceinline__ void mbarrier_wait_parity(const uint64_t* barrier,
+                                                     uint32_t parity) {
+  uint64_t* bar = const_cast<uint64_t*>(barrier);
+  while (!::cuda::ptx::mbarrier_try_wait_parity(bar, parity)) {
+  }
 }
 
 /// Block-collective global -> shared tensor copy. Called by all threads;
