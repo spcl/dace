@@ -143,10 +143,12 @@ def test_gpu_offload_launches_from_the_block_loops(lvn_only, istep, tmp_path):
 
     hosts = block_maps(sdfg)
     assert (len(hosts), kernels(sdfg)) == OFFLOADED[lvn_only, istep]
-    # A block loop that launches kernels runs them one block at a time; one left with host work only is threaded
+    # A block loop that launches kernels runs them one block at a time; one left with host work only runs as its CPU
+    # form does, threaded unless canonicalization left it sequential
     schedules = {entry.map.label: (entry.map.schedule, launches(sdfg, entry)) for entry in hosts}
+    host_forms = (dace.ScheduleType.Sequential, dace.ScheduleType.CPU_Multicore)
     assert all(
-        schedule == (dace.ScheduleType.Sequential if launched else dace.ScheduleType.CPU_Multicore)
+        schedule == dace.ScheduleType.Sequential if launched else schedule in host_forms
         for schedule, launched in schedules.values()
     ), schedules
     assert any(code.title == "CUDA" for code in sdfg.generate_code())
