@@ -38,7 +38,7 @@ def is_device_wide_libnode(node: nodes.Node, state: SDFGState | None = None) -> 
     a call -- EXCEPT the expansions that say otherwise: a cub block reduce emits device code and
     refuses to expand outside a kernel, so a map around one is that kernel, not a host loop. A node left
     to selection with a thread-block lowering that takes its shape is the same: in the kernel it runs on
-    the block.
+    the block, unless few iterations each carry large work (:func:`few_iterations_of_large_work`).
     Given its ``state``, a node whose operands are all ``SMALL`` (:func:`small_operands`) is
     per-iteration work too: a thread runs it whole, as the in-kernel lowering selection gives it.
     """
@@ -50,9 +50,34 @@ def is_device_wide_libnode(node: nodes.Node, state: SDFGState | None = None) -> 
     if expansion is not None and expansion.runs_inside_kernel:
         return False
     chosen = node.implementation not in (None, "Auto")
-    if not chosen and state is not None and gpu_block_implementation(node, state, state.sdfg) is not None:
+    if (
+        not chosen
+        and state is not None
+        and gpu_block_implementation(node, state, state.sdfg) is not None
+        and not few_iterations_of_large_work(node, state)
+    ):
         return False
     return state is None or not small_operands(node, state)
+
+
+def few_iterations_of_large_work(node: nodes.LibraryNode, state: SDFGState) -> bool:
+    """Whether the maps around ``node`` run too few iterations to share out (``SMALL``, or a literal below
+    ``SMALL_CONSTANT_EXTENT``) while one of its operands is not that small: one block per iteration would leave the
+    device idle, so the host issues the device-wide call per iteration instead."""
+    entry, extent = state.entry_node(node), 1
+    if entry is None:
+        return False
+    while entry is not None:
+        extent *= entry.map.range.num_elements()
+        entry = state.entry_node(entry)
+    facts = SymbolResolver().facts_at(state, node)
+    if not symbolic.is_small_extent(extent, facts):
+        return False
+    return any(
+        not symbolic.is_small_extent(edge.data.subset.num_elements(), facts)
+        for edge in state.all_edges(node)
+        if not edge.data.is_empty()
+    )
 
 
 def small_operands(node: nodes.LibraryNode, state: SDFGState) -> bool:
