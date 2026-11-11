@@ -11,6 +11,7 @@ each thread filled its own ``omp for`` share and read the rest uninitialized. bf
 """
 
 import re
+
 import numpy as np
 
 import dace
