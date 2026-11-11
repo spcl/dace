@@ -1054,6 +1054,28 @@ def maximal_fusion(target: str, after: Callable[[], list[ppl.Pass]] | None = Non
     return PhaseFixpoint("maximal_fusion", outer_round, FUSION_OUTER_ROUNDS)
 
 
+def after_fusion_units(lift: bool, lift_copy: bool, target: str) -> list[ppl.Pass]:
+    """Fresh units that lift and tidy what fusion exposed: they close every round of maximal fusion, and a caller that
+    chose the fusions itself runs them once before the ``finish`` stages."""
+    # A reduction fused over one element leaves its init map
+    units: list[ppl.Pass] = [PatternApplyOnceEverywhere([TrivialMapElimination()])]
+    # Out of phase: these matchers need the fused map form (contractions split over maps, durbin's unary copy).
+    if lift_copy:
+        units += [AssignmentAndCopyKernelToMemsetAndMemcpy()]
+    if lift:
+        units += [PatternApplyOnceEverywhere([LiftEinsum(per_slice=target == "cpu")])]
+    # Fusion joined a slice update's map with the copy of its result, across the states the frontend gave them.
+    units += [
+        EliminateCopyBack(),
+        ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination(fold_ordered_copies=True, nested=True)]),
+        PruneEmptyConditionalBranches(),
+        PatternApplyOnceEverywhere([RedundantArray()]),
+        RematerializeDerivedTemporaries(),
+        PatternApplyOnceEverywhere([MapCollapse()]),
+    ]
+    return units
+
+
 def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     """(MapCollapse x FuseMaps x FuseStates) to a fixpoint inside a fixpoint that re-permutes, interchanges and
     fuses conditions; lift what fusion exposed; the final tidy. Invariant guards stay pushed in: hoisting them is
@@ -1077,26 +1099,7 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     # fusion, so its state does not stand between the maps; the finish runs it again for the fills lifted after.
     s += [(label, DeadFillElimination())]
 
-    def after_fusion() -> list[ppl.Pass]:
-        # A reduction fused over one element leaves its init map
-        units: list[ppl.Pass] = [PatternApplyOnceEverywhere([TrivialMapElimination()])]
-        # Out of phase: these matchers need the fused map form (contractions split over maps, durbin's unary copy).
-        if lift_copy:
-            units += [AssignmentAndCopyKernelToMemsetAndMemcpy()]
-        if lift:
-            units += [PatternApplyOnceEverywhere([LiftEinsum(per_slice=target == "cpu")])]
-        # Fusion joined a slice update's map with the copy of its result, across the states the frontend gave them.
-        units += [
-            EliminateCopyBack(),
-            ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination(fold_ordered_copies=True, nested=True)]),
-            PruneEmptyConditionalBranches(),
-            PatternApplyOnceEverywhere([RedundantArray()]),
-            RematerializeDerivedTemporaries(),
-            PatternApplyOnceEverywhere([MapCollapse()]),
-        ]
-        return units
-
-    s += [(FUSE, maximal_fusion(target, after_fusion))]
+    s += [(FUSE, maximal_fusion(target, lambda: after_fusion_units(lift, lift_copy, target)))]
     return s
 
 
