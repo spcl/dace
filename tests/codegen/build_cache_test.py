@@ -8,8 +8,11 @@ import contextlib
 import glob
 import json
 import os
+import pathlib
 import shutil
 import subprocess
+import tempfile
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -152,7 +155,7 @@ def test_precompiled_header_is_actually_used(tmp_path):
         generated = [e for e in json.load(fp) if "pchused" in e["file"]]
     assert generated, "no compile command recorded for the generated source"
     command = generated[0]["command"]
-    assert "dace_prewarm.h" in command, "the precompiled header never reached the compile line"
+    assert "-include dace/dace.h" in command, "the precompiled header never reached the compile line"
     checked = command.replace(" -c ", " -Winvalid-pch -Werror=invalid-pch -c ")
     result = subprocess.run(checked, shell=True, cwd=generated[0]["directory"], capture_output=True, text=True)
     assert result.returncode == 0, f"the compiler refused the precompiled header:\n{result.stderr}"
@@ -233,6 +236,26 @@ def test_vanished_precompiled_header_is_not_included(tmp_path, monkeypatch):
                 shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
         with dace.config.set_temporary("compiler", "precompiled_header", value=False):
             build_and_check(tmp_path, "pchvanished")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="precompiled headers are only wired up for GCC/Clang")
+def test_precompiled_header_evicted_before_the_compile_still_builds():
+    """Another process may prune the entry between its preparation and the compile; that must cost speed only."""
+    original = compiler.prepare_precompiled_header
+
+    def evicted(targets):
+        entry = original(targets)
+        assert entry, "no precompiled header was produced, so nothing is evicted"
+        shutil.rmtree(entry)
+        return entry
+
+    with tempfile.TemporaryDirectory() as tmp:
+        with (
+            mock.patch.object(compiler, "build_cache_root", return_value=os.path.join(tmp, "cache")),
+            mock.patch.object(compiler, "prepare_precompiled_header", autospec=True, side_effect=evicted) as prepare,
+        ):
+            build_and_check(pathlib.Path(tmp), "pchevicted")
+        assert prepare.called, "the build never asked for a precompiled header"
 
 
 def test_caches_disabled_still_builds(tmp_path):

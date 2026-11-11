@@ -62,10 +62,11 @@ endforeach()
 
 # Reuse the precompiled DaCe runtime header. Generated host sources only: force-including it into an
 # environment's aux .cpp or a .cu can break a file that never asked for it. Mismatched flags are
-# ignored by the compiler.
+# ignored by the compiler. -iquote is searched before every -I, so the cached .gch shadows the runtime's
+# dace/dace.h, which still serves the build should the cache entry be evicted.
 if(DACE_PCH_DIR AND DACE_GENERATED_HOST_FILES)
   set_source_files_properties(${DACE_GENERATED_HOST_FILES} PROPERTIES
-                              COMPILE_OPTIONS "-I${DACE_PCH_DIR};-include;dace_prewarm.h")
+                              COMPILE_OPTIONS "-iquote;${DACE_PCH_DIR};-include;dace/dace.h")
 endif()
 
 # Internal dependencies

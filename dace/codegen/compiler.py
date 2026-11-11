@@ -525,20 +525,18 @@ def prepare_precompiled_header(targets) -> str | None:
     if any(t in ("cuda", "experimental_cuda") for t in targets):
         flags.append("-DWITH_CUDA")
     pch = os.path.join(build_cache_root(), "pch", cache_key(runtime, build_cache.runtime_digest(runtime), cxx, *flags))
-    header = os.path.join(pch, "dace_prewarm.h")
+    header, gch = os.path.join(runtime, build_cache.PCH_HEADER), os.path.join(pch, build_cache.PCH_HEADER + ".gch")
     try:
-        if not os.path.exists(header + ".gch"):
-            os.makedirs(pch, exist_ok=True)
-            with open(header, "w") as fp:
-                fp.write("#include <dace/dace.h>\n")
+        if not os.path.exists(gch):
+            os.makedirs(os.path.dirname(gch), exist_ok=True)
             # Build to a private name and rename, so a concurrent build never sees a partial header.
-            staging = f"{header}.gch.{os.getpid()}"
+            staging = f"{gch}.{os.getpid()}"
             subprocess.run(
                 [cxx] + flags + ["-I", runtime, "-x", "c++-header", header, "-o", staging],
                 check=True,
                 capture_output=True,
             )
-            os.replace(staging, header + ".gch")
+            os.replace(staging, gch)
             # ~110 MB just landed in the cache, whose default root is RAM. Bound it here, at the
             # only point where it grows.
             build_cache.prune(os.path.join(build_cache_root(), "pch"))
