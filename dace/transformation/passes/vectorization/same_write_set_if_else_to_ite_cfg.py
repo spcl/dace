@@ -693,7 +693,8 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         for new in node_map.values():
             if not isinstance(new, dace.nodes.AccessNode):
                 continue
-            if new.data in rename and dst.in_degree(new) > 0:
+            # An empty ordering edge into a read node writes nothing
+            if new.data in rename and any(not ie.data.is_empty() for ie in dst.in_edges(new)):
                 base_name = new.data
                 wcr_escapes.extend(
                     (ie, base_name, copy.deepcopy(ie.data.subset))
