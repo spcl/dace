@@ -500,7 +500,7 @@ def publish_cmake_configure(build_folder: str, key: str) -> None:
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def prepare_precompiled_header(targets) -> str | None:
+def prepare_precompiled_header(targets, environments=()) -> str | None:
     """Precompile ``<dace/dace.h>`` once per (runtime, compiler, flags), returning its dir or ``None``.
 
     The runtime umbrella header is most of the compile time of a small kernel; caching it across
@@ -524,6 +524,10 @@ def prepare_precompiled_header(targets) -> str | None:
     )
     if any(t in ("cuda", "experimental_cuda") for t in targets):
         flags.append("-DWITH_CUDA")
+    # Environments' flags reach every TU (e.g. mimalloc's -DDACE_MIMALLOC). CMake-expanded ones (``${...}``)
+    # cannot be resolved here; they are include paths, which do not invalidate a header.
+    env_flags = {f for env in environments for flag in _get_or_eval(env.cmake_compile_flags) for f in shlex.split(flag)}
+    flags += sorted(f for f in env_flags if "$" not in f)
     pch = os.path.join(build_cache_root(), "pch", cache_key(runtime, build_cache.runtime_digest(runtime), cxx, *flags))
     header, gch = os.path.join(runtime, build_cache.PCH_HEADER), os.path.join(pch, build_cache.PCH_HEADER + ".gch")
     try:
@@ -805,7 +809,7 @@ def cmake_configure_and_build(
         cmake_command.append(f'-DCMAKE_SHARED_LINKER_FLAGS="{cmake_link_flags}"')
 
     # Always set (even if empty), so a CMake cache cannot keep pointing at a header that no longer exists
-    pch_dir = prepare_precompiled_header(targets) or ""
+    pch_dir = prepare_precompiled_header(targets, environments) or ""
     cmake_command.append(f'-DDACE_PCH_DIR="{pch_dir}"')
     # What the configure DISCOVERS: the command minus the flags naming this program. ``DACE_FILES``
     # reduces to its target subdirectories, which select the languages and packages CMake enables.

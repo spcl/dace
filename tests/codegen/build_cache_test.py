@@ -243,8 +243,8 @@ def test_precompiled_header_evicted_before_the_compile_still_builds():
     """Another process may prune the entry between its preparation and the compile; that must cost speed only."""
     original = compiler.prepare_precompiled_header
 
-    def evicted(targets):
-        entry = original(targets)
+    def evicted(targets, environments=()):
+        entry = original(targets, environments)
         assert entry, "no precompiled header was produced, so nothing is evicted"
         shutil.rmtree(entry)
         return entry
