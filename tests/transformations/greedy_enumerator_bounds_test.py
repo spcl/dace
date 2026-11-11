@@ -128,8 +128,14 @@ def test_greedy_enumerator_scales_linearly():
     """Doubling the map count must not more than double the cost."""
     _enumerate(_clique_state_sdfg(4))
 
-    _, small_calls, small_peak = _enumerate(_clique_state_sdfg(N_MAPS // 2), measure=True)
-    _, large_calls, large_peak = _enumerate(_clique_state_sdfg(N_MAPS), measure=True)
+    # tracemalloc also counts what other threads allocate meanwhile (pytest-xdist's receiver); that only adds, so
+    # the least of a few runs is the enumerator's own peak
+    small_groups, small_calls, small_peak = min(
+        (_enumerate(_clique_state_sdfg(N_MAPS // 2), measure=True) for i in range(3)), key=lambda run: run[2]
+    )
+    large_groups, large_calls, large_peak = min(
+        (_enumerate(_clique_state_sdfg(N_MAPS), measure=True) for i in range(3)), key=lambda run: run[2]
+    )
 
     assert large_calls <= 2 * small_calls + 2, (
         f"{small_calls} calls for {N_MAPS // 2} maps but {large_calls} for {N_MAPS}"
