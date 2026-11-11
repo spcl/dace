@@ -92,7 +92,8 @@ def test_baseline_isa_stays_on_the_emulation():
     slower than the inline emulation. The header therefore gates on the ISA feature
     macro, and this pins that decision.
     """
-    assert not compiler_selects_native([]), (
+    # Named, not the compiler's default: a toolchain built for x86-64-v3 enables F16C without a flag
+    assert not compiler_selects_native(["-march=x86-64"]), (
         "the x86-64 baseline ISA has no hardware fp16 conversion, so "
         "<dace/types.h> must stay on the software emulation there"
     )
