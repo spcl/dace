@@ -198,6 +198,28 @@ def test_a_host_level_node_keeps_its_pure_lowering():
     assert np.allclose(out[0], np.linalg.norm(a))
 
 
+def test_the_offloader_keeps_a_row_loop_around_a_norm_a_kernel():
+    """Without a block lowering the map holding the node would be pinned to the host."""
+    from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+
+    @dace.program
+    def row_norms(a: dace.float64[R, N], out: dace.float64[R]):
+        for i in dace.map[0:R]:
+            dace.libraries.standard.norm2(a[i], out[i : i + 1])
+
+    sdfg = row_norms.to_sdfg(simplify=True)
+    canonicalize(sdfg, target="gpu", validate_all=False)
+    offload_to_gpu(sdfg)
+    ((node, state),) = [(n, st) for n, st in sdfg.all_nodes_recursive() if isinstance(n, Norm2)]
+    scopes = [
+        s.map.schedule
+        for s in dace.transformation.helpers.get_parent_map_and_loop_scopes(state.sdfg, node, state)
+        if isinstance(s, nodes.MapEntry)
+    ]
+    assert dtypes.ScheduleType.GPU_Device in scopes
+
+
 def run_on_gpu(sdfg: dace.SDFG, **arrays) -> dict:
     import cupy
 
@@ -296,6 +318,7 @@ if __name__ == "__main__":
     test_a_reduction_along_one_axis_keeps_its_per_thread_lowering()
     test_an_elementwise_node_writing_a_threads_own_copy_keeps_its_per_thread_lowering()
     test_a_host_level_node_keeps_its_pure_lowering()
+    test_the_offloader_keeps_a_row_loop_around_a_norm_a_kernel()
     test_row_norm2_in_a_kernel_matches_numpy()
     for args in [(ArgMax, False, False), (ArgMin, True, False), (ArgMax, False, True)]:
         test_row_extreme_index_in_a_kernel_matches_numpy(*args)
