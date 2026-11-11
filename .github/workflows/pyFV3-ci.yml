@@ -74,6 +74,8 @@ jobs:
 
     - name: Install OpenMPI
       run: |
+        # A mirror outside Canonical's DNS, see .github/actions/setup-dace
+        echo -e 'https://mirrors.edge.kernel.org/ubuntu/\tpriority:9' | sudo tee -a /etc/apt/apt-mirrors.txt >/dev/null
         sudo apt-get update
         sudo apt-get install -y libopenmpi-dev openmpi-bin
 

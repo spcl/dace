@@ -40,9 +40,8 @@ runs:
         # man-db auto-update dominates apt time on the hosted images.
         echo 'set man-db/auto-update false' | sudo debconf-communicate >/dev/null
         sudo dpkg-reconfigure man-db
-        # A hosted runner's resolver drops out for seconds at a time ("Temporary failure resolving"); apt gives up
-        # on the first miss unless told to retry.
-        echo 'Acquire::Retries "8";' | sudo tee /etc/apt/apt.conf.d/80-retries >/dev/null
+        # The runner's mirror list names Canonical hosts only; when their DNS is down no job installs anything.
+        echo -e 'https://mirrors.edge.kernel.org/ubuntu/\tpriority:9' | sudo tee -a /etc/apt/apt-mirrors.txt >/dev/null
         sudo apt-get update
         sudo apt-get install -y ${{ inputs.apt-packages }}
         # `testing` / `ml-testing` / `linting` / `docs` are dependency GROUPS, not extras
