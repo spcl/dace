@@ -86,13 +86,16 @@ LibnodeTest = Callable[[nodes.Node, SDFGState], bool]
 def is_kernel_refused_libnode(node: nodes.Node, state: SDFGState) -> bool:
     """A device-wide library node left to selection with no in-kernel block lowering for its shape, so no kernel can
     run it. A lowering the caller chose places the node itself."""
-    from dace.libraries.standard.block_reduce import gpu_block_implementation  # Avoid import loop
+    from dace.libraries.blas.nodes.matmul import MatMul, specialized_type  # Avoid import loop
+    from dace.libraries.standard.block_reduce import GPU_BLOCK_IMPLEMENTATIONS, gpu_block_implementation
 
-    return (
-        is_device_wide_libnode(node, state)
-        and node.implementation in (None, "Auto")
-        and gpu_block_implementation(node, state, state.sdfg) is None
-    )
+    if not (is_device_wide_libnode(node, state) and node.implementation in (None, "Auto")):
+        return False
+    if isinstance(node, MatMul):
+        # A product is judged by the node it specializes to: a Gemm or a Dot has a block lowering
+        target = specialized_type(node, state, state.sdfg)
+        return target is None or not any(impl in target.implementations for impl in GPU_BLOCK_IMPLEMENTATIONS)
+    return gpu_block_implementation(node, state, state.sdfg) is None
 
 
 def encloses_device_wide_libnode(

@@ -172,8 +172,8 @@ def copy_of_view_sdfg(name: str, copy_node: bool, clobber: bool = False) -> dace
     if copy_node:
         node = CopyLibraryNode("copy")
         state.add_node(node)
-        state.add_edge(v, None, node, "_cpy_in", dace.Memlet("v[0:8]"))
-        state.add_edge(node, "_cpy_out", t, None, dace.Memlet("t[0:8]"))
+        state.add_edge(v, None, node, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet("v[0:8]"))
+        state.add_edge(node, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, t, None, dace.Memlet("t[0:8]"))
     else:
         state.add_nedge(v, t, dace.Memlet("v[0:8] -> [0:8]"))
     state.add_mapped_tasklet(

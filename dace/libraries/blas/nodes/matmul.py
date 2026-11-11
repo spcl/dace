@@ -265,6 +265,36 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
     return opt
 
 
+def specialization(a, b, c) -> str | None:
+    """What :class:`SpecializeMatMul` lowers a product of operands ``a``, ``b`` into ``c`` to (``_get_matmul_operands``
+    tuples): ``gemm``, ``batched``, ``gemv``, ``gemvt``, ``dot``, or ``None`` for shapes it has no lowering for."""
+    size_a, size_b, size_c = a[4], b[4], c[4]
+    # A degenerate operand dimension is squeezed with a unit batch, so also check the output
+    is_batched = len(size_a) >= 3 or len(size_b) >= 3 or (len(size_c) >= 3 and (len(a[2]) >= 3 or len(b[2]) >= 3))
+    if is_gemm_shape(a, b, c):
+        return "gemm"
+    if is_batched and len(size_a) >= 2 and len(size_b) >= 2:
+        return "batched"
+    if len(size_a) == 2 and len(size_b) == 1:
+        return "gemv"
+    if len(size_a) == 1 and len(size_b) == 2:
+        return "gemvt"
+    if len(size_a) == 1 and len(size_b) == 1:
+        return "dot"
+    return None
+
+
+def specialized_type(node, state, sdfg) -> type | None:
+    """The library node class :class:`SpecializeMatMul` lowers ``node`` to."""
+    from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
+    from dace.libraries.blas.nodes.dot import Dot
+    from dace.libraries.blas.nodes.gemm import Gemm
+    from dace.libraries.blas.nodes.gemv import Gemv
+
+    kinds = {"gemm": Gemm, "batched": BatchedMatMul, "gemv": Gemv, "gemvt": Gemv, "dot": Dot}
+    return kinds.get(specialization(*_get_matmul_operands(node, state, sdfg)))
+
+
 @dace.library.expansion
 class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
     environments = []
@@ -272,15 +302,9 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         a, b, c = _get_matmul_operands(node, state, sdfg)
-        size_a = a[4]
-        size_b = b[4]
-        size_c = c[4]
+        kind = specialization(a, b, c)
 
-        # Check if this is a batched operation (at least one input has 3+ dimensions).
-        # A degenerate operand dimension is squeezed with a unit batch, so also check the output
-        is_batched = len(size_a) >= 3 or len(size_b) >= 3 or (len(size_c) >= 3 and (len(a[2]) >= 3 or len(b[2]) >= 3))
-
-        if is_gemm_shape(a, b, c):
+        if kind == "gemm":
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
 
@@ -307,14 +331,14 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
                 transB=node.transB,
             )
             return gemm
-        elif is_batched and len(size_a) >= 2 and len(size_b) >= 2:
+        elif kind == "batched":
             # Batched matrix multiplication with broadcasting support
             # Handles: [b, m, k] @ [b, k, n], [b, m, k] @ [k, n], [m, k] @ [b, k, n], [b1, b2, m, k] @ [b1, b2, k, n], etc.
             from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
 
             result = BatchedMatMul(node.name + "bmm", location=node.location)
             result.transA, result.transB = node.transA, node.transB
-        elif len(size_a) == 2 and len(size_b) == 1:
+        elif kind == "gemv":
             # Matrix and vector -> GEMV.  ``transA`` flows through:
             # Fortran ``MATMUL(TRANSPOSE(A), v)`` arrives with the
             # node's ``transA=True`` flag, A is read as the
@@ -327,7 +351,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             b[0].dst_conn = "_x"
             c[0].src_conn = "_y"
             result = Gemv(node.name + "gemv", location=node.location, transA=node.transA)
-        elif len(size_a) == 1 and len(size_b) == 2:
+        elif kind == "gemvt":
             # Vector and matrix -> GEMV with transposed matrix.
             # ``node.transA`` flipping the second operand
             # corresponds to ``v @ A^T``; XOR with the implicit
@@ -340,7 +364,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             b[0].dst_conn = "_A"
             c[0].src_conn = "_y"
             result = Gemv(node.name + "gemvt", location=node.location, transA=not node.transB)
-        elif len(size_a) == 1 and len(size_b) == 1:
+        elif kind == "dot":
             # Vector and vector -> dot product
             from dace.libraries.blas.nodes.dot import Dot
 
@@ -350,7 +374,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             c[0].src_conn = "_result"
             result = Dot(node.name + "dot", location=node.location)
         else:
-            raise NotImplementedError(f"Matrix multiplication not implemented for shapes: {size_a} and {size_b}")
+            raise NotImplementedError(f"Matrix multiplication not implemented for shapes: {a[4]} and {b[4]}")
 
         result.alpha = node.alpha
         result.beta = node.beta

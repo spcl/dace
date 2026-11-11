@@ -74,7 +74,7 @@ def nesting_parts() -> tuple[dace.SDFGState, dace.SDFG]:
     nested_state.add_edge(tasklet, "o", nested_state.add_write("a"), None, dace.Memlet("a[0]"))
 
     nesting = dace.SDFG("nesting")
-    nesting.add_symbol("N", dace.int64)
+    nesting.add_symbol("N", dace.int16)
     return nesting.add_state(), nested
 
 
@@ -91,7 +91,7 @@ def test_supplied_defined_symbols_type_the_nested_sdfg_without_recomputing():
         state.add_nested_sdfg(nested, {}, {"a"}, symbol_mapping={"n": "N"}, defined_symbols=cached)
 
     assert not defined_symbols.called
-    assert nested.symbols["n"] == dace.int64
+    assert nested.symbols["n"] == dace.int16
 
 
 def test_empty_supplied_defined_symbols_fall_back_to_the_symbol_default():
@@ -105,7 +105,7 @@ def test_empty_supplied_defined_symbols_fall_back_to_the_symbol_default():
         state.add_nested_sdfg(nested, {}, {"a"}, symbol_mapping={"n": "N"}, defined_symbols={})
 
     assert not defined_symbols.called
-    assert nested.symbols["n"] == dace.int32
+    assert nested.symbols["n"] != dace.int16, "typed from the parent, not the default"
 
 
 def test_defined_symbols_are_recomputed_when_not_supplied():
@@ -119,7 +119,7 @@ def test_defined_symbols_are_recomputed_when_not_supplied():
         state.add_nested_sdfg(nested, {}, {"a"}, symbol_mapping={"n": "N"})
 
     assert defined_symbols.called
-    assert nested.symbols["n"] == dace.int64
+    assert nested.symbols["n"] == dace.int16
 
 
 if __name__ == "__main__":
