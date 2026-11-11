@@ -9,7 +9,9 @@ in the same state, which every in-place stencil sweep is -- so the buffer used t
 codegen as a heap allocation plus a full-size copy loop per timestep.
 """
 
+import contextlib
 import os
+from unittest import mock
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -80,12 +82,13 @@ def _is_cleanup_stage(unit: ppl.Pass) -> bool:
 
 
 def _canonicalize(sdfg: dace.SDFG, with_cleanup: bool) -> dace.SDFG:
-    """Run the real recipe, optionally with the cleanup stage skipped (the A/B reference)."""
+    """Run the real recipe, optionally with the cleanup stage matching nothing (the A/B reference): the recipe runs
+    ``RedundantArray`` only there."""
     canon_pipeline.disable_openmp_sections(sdfg)
-    for label, unit in canon_pipeline.build_stages():
-        if not with_cleanup and _is_cleanup_stage(unit):
-            continue
-        unit.apply_pass(sdfg, {})
+    off = mock.patch.object(RedundantArray, "can_be_applied", lambda *args, **kwargs: False)
+    with contextlib.nullcontext() if with_cleanup else off:
+        for label, unit in canon_pipeline.build_stages():
+            unit.apply_pass(sdfg, {})
     canon_pipeline.disable_openmp_sections(sdfg)
     sdfg.validate()
     return sdfg
@@ -125,8 +128,14 @@ def _shape(sdfg: dace.SDFG) -> tuple[list[tuple[str, str]], list[tuple[str, str,
 
 
 def test_the_stage_is_wired_in_once_after_maximal_fusion():
-    labels = [label for label, unit in canon_pipeline.build_stages() if _is_cleanup_stage(unit)]
-    assert labels == ["after_fusion"], labels
+    """The stage closes every round of maximal fusion, and runs nowhere else in the recipe."""
+    stages = canon_pipeline.build_stages()
+    assert not any(_is_cleanup_stage(unit) for label, unit in stages)
+    fusions = [
+        unit for label, unit in stages if isinstance(unit, canon_pipeline.PhaseFixpoint) and unit.name == "maximal_fusion"
+    ]
+    assert len(fusions) == 1
+    assert sum(_is_cleanup_stage(unit) for unit in fusions[0].factory()) == 1
 
 
 def test_heat3d_loses_the_copy_out_buffer(monkeypatch):
