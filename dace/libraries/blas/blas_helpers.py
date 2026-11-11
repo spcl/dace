@@ -421,7 +421,7 @@ def reject_overlapping_output(
 def connector_sdfg(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG") -> "dace.SDFG":
     """A nested SDFG with one array per connector of ``node``, in the shape and strides of its :func:`operand`."""
     nsdfg = dace.sdfg.utils.expansion_sdfg(f"{node.label}_sdfg", node, state)
-    for connector in list(node.in_connectors) + list(node.out_connectors):
+    for connector in dict.fromkeys([*node.in_connectors, *node.out_connectors]):
         if connector in SCALE_CONNECTORS:
             continue
         desc, shape, strides = operand(node, state, sdfg, connector)
@@ -463,7 +463,9 @@ def in_place_call(
     nsdfg = connector_sdfg(node, state, sdfg)
     # The source stays a tasklet input even when unused, so the outer graph keeps its read
     reads = {f"{c}_value" if c in SCALE_CONNECTORS else f"_{c}": c for c in node.in_connectors}
-    if overwrites or same_memory(node, state, source, target):
+    if source == target and f"_{source}" in reads:  # one connector both read and written (Gemv's ``_y``)
+        reads[f"_{source}_in"] = reads.pop(f"_{source}")
+    if overwrites or source == target or same_memory(node, state, source, target):
         call_state = nsdfg.add_state(f"{node.label}_call")
     else:
         copy_state = nsdfg.add_state(f"{node.label}_copy")

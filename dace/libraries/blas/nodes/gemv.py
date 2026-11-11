@@ -255,8 +255,6 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
         dtype_a = outer_array_a.dtype.type
         dtype = outer_array_x.dtype.base_type
         veclen = outer_array_x.dtype.veclen
-        alpha = f"{dtype.ctype}({blas_helpers.scale_text(node, 'alpha', node.alpha)})"
-        beta = f"{dtype.ctype}({blas_helpers.scale_text(node, 'beta', node.beta)})"
 
         m = m or node.m
         n = n or node.n
@@ -292,23 +290,15 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
 
         func = func.lower() + "gemv"
 
-        code = ""
-        if dtype in (dace.complex64, dace.complex128):
-            code = f"""
-            {dtype.ctype} __alpha = {alpha};
-            {dtype.ctype} __beta = {beta};
-            """
-            alpha = "&__alpha"
-            beta = "&__beta"
-
-        code += f"""cblas_{func}({layout}, {trans}, {sym2cpp(m)}, {sym2cpp(n)}, {alpha}, _A, {sym2cpp(lda)},
-                                _x, {sym2cpp(strides_x[0])}, {beta}, _y, {sym2cpp(strides_y[0])});"""
-
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        # ``_y`` is read and updated in place when beta is not a literal 0
+        values = blas_helpers.scales(node, alpha=node.alpha, beta=node.beta)
+        scalars, arg = blas_helpers.scalar_arguments(dtype, **values)
+        call = (
+            f"cblas_{func}({layout}, {trans}, {sym2cpp(m)}, {sym2cpp(n)}, {arg['alpha']}, __A, {sym2cpp(lda)}, "
+            f"__x, {sym2cpp(strides_x[0])}, {arg['beta']}, __y, {sym2cpp(strides_y[0])});"
         )
-
-        return tasklet
+        overwrites = blas_helpers.is_literal_scale(node, "beta", node.beta, 0)
+        return blas_helpers.in_place_call(node, state, sdfg, "_y", "_y", scalars + call, overwrites=overwrites)
 
 
 @dace.library.expansion
@@ -396,6 +386,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         "PBLAS": ExpandGemvPBLAS,
     }
     default_implementation = None
+    matrix_connectors = ("_A",)
 
     # Object fields
     alpha = properties.SymbolicProperty(allow_none=False, default=1, category="Semantics")
