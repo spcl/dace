@@ -48,15 +48,15 @@ class ExpandPure(ExpandTransformation):
         map_params = [f"__i{i}" for i in range(len(inp_arr.shape))]
         map_rng = {i: f"0:{s}" for i, s in zip(map_params, inp_arr.shape)}
         inp_mem = dace.Memlet(expr=f"_inp_tensor[{','.join(map_params)}]")
-        out_mem = dace.Memlet(expr=f"_out_tensor[{','.join([map_params[i] for i in node.axes])}]")
+        out_expr = f"_out_tensor[{','.join([map_params[i] for i in node.axes])}]"
         inputs = {"_inp": inp_mem}
-        outputs = {"_out": out_mem}
+        outputs = {"_out": dace.Memlet(expr=out_expr)}
         if node.alpha == 1:
             code = "_out = _inp"
         else:
             code = f"_out = decltype(_inp)({node.alpha}) * _inp"
         if node.beta != 0:
-            inputs["_inout"] = out_mem
+            inputs["_inout"] = dace.Memlet(expr=out_expr)  # its own object: one Memlet on two edges is invalid
             code = f"_out = {node.alpha} * _inp + {node.beta} * _inout"
         # A device-resident operand needs a device map: the default schedule is host code, which
         # cannot touch GPU_Global memory. ls3df_scf's double tensor transpose hits this case; it
