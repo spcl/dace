@@ -132,7 +132,9 @@ def test_the_stage_is_wired_in_once_after_maximal_fusion():
     stages = canon_pipeline.build_stages()
     assert not any(_is_cleanup_stage(unit) for label, unit in stages)
     fusions = [
-        unit for label, unit in stages if isinstance(unit, canon_pipeline.PhaseFixpoint) and unit.name == "maximal_fusion"
+        unit
+        for label, unit in stages
+        if isinstance(unit, canon_pipeline.PhaseFixpoint) and unit.name == "maximal_fusion"
     ]
     assert len(fusions) == 1
     assert sum(_is_cleanup_stage(unit) for unit in fusions[0].factory()) == 1

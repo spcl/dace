@@ -305,7 +305,10 @@ def test_the_stage_is_idempotent():
     sdfg = _canonicalize(_fuse_diamond.to_sdfg(simplify=False))
     before = (_transients(sdfg), _access_nodes(sdfg), _tasklets(sdfg))
     stage = [
-        member for label, unit in canon_pipeline.build_stages() for member in _members(unit) if _is_reclaim_stage(member)
+        member
+        for label, unit in canon_pipeline.build_stages()
+        for member in _members(unit)
+        if _is_reclaim_stage(member)
     ][0]
     stage.apply_pass(sdfg, {})
     assert (_transients(sdfg), _access_nodes(sdfg), _tasklets(sdfg)) == before
