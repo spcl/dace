@@ -743,6 +743,7 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
             raise ValueError("reorder_nodes expects a permutation of the current node list")
         self._nodes = reordered
         self._node_indices = None
+        self._node_list = None
         # networkx has no reordering API; popping and re-inserting each node in the wanted order
         # moves it to the end of every backing dict, so after one sweep they read in ``order``.
         for n in order:
@@ -1054,8 +1055,8 @@ def copy_graph_field(owner: Any, name: str, value: Any, memo: dict[int, Any]) ->
             return copy_node_index(value, memo)
         if name == "_edges":
             return copy_edge_index(value, memo)
-        if name == "_node_indices":
-            # Rebuilt on first ``node_id``
+        if name in ("_node_indices", "_node_list"):
+            # Rebuilt on first ``node_id`` / ``node``
             return None
     return copy_value(value, memo)
 
