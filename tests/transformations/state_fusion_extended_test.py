@@ -2198,7 +2198,47 @@ def test_a_read_of_a_container_the_next_state_rewrites_fuses_with_the_read_first
     assert np.array_equal(out, expected_acc * expected_vel)
 
 
+def test_a_node_only_an_ordering_edge_enters_is_no_writer():
+    """``B = 2 G``, ``C = G + 1``, ``P = 3 F``, then a state where ``G`` follows ``P`` by an empty edge only and feeds
+    ``H = G - B`` (nbody's energy states). The ordered ``G`` writes nothing, so no value of ``P`` flows into ``G``."""
+    sdfg = SDFG("ordering_only_reader")
+    for name in ("G", "B", "C", "F", "P", "H"):
+        sdfg.add_array(name, (8,), dace.float64)
+    first = sdfg.add_state("first")
+    g = first.add_read("G")
+    for name, code in (("B", "b = 2 * a"), ("C", "b = a + 1")):
+        first.add_mapped_tasklet(
+            f"make_{name}",
+            {"i": "0:8"},
+            {"a": Memlet("G[i]")},
+            code,
+            {"b": Memlet(f"{name}[i]")},
+            external_edges=True,
+            input_nodes={"G": g},
+        )
+    first.add_mapped_tasklet(
+        "make_P", {"i": "0:8"}, {"a": Memlet("F[i]")}, "b = 3 * a", {"b": Memlet("P[i]")}, external_edges=True
+    )
+    second = sdfg.add_state_after(first, "second")
+    g2 = second.add_access("G")
+    second.add_nedge(second.add_read("P"), g2, Memlet())
+    second.add_mapped_tasklet(
+        "make_H",
+        {"i": "0:8"},
+        {"a": Memlet("G[i]"), "c": Memlet("B[i]")},
+        "b = a - c",
+        {"b": Memlet("H[i]")},
+        external_edges=True,
+        input_nodes={"G": g2},
+    )
+    sdfg.validate()
+    assert StateFusionExtended.can_be_applied_to(
+        sdfg, first_state=first, second_state=second, options={"aggressive_merges": True}
+    )
+
+
 if __name__ == "__main__":
+    test_a_node_only_an_ordering_edge_enters_is_no_writer()
     test_a_read_of_a_container_the_next_state_rewrites_fuses_with_the_read_first()
     test_a_read_disjoint_from_the_writer_never_exempts_a_later_rewrite()
     test_a_read_the_merge_point_does_not_follow_still_precedes_the_overwrite()

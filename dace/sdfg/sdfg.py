@@ -1358,8 +1358,6 @@ class SDFG(ControlFlowRegion):
         find_new_name: bool = False,
         predicates: frozenset[symbolic.Predicate] = frozenset(),
         scale: symbolic.Scale = symbolic.Scale.DEFAULT,
-        *,
-        scope_bound: AbstractSet[str] | None = None,
     ):
         """Adds a symbol to the SDFG. Adding a symbol again with the same type and predicates does nothing.
 
@@ -1368,7 +1366,6 @@ class SDFG(ControlFlowRegion):
         :param find_new_name: Find a new name.
         :param predicates: Sign predicates assumed for the symbol.
         :param scale: ``Scale.SMALL`` makes the symbol much smaller than every default one; see ``set_symbol_scale``.
-        :param scope_bound: ``scope_bound_names(self)``, when the caller already holds it (it walks every node).
         :raise NameCollisionError: If the name is used by a data descriptor.
         :raise InconsistentAssumptionsError: If the symbol exists with another type or other predicates, or the
                                              predicates contradict the SDFG's facts.
@@ -1388,10 +1385,6 @@ class SDFG(ControlFlowRegion):
         elif name in self.arrays:
             # Data constants are not checked, as they are linked to the data descriptors.
             raise NameCollisionError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
-        elif name not in self.symbols and name in (scope_bound if scope_bound is not None else scope_bound_names(self)):
-            raise NameCollisionError(
-                f'Cannot create symbol "{name}", a loop or map scope binds it; its facts come from the scope.'
-            )
         self._symbol_repo.add(name, dtype, predicates)
         if scale is symbolic.Scale.SMALL:
             self._symbol_repo.set_scale(name, scale)
