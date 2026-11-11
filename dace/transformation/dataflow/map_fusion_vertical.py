@@ -1167,9 +1167,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     ]
                     # In place, the consumer reads the container itself: what no producer of this iteration covers
                     #  is right as long as no other iteration writes it (NestForge #27, a recurrence whose row 0
-                    #  another map wrote).
+                    #  another map wrote). Another writer of this node would stay unordered with the fused read.
                     if len(prospective_producers) != 1 and not (
                         intermediate_node.data in in_place
+                        and all(e.src is first_map_exit for e in state.in_edges(intermediate_node))
                         and self.other_iterations_miss(
                             first_map_exit.map, list(producer_subsets), [consumer_subset], facts
                         )

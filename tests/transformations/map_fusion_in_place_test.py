@@ -98,6 +98,47 @@ def test_a_reader_of_elements_another_map_wrote_fuses_in_place():
     assert np.allclose(q, expected)
 
 
+def test_a_read_another_writer_of_the_node_produced_is_refused():
+    """``m0`` writes row 0 and ``m1`` row 1 of one node; the in-place reader of row 0 must not fuse with ``m1``, whose
+    fused body would read row 0 unordered with ``m0``'s write (CloudSC's ``zqlhs``)."""
+    sdfg = dace.SDFG("sibling_writer")
+    for name, shape in (("a", [N]), ("p", [3, N]), ("q", [N])):
+        sdfg.add_array(name, shape, dace.float64)
+    state = sdfg.add_state()
+    p_in, p_mid = state.add_access("p"), state.add_access("p")
+    state.add_mapped_tasklet(
+        "m0",
+        dict(i="0:N"),
+        dict(x=dace.Memlet("a[i]")),
+        "y = x",
+        dict(y=dace.Memlet("p[0, i]")),
+        output_nodes=dict(p=p_mid),
+        external_edges=True,
+    )
+    # Reads row 2 and writes row 1: not point-wise, so the fusion is in place
+    first = state.add_mapped_tasklet(
+        "m1",
+        dict(i="0:N"),
+        dict(x=dace.Memlet("p[2, i]")),
+        "y = x + 1",
+        dict(y=dace.Memlet("p[1, i]")),
+        input_nodes=dict(p=p_in),
+        output_nodes=dict(p=p_mid),
+        external_edges=True,
+    )[2]
+    reader = state.add_mapped_tasklet(
+        "reader",
+        dict(i="0:N"),
+        dict(x=dace.Memlet("p[0, i]")),
+        "y = 2 * x",
+        dict(y=dace.Memlet("q[i]")),
+        input_nodes=dict(p=p_mid),
+        external_edges=True,
+    )[1]
+    sdfg.validate()
+    assert not MapFusionVertical.can_be_applied_to(sdfg, first_map_exit=first, array=p_mid, second_map_entry=reader)
+
+
 def test_a_reader_of_another_iterations_row_is_refused():
     sdfg = reader_of_the_row_above.to_sdfg(simplify=True)
     assert sdfg.apply_transformations_repeated(MapFusionVertical) == 0
@@ -214,6 +255,7 @@ def test_a_piece_computed_from_an_earlier_piece_fuses_without_a_cycle():
 if __name__ == "__main__":
     test_a_row_recurrence_and_its_reader_fuse_in_place()
     test_a_reader_of_elements_another_map_wrote_fuses_in_place()
+    test_a_read_another_writer_of_the_node_produced_is_refused()
     test_a_reader_of_another_iterations_row_is_refused()
     test_maps_whose_bodies_are_nested_sdfgs_fuse_through_an_array_the_first_updates_point_wise()
     test_two_updates_of_one_container_fuse_in_place()
