@@ -2406,17 +2406,23 @@ def get_control_flow_block_dominators(
         #   dominator of that loop or conditional.
         # - If the immediate dominator is any other control flow region, change the immediate dominator to be the
         #   immediate dominator of that region's end / exit - or a virtual one if no single one exists.
+        roots: set[ControlFlowBlock] = set()
         for k in idom.keys():
             if k.parent_graph is not sdfg and k is k.parent_graph.start_block:
                 region = k.parent_graph
                 next_dom = idom[region]
-                while next_dom.parent_graph is not sdfg and next_dom is next_dom.parent_graph.start_block:
+                while (
+                    next_dom.parent_graph is not sdfg
+                    and next_dom is next_dom.parent_graph.start_block
+                    and next_dom not in roots
+                ):
                     region = next_dom.parent_graph
                     next_dom = idom[region]
                 # A region that starts the SDFG is the root: its first block becomes the root instead
-                idom[k] = (
-                    k if next_dom is region and not isinstance(region, (LoopRegion, ConditionalBlock)) else next_dom
-                )
+                if next_dom is region and not isinstance(region, (LoopRegion, ConditionalBlock)):
+                    roots.add(k)
+                    next_dom = k
+                idom[k] = next_dom
         changed = True
         while changed:
             changed = False
@@ -2466,22 +2472,28 @@ def get_control_flow_block_dominators(
 
         # Compute the transitive relationship of immediate postdominators, similar to how it works for immediate
         # dominators, but inverse.
+        roots: set[ControlFlowBlock] = set()
         for k in ipostdom.keys():
             if k.parent_graph is not sdfg and (
                 k is sinks_per_cfg[k.parent_graph] or isinstance(k.parent_graph, ConditionalBlock)
             ):
                 region = k.parent_graph
                 next_pdom = ipostdom[region]
-                while next_pdom.parent_graph is not sdfg and (
-                    next_pdom is sinks_per_cfg[next_pdom.parent_graph]
-                    or isinstance(next_pdom.parent_graph, ConditionalBlock)
+                while (
+                    next_pdom.parent_graph is not sdfg
+                    and (
+                        next_pdom is sinks_per_cfg[next_pdom.parent_graph]
+                        or isinstance(next_pdom.parent_graph, ConditionalBlock)
+                    )
+                    and next_pdom not in roots
                 ):
                     region = next_pdom.parent_graph
                     next_pdom = ipostdom[region]
                 # A region that ends the SDFG is the root: its last block becomes the root instead
-                ipostdom[k] = (
-                    k if next_pdom is region and not isinstance(region, (LoopRegion, ConditionalBlock)) else next_pdom
-                )
+                if next_pdom is region and not isinstance(region, (LoopRegion, ConditionalBlock)):
+                    roots.add(k)
+                    next_pdom = k
+                ipostdom[k] = next_pdom
         changed = True
         while changed:
             changed = False
