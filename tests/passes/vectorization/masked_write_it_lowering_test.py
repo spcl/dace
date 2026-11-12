@@ -262,5 +262,42 @@ def test_a_blend_on_a_symbol_condition_tiles_and_matches_numpy(flag):
     assert np.array_equal(out, expected), f"{out[:6]} != {expected[:6]}"
 
 
+def blend_read_through_an_access_node_in_the_map() -> dace.SDFG:
+    """``out[i] = ITE(c[i] > 0, x[i], out[i])`` whose old value enters through an access node inside the map, as an
+    inlined body reads it."""
+    sdfg = dace.SDFG("blend_read_through_an_access_node_in_the_map")
+    for name in ("c", "x", "out"):
+        sdfg.add_array(name, [N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", dict(i="0:N"))
+    cond = state.add_tasklet("cond", {"a"}, {"r"}, "r = a > 0")
+    sdfg.add_scalar("flag", dace.bool_, transient=True)
+    flag = state.add_access("flag")
+    state.add_memlet_path(state.add_read("c"), me, cond, dst_conn="a", memlet=dace.Memlet("c[i]"))
+    state.add_edge(cond, "r", flag, None, dace.Memlet("flag[0]"))
+    blend = state.add_tasklet("blend", {"_c", "_t", "_e"}, {"_o"}, "_o = ITE(_c, _t, _e)")
+    state.add_edge(flag, None, blend, "_c", dace.Memlet("flag[0]"))
+    state.add_memlet_path(state.add_read("x"), me, blend, dst_conn="_t", memlet=dace.Memlet("x[i]"))
+    old = state.add_access("out")
+    state.add_memlet_path(state.add_read("out"), me, old, memlet=dace.Memlet("out[i]"))
+    state.add_edge(old, None, blend, "_e", dace.Memlet("out[i]"))
+    state.add_memlet_path(blend, mx, state.add_write("out"), src_conn="_o", memlet=dace.Memlet("out[i]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_blend_read_through_an_access_node_in_the_map_tiles_and_matches_numpy():
+    """The demoted blend leaves no dead read of ``out`` in the map body, which would hide the map from the
+    tile-candidate gate."""
+    sdfg = blend_read_through_an_access_node_in_the_map()
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=HOST_ISA, validate=True)).apply_pass(sdfg, {})
+    assert_tiled(sdfg, blend_read_through_an_access_node_in_the_map())
+    rng = np.random.default_rng(6)
+    c, x, out = rng.random(37) - 0.5, rng.random(37), rng.random(37)
+    expected = np.where(c > 0, x, out)
+    sdfg(c=c, x=x, out=out, N=37)
+    assert np.array_equal(out, expected)
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q", "-p", "no:cacheprovider"]))

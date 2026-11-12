@@ -151,6 +151,11 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
         # strand them (a dangling out-connector the validator rejects). It also drops the tasklet's
         # own ``else_conn`` in-connector, so no separate removal is needed.
         state.remove_memlet_path(in_edges[0], remove_orphans=True)
+        # An inlined body reads through an access node inside the map; left without readers, its path is dead too
+        # (and a dead end in the body hides the map from the tile-candidate gate).
+        if isinstance(source, nd.AccessNode) and source in state.nodes() and state.out_degree(source) == 0:
+            for edge in list(state.in_edges(source)):
+                state.remove_memlet_path(edge, remove_orphans=True)
         return True
 
     def _parse_self_blend(self, tasklet: nd.Tasklet) -> tuple[str, str, str, str] | None:
