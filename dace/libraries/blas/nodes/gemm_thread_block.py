@@ -30,6 +30,7 @@ from dace.codegen.common import sym2cpp
 from dace.config import Config
 from dace.libraries.blas.blocked import operand_view
 from dace.sdfg.scope import is_devicelevel_gpu, is_thread_block_level, kernel_scope
+from dace.sdfg.state import LoopRegion
 from dace.transformation.transformation import ExpandTransformation
 
 WARP_SIZE = 32
@@ -207,23 +208,30 @@ def _rows_bound(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> int | 
     return math.inf
 
 
-def _nested(node, operands: dict, phases: list, threads: int, scratch: dict) -> SDFG:
+def _nested(node, operands: dict, phases: list, threads: int, scratch: dict, chunks: tuple | None = None) -> SDFG:
     """A nested SDFG that runs ``phases`` one after the other, each a state with a thread-block map of ``threads``
     threads around a C++ tasklet. A phase is ``(name, code, inputs, outputs)``, where ``inputs`` and ``outputs`` map
     the tasklet's connectors to the containers they access: the operands (``_a``, ``_b``, ``_a_index``, ``_c``) and
-    the transients in ``scratch`` (name to shape, type and storage)."""
+    the transients in ``scratch`` (name to shape, type and storage). With ``chunks``, a pair of the number of rows and
+    the rows of a chunk, the phases are the body of a loop over the first row of every chunk, ``m0``."""
     sdfg = SDFG(f"{node.label}_sdfg")
     for connector, (size, strides, desc) in operands.items():
         if connector not in sdfg.arrays:
             sdfg.add_array(connector, size, desc.dtype, storage=desc.storage, strides=strides)
     for name, (shape, dtype, storage) in scratch.items():
         sdfg.add_transient(name, shape, dtype, storage=storage)
+    region = sdfg
+    if chunks is not None:
+        rows, chunk = chunks
+        sdfg.add_symbol("m0", dtypes.int64)
+        region = LoopRegion(f"{node.label}_chunks", f"m0 < {rows}", "m0", "m0 = 0", f"m0 = m0 + {chunk}", sdfg=sdfg)
+        sdfg.add_node(region, is_start_block=True)
     previous = None
     for phase, code, inputs, outputs in phases:
         label = node.label if len(phases) == 1 else f"{node.label}_{phase}"
-        state = sdfg.add_state(label, is_start_block=previous is None)
+        state = region.add_state(label, is_start_block=previous is None)
         if previous is not None:
-            sdfg.add_edge(previous, state, InterstateEdge())
+            region.add_edge(previous, state, InterstateEdge())
         previous = state
         entry, exit_ = state.add_map(
             f"{label}_threads", {"tid": f"0:{threads}"}, schedule=dtypes.ScheduleType.GPU_ThreadBlock
@@ -485,12 +493,14 @@ class ExpandGemmThreadBlockMMA(ExpandTransformation):
         storage = dtypes.StorageType.GPU_Shared(dynamic=True, may_overlap_outputs=single_chunk)
         scratch = {"_workspace": ([MMA_STAGES, rows + n, MMA_K_STEP], product.types[0], storage)}
         inputs = _inputs(product)
-        if single_chunk and _runs_states_as_block(sdfg, state, node):
-            # Two states: the copies and products, then the stores, with the accumulators of every thread in between.
-            # The states synchronize the block where the tasklets used to (before the workspace is used, between the
-            # last use of the workspace and the first write of c, and once c is complete).
+        if _runs_states_as_block(sdfg, state, node):
+            # Two states: the copies and products, then the stores, with the accumulators of every thread in between,
+            # in a loop over the chunks of rows unless there is one. The states synchronize the block where the
+            # tasklets would have to (before the workspace is used, between the last use of the workspace and the first
+            # write of c, and once c is complete).
             scratch["_acc"] = ([accumulators], dace.float32, dtypes.StorageType.Register)
-            first = "const long long m0 = 0;\n"
+            first = "const long long m0 = 0;\n" if single_chunk else ""
+            chunks = None if single_chunk else (f"({product.m})", rows)
             phases = [
                 (
                     "compute",
@@ -500,8 +510,9 @@ class ExpandGemmThreadBlockMMA(ExpandTransformation):
                 ),
                 ("store", code.header + first + code.store() + code.footer, {"acc": "_acc"}, {"c": "_c"}),
             ]
+            return _nested(node, operands, phases, threads, scratch, chunks)
         else:
-            # Chunks of rows in a loop of one tasklet, which synchronizes the block itself
+            # Chunks of rows in a loop of one tasklet, which synchronizes the block itself (in a persistent kernel)
             done_with_workspace = "__syncthreads();  // Every warp is done with the workspace, which may overlap c\n"
             body = f"""float acc[MF * NF * 4];
 for (long long m0 = 0; m0 < M_TOTAL; m0 += MT) {{
