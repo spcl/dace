@@ -4106,7 +4106,8 @@ def simplify_under(expr: SymbolicType, facts: Facts) -> SymbolicType:
     is written back in the original symbols (``s = N - 5``)."""
     expr = fold_extrema(sympy.sympify(expr), facts)
     names = {s.name: s for s in expr.free_symbols if isinstance(s, sympy.Symbol) and not isinstance(s, sympy.Dummy)}
-    solved = {str(target): value for target, value in facts.substitution.items()}
+    # A symbol an assignment equates to a container read (``K = lengths[i]``) stays itself: no slack writes it back
+    solved = {str(target): value for target, value in facts.substitution.items() if not value.has(Subscript)}
     rewritten = expr.xreplace({s: solved.get(name, s) for name, s in names.items()})
     plain = {s for s in rewritten.free_symbols if isinstance(s, sympy.Symbol) and not isinstance(s, sympy.Dummy)}
     assumed = {s: sympy.Symbol(s.name, **facts.assumptions(s.name)) for s in plain}
