@@ -10,9 +10,10 @@ implementations for it (see ``thread_block_implementation``).
   columns ``N`` and inner dimension ``K``, ``K`` contiguous in both operands (as in ``x @ w.T`` for row-major ``x``
   and ``w``). The rows, any number of them (also data-dependent, as in ``x[r0:r0 + nr] @ w.T``), are computed in
   chunks of up to 64, the columns split among the warps of the block. Slices of ``K`` are copied asynchronously
-  (``cp.async``, which also fetches the next slices into L2) into a workspace, a transient in dynamic shared memory
-  (which the products in other states of the block's code share, see ``PlanSharedMemory``), and loaded into
-  tensor-core fragments (``ldmatrix``). Rows of ``a`` gathered through ``_a_index`` (see
+  (``cp.async``, which also fetches the next slices into L2) into a workspace, a transient in dynamic shared memory,
+  and loaded into tensor-core fragments (``ldmatrix``). The products accumulate in registers of every thread, which a
+  second state of the expansion writes to the output: the workspace is then no longer in use, and may share memory
+  with the output and with the containers of other code of the block (see ``SharedMemoryInterference``). Rows of ``a`` gathered through ``_a_index`` (see
   ``dace.libraries.blas.indexed``) are read directly, as are operands stored in blocks of columns along ``K`` (see
   ``dace.libraries.blas.blocked``, blocks of a multiple of 32 columns), whose slices are then contiguous. The
   tensor-core code needs CUDA compute capability 8.0; elsewhere (older GPUs, HIP), the same expansion multiplies element
@@ -515,17 +516,17 @@ class ExpandGemmThreadBlockMMA(ExpandTransformation):
             rows = min(MMA_ROWS, -(-int(symbolic.evaluate(m, sdfg.constants)) // 16) * 16)
         code = _MMACode(product, threads, rows, n, k)
         accumulators = _MMACode.accumulators(rows, n, threads)
+        # A single chunk of rows if there are at most those of the output's container
         single_chunk = _rows_bound(node, state, sdfg) <= MMA_ROWS
-        # With a single chunk of rows (at most those of the output's container), the workspace is no longer used once
-        # the output is written: it may overlap the output (see ``StorageType.GPU_Shared.may_overlap_outputs``)
-        storage = dtypes.StorageType.GPU_Shared(dynamic=True, may_overlap_outputs=single_chunk)
+        storage = dtypes.StorageType.GPU_Shared(dynamic=True)
         scratch = {"_workspace": ([MMA_STAGES, rows + n, MMA_K_STEP], product.types[0], storage)}
         inputs = _inputs(product)
         if _runs_states_as_block(sdfg, state, node):
             # Two states: the copies and products, then the stores, with the accumulators of every thread in between,
             # in a loop over the chunks of rows unless there is one. The states synchronize the block where the
             # tasklets would have to (before the workspace is used, between the last use of the workspace and the first
-            # write of c, and once c is complete).
+            # write of c, and once c is complete), and show that the workspace is no longer used once c is written: it
+            # may share memory with c (see ``SharedMemoryInterference``).
             scratch["_acc"] = ([accumulators], dace.float32, dtypes.StorageType.Register)
             first = "const long long m0 = 0;\n" if single_chunk else ""  # The first row of the chunk
             chunks = None if single_chunk else (f"({product.m})", rows)
@@ -541,11 +542,10 @@ class ExpandGemmThreadBlockMMA(ExpandTransformation):
             return _nested(node, operands, phases, threads, scratch, chunks)
         else:
             # Chunks of rows in a loop of one tasklet, which synchronizes the block itself (in a persistent kernel)
-            done_with_workspace = "__syncthreads();  // Every warp is done with the workspace, which may overlap c\n"
             body = f"""float acc[MF * NF * 4];
 for (long long m0 = 0; m0 < M_TOTAL; m0 += MT) {{
 __syncthreads();  // The previous user of the workspace is done with it
-{code.compute()}{done_with_workspace if single_chunk else ""}{code.store()}}}
+{code.compute()}{code.store()}}}
 __syncthreads();  // The product is complete for every thread of the block
 """
             phases = [("product", code.header + body + code.footer, inputs, {"c": "_c", "workspace": "_workspace"})]

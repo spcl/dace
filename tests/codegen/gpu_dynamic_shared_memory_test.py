@@ -247,7 +247,6 @@ def test_storage_type_attribute():
         S.GPU_Shared,
         S.GPU_Shared(dynamic=True),
         S.GPU_Shared(dynamic=False),
-        S.GPU_Shared(dynamic=True, may_overlap_outputs=True),
     ],
 )
 def test_storage_type_serialization(storage: S):

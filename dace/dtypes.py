@@ -65,10 +65,6 @@ class StorageType(ExtensibleAttributeEnum):
         #: Whether the data is placed in dynamic shared memory (``True``), in static shared memory (``False``), or where
         #: the code generator decides (``None``), based on its size and the static shared memory the kernel uses.
         dynamic: bool | None = None
-        #: Whether the SDFG of the container is done with it before it writes any of its outputs (its non-transient
-        #: containers), so that the container may share memory with an output that holds no values until the SDFG
-        #: writes it (see ``PlanSharedMemory``), e.g., the workspace of a matrix product with its result.
-        may_overlap_outputs: bool = False
 
     SVE_Register = auto()  #: SVE register
     Snitch_TCDM = auto()  #: Cluster-private memory

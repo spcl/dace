@@ -737,9 +737,7 @@ class PlanSharedMemory(ppl.Pass):
         # Make every decision explicit in the SDFG
         for level_sdfg, name in containers:
             desc = level_sdfg.arrays[name]
-            desc.storage = dtypes.StorageType.GPU_Shared(
-                dynamic=(level_sdfg, name) in dynamic, may_overlap_outputs=desc.storage.may_overlap_outputs
-            )
+            desc.storage = dtypes.StorageType.GPU_Shared(dynamic=(level_sdfg, name) in dynamic)
 
         # Lay out dynamic shared memory
         if dynamic:
