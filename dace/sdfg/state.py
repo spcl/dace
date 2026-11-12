@@ -3476,9 +3476,8 @@ class SymbolResolver:
     @staticmethod
     def guard_facts(conditional: "ConditionalBlock", branch: "ControlFlowRegion") -> tuple["AssignmentFact", ...]:
         """The relations that hold where ``branch`` of ``conditional`` starts: the order comparisons its condition
-        conjoins and, for each earlier branch, those its negation conjoins when the condition reads only integers (a
-        NaN fails a comparison and its negation alike)."""
-        sdfg = conditional.sdfg
+        conjoins and, for each earlier branch, those its negation conjoins when the condition reads only names whose
+        type resolves to an integer (``integer_name``; a NaN fails a comparison and its negation alike)."""
         found: list[AssignmentFact] = []
         for condition, region in conditional.branches:
             if condition is None:
@@ -3487,19 +3486,42 @@ class SymbolResolver:
                 expr = symbolic.pystr_to_symbolic(condition.as_string)
             except (TypeError, ValueError, SyntaxError, sympy.SympifyError):
                 expr = None
-            if expr is not None:
-                reads = frozenset(symbolic.free_symbols_and_functions(expr)) | symbolic.arrays(expr)
+            if isinstance(expr, sympy.Basic):
+                names = frozenset(symbolic.free_symbols_and_functions(expr))
+                reads = names | symbolic.arrays(expr)
                 negated = region is not branch
-                integral = not negated or all(
-                    (sdfg.arrays[name].dtype if name in sdfg.arrays else sdfg.symbols.get(name, dtypes.int64))
-                    in dtypes.INTEGER_TYPES
-                    for name in reads
+                # A function's value, as a name of unknown type, may be a NaN
+                integral = not negated or (
+                    names <= {str(s) for s in expr.free_symbols}
+                    and all(SymbolResolver.integer_name(conditional, name) for name in reads)
                 )
                 if integral:
                     found += [AssignmentFact(r, reads, frozenset()) for r in SymbolResolver.conjoined(expr, negated)]
             if region is branch:
                 break
         return tuple(found)
+
+    @staticmethod
+    def integer_name(block: "ControlFlowBlock", name: str) -> bool:
+        """Whether ``name`` is a container or symbol visible at ``block`` whose type resolves to an integer: declared on
+        the SDFG, of the container, of an enclosing loop's iterator, or inferred on every interstate edge assigning
+        it. A name whose type does not resolve is not an integer."""
+        sdfg = block.sdfg
+        if name in sdfg.arrays:
+            return sdfg.arrays[name].dtype in dtypes.INTEGER_TYPES
+        if name in sdfg.symbols:
+            return sdfg.symbols[name] in dtypes.INTEGER_TYPES
+        region = block.parent_graph
+        while region is not None and not isinstance(region, dace.SDFG):
+            if isinstance(region, LoopRegion) and region.loop_variable == name:
+                return region.new_symbols(sdfg.symbols).get(name) in dtypes.INTEGER_TYPES
+            region = region.parent_graph
+        types = [
+            edge.data.new_symbols(sdfg, sdfg.symbols).get(name)
+            for edge in sdfg.all_interstate_edges()
+            if name in edge.data.assignments
+        ]
+        return bool(types) and all(dtype in dtypes.INTEGER_TYPES for dtype in types)
 
     @staticmethod
     def conjoined(condition: Any, negated: bool) -> list[symbolic.Relation]:
