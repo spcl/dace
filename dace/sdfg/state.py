@@ -3191,7 +3191,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
 
 class AssignmentFact(NamedTuple):
-    """A relation an interstate edge establishes, the names and containers it reads, and its integer names."""
+    """A relation an interstate edge or a branch condition establishes, the names and containers it reads, and its
+    integer names."""
 
     relation: symbolic.Relation
     reads: frozenset[str]
@@ -3351,7 +3352,7 @@ class SymbolResolver:
                 for param, rng in zip(map_entry.map.params, map_entry.map.range.ranges)
             ]
             scopes.append((map_entry, bound, ranges if isinstance(map_entry, nd.MapEntry) else []))
-        from_ranges: list[symbolic.Relation] = []
+        contingent: list[symbolic.Relation] = []
         for owner, bound, ranges in scopes:
             # A scope rebinds its names: what held for an outer symbol of the same name no longer does
             relations = [relation for relation in relations if not symbolic.relation_names(relation) & bound.keys()]
@@ -3380,7 +3381,7 @@ class SymbolResolver:
                         symbolic.Relation(symbolic.RelationKind.LE, symbolic.symbol(name), sympy.sympify(high)),
                     ]
                     relations += bounds
-                    from_ranges += bounds
+                    contingent += bounds
             # What the scope declares for its names
             if owner in sdfg.symbol_repo.scopes:
                 declared = scope_facts(sdfg.symbol_repo.scopes[owner])
@@ -3398,8 +3399,10 @@ class SymbolResolver:
             if not fact.reads & rebound:
                 relations.append(fact.relation)
                 integers |= fact.integers
+                contingent.append(fact.relation)
         # Solved by the first proof that needs them: most scopes are never asked. A range the facts prove empty has a
-        # body that never runs, so it is sound to know less there: without its bounds.
+        # body that never runs, as has a branch whose condition they contradict, so it is sound to know less there:
+        # without its bounds and the assignments and conditions before it.
         return symbolic.Facts(
             tuple(relations),
             frozenset(integers),
@@ -3407,7 +3410,7 @@ class SymbolResolver:
             frozenset(parameters),
             own.assumed,
             check=False,
-            fallback=tuple(relation for relation in relations if relation not in from_ranges),
+            fallback=tuple(relation for relation in relations if relation not in contingent),
         )
 
     def changes(self, block: "ControlFlowBlock") -> frozenset[str]:
@@ -3426,8 +3429,9 @@ class SymbolResolver:
 
     def assignment_facts(self, block: "ControlFlowBlock") -> tuple["AssignmentFact", ...]:
         """The relations the interstate assignments that run before ``block`` on every path to it establish on entry to
-        it: ``name == value`` for each ``name = value``, and what the edge declares of the names it binds, while
-        nothing since changes a name or container they read. A merge, or the entry of the SDFG, knows none."""
+        it: ``name == value`` for each ``name = value``, what the edge declares of the names it binds, and inside a
+        branch what its condition establishes (``guard_facts``), while nothing since changes a name or container they
+        read. A merge, or the entry of the SDFG, knows none."""
         if isinstance(block, dace.SDFG):
             return ()
         path: list[tuple[ControlFlowBlock, ControlFlowBlock | None, dace.sdfg.InterstateEdge | None]] = []
@@ -3464,8 +3468,51 @@ class SymbolResolver:
                 found = tuple(fact for fact in found if not fact.reads & changed)
             if edge is not None:
                 found = self.edge_facts(target.sdfg, edge, found)
+            elif isinstance(previous, ConditionalBlock):
+                found = found + self.guard_facts(previous, target)
             self._assignment_facts[target] = found
         return found
+
+    @staticmethod
+    def guard_facts(conditional: "ConditionalBlock", branch: "ControlFlowRegion") -> tuple["AssignmentFact", ...]:
+        """The relations that hold where ``branch`` of ``conditional`` starts: the order comparisons its condition
+        conjoins and, for each earlier branch, those its negation conjoins when the condition reads only integers (a
+        NaN fails a comparison and its negation alike)."""
+        sdfg = conditional.sdfg
+        found: list[AssignmentFact] = []
+        for condition, region in conditional.branches:
+            if condition is None:
+                break
+            try:
+                expr = symbolic.pystr_to_symbolic(condition.as_string)
+            except (TypeError, ValueError, SyntaxError, sympy.SympifyError):
+                expr = None
+            if expr is not None:
+                reads = frozenset(symbolic.free_symbols_and_functions(expr)) | symbolic.arrays(expr)
+                negated = region is not branch
+                integral = not negated or all(
+                    (sdfg.arrays[name].dtype if name in sdfg.arrays else sdfg.symbols.get(name, dtypes.int64))
+                    in dtypes.INTEGER_TYPES
+                    for name in reads
+                )
+                if integral:
+                    found += [AssignmentFact(r, reads, frozenset()) for r in SymbolResolver.conjoined(expr, negated)]
+            if region is branch:
+                break
+        return tuple(found)
+
+    @staticmethod
+    def conjoined(condition: Any, negated: bool) -> list[symbolic.Relation]:
+        """The order comparisons ``condition``, or its negation, conjoins: through ``and``, ``not``, and the ``or`` a
+        negation turns into an ``and``."""
+        if isinstance(condition, sympy.Not):
+            return SymbolResolver.conjoined(condition.args[0], not negated)
+        if isinstance(condition, (symbolic.OR, sympy.Or) if negated else (symbolic.AND, sympy.And)):
+            return [r for arg in condition.args for r in SymbolResolver.conjoined(arg, negated)]
+        if not isinstance(condition, sympy.core.relational.Relational):
+            return []
+        relation = symbolic.comparison_relation(condition.negated if negated else condition)
+        return [] if relation is None else [relation]
 
     @staticmethod
     def starts(region: "ControlFlowRegion", block: "ControlFlowBlock") -> bool:

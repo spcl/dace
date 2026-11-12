@@ -472,6 +472,118 @@ def test_a_running_maximum_is_nondecreasing_whatever_it_reads():
     assert array_facts.FactKind.NONDECREASING not in kinds(sdfg, loop)
 
 
+def stored_index(value: str, assigned: bool = False) -> tuple[dace.SDFG, LoopRegion]:
+    """``idx`` (a transient) filled with -1, then ``idx[i] = value`` over a map ``i < N``, then a loop reading ``idx``;
+    ``value`` may read ``s``, which an edge assigns when ``assigned``. Returns the SDFG and the loop."""
+    sdfg = dace.SDFG(f"stored_index_{abs(hash((value, assigned)))}")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("s", dace.int64)
+    sdfg.add_array("idx", ["N"], dace.int64, transient=True)
+    sdfg.add_array("out", ["N"], dace.int64)
+    first = sdfg.add_state("fill", is_start_block=True)
+    node = FillLibraryNode("fill_idx", value=-1)
+    first.add_node(node)
+    first.add_edge(node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, first.add_write("idx"), None, dace.Memlet("idx[0:N]"))
+    store = sdfg.add_state("store")
+    sdfg.add_edge(first, store, dace.InterstateEdge(assignments={"s": "N"} if assigned else None))
+    store.add_mapped_tasklet("st", {"i": "0:N"}, {}, f"o = {value}", {"o": dace.Memlet("idx[i]")}, external_edges=True)
+    loop = LoopRegion("use", "r < N", "r", "r = 0", "r = r + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(store, loop, dace.InterstateEdge())
+    body = loop.add_state("body", is_start_block=True)
+    t = body.add_tasklet("t", {"x"}, {"o"}, "o = x")
+    body.add_edge(body.add_read("idx"), None, t, "x", dace.Memlet("idx[r]"))
+    body.add_edge(t, "o", body.add_write("out"), None, dace.Memlet("out[r]"))
+    return sdfg, loop
+
+
+def bounded(sdfg: dace.SDFG, loop: LoopRegion) -> list[tuple[str, str]]:
+    return [
+        (str(f.lo), str(f.hi))
+        for f in array_facts.facts_at(sdfg, loop, ["idx"])
+        if f.kind is array_facts.FactKind.BOUNDED
+    ]
+
+
+def test_every_bounded_store_bounds_the_elements():
+    """The fill stores -1, the map ``N - 1 - i`` over ``i`` in ``[0, N - 1]``: every element lies in ``[-1, N - 1]``."""
+    assert bounded(*stored_index("N - 1 - i")) == [("-1", "N - 1")]
+
+
+@pytest.mark.parametrize(
+    "value, assigned",
+    [
+        # ``s`` is assigned by an edge: the bound would not hold where ``s`` changes
+        ("s + i", True),
+        # No slope: the extremes of ``i`` are not those of the value
+        ("i // 2", False),
+        # Not an integer: the store truncates it
+        ("i + 0.5", False),
+    ],
+)
+def test_a_store_without_invariant_affine_bounds_bounds_nothing(value, assigned):
+    assert bounded(*stored_index(value, assigned)) == []
+
+
+@dace.program
+def gather_reversed(a: dace.float64[2 * N]):
+    idx = np.empty((N,), dtype=np.int64)
+    for i in range(N):
+        idx[i] = N - 1 - i
+    for r in range(N):
+        row = idx[r]
+        a[N + r] = a[row] + 1.0
+
+
+@dace.program
+def gather_after_a_caller_store(a: dace.float64[2 * N], k: dace.int64[1]):
+    idx = np.empty((N,), dtype=np.int64)
+    for i in range(N):
+        idx[i] = N - 1 - i
+    idx[0] = k[0]
+    for r in range(N):
+        row = idx[r]
+        a[N + r] = a[row] + 1.0
+
+
+@dace.program
+def gather_through_caller_index(idx: dace.int64[N], a: dace.float64[2 * N]):
+    for r in range(N):
+        row = idx[r]
+        a[N + r] = a[row] + 1.0
+
+
+def test_a_gather_from_the_lower_half_maps_under_a_derived_range():
+    """``idx`` holds ``N - 1 - i``: the reads stay in ``a[0:N]``, apart from the stores into ``a[N:2N]``."""
+    sdfg = parallelized(gather_reversed)
+    assert "r" not in loop_variables(sdfg)
+    assert any("idx in [0, N - 1]" in n for n in fact_notes(sdfg))
+    a = np.arange(20, dtype=np.float64)
+    ref = a.copy()
+    ref[10:] = a[9::-1] + 1.0
+    sdfg(a=a, N=10)
+    assert np.array_equal(a, ref)
+
+
+def test_a_gather_through_a_caller_store_stays_sequential():
+    """``idx[0]`` is the caller's: it may name an element of ``a[N:2N]`` another iteration stores."""
+    sdfg = parallelized(gather_after_a_caller_store)
+    assert "r" in loop_variables(sdfg)
+
+
+def test_a_declared_range_maps_a_gather_through_a_caller_index():
+    sdfg = gather_through_caller_index.to_sdfg(simplify=True)
+    ParallelizeLoops().apply_pass(sdfg, {})
+    assert "r" in loop_variables(sdfg)
+    sdfg = gather_through_caller_index.to_sdfg(simplify=True)
+    sdfg.add_data_assumption(
+        "idx", dace.symbolic.DataFact(dace.symbolic.DataFactKind.BOUNDED, dace.symbolic.pystr_to_symbolic("0"), N - 1)
+    )
+    ParallelizeLoops().apply_pass(sdfg, {})
+    assert "r" not in loop_variables(sdfg)
+    assert any("idx in [0, N - 1] (declared)" in n for n in fact_notes(sdfg))
+
+
 if __name__ == "__main__":
     import sys
 

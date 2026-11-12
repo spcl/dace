@@ -424,7 +424,7 @@ class SymbolRepo:
             if desc is None or desc.transient:
                 raise InvalidSDFGError(f'Data facts name "{name}", which is not a container the SDFG takes', sdfg, None)
             for fact in facts:
-                if fact.kind is not DataFactKind.NONNEGATIVE and len(desc.shape) != 1:
+                if fact.kind not in (DataFactKind.NONNEGATIVE, DataFactKind.BOUNDED) and len(desc.shape) != 1:
                     raise InvalidSDFGError(
                         f'{fact.kind.name} of "{name}" needs a one-dimensional container', sdfg, None
                     )

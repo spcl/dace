@@ -1436,9 +1436,9 @@ class SDFG(ControlFlowRegion):
         self._symbol_repo.set_data_facts(name, facts)
 
     def check_data_fact(self, name: str, fact: symbolic.DataFact) -> None:
-        """Raises if ``fact`` cannot hold for container ``name``: a kind other than ``NONNEGATIVE`` on a container
-        that is not one-dimensional, segments naming no container, or a sentinel-free ``INJECTIVE`` whose value range
-        is provably smaller than the container's extent.
+        """Raises if ``fact`` cannot hold for container ``name``: a kind other than ``NONNEGATIVE`` or ``BOUNDED`` on a
+        container that is not one-dimensional, segments naming no container, or a sentinel-free ``INJECTIVE`` whose
+        value range is provably smaller than the container's extent.
 
         :raise KeyError: If the container does not exist.
         :raise InconsistentAssumptionsError: If the fact cannot hold.
@@ -1447,7 +1447,8 @@ class SDFG(ControlFlowRegion):
         if desc is None:
             raise KeyError(f'Container "{name}" does not exist')
         problems = []
-        if fact.kind is not symbolic.DataFactKind.NONNEGATIVE and len(desc.shape) != 1:
+        elementwise = (symbolic.DataFactKind.NONNEGATIVE, symbolic.DataFactKind.BOUNDED)
+        if fact.kind not in elementwise and len(desc.shape) != 1:
             problems.append(f"{fact.kind.name} needs a one-dimensional container, not shape {desc.shape}")
         if fact.segments is not None and fact.segments not in self._arrays:
             problems.append(f'segments "{fact.segments}" is not a container')

@@ -6,7 +6,8 @@ A fact is a property of an array's contents at one program point:
 * ``INJECTIVE``: the entries other than ``sentinel`` are pairwise distinct, each within ``[lo, hi]``
   (a permutation, the output of a counting-sort scatter);
 * ``NONDECREASING``: ``A[x] <= A[y]`` for ``lo <= x <= y <= hi`` (a prefix sum, CSR row pointers);
-* ``NONNEGATIVE``: every entry is ``>= 0``.
+* ``NONNEGATIVE``: every entry is ``>= 0``;
+* ``BOUNDED``: every entry lies in ``[lo, hi]`` (an index array every store into which is in range).
 
 Facts are derived from the producer blocks preceding the reading loop (:func:`facts_at`), and enter the
 consumer's conflict query as axioms instantiated over the array reads the query contains
@@ -19,14 +20,16 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
+import sympy
+
 from dace import data as dt
-from dace import subsets, symbolic
+from dace import dtypes, subsets, symbolic
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.libraries.standard.nodes.scan import Scan, ScanOp, segmented
 from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg.analysis.cfg import collect_enclosing_conditions
-from dace.sdfg.sdfg import SDFG
+from dace.sdfg.sdfg import SDFG, interstate_bound_names
 from dace.sdfg.state import (
     ConditionalBlock,
     ControlFlowBlock,
@@ -604,6 +607,98 @@ def nonnegative_containers(
     return known - (set(assumed) - candidates)
 
 
+def extreme(value: Any, ranges: list[tuple[str, Any, Any]], upper: bool) -> Any | None:
+    """The largest (``upper``) or smallest value of ``value`` while each ``(name, lo, hi)`` of ``ranges``, innermost
+    first, ranges over ``[lo, hi]`` (which may read the names of the ranges after it); None unless ``value`` is
+    affine in each of them with an integer slope."""
+    for name, lo, hi in ranges:
+        sym = next((s for s in value.free_symbols if str(s) == name), None)
+        if sym is None:
+            continue
+        slope = symbolic.simplify(value.diff(sym))
+        if not slope.is_Integer:
+            return None
+        value = value.subs(sym, hi if (slope > 0) == upper else lo)
+    return value
+
+
+def store_bounds(sdfg: SDFG, state: SDFGState, edge: Any) -> tuple[Any, Any] | None:
+    """``(lo, hi)`` of every value ``edge`` stores: a constant fill, or a tasklet (or a nested SDFG's one store, see
+    :func:`nested_store`) assigning an expression affine in the enclosing map parameters and loop iterators, at their
+    extremes; None unless both read only names nothing in
+    ``sdfg`` assigns."""
+    node, inner = producer(state, edge)
+    if node is None or edge.data.wcr is not None or inner.data.wcr is not None:
+        return None
+    if isinstance(node, FillLibraryNode):
+        constant = integer_constant(repr(node.value))
+        return None if node.value_edge(state) is not None or constant is None else (sympy.Integer(constant),) * 2
+    if isinstance(node, nodes.NestedSDFG):
+        nested = nested_store(node, inner.src_conn)
+        value = None if nested is None else nested[1]
+    else:
+        text = assignment_value(node) if isinstance(node, nodes.Tasklet) and not node.in_connectors else None
+        value = None if text is None else symbolic.pystr_to_symbolic(text)
+    # An integer polynomial: a stored float would be truncated, a ``Mod`` or ``floor`` has no slope
+    if not isinstance(value, sympy.Expr) or not value.is_polynomial():
+        return None
+    if not all(number.is_Integer for number in value.atoms(sympy.Number)):
+        return None
+    ranges = []
+    entry = state.entry_node(node)
+    while entry is not None:
+        if isinstance(entry, nodes.MapEntry):
+            for name, (lo, hi, step) in zip(entry.map.params, entry.map.range.ranges):
+                if sympy.sympify(step).is_positive:
+                    ranges.append((name, lo, hi))
+        entry = state.entry_node(entry)
+    region = state.parent_graph
+    while isinstance(region, ControlFlowRegion) and not isinstance(region, SDFG):
+        bounds = loop_range(region) if isinstance(region, LoopRegion) and not region.inverted else None
+        if bounds is not None and loop_analysis.range_holds(region, bounds, sdfg):
+            start, end, step = bounds
+            ranges.append((region.loop_variable, *((start, end) if step.is_positive else (end, start))))
+        region = region.parent_graph
+    lo, hi = extreme(value, ranges, False), extreme(value, ranges, True)
+    if lo is None or hi is None or lo.atoms(symbolic.Subscript) or hi.atoms(symbolic.Subscript):
+        return None
+    invariant = sdfg.symbols.keys() - interstate_bound_names(sdfg)
+    return (lo, hi) if {str(s) for b in (lo, hi) for s in b.free_symbols} <= invariant else None
+
+
+def widest(bounds: list[Any], upper: bool, facts: symbolic.Facts) -> Any | None:
+    """The one of ``bounds`` that ``facts`` prove at least (``upper``), or at most, every other one."""
+    for c in bounds:
+        if all(
+            symbolic.ask(symbolic.Relation(symbolic.RelationKind.LE, *((b, c) if upper else (c, b))), facts)
+            is symbolic.Truth.TRUE
+            for b in bounds
+            if b != c
+        ):
+            return c
+    return None
+
+
+def bounded_fact(sdfg: SDFG, name: str) -> ArrayFact | None:
+    """``BOUNDED`` of the one-dimensional integer transient ``name`` when every store into it is bounded
+    (:func:`store_bounds`): over the smallest of their lower bounds and the largest of their upper bounds, if the
+    SDFG's facts order them. Holds for every value the program stores, so at every point."""
+    desc = sdfg.arrays.get(name)
+    if desc is None or not desc.transient or len(desc.shape) != 1 or desc.dtype not in dtypes.INTEGER_TYPES:
+        return None
+    # A view or reference stores into a container under another name
+    if any(isinstance(d, (dt.View, dt.Reference)) for d in sdfg.arrays.values()):
+        return None
+    found = [store_bounds(sdfg, st, e) for st, e in write_edges(sdfg, name)]
+    if not found or None in found:
+        return None
+    facts = sdfg.facts()
+    lo, hi = widest([b[0] for b in found], False, facts), widest([b[1] for b in found], True, facts)
+    if lo is None or hi is None:
+        return None
+    return ArrayFact(FactKind.BOUNDED, name, lo, hi, origin="every store is bounded")
+
+
 def facts_at(
     sdfg: SDFG, block: ControlFlowBlock, names: Iterable[str], nonneg: set[str] | None = None
 ) -> list[ArrayFact]:
@@ -624,6 +719,8 @@ def facts_at(
             found.append(fact)
         elif nonneg is not None and name in nonneg:
             found.append(ArrayFact(FactKind.NONNEGATIVE, name, origin="every store is nonnegative"))
+        if (bounded := bounded_fact(sdfg, name)) is not None:
+            found.append(bounded)
         found.extend(f for f in declared_facts(block, name) if f not in found)
     return found
 
@@ -824,6 +921,8 @@ def fact_axioms(facts: list[ArrayFact], arrays: dict[str, Any], terms: list[Any]
             ax = arr[x]
             if fact.kind is FactKind.NONNEGATIVE:
                 axioms.append(ax >= 0)
+            elif fact.kind is FactKind.BOUNDED:
+                axioms += [c for c in (lo is None or lo <= ax, hi is None or ax <= hi) if c is not True]
             elif fact.kind is FactKind.INJECTIVE and lo is not None:
                 inside = z.And(lo <= ax, ax <= hi)
                 axioms.append(inside if fact.sentinel is None else z.Or(ax == fact.sentinel, inside))
