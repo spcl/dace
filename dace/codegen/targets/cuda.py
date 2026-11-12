@@ -1982,11 +1982,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # of a collaborative write, or update a value one thread initialized). A state that runs thread-block maps
         # also syncs at its end (see below).
         if self._toplevel_schedule == dtypes.ScheduleType.GPU_Device:
-            for node in state.nodes():
-                if isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared:
-                    if not self._scope_has_collaborative_copy:
-                        callsite_stream.write("__syncthreads();", cfg, state.block_id)
-                    break
+            if gpu_helpers.state_starts_with_block_barrier(sdfg, state) and not self._scope_has_collaborative_copy:
+                callsite_stream.write("__syncthreads();", cfg, state.block_id)
 
         # In GPU_Persistent scopes, states need global barriers between them,
         # the DFGs inside of a state are independent, so they don't need
@@ -2083,9 +2080,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # The threads of thread-block maps finish them before the block goes on: what follows, the next state or the
         # condition or assignments of a transition, may read what other threads wrote, also in global memory (e.g., one
         # thread updates a counter after all threads wrote their part, or all threads read a flag one thread set)
-        if self._toplevel_schedule == dtypes.ScheduleType.GPU_Device and any(
-            isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
-            for node in state.nodes()
+        if self._toplevel_schedule == dtypes.ScheduleType.GPU_Device and gpu_helpers.state_ends_with_block_barrier(
+            state
         ):
             callsite_stream.write("__syncthreads();", cfg, state.block_id)
 

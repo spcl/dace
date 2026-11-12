@@ -33,6 +33,40 @@ def gpu_kernels(sdfg: SDFG) -> list[tuple[SDFG, SDFGState, nodes.MapEntry]]:
     return result
 
 
+def state_starts_with_block_barrier(sdfg: SDFG, state: SDFGState) -> bool:
+    """
+    Returns whether the code generator synchronizes the thread block at the start of a state of a thread block's code
+    in a ``GPU_Device`` kernel: if the state accesses shared memory (has an access node of ``GPU_Shared`` storage),
+    which the threads of the block may have accessed in a previous state.
+
+    The barrier is left out while a collaborative copy of the kernel (an implicit copy between GPU containers in the
+    block's code) is pending, whose own barrier is emitted at the next thread-block map.
+
+    :param sdfg: The SDFG of the state.
+    :param state: The state.
+    :return: True if the state starts with a barrier.
+    """
+    return any(
+        isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared
+        for node in state.nodes()
+    )
+
+
+def state_ends_with_block_barrier(state: SDFGState) -> bool:
+    """
+    Returns whether the code generator synchronizes the thread block at the end of a state of a thread block's code in
+    a ``GPU_Device`` kernel: if the state runs a thread-block map, so that what follows may read what other threads
+    wrote in it.
+
+    :param state: The state.
+    :return: True if the state ends with a barrier.
+    """
+    return any(
+        isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+        for node in state.nodes()
+    )
+
+
 def dynamic_map_block_dims() -> tuple[int, ...]:
     """
     Returns the thread-block dimensions of dynamic thread-block maps (``compiler.cuda.dynamic_map_block_size``).
