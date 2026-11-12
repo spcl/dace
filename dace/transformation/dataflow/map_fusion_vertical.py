@@ -2893,12 +2893,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         producer = guard(writer.src, state.entry_node(writer.src).map.params)
         if producer is None:
             return False
-        written = [
-            e
-            for n in producer[1].data_nodes()
-            if n.data == writer.src_conn
-            for e in producer[1].in_edges(n)
-        ]
+        written = [e for n in producer[1].data_nodes() if n.data == writer.src_conn for e in producer[1].in_edges(n)]
         if not written or any(e.data.dynamic for e in written):
             return False
         intermediate = state.memlet_path(producer_edge)[-1].dst
