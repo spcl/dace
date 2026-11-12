@@ -292,7 +292,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if any(
                 not _is_view_of(nstate, neighbor, n)
                 for n in accesses
-                for neighbor in [e.src for e in data_edges(nstate, n, True)] + [e.dst for e in data_edges(nstate, n, False)]
+                for neighbor in [e.src for e in data_edges(nstate, n, True)]
+                + [e.dst for e in data_edges(nstate, n, False)]
                 if isinstance(neighbor, (nodes.AccessNode, nodes.LibraryNode))
             ):
                 continue
