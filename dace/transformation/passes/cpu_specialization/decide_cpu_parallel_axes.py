@@ -572,9 +572,7 @@ def stripe_inside_reduced_axes(
         if not e.data.is_empty() and axis in {str(s) for s in e.data.subset.free_symbols}
     )
     tile = tile_size(Cut([], entry.map.range.size()[params.index(axis)], True, per_position))
-    StripMining.apply_to(
-        sdfg, map_entry=entry, options={"dim_idx": params.index(axis), "tile_size": tile}, save=False
-    )
+    StripMining.apply_to(sdfg, map_entry=entry, options={"dim_idx": params.index(axis), "tile_size": tile}, save=False)
     stripes = state.entry_node(entry)
     others = [p for p in entry.map.params if p in indexing and p != axis]
     order = others + [p for p in entry.map.params if p not in indexing] + [axis]
@@ -750,6 +748,9 @@ class DecideCpuParallelAxes(ppl.Pass):
             self.pinned += 1
             return False, False
         reshaped = False
+        # Counted before a split, which moves trips into the inner maps and not out of the region (a stripe count is
+        # the thread count alone)
+        count = node.map.range.num_elements() * pinned_inner_trips(node, children)
         if node.map.collapse <= 1 and (indexing := reduction_output_params(state, node)) is not None:
             node = share_out_indexing_axes(state, node, indexing)
             self.pinned += 1
@@ -757,7 +758,6 @@ class DecideCpuParallelAxes(ppl.Pass):
             children = state.scope_children()
             if node.map.schedule == dtypes.ScheduleType.Sequential:
                 return False, True
-        count = node.map.range.num_elements() * pinned_inner_trips(node, children)
         facts = SymbolResolver().facts_at(state, node)
         if small_count(count, facts):
             note_sequential(node, SMALL_REASON.format(count=count))
