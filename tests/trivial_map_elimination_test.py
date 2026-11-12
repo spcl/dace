@@ -444,7 +444,6 @@ def test_the_order_reaches_a_nested_scope_at_its_entry():
     assert all(e.src is ie for e in state.in_edges(t1))
 
 
-
 def two_state_body() -> dace.SDFG:
     """``t = 2 * a`` then, in a state of its own, ``b = t + 1``: a body only multistate inlining takes."""
     inner = dace.SDFG("two_state_body")
