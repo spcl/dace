@@ -533,7 +533,9 @@ def place_barriers(state: SDFGState, lane_zero: OrderedSet[nodes.Node]) -> None:
         # Lane 0 after lane 0 is one thread; provably disjoint elements need no order either.
         return any(
             not (zero and was_zero)
-            and (subset is None or other is None or subsets.intersects(subset, other, facts) is not symbolic.Truth.FALSE)
+            and (
+                subset is None or other is None or subsets.intersects(subset, other, facts) is not symbolic.Truth.FALSE
+            )
             for name, subset in accesses
             for other, was_zero in seen.get(name, ())
         )

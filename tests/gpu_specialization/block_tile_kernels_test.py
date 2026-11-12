@@ -248,7 +248,11 @@ def test_an_in_place_update_outside_the_inner_map_runs_on_lane_zero_between_barr
 
 def barriers(sdfg: dace.SDFG) -> int:
     return len(
-        [n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet) and n.label == "lane_barrier"]
+        [
+            n
+            for n, parent in sdfg.all_nodes_recursive()
+            if isinstance(n, dace.nodes.Tasklet) and n.label == "lane_barrier"
+        ]
     )
 
 
