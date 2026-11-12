@@ -811,3 +811,59 @@ if __name__ == "__main__":
     test_smt_fallback_refuses_the_same_shape_without_the_guard()
     test_smt_fallback_refuses_when_the_indirection_array_is_written_in_the_loop()
     test_an_offset_array_the_loop_rewrites_is_not_renamed()
+
+
+def test_a_versioned_loop_takes_the_loops_nested_in_it_along():
+    """Versioning ``i`` on the unknown sign of ``K`` replaces it, and the ``j`` loop inside it, with copies; the
+    ``j`` loop of the replaced original is no longer in the SDFG and is not analyzed, and the values are kept."""
+    from dace.sdfg import SDFG
+    from dace.sdfg.state import ConditionalBlock
+
+    K, M, L = dace.symbol("K"), dace.symbol("M"), dace.symbol("L")
+
+    @dace.program
+    def versioned_around_an_inner_loop(a: dace.float64[L], b: dace.float64[N], c: dace.float64[N, M + 1]):
+        for i in range(N):
+            for j in range(M):
+                c[i, j] = c[i, j + 1] + 1.0
+            a[i] = a[i + K] + b[i]
+
+    def in_sdfg(region) -> bool:
+        while not isinstance(region, SDFG):
+            parent = region.parent_graph
+            if isinstance(parent, ConditionalBlock):
+                if all(branch is not region for _, branch in parent.branches):
+                    return False
+            elif parent is None or region not in parent.nodes():
+                return False
+            region = parent
+        return True
+
+    analyzed = []
+
+    class Recording(BreakAntiDependence):
+        def _renamable_arrays(self, loop, sdfg):
+            analyzed.append(in_sdfg(loop))
+            return super()._renamable_arrays(loop, sdfg)
+
+        def forward_read_plans(self, loop, sdfg):
+            analyzed.append(in_sdfg(loop))
+            return super().forward_read_plans(loop, sdfg)
+
+    sdfg = versioned_around_an_inner_loop.to_sdfg(simplify=True)
+    Recording(forward_reads=True).apply_pass(sdfg, {})
+    Recording().apply_pass(sdfg, {})
+    assert any(isinstance(r, ConditionalBlock) for r in sdfg.all_control_flow_regions())
+    assert analyzed and all(analyzed)
+    sdfg.validate()
+
+    rng = np.random.default_rng(11)
+    n, m, k = 12, 5, 3
+    a, b, c = rng.random(n + k), rng.random(n), rng.random((n, m + 1))
+    ref_a, ref_c = a.copy(), c.copy()
+    for i in range(n):
+        for j in range(m):
+            ref_c[i, j] = ref_c[i, j + 1] + 1.0
+        ref_a[i] = ref_a[i + k] + b[i]
+    sdfg(a=a, b=b, c=c, N=n, M=m, K=k, L=n + k)
+    assert np.allclose(a, ref_a) and np.allclose(c, ref_c)

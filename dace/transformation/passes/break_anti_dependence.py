@@ -1340,17 +1340,21 @@ class BreakAntiDependence(ppl.Pass):
         ``forward_reads`` picks the admission policy (see the module docstring): the default
         whole-array pure-WAR rename, or the per-edge read-ahead break that unbinds two statements
         of a loop that stays sequential."""
+        from dace.transformation.passes.canonicalize.merge_guards import attached  # avoid an import cycle
+
         self._facts_memo = {}
         self._solver_facts = {}
         if self.forward_reads:
             applied = 0
             for loop in self._loops(sdfg):
-                applied += self.snapshot_forward_reads(loop, sdfg)
+                # A versioning replaces a loop and the loops nested in it with copies
+                if attached(loop):
+                    applied += self.snapshot_forward_reads(loop, sdfg)
             return applied or None
         renamed = 0
         for loop in self._loops(sdfg):
             # A loop nested in one versioned earlier is gone with it; its clones are renamed there
-            if loop.parent_graph is None or loop not in loop.parent_graph.nodes():
+            if not attached(loop):
                 continue
             if not self._safe_stride(loop, sdfg):
                 continue
