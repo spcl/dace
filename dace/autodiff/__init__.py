@@ -27,7 +27,15 @@ Key Features
 
 from .base_abc import BackwardImplementation, BackwardContext, BackwardResult, AutoDiffException
 from .backward_pass_generator import BackwardPassGenerator
-from .autodiff import add_backward_pass
+from .autodiff import (
+    BACKWARD_PHASE,
+    FORWARD_PHASE,
+    BackwardPass,
+    TwoPhaseBackwardPass,
+    add_backward_pass,
+    make_backward_pass,
+    make_two_phase_backward_pass,
+)
 
 try:
     from .torch import make_backward_function
@@ -43,6 +51,12 @@ from . import library
 __all__ = [
     # Main API
     "add_backward_pass",
+    "make_backward_pass",
+    "BackwardPass",
+    "make_two_phase_backward_pass",
+    "TwoPhaseBackwardPass",
+    "FORWARD_PHASE",
+    "BACKWARD_PHASE",
     # Core classes
     "BackwardPassGenerator",
     "BackwardContext",
