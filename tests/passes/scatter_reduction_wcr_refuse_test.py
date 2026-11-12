@@ -300,30 +300,9 @@ def test_cpu_subtraction_scatter_refused_and_bit_exact():
     assert np.allclose(res, ref), f"maxerr={np.max(np.abs(res - ref))}"
 
 
-def test_cpu_knob_off_scatter_refused_and_bit_exact():
-    """Bug 1 (CPU face): with ``privatize_scatter_reductions=False`` (the GPU default) the
-    reducible ``+`` scatter is NOT surfaced, so ``NormalizeWCR`` used to mangle it into a
-    whole-buffer ``_nnr_out`` reduction -> garbage. The refuse-guard now leaves the correct
-    atomic: no ``_nnr_out`` buffer, and the result matches numpy."""
-    sdfg = weighted_histogram.to_sdfg(simplify=True)
-    unique_build(sdfg, "knoboff")
-    canonicalize(sdfg, validate=True, target="cpu", privatize_scatter_reductions=False)
-    code = codegen_text(sdfg)
-    assert "_nnr_out" not in code, "knob-off scatter must not be wrapped in a whole-array buffer"
-
-    rng = np.random.default_rng(1)
-    n, nb = 20000, 29
-    binidx = rng.integers(0, nb, n).astype(np.int64)
-    weights = rng.random(n)
-    res = sdfg(binidx=binidx, weights=weights, N=n, bins=nb)
-    ref = np.zeros(nb)
-    np.add.at(ref, binidx, weights)
-    assert np.allclose(res, ref), f"maxerr={np.max(np.abs(res - ref))}"
-
-
 def test_gpu_target_scatter_not_whole_array_buffered():
-    """Bug 1 (GPU face, structural): GPU-target canonicalize has ``privatize_scatter_reductions``
-    off, so ``NormalizeWCR`` must refuse the scatter (leaving the inner WCR to lower to an
+    """Bug 1 (GPU face, structural): canonicalize never privatizes a scatter (a CPU specialization),
+    so ``NormalizeWCR`` must refuse the scatter (leaving the inner WCR to lower to an
     atomicAdd) rather than insert a per-iteration whole-array ``_nnr_out`` buffer. GPU compile
     is not required in this env -- assert on the SDFG structure."""
     sdfg = weighted_histogram.to_sdfg(simplify=True)

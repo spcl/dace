@@ -40,9 +40,11 @@ Order within the stage, and why:
    the parallel-by-default copy expansion costs nothing when the cost model refuses it.
 7a. :class:`~dace.transformation.passes.cpu_specialization.bound_masked_maps.BoundMaskedMaps` -- on the final shapes:
    a map over padded slots stops at the count that masks them, and ``ChooseOmpSchedule`` then sees the uneven work.
-8. :class:`~dace.transformation.passes.cpu_specialization.range_privatize_scatter_reductions.RangePrivatizeScatterReductions`
+8. :class:`~dace.transformation.passes.privatize_scatter_reduction.PrivatizeScatterReduction` then
+   :class:`~dace.transformation.passes.cpu_specialization.range_privatize_scatter_reductions.RangePrivatizeScatterReductions`
    -- after the schedules are final: a parallel map scattering into an array through data-dependent
-   indices gives each thread a private copy of only the rows its chunk writes, not of the whole array.
+   indices reduces into a private copy (an OpenMP array-section ``reduction``), of only the rows its chunk writes
+   where that is smaller than the whole array.
 9. :class:`~dace.transformation.passes.specialize_small_gemms.SpecializeSmallGemms` -- a small GEMM a map or
    loop repeats runs as the row-wise loop nest in the iteration's thread, not as a BLAS call per iteration.
 10. :class:`~dace.transformation.passes.cpu_specialization.choose_omp_schedule.ChooseOmpSchedule` -- once the parallel
@@ -73,6 +75,7 @@ from dace.transformation.passes.cpu_specialization.recompute_oversized_intermedi
 from dace.transformation.passes.cpu_specialization.sequentialize_reduction_axes import SequentializeReductionAxes
 from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import SequentializeSmallAxes
 from dace.transformation.passes.cpu_specialization.specialize_cpu_transfers import SpecializeCpuTransfers
+from dace.transformation.passes.privatize_scatter_reduction import PrivatizeScatterReduction
 from dace.transformation.passes.specialize_small_gemms import SpecializeSmallGemms
 
 
@@ -102,6 +105,7 @@ def cpu_specialize(sdfg: SDFG, validate: bool = False) -> SDFG:
     # After the schedules are final: only a body that stays a parallel map is if-converted.
     IfConvertParallelMapBodies().apply_pass(sdfg, {})
     BoundMaskedMaps().apply_pass(sdfg, {})
+    PrivatizeScatterReduction().apply_pass(sdfg, {})
     RangePrivatizeScatterReductions().apply_pass(sdfg, {})
     SpecializeCpuTransfers().apply_pass(sdfg, {})
     SpecializeSmallGemms(dtypes.DeviceType.CPU).apply_pass(sdfg, {})
