@@ -455,6 +455,11 @@ def test_an_inner_map_the_kernel_threads_already_coalesce_is_not_strided_across_
     each read a row 512 elements apart. Transposed, the inner map is the contiguous one and takes the lanes."""
     state, kernel, rows = kernel_summing_columns(transposed=False)
     assert strided_maps(state, kernel) == []
+    assert BlockTileKernels().apply_pass(state.sdfg, {}) is None, "one thread per column walks the rows"
+    assert [n.map.schedule for n in state.nodes() if isinstance(n, dace.nodes.MapEntry)] == [
+        dtypes.ScheduleType.GPU_Device,
+        dtypes.ScheduleType.Sequential,
+    ]
     state, kernel, rows = kernel_summing_columns(transposed=True)
     assert strided_maps(state, kernel) == [(state, rows)]
 

@@ -504,6 +504,12 @@ class BlockTileKernels(ppl.Pass):
             if xfh.gpu_map_has_explicit_threadblocks(state, kernel):
                 continue
             strided = strided_maps(state, kernel)
+            # Every inner map the kernel's own threads coalesce: one thread per iteration walks them, untiled
+            if not strided and any(
+                isinstance(inner, nodes.MapEntry) and coalesced_by_the_kernel(inner_state, kernel, inner)
+                for inner_state, inner in xfh.get_internal_scopes(state, kernel, immediate=True)
+            ):
+                continue
             fills = give_blocks_their_containers(state, kernel, strided)
             if fills_per_lane_buffer(state, kernel, strided):
                 continue
