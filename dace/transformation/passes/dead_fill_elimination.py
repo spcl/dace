@@ -239,8 +239,14 @@ def dead_fill(
     zeroed = out_edges[0].dst
     sdfg = state.sdfg
     desc = sdfg.arrays[zeroed.data]
-    if not desc.transient or not isinstance(desc, data.Array) or isinstance(desc, data.View):
+    if not isinstance(desc, data.Array) or isinstance(desc, data.View):
         return None
+    if not desc.transient:
+        # The caller sees every element of an argument: only a whole overwrite kills its fill, and only in the SDFG
+        # the caller calls, where nothing outside it reads the argument in between.
+        if sdfg.parent is not None:
+            return None
+        reads = None
     subset = out_edges[0].data.subset
     if subset is None or symbolic.simplify(subset.num_elements() - desc.total_size) != 0:
         return None

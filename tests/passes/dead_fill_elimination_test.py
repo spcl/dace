@@ -442,3 +442,66 @@ def test_memset_a_copy_leaves_a_middle_row_of_stays_whole():
     sdfg(c=c, out=out, N=9)
     assert np.array_equal(out, np.concatenate([np.zeros((1, 4)), c[:8], np.zeros((1, 4))]))
 
+
+def argument_zeroed_then_written(map_range: str = "0:N") -> dace.SDFG:
+    """``out[:] = 0; out[i] = b[i] for i in map_range`` in one state, ``out`` a program argument."""
+    sdfg = dace.SDFG(f"argument_zeroed_then_written_{abs(hash(map_range))}")
+    sdfg.add_array("b", [N], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    state = sdfg.add_state()
+    zeroed = state.add_access("out")
+    fill = FillLibraryNode("memset_out", value=0)
+    state.add_node(fill)
+    state.add_edge(fill, FillLibraryNode.OUTPUT_CONNECTOR_NAME, zeroed, None, dace.Memlet("out[0:N]"))
+    b = state.add_read("b")
+    state.add_nedge(zeroed, b, dace.Memlet())
+    state.add_mapped_tasklet(
+        "write",
+        {"i": map_range},
+        {"__b": dace.Memlet("b[i]")},
+        "__t = __b",
+        {"__t": dace.Memlet("out[i]")},
+        input_nodes={"b": b},
+        output_nodes={"out": state.add_access("out")},
+        external_edges=True,
+    )
+    return sdfg
+
+
+def test_memset_of_an_argument_overwritten_whole_is_dropped():
+    sdfg = argument_zeroed_then_written()
+    assert DeadFillElimination().apply_pass(sdfg, {}) == 1
+    assert fills(sdfg) == 0
+    sdfg.validate()
+    b = np.random.rand(17)
+    out = np.full(17, np.nan)
+    sdfg(b=b, out=out, N=17)
+    assert np.array_equal(out, b)
+
+
+def test_memset_of_an_argument_kept_where_the_overwrite_misses_elements():
+    """Nothing reads ``out[0]`` in the SDFG, but the caller does: a transient's fill would go, an argument's stays."""
+    sdfg = argument_zeroed_then_written("1:N")
+    assert DeadFillElimination().apply_pass(sdfg, {}) is None
+    assert fills(sdfg) == 1
+    b = np.random.rand(17)
+    out = np.full(17, np.nan)
+    sdfg(b=b, out=out, N=17)
+    assert out[0] == 0 and np.array_equal(out[1:], b[1:])
+
+
+def test_memset_of_an_argument_kept_inside_a_nested_sdfg():
+    inner = argument_zeroed_then_written()
+    sdfg = dace.SDFG("argument_memset_nested")
+    sdfg.add_array("b", [N], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    state = sdfg.add_state()
+    nested = state.add_nested_sdfg(inner, {"b"}, {"out"}, {"N": "N"})
+    state.add_edge(state.add_read("b"), None, nested, "b", dace.Memlet("b[0:N]"))
+    state.add_edge(nested, "out", state.add_write("out"), None, dace.Memlet("out[0:N]"))
+    assert DeadFillElimination().apply_pass(sdfg, {}) is None
+    assert fills(sdfg) == 1
+    b = np.random.rand(17)
+    out = np.full(17, np.nan)
+    sdfg(b=b, out=out, N=17)
+    assert np.array_equal(out, b)
