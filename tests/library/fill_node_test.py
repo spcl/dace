@@ -183,7 +183,7 @@ def test_fill_pure_host_map_gets_no_block():
     """A host fill's map is no kernel, so the expansion leaves its block unset."""
     sdfg = make_fill_sdfg("pure", (1000,), "0:1000", gpu=False, name="fill_block_host", value=2.0)
     sdfg.expand_library_nodes()
-    maps = [n.map for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+    maps = [node.map for node, state in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.MapEntry)]
     assert len(maps) == 1 and maps[0].gpu_block_size is None
 
 
