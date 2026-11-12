@@ -2,6 +2,7 @@
 """Tests for :class:`FillLibraryNode` and its pure / CPU / CUDA / tasklet expansions."""
 
 import contextlib
+import re
 from collections.abc import Sequence
 
 import numpy as np
@@ -147,6 +148,16 @@ def test_fill_cuda_1d_gpu():
     assert cp.all(B[:50] == 1)
     assert cp.all(B[100:] == 1)
     assert cp.all(B[50:100] == 0)
+
+
+def test_fill_cuda_frame_includes_no_cuda_runtime():
+    """The host frame reaches the GPU runtime through ``dace.h``, which picks CUDA or HIP; a HIP
+    build cannot include ``cuda_runtime.h``."""
+    sdfg = _get_sdfg("CUDA", gpu=True)
+    sdfg.name += "_frame_headers"
+    sdfg.expand_library_nodes()
+    host_code = "\n".join(obj.clean_code for obj in sdfg.generate_code() if obj.language == "cpp")
+    assert "cuda_runtime.h" not in host_code
 
 
 @pytest.mark.gpu
@@ -387,9 +398,6 @@ def test_fill_symbolic_size_emits_omp_parallel_for():
         assert "std::fill_n" not in code
 
 
-if __name__ == "__main__":
-    pytest.main([__file__])
-
 NARROW_FLOATS = [
     pytest.param(dace.float16, "float16"),
     pytest.param(dace.bfloat16, "bfloat16"),
@@ -478,6 +486,19 @@ def make_dynamic_fill_sdfg(
     return sdfg
 
 
+def assert_reads_the_dynamic_value(code: str, call: str) -> None:
+    """The emitted ``call`` must take its fill value FROM ``V``, not from a baked-in literal.
+
+    Asserted on the call's arguments: the readable CPU generator inlines tasklet connectors, so the same lowering
+    spells the operand ``V[V_idx(0)]`` while the legacy one spells it ``_fill_val``.
+    """
+    sites = [ln for ln in code.split("\n") if call in ln]
+    assert sites, f"expected a {call} call in the generated code"
+    assert any(FillLibraryNode.VALUE_CONNECTOR_NAME in ln or re.search(r"\bV\b", ln) for ln in sites), (
+        f"{call} must read the dynamic value; got {sites}"
+    )
+
+
 def test_fill_dynamic_value_cpu_routes_to_cpu_for_contiguous_32bit():
     """A dynamic <=32-bit value on a contiguous CPU subset lowers to ``std::fill_n``."""
     sdfg = make_dynamic_fill_sdfg(
@@ -488,8 +509,7 @@ def test_fill_dynamic_value_cpu_routes_to_cpu_for_contiguous_32bit():
     assert select_fill_implementation(node, sdfg.start_state) == "CPU"
     sdfg.expand_library_nodes()
     code = _generated_code(sdfg)
-    assert "std::fill_n" in code
-    assert f"{FillLibraryNode.VALUE_CONNECTOR_NAME}" in code
+    assert_reads_the_dynamic_value(code, "std::fill_n")
 
 
 def test_fill_dynamic_value_cpu_64bit_routes_to_pure():
@@ -557,4 +577,41 @@ def test_fill_dynamic_value_gpu_routes_to_cuda_for_32bit():
     sdfg.expand_library_nodes()
     code = _generated_code(sdfg)
     assert "MemsetAsync" in code
-    assert f"{FillLibraryNode.VALUE_CONNECTOR_NAME}" in code
+    # The pattern is built from the value: the connector under the legacy generator, ``V`` under the readable one
+    assert FillLibraryNode.VALUE_CONNECTOR_NAME in code or re.search(r"\bV\b", code)
+
+
+if __name__ == "__main__":
+    test_fill_pure_1d_cpu()
+    test_fill_pure_3d_cpu()
+    test_fill_cuda_frame_includes_no_cuda_runtime()
+    test_fill_auto_routes_non_contiguous_to_pure_cpu()
+    test_fill_cpu_rejects_non_contiguous_subset()
+    test_fill_register_outside_kernel_routes_to_cpu_tasklet()
+    test_fill_register_inside_kernel_routes_to_sequential()
+    test_fill_single_gpu_shared_inside_kernel_expands_clean()
+    test_fill_tasklet_rejects_gpu_storage_from_host_scope()
+    test_fill_pure_strided_map_matches_array()
+    test_fill_below_threshold_emits_a_single_call()
+    test_fill_at_threshold_emits_omp_parallel_for()
+    test_fill_symbolic_size_emits_omp_parallel_for()
+    for value in [0.0, 1.0, -1.0, 0.5, 2.0]:
+        for dtype, label in (param.values for param in NARROW_FLOATS):
+            test_fill_narrow_float_writes_the_value(dtype, label, value)
+    for value in [0.0, 1.0]:
+        for dtype, label in (param.values for param in NARROW_FLOATS):
+            test_fill_narrow_float_host_lowering_is_one_call(dtype, label, value)
+    for dtype, label in (param.values for param in NARROW_FLOATS):
+        test_fill_narrow_float_gpu_routing_follows_the_byte_pattern(dtype, label)
+    test_fill_dynamic_value_cpu_routes_to_cpu_for_contiguous_32bit()
+    test_fill_dynamic_value_cpu_64bit_routes_to_pure()
+    test_fill_dynamic_value_cpu_runs_and_writes_value()
+    test_fill_dynamic_value_rejects_multi_element_subset()
+    test_fill_dynamic_value_rejects_dtype_mismatch()
+    test_fill_pure_1d_gpu()
+    test_fill_pure_3d_gpu()
+    test_fill_cuda_1d_gpu()
+    test_fill_cuda_3d_gpu()
+    test_fill_cuda_rejects_cpu_storage()
+    test_fill_cuda_rejects_non_contiguous_subset()
+    test_fill_dynamic_value_gpu_routes_to_cuda_for_32bit()

@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from io import StringIO
 
+import numpy as np
+
 from dace import config, data, dtypes, symbolic
 from dace import sdfg as sd
 from dace.codegen import cppunparse
@@ -54,9 +56,14 @@ def sym2cpp(s, arrayexprs: set[str] | None = None) -> str | list[str]:
                        user-functions back to array expressions.
     :return: C++-compilable expression or list thereof.
     """
-    if not isinstance(s, list):
-        return _sym2cpp(s, None if arrayexprs is None else frozenset(arrayexprs))
-    return [sym2cpp(d, arrayexprs) for d in s]
+    if isinstance(s, list):
+        return [sym2cpp(d, arrayexprs) for d in s]
+    # Literal kinds symstr cannot carry: a bool prints as Python 'True', a complex loses its width.
+    if isinstance(s, (bool, np.bool_)):
+        return "true" if s else "false"
+    if isinstance(s, (complex, np.complexfloating)):
+        return f"{dtypes.dtype_to_typeclass(type(s))}({s.real}, {s.imag})"
+    return _sym2cpp(s, None if arrayexprs is None else frozenset(arrayexprs))
 
 
 def codeblock_to_cpp(cb: CodeBlock):

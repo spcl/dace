@@ -109,6 +109,11 @@ etc.) and are registered with one of the decorators exported from
   fully-qualified, pydoc-compliant name of the function being intercepted
   (e.g., ``"numpy.dot"``, ``"math.exp"``, ``"dace.comm.Bcast"``). A single
   replacement may be decorated multiple times to cover several aliases.
+* :func:`@oprepo.replaces_windows(qualname, outputs) <dace.frontend.common.op_repository.replaces_windows>` -
+  like ``replaces``, for a call that wires the slices of its arguments itself. An argument ``A[i:i + 8]`` reaches
+  the replacement as the pair ``(container, subset)`` of the data container holding the array in the SDFG being
+  built and the range of it the slice names, and the arguments at the positions in ``outputs`` are written (see
+  :ref:`tile-calls`).
 * :func:`@oprepo.replaces_method(classname, method_name) <dace.frontend.common.op_repository.replaces_method>` -
   replaces a method invocation on an object whose class name matches
   ``classname`` (e.g., ``("Intracomm", "Bcast")`` for ``mpi4py``'s

@@ -1104,6 +1104,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
         self.views: dict[str, tuple[str, Memlet]] = {}  # Keeps track of views
+        self.size_symbols: list[str] = []  # Symbols read from a size-1 descriptor on an interstate edge
         self.nested_closure_arrays: dict[str, tuple[Any, data.Data]] = {}
         self.annotated_types: dict[str, data.Data] = annotated_types or {}
 
@@ -1253,6 +1254,9 @@ class ProgramVisitor(ExtNodeVisitor):
         for arrname, arr in self.sdfg.arrays.items():
             # Return values become non-transient (accessible by the outside)
             if arrname.startswith("__return"):
+                # The caller sizes a return value before the interstate edge assigning the symbol runs
+                if any(str(s) in self.size_symbols for s in arr.free_symbols):
+                    raise DaceSyntaxError(self, self.program_ast, f"Data-dependent shape {arr.shape} is not allowed.")
                 arr.transient = False
                 self.outputs[arrname] = (None, Memlet.from_array(arrname, arr), [])
 
@@ -3999,6 +4003,36 @@ class ProgramVisitor(ExtNodeVisitor):
                 return result[0]
         return result
 
+    def parse_window_argument(self, arg: ast.AST, written: bool):
+        """One argument of a call to a replacement that takes windows.
+
+        An array, or a slice of one, becomes the pair ``(container, subset)``: the container in the SDFG being built that
+        holds the data, which is a connector of it when the array lives outside this scope, and the range of the
+        container the argument names. Any other argument is parsed as usual.
+
+        :param arg: The argument of the call.
+        :param written: Whether the replacement writes the argument.
+        """
+        subscripted = isinstance(arg, ast.Subscript) and isinstance(arg.value, ast.Name)
+        if not subscripted and not isinstance(arg, ast.Name):
+            return self._parse_function_arg(arg)
+        name = rname(arg)
+        true_name = {**self.variables, **self.scope_vars}.get(name, name)
+        defined_arrays = {**self.sdfg.arrays, **self.scope_arrays, **self.defined.materialize()}
+        if not isinstance(defined_arrays.get(true_name), data.Array):
+            return self._parse_function_arg(arg)
+        true_node = copy.deepcopy(arg)
+        (true_node.value if subscripted else true_node).id = true_name
+        expr: MemletExpr = ParseMemlet(
+            self, defined_arrays, true_node, self._parse_subscript_slice(arg.slice) if subscripted else None
+        )
+        subset = expr.subset
+        if expr.arrdims:
+            raise DaceSyntaxError(self, arg, "A window passed to a call cannot be indexed by an array")
+        access = self._add_write_access if written else self._add_read_access
+        container, local_subset = access(name, subset, arg)
+        return container, subset if local_subset is None else local_subset
+
     def _is_inputnode(self, sdfg: SDFG, name: str):
         visited_data = set()
         for state in sdfg.states():
@@ -4941,14 +4975,21 @@ class ProgramVisitor(ExtNodeVisitor):
                     self, node, f'Function "{funcname}" is not registered with an SDFG implementation'
                 )
 
-        # NOTE: Temporary fix for MPI library-node replacements
         # Parsing the arguments with `_parse_function_arg` will generate
-        # slices even for the output arguments.
+        # slices even for the output arguments. A replacement that wires the
+        # slices itself (see `oprepo.replaces_windows`) gets the containers and
+        # the ranges accessed instead, and writes the output arguments.
+        window_outputs = oprepo.Replacements.window_outputs(funcname)
+        if window_outputs is not None:
+            args.extend(
+                self.parse_window_argument(arg, written=index in window_outputs) for index, arg in enumerate(node.args)
+            )
+        # NOTE: Temporary fix for MPI library-node replacements
         # We make a special exception for MPI calls (`dace.comm` namespace)
         # and we pass instead the array names and the ranges accessed.
         # The replacement functions are responsible for generating the correct
         # subgraph/memlets.
-        if funcname.startswith("dace.comm"):
+        elif funcname.startswith("dace.comm"):
             mpi_args = []
             for arg in node.args:
                 # We are only looking for subscripts on arrays of the current SDFG.
@@ -5429,7 +5470,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # We also check the type of the slice attribute of the node
         # in order to distinguish between A[0] and A[0:1], which are semantically different in numpy
         # (the former is an index, the latter is a slice).
-        is_index = range_is_index(expr.subset) and not isinstance(node.slice, ast.Slice)
+        # A[1:2, 1:2] has index-shaped ranges but non-empty slice_dims forces the slice path (stays 2-D).
+        is_index = range_is_index(expr.subset) and not isinstance(node.slice, ast.Slice) and not expr.slice_dims
         other_subset = copy.deepcopy(expr.subset)
         strides = list(arrobj.strides)
 
@@ -5441,7 +5483,9 @@ class ProgramVisitor(ExtNodeVisitor):
             for i in new_axes:
                 strides.insert(i, 1)
         length = len(other_subset)
-        nsqz = other_subset.squeeze(ignore_indices=new_axes)
+        # Squeeze only scalar-index dims; a length-1 slice keeps its axis. slice_dims count the axes before new_axes.
+        subset_axes = [i for i in range(length) if i not in new_axes]
+        nsqz = other_subset.squeeze(ignore_indices=new_axes + [subset_axes[dim] for dim in expr.slice_dims])
         sqz = [i for i in range(length) if i not in nsqz]
         for i in reversed(sqz):
             strides.pop(i)
@@ -5505,6 +5549,33 @@ class ProgramVisitor(ExtNodeVisitor):
                 ),
             )
         return tmp
+
+    def promote_scalar_to_symbol(self, scalar: str) -> symbolic.symbol:
+        """
+        Reads a size-1 descriptor into a fresh symbol on a new interstate edge, keeping the descriptor. Sizes an
+        array, so unlike a subscript promotion the symbol is never reassigned.
+
+        :param scalar: Name of the data descriptor to read.
+        :return: The new symbol.
+        """
+        desc = self.sdfg.arrays[scalar]
+        name = self.sdfg.add_symbol(f"__sym_{scalar}", desc.dtype, find_new_name=True)
+        self.size_symbols.append(name)
+        sym = dace.symbol(name, dtype=desc.dtype)
+        # Nested scopes resolve free symbols through globals
+        self.globals[name] = sym
+        state = self._add_state(f"promote_{scalar}_to_{name}")
+        rhs = scalar
+        if not isinstance(desc, data.Scalar):
+            # A size-1 array reads by subscript, or the assignment would take its pointer. Only an access node binds a
+            # view, so an edge reads the array behind it.
+            subset = subsets.Range([(0, 0, 1)] * len(desc.shape))
+            while scalar in self.views:
+                scalar, memlet = self.views[scalar]
+                subset = memlet.subset.compose(subset)
+            rhs = f"{scalar}[{', '.join(map(str, subset.min_element()))}]"
+        state.parent_graph.in_edges(state)[0].data.assignments = {name: rhs}
+        return sym
 
     def _parse_subscript_slice(self, s: ast.AST, multidim: bool = False) -> Any | tuple[Any | str | symbolic.symbol]:
         """Parses the slice attribute of an ast.Subscript node.

@@ -21,6 +21,10 @@ jobs:
   test:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: ubuntu-latest
+    env:
+      # GCC 13 (the runner default) miscompiles a vectorized conditional select at -O3 with AVX2
+      CC: gcc-14
+      CXX: g++-14
     strategy:
       matrix:
         python-version: ['3.10','3.14']
@@ -42,7 +46,7 @@ jobs:
         sudo dpkg-reconfigure man-db
         # Install dependencies
         sudo apt-get update
-        sudo apt-get install -y libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev libpapi-dev papi-tools
+        sudo apt-get install -y g++-14 libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev libpapi-dev papi-tools
         curl -Os https://uploader.codecov.io/latest/linux/codecov
         chmod +x codecov
 
