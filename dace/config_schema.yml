@@ -846,9 +846,9 @@ required:
                         description: >
                             The SM / CU count of the GPU the SDFG is compiled for, which sizes grid-strided
                             kernels and per-block buffers (resident blocks = multiprocessors x blocks per
-                            multiprocessor). 0 probes the GPU visible at compile time; with none visible,
+                            multiprocessor). 0 queries the GPU visible at compile time; with none visible,
                             128 multiprocessors and the two keys below are assumed. A positive value
-                            overrides the probe and is used with the two keys below.
+                            overrides the query and is used with the two keys below.
                         default: 0
 
                     device_threads_per_multiprocessor:

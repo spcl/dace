@@ -26,28 +26,26 @@ def test_a_block_wider_than_a_multiprocessor_holds_still_gets_one_per_multiproce
 
 
 def test_the_visible_device_wins_over_the_defaults(monkeypatch):
-    monkeypatch.setattr(rb.PROBE, "probed", True)
-    monkeypatch.setattr(rb.PROBE, "found", DeviceLimits(228, 2048, 32))
-    assert device_limits() == DeviceLimits(228, 2048, 32)
+    monkeypatch.setattr(rb, "query_device", lambda: DeviceLimits(228, 2048, 0))
+    assert device_limits() == DeviceLimits(228, 2048, 0)
 
 
-def test_a_configured_device_overrides_the_probe(monkeypatch):
-    monkeypatch.setattr(rb.PROBE, "probed", True)
-    monkeypatch.setattr(rb.PROBE, "found", DeviceLimits(228, 2048, 32))
+def test_a_configured_device_overrides_the_query(monkeypatch):
+    monkeypatch.setattr(rb, "query_device", lambda: DeviceLimits(228, 2048, 0))
     with dace.config.set_temporary("compiler", "cuda", "device_multiprocessors", value=104):
         with dace.config.set_temporary("compiler", "cuda", "device_blocks_per_multiprocessor", value=4):
             assert rb.resident_blocks(256) == 104 * 4
 
 
 def test_without_a_visible_device_the_fallback_count_is_used(monkeypatch):
-    monkeypatch.setattr(rb.PROBE, "probed", True)
-    monkeypatch.setattr(rb.PROBE, "found", None)
-    assert device_limits().multiprocessors == rb.FALLBACK_MULTIPROCESSORS
+    monkeypatch.setattr(rb, "query_device", lambda: None)
+    with pytest.warns(UserWarning, match="No GPU visible"):
+        assert device_limits().multiprocessors == rb.FALLBACK_MULTIPROCESSORS
 
 
 @pytest.mark.gpu
-def test_the_probe_reads_the_visible_device():
-    found = rb.probe_device()
+def test_the_query_reads_the_visible_device():
+    found = rb.query_device()
     assert found is not None and found.multiprocessors > 0 and found.threads_per_multiprocessor >= 1024
     print("device limits", found)
 
@@ -59,4 +57,4 @@ if __name__ == "__main__":
     test_the_blocks_per_multiprocessor_limit_binds_narrow_blocks()
     test_an_unreported_block_limit_does_not_bind()
     test_a_block_wider_than_a_multiprocessor_holds_still_gets_one_per_multiprocessor()
-    test_the_probe_reads_the_visible_device()
+    test_the_query_reads_the_visible_device()

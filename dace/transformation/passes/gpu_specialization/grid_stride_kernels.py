@@ -45,7 +45,7 @@ from dace import SDFG, dtypes, properties, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.gpu_specialization.resident_blocks import resident_blocks
+from dace.transformation.passes.gpu_specialization.resident_blocks import DeviceLimits, device_limits
 from dace.transformation.passes.iteration_domain import loop_trip_count
 
 # A grid-strided kernel keeps the blocks the device holds resident at once (:func:`resident_blocks` of its block
@@ -199,14 +199,15 @@ class GridStrideKernels(ppl.Pass):
             and not is_tile_kernel(s, n)
         ]
         strided = hinted = 0
+        limits: list[DeviceLimits] = []  # asked for at the first kernel that gets that far, once
         for entry, state in kernels:
             # Hint first: the tiling rewrites ``entry`` into a sequential map under a fresh device
             # map, and the launch shape being recorded is the one BEFORE that rewrite.
             hinted += self.hint_persistent(sdfg, state, entry)
-            strided += self.grid_stride(sdfg, state, entry)
+            strided += self.grid_stride(sdfg, state, entry, limits)
         return (strided, hinted) if strided or hinted else None
 
-    def grid_stride(self, sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry) -> int:
+    def grid_stride(self, sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry, limits: list[DeviceLimits]) -> int:
         """Fold ``entry``'s grid onto a device-sized one, or leave it alone. ``1`` iff folded."""
         inner = strip_mined_pair(state, entry)
         if inner is None:
@@ -233,7 +234,8 @@ class GridStrideKernels(ppl.Pass):
         block_dim = block_threads(entry, inner)
         if block_dim is None:
             return 0
-        resident = resident_blocks(block_dim)
+        limits[:] = limits or [device_limits()]
+        resident = limits[0].resident_blocks(block_dim)
         if grid_is_known_small(entry, resident):
             return 0
         where = {"outer_map_entry": entry, "inner_map_entry": inner}
