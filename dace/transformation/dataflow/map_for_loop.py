@@ -238,6 +238,9 @@ class MapToForLoop(transformation.SingleStateTransformation):
         loop_idx = map_entry.map.params[0]
         loop_from, loop_to, loop_step = map_entry.map.range[0]
 
+        # The nested SDFGs right under the map: the loop leaves them outside every scope
+        freed = [n for n in graph.scope_children()[map_entry] if isinstance(n, nodes.NestedSDFG)]
+
         # Turn the map scope into a nested SDFG
         node = nest_state_subgraph(sdfg, graph, graph.scope_subgraph(map_entry))
 
@@ -381,4 +384,7 @@ class MapToForLoop(transformation.SingleStateTransformation):
 
             written = {n.data for st in loop_region.states() for n in st.data_nodes() if is_written(st, n)}
             loop_analysis.mark_known_parallel(loop_region, written)
+        from dace.transformation.helpers import inline_freed_nested_sdfgs
+
+        inline_freed_nested_sdfgs(sdfg, freed)
         return node, nstate

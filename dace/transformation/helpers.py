@@ -2980,13 +2980,16 @@ def inline_freed_nested_sdfgs(sdfg: SDFG, freed: Iterable[nodes.NestedSDFG]) -> 
 
     inlined = 0
     for node in freed:
-        # An inlining over several states moves the nodes after the nested SDFG into a state of their own
-        state = next((st for st in sdfg.states() if node in st.nodes()), None)
+        # An inlining over several states moves the nodes after the nested SDFG into a state of their own, and an
+        #  inlined wrapper moves the node into its parent
+        state = node.sdfg.parent
+        if not isinstance(state, SDFGState) or node not in state.nodes():
+            state = next((st for st in sdfg.states() if node in st.nodes()), None)
         if state is None or state.entry_node(node) is not None:
             continue
         for inline in (InlineSDFG, InlineMultistateSDFG):
-            if inline.can_be_applied_to(sdfg, nested_sdfg=node):
-                inline.apply_to(sdfg, verify=False, nested_sdfg=node)
+            if inline.can_be_applied_to(state.sdfg, nested_sdfg=node):
+                inline.apply_to(state.sdfg, verify=False, nested_sdfg=node)
                 inlined += 1
                 break
     return inlined
