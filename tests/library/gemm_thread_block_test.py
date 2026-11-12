@@ -10,6 +10,7 @@ from dace.transformation.dataflow import GatherIntoMatrixProduct, TransposeIntoM
 from dace.transformation.passes import BlockMatrixOperands
 
 BM, N, K, T, R = 64, 128, 256, 3, 500  # Rows per tile, columns, inner dimension, tiles, rows of the gathered matrix
+CM = 160  # Rows of a product of several chunks of rows (the last one partial)
 GPU_Global, GPU_Shared = dace.StorageType.GPU_Global, dace.StorageType.GPU_Shared
 TB = dace.ScheduleType.GPU_ThreadBlock
 
@@ -41,6 +42,19 @@ def gathered(
         for j in dace.map[0:N] @ TB:
             for r in range(BM):
                 y[t * BM + r, j] = dace.float32(tile[r, j])
+
+
+@dace.program
+def chunks(
+    x: dace.bfloat16[T, CM, K] @ GPU_Global,
+    w: dace.bfloat16[N, K] @ GPU_Global,
+    y: dace.float32[T, CM, N] @ GPU_Global,
+    z: dace.float32[T, N] @ GPU_Global,
+):
+    for t in dace.map[0:T] @ dace.ScheduleType.GPU_Device:
+        y[t] = x[t] @ w.T  # More rows than a chunk: the product computes them in a loop
+        for j in dace.map[0:N] @ TB:  # A thread-block map makes the product the block's
+            z[t, j] = 1
 
 
 def products(sdfg: dace.SDFG) -> list:
@@ -103,8 +117,19 @@ def test_gathered_rows(implementation, blocked):
     assert np.array_equal(y, as_bf16(x[idx.reshape(-1)] @ w.T).astype(np.float32))
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize("blocked", [False, True])
+@pytest.mark.parametrize("implementation", ["ThreadBlockMMA", "ThreadBlock"])
+def test_several_chunks_of_rows(implementation, blocked):
+    x, w = random_bf16(T, CM, K), random_bf16(N, K)
+    zeros = np.zeros((T, CM, N), np.float32)
+    y = run(chunks, implementation, blocked, x=as_bf16(x), w=as_bf16(w), y=zeros, z=np.zeros((T, N), np.float32))
+    assert np.array_equal(y, x @ w.T)
+
+
 if __name__ == "__main__":
     for implementation in ("ThreadBlockMMA", "ThreadBlock"):
         for blocked in (False, True):
             test_tiles(implementation, blocked)
             test_gathered_rows(implementation, blocked)
+            test_several_chunks_of_rows(implementation, blocked)
