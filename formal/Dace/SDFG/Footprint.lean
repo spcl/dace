@@ -121,8 +121,6 @@ structure Le (P Q : LocPred) : Prop where
   write : ∀ l, P.write l → Q.write l
   wcr : ∀ op l, P.wcr op l → Q.wcr op l
 
-theorem Le.refl (P : LocPred) : Le P P := ⟨fun _ h => h, fun _ h => h, fun _ _ h => h⟩
-
 /-- The locations hit by accesses of a list, by kind. -/
 def ofAccesses (ctx : Ctx) (m₀ : Mem) (ρ : Valuation) (A : List Access) : LocPred where
   read l := ∃ a ∈ A, a.kind = .read ∧ a.Hit ctx m₀ ρ l

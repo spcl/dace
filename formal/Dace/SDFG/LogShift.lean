@@ -136,12 +136,6 @@ def shift (L : Log) (st : St) : St := { st with log := L.seq st.log }
 @[simp] theorem shift_vals (L : Log) (st : St) : (st.shift L).vals = st.vals := rfl
 @[simp] theorem shift_val? (L : Log) (st : St) (k : NodeId × Conn) : (st.shift L).val? k = st.val? k := rfl
 
-theorem shift_shift (L₁ L₂ : Log) (st : St) : (st.shift L₂).shift L₁ = st.shift (L₁.seq L₂) := by
-  simp [shift, Log.seq_assoc]
-
-@[simp] theorem shift_empty (st : St) : st.shift Log.empty = st := by
-  cases st; simp [shift, Log.empty_seq]
-
 /-- A state with log `L` is the state with the empty log, shifted by `L`. -/
 theorem withLog_eq_shift (st : St) (L : Log) : { st with log := L } = St.shift L { st with log := Log.empty } := by
   simp [shift, Log.seq_empty]
@@ -172,12 +166,6 @@ def shift (L : Log) (cst : CSt) : CSt := { cst with log := L.seq cst.log }
 @[simp] theorem shift_ρ (L : Log) (cst : CSt) : (cst.shift L).ρ = cst.ρ := rfl
 @[simp] theorem shift_mem (L : Log) (cst : CSt) : (cst.shift L).mem = cst.mem := rfl
 @[simp] theorem shift_log (L : Log) (cst : CSt) : (cst.shift L).log = L.seq cst.log := rfl
-
-theorem shift_shift (L₁ L₂ : Log) (cst : CSt) : (cst.shift L₂).shift L₁ = cst.shift (L₁.seq L₂) := by
-  simp [shift, Log.seq_assoc]
-
-@[simp] theorem shift_empty (cst : CSt) : cst.shift Log.empty = cst := by
-  cases cst; simp [shift, Log.empty_seq]
 
 theorem withLog_eq_shift (cst : CSt) (L : Log) :
     { cst with log := L } = CSt.shift L { cst with log := Log.empty } := by
@@ -270,14 +258,6 @@ theorem readScalarData_shift (d : Name) (sub : Option Subset) (oob : Bool) (st :
       exact Res.bind_shift _ fun ⟨vs, st'⟩ => rfl
     · rw [St.read_shift]
       exact Res.bind_shift _ fun ⟨v, st'⟩ => rfl
-  · rfl
-
-theorem readEdgeScalar_shift (s : State) (e : DEdge) (st : St) :
-    readEdgeScalar ctx ρ s e (st.shift L) = (readEdgeScalar ctx ρ s e st).map (shiftR L) := by
-  unfold readEdgeScalar
-  split
-  · rfl
-  · exact readScalarData_shift ..
   · rfl
 
 theorem copyData_shift (st : St) (sd : Name) (ssub : Option Subset) (dd : Name) (dsub : Option Subset)
@@ -496,28 +476,6 @@ theorem aliasTo_shift (st : St) (d base : Name) (sub : Option Subset) :
   · repeat (refine Res.bind_shift' _ fun _ => ?_)
     simp [Res.map]
 
-theorem bindView_shift (s : State) (v : DNode) (d : Name) (st : St) :
-    bindView ctx ρ s v d (st.shift L) = (bindView ctx ρ s v d st).map (St.shift L) := by
-  unfold bindView
-  split
-  · rfl
-  · dsimp only
-    split
-    · rfl
-    · exact aliasTo_shift ..
-
-theorem bindViews_shift (s : State) (ids : List NodeId) (st : St) :
-    bindViews ctx ρ s ids (st.shift L) = (bindViews ctx ρ s ids st).map (St.shift L) := by
-  unfold bindViews
-  refine List.foldlM_res_comm (St.shift L) _ (fun st id => ?_) _ _
-  split
-  · split
-    · split
-      · exact bindView_shift ..
-      · rfl
-    · rfl
-  · rfl
-
 theorem refSet_shift (s : State) (e : DEdge) (d : Name) (st : St) :
     refSet ctx ρ s e d (st.shift L) = (refSet ctx ρ s e d st).map (St.shift L) := by
   unfold refSet
@@ -551,40 +509,11 @@ theorem execSimple_shift (s : State) (n : DNode) (st : St) :
       · exact execReduce_shift ..
       · exact execCode_shift ..
 
-theorem bindDynamicInputs_shift (s : State) (n : DNode) (st : St) :
-    bindDynamicInputs ctx ρ s n (st.shift L) = (bindDynamicInputs ctx ρ s n st).map (shiftR L) := by
-  unfold bindDynamicInputs
-  refine List.foldlM_res_comm (shiftR L) _ (fun ⟨ρ, st⟩ e => ?_) _ (ρ, st)
-  simp only [Prod.map_apply, id_eq]
-  split
-  · split
-    · rw [readEdgeScalar_shift]
-      refine Res.bind_shift _ fun ⟨v?, st'⟩ => ?_
-      cases v? <;> rfl
-    · rfl
-  · rfl
-
-/-- Shift the state of a scope set-up result. -/
-abbrev shiftSetup {α : Type} (L : Log) : Valuation × St × α → Valuation × St × α :=
-  Prod.map id (Prod.map (St.shift L) id)
-
-theorem mapSetup_shift (s : State) (n : DNode) (mp : MapNode) (st : St) :
-    mapSetup ctx ρ s n mp (st.shift L) = (mapSetup ctx ρ s n mp st).map (shiftSetup L) := by
-  unfold mapSetup
-  rw [bindDynamicInputs_shift]
-  exact Res.bind_shift _ fun ⟨ρ', st'⟩ => Res.bind_shift' _ fun pts => rfl
-
 theorem scopeFinish_shift (pre : St) (logs : List Log) :
     scopeFinish ctx (pre.shift L) logs = (scopeFinish ctx pre logs).map (St.shift L) := by
   unfold scopeFinish
   simp only [St.shift_mem]
   split <;> simp [Res.map, St.shift, Log.seq_assoc]
-
-theorem consumeSetup_shift (s : State) (n : DNode) (c : ConsumeNode) (st : St) :
-    consumeSetup ctx ρ s n c (st.shift L) = (consumeSetup ctx ρ s n c st).map (shiftSetup L) := by
-  unfold consumeSetup
-  rw [bindDynamicInputs_shift]
-  exact Res.bind_shift _ fun ⟨ρ', st'⟩ => Res.bind_shift' _ fun l => Res.bind_shift' _ fun np => rfl
 
 theorem consumeFinish_shift (pre : St) (l : Loc) (logs : List Log) (rest pushed : List Val) :
     consumeFinish ctx (pre.shift L) l logs rest pushed =
@@ -592,52 +521,6 @@ theorem consumeFinish_shift (pre : St) (l : Loc) (logs : List Log) (rest pushed 
   unfold consumeFinish
   simp only [St.shift_mem]
   split <;> simp [Res.map, St.shift, Log.seq_assoc]
-
-theorem bindCodeInputs_shift (ctx' : Ctx) (ρ' : Valuation) (s : State) (n : DNode) (st : St) :
-    bindCodeInputs ctx' ρ' s n (st.shift L) =
-      (bindCodeInputs ctx' ρ' s n st).map (Prod.map (St.shift L) id) := by
-  unfold bindCodeInputs
-  refine List.foldlM_res_comm (Prod.map (St.shift L) id) _ (fun ⟨st, codes⟩ c => ?_) _ (st, [])
-  simp only [Prod.map_apply, id_eq, St.shift_mem, St.shift_val?]
-  split
-  · split
-    · exact Res.bind_shift' _ fun l => rfl
-    · rfl
-  · rfl
-
-/-- Shift the state of a nested set-up result. -/
-abbrev shiftNested (L : Log) : Ctx × Valuation × St × List Name → Ctx × Valuation × St × List Name :=
-  Prod.map id (Prod.map id (Prod.map (St.shift L) id))
-
-theorem nestedSetup_shift (s : State) (n : DNode) (inner : SDFG) (mapping : List (Sym × Expr)) (st : St) :
-    nestedSetup ctx ρ s n inner mapping (st.shift L) =
-      (nestedSetup ctx ρ s n inner mapping st).map (shiftNested L) := by
-  unfold nestedSetup
-  refine Res.bind_shift' _ fun _ => ?_
-  refine Res.bind_shift' _ fun conns => ?_
-  simp only [St.shift_mem]
-  refine Res.bind_shift' _ fun ρ' => ?_
-  have : ({ st.shift L with mem := st.mem.allocAll (inner.callTransients.map (ctx.enter inner conns).cname) } : St) =
-      St.shift L { st with mem := st.mem.allocAll (inner.callTransients.map (ctx.enter inner conns).cname) } := rfl
-  rw [this, bindCodeInputs_shift]
-  exact Res.bind_shift _ fun ⟨st', codes⟩ => rfl
-
-theorem nestedFinish_shift (ctx' : Ctx) (ρ' : Valuation) (s : State) (n : DNode) (aliased : List Name) (pre : St)
-    (m₂ : Mem) (g₂ : Log) :
-    nestedFinish ctx' ρ' s n aliased (pre.shift L) m₂ g₂ =
-      (nestedFinish ctx' ρ' s n aliased pre m₂ g₂).map (St.shift L) := by
-  unfold nestedFinish
-  have h0 : ∀ (m : Mem) (G : Log), ({ mem := m, log := (pre.shift L).log.seq G, vals := (pre.shift L).vals } : St) =
-      St.shift L { mem := m, log := pre.log.seq G, vals := pre.vals } := by
-    intro m G
-    simp [St.shift, Log.seq_assoc]
-  rw [h0]
-  refine List.foldlM_res_comm (St.shift L) _ (fun st e => ?_) _ _
-  split
-  · split
-    · exact Res.bind_shift' _ fun l => by split <;> rfl
-    · rfl
-  · rfl
 
 @[simp] theorem iterStart_shift (priv : List Name) (pre : St) : iterStart priv (pre.shift L) = iterStart priv pre := rfl
 
@@ -674,130 +557,6 @@ open St (shiftR)
 
 variable {ctx : Ctx} {ρ : Valuation} {s : State}
 
-/-- The map iterations depend on the pre-map state only through `iterStart`. -/
-theorem IterExec.of_iterStart_eq {entry : NodeId} {params : List Sym} {priv : List Name} {pre pre' : St}
-    {pts : List Idx} {r : Res (List Log)} (he : iterStart priv pre' = iterStart priv pre) :
-    IterExec ctx ρ s entry params priv pre pts r → IterExec ctx ρ s entry params priv pre' pts r
-  | .nil => .nil
-  | .headErr hb => .headErr (he ▸ hb)
-  | .tailErr hr => .tailErr (IterExec.of_iterStart_eq he hr)
-  | .cons hb hr => .cons (he ▸ hb) (IterExec.of_iterStart_eq he hr)
-
-/-- The map iterations do not read the log of the pre-map state. -/
-theorem IterExec.shift_iff {entry : NodeId} {params : List Sym} {priv : List Name} {pre : St} {pts : List Idx}
-    {r : Res (List Log)} (L : Log) :
-    IterExec ctx ρ s entry params priv (pre.shift L) pts r ↔ IterExec ctx ρ s entry params priv pre pts r :=
-  ⟨IterExec.of_iterStart_eq rfl, IterExec.of_iterStart_eq rfl⟩
-
-/-- The consume tasks depend on the pre-scope state only through its memory
-and code-edge values. -/
-theorem ConsumeTasks.of_eq {entry : NodeId} {c : ConsumeNode} {l : Loc} {np : Int} {priv : List Name}
-    {pre pre' : St} {q : List Val} {r : Res (List Log × List Val × List Val)}
-    (hm : pre'.mem = pre.mem) (hv : pre'.vals = pre.vals) :
-    ConsumeTasks ctx ρ s entry c l np priv pre q r → ConsumeTasks ctx ρ s entry c l np priv pre' q r
-  | .condErr hc => .condErr (hm ▸ hc)
-  | .stop hc => .stop (hm ▸ hc)
-  | .bodyErr hc hq hp hb => .bodyErr (hm ▸ hc) hq hp (by unfold taskStart at hb ⊢; rw [hm, hv]; exact hb)
-  | .restErr hc hq hp hb hr =>
-    .restErr (hm ▸ hc) hq hp (by unfold taskStart at hb ⊢; rw [hm, hv]; exact hb) (ConsumeTasks.of_eq hm hv hr)
-  | .step hc hq hp hb hr =>
-    .step (hm ▸ hc) hq hp (by unfold taskStart at hb ⊢; rw [hm, hv]; exact hb) (ConsumeTasks.of_eq hm hv hr)
-
-/-- The consume tasks do not read the log of the pre-scope state. -/
-theorem ConsumeTasks.shift_iff {entry : NodeId} {c : ConsumeNode} {l : Loc} {np : Int} {priv : List Name}
-    {pre : St} {q : List Val} {r : Res (List Log × List Val × List Val)} (L : Log) :
-    ConsumeTasks ctx ρ s entry c l np priv (pre.shift L) q r ↔ ConsumeTasks ctx ρ s entry c l np priv pre q r :=
-  ⟨ConsumeTasks.of_eq rfl rfl, ConsumeTasks.of_eq rfl rfl⟩
-
-theorem NodeExec.shift {n : DNode} {st : St} {r : Res St} (L : Log) (h : NodeExec ctx ρ s n st r) :
-    NodeExec ctx ρ s n (st.shift L) (r.map (St.shift L)) := by
-  cases h with
-  | simple h =>
-    rw [← execSimple_shift]
-    exact .simple h
-  | mapSetupErr hk hs =>
-    exact .mapSetupErr hk (by rw [mapSetup_shift, hs]; rfl)
-  | mapIterErr hk hs hi =>
-    exact .mapIterErr hk (by rw [mapSetup_shift, hs]; rfl) ((IterExec.shift_iff L).2 hi)
-  | mapScope hk hs hi =>
-    rw [← scopeFinish_shift]
-    exact .mapScope hk (by rw [mapSetup_shift, hs]; rfl) ((IterExec.shift_iff L).2 hi)
-  | consumeSetupErr hk hs =>
-    exact .consumeSetupErr hk (by rw [consumeSetup_shift, hs]; rfl)
-  | consumeTasksErr hk hs ht =>
-    exact .consumeTasksErr hk (by rw [consumeSetup_shift, hs]; rfl) ((ConsumeTasks.shift_iff L).2 ht)
-  | consumeScope hk hs ht =>
-    rw [← consumeFinish_shift]
-    exact .consumeScope hk (by rw [consumeSetup_shift, hs]; rfl) ((ConsumeTasks.shift_iff L).2 ht)
-  | nestedSetupErr hk hs =>
-    exact .nestedSetupErr hk (by rw [nestedSetup_shift, hs]; rfl)
-  | nestedInnerErr hk hs hr =>
-    exact .nestedInnerErr hk ((nestedSetup_shift ..).trans (congrArg _ hs)) hr
-  | nested hk hs hr =>
-    rw [← nestedFinish_shift]
-    exact .nested hk (by rw [nestedSetup_shift, hs]; rfl) hr
-
-theorem NodeExec.unshift {n : DNode} {st : St} {r : Res St} {L : Log} (h : NodeExec ctx ρ s n (st.shift L) r) :
-    ∃ r₀, NodeExec ctx ρ s n st r₀ ∧ r = r₀.map (St.shift L) := by
-  generalize hst : st.shift L = st' at h
-  cases h with
-  | simple h =>
-    subst hst
-    exact ⟨_, .simple h, execSimple_shift ..⟩
-  | mapSetupErr hk hs =>
-    subst hst
-    rw [mapSetup_shift, Res.map_eq_err] at hs
-    exact ⟨_, .mapSetupErr hk hs, rfl⟩
-  | mapIterErr hk hs hi =>
-    subst hst
-    rw [mapSetup_shift, Res.map_eq_ok] at hs
-    obtain ⟨⟨ρ₁, st₁, pts₁⟩, hs, he⟩ := hs
-    cases he
-    exact ⟨_, .mapIterErr hk hs ((IterExec.shift_iff L).1 hi), rfl⟩
-  | mapScope hk hs hi =>
-    subst hst
-    rw [mapSetup_shift, Res.map_eq_ok] at hs
-    obtain ⟨⟨ρ₁, st₁, pts₁⟩, hs, he⟩ := hs
-    cases he
-    exact ⟨_, .mapScope hk hs ((IterExec.shift_iff L).1 hi), scopeFinish_shift ..⟩
-  | consumeSetupErr hk hs =>
-    subst hst
-    rw [consumeSetup_shift, Res.map_eq_err] at hs
-    exact ⟨_, .consumeSetupErr hk hs, rfl⟩
-  | consumeTasksErr hk hs ht =>
-    subst hst
-    rw [consumeSetup_shift, Res.map_eq_ok] at hs
-    obtain ⟨⟨ρ₁, st₁, l₁, np₁⟩, hs, he⟩ := hs
-    cases he
-    exact ⟨_, .consumeTasksErr hk hs ((ConsumeTasks.shift_iff L).1 ht), rfl⟩
-  | consumeScope hk hs ht =>
-    subst hst
-    rw [consumeSetup_shift, Res.map_eq_ok] at hs
-    obtain ⟨⟨ρ₁, st₁, l₁, np₁⟩, hs, he⟩ := hs
-    cases he
-    exact ⟨_, .consumeScope hk hs ((ConsumeTasks.shift_iff L).1 ht), consumeFinish_shift ..⟩
-  | nestedSetupErr hk hs =>
-    subst hst
-    rw [nestedSetup_shift, Res.map_eq_err] at hs
-    exact ⟨_, .nestedSetupErr hk hs, rfl⟩
-  | nestedInnerErr hk hs hr =>
-    subst hst
-    rw [nestedSetup_shift, Res.map_eq_ok] at hs
-    obtain ⟨⟨ctx₁, ρ₁, st₁, al₁⟩, hs, he⟩ := hs
-    cases he
-    exact ⟨_, .nestedInnerErr hk hs hr, rfl⟩
-  | nested hk hs hr =>
-    subst hst
-    rw [nestedSetup_shift, Res.map_eq_ok] at hs
-    obtain ⟨⟨ctx₁, ρ₁, st₁, al₁⟩, hs, he⟩ := hs
-    cases he
-    exact ⟨_, .nested hk hs hr, nestedFinish_shift ..⟩
-
-/-- **Logs are write-only** (one node). -/
-theorem NodeExec.shift_iff {n : DNode} {st : St} {r : Res St} (L : Log) :
-    NodeExec ctx ρ s n (st.shift L) r ↔ ∃ r₀, NodeExec ctx ρ s n st r₀ ∧ r = r₀.map (St.shift L) :=
-  ⟨NodeExec.unshift, fun ⟨_, h, he⟩ => he ▸ h.shift L⟩
-
 theorem SeqExec.shift {ids : List NodeId} {st : St} {r : Res (St × List (NodeId × Log))} (L : Log) :
     SeqExec ctx ρ s ids st r → SeqExec ctx ρ s ids (st.shift L) (r.map (Prod.map (St.shift L) id))
   | .nil => .nil
@@ -833,50 +592,6 @@ theorem SeqExec.shift_iff {ids : List NodeId} {st : St} {r : Res (St × List (No
     SeqExec ctx ρ s ids (st.shift L) r ↔
       ∃ r₀, SeqExec ctx ρ s ids st r₀ ∧ r = r₀.map (Prod.map (St.shift L) id) :=
   ⟨SeqExec.unshift rfl, fun ⟨_, h, he⟩ => he ▸ h.shift L⟩
-
-theorem OrderedExec.shift {all direct : List NodeId} {st : St} {r : Res St} (L : Log) :
-    OrderedExec ctx ρ s all direct st r → OrderedExec ctx ρ s all direct (st.shift L) (r.map (St.shift L))
-  | .prologueErr hp => .prologueErr (by rw [bindViews_shift, hp]; rfl)
-  | .seqErr ho hp hs => .seqErr ho (by rw [bindViews_shift, hp]; rfl) (hs.shift L)
-  | .hbRace ho hp hs hf => .hbRace ho (by rw [bindViews_shift, hp]; rfl) (hs.shift L) hf
-  | .run ho hp hs hf => .run ho (by rw [bindViews_shift, hp]; rfl) (hs.shift L) hf
-
-theorem OrderedExec.unshift {all direct : List NodeId} {st : St} {r : Res St} {L : Log}
-    (h : OrderedExec ctx ρ s all direct (st.shift L) r) :
-    ∃ r₀, OrderedExec ctx ρ s all direct st r₀ ∧ r = r₀.map (St.shift L) := by
-  cases h with
-  | prologueErr hp =>
-    rw [bindViews_shift, Res.map_eq_err] at hp
-    exact ⟨_, .prologueErr hp, rfl⟩
-  | seqErr ho hp hs =>
-    rw [bindViews_shift, Res.map_eq_ok] at hp
-    obtain ⟨st₁, hp, rfl⟩ := hp
-    obtain ⟨r₀, h₀, he⟩ := (SeqExec.shift_iff L).1 hs
-    rw [eq_comm, Res.map_eq_err] at he
-    subst he
-    exact ⟨_, .seqErr ho hp h₀, rfl⟩
-  | hbRace ho hp hs hf =>
-    rw [bindViews_shift, Res.map_eq_ok] at hp
-    obtain ⟨st₁, hp, rfl⟩ := hp
-    obtain ⟨r₀, h₀, he⟩ := (SeqExec.shift_iff L).1 hs
-    rw [eq_comm, Res.map_eq_ok] at he
-    obtain ⟨⟨st₂, tr⟩, rfl, he⟩ := he
-    cases he
-    exact ⟨_, .hbRace ho hp h₀ hf, rfl⟩
-  | run ho hp hs hf =>
-    rw [bindViews_shift, Res.map_eq_ok] at hp
-    obtain ⟨st₁, hp, rfl⟩ := hp
-    obtain ⟨r₀, h₀, he⟩ := (SeqExec.shift_iff L).1 hs
-    rw [eq_comm, Res.map_eq_ok] at he
-    obtain ⟨⟨st₂, tr⟩, rfl, he⟩ := he
-    cases he
-    exact ⟨_, .run ho hp h₀ hf, rfl⟩
-
-/-- **Logs are write-only** (a scope body or state component). -/
-theorem OrderedExec.shift_iff {all direct : List NodeId} {st : St} {r : Res St} (L : Log) :
-    OrderedExec ctx ρ s all direct (st.shift L) r ↔
-      ∃ r₀, OrderedExec ctx ρ s all direct st r₀ ∧ r = r₀.map (St.shift L) :=
-  ⟨OrderedExec.unshift, fun ⟨_, h, he⟩ => he ▸ h.shift L⟩
 
 end Dataflow
 
@@ -1136,68 +851,13 @@ end
 
 variable {cst : CSt} {r : Res (Ctl × CSt)}
 
-theorem StateExec.shift_iff {s : State} (L : Log) :
-    StateExec ctx (cst.shift L) s r ↔ ∃ r₀, StateExec ctx cst s r₀ ∧ r = r₀.map (shiftC L) :=
-  ⟨StateExec.unshift rfl, fun ⟨_, h, he⟩ => he ▸ h.shift L⟩
-
 theorem BlockExec.shift_iff {b : Block} (L : Log) :
     BlockExec ctx (cst.shift L) b r ↔ ∃ r₀, BlockExec ctx cst b r₀ ∧ r = r₀.map (shiftC L) :=
   ⟨BlockExec.unshift rfl, fun ⟨_, h, he⟩ => he ▸ h.shift L⟩
 
-theorem RegionAt.shift_iff {rg : Region} {bid : BlockId} (L : Log) :
-    RegionAt ctx rg (cst.shift L) bid r ↔ ∃ r₀, RegionAt ctx rg cst bid r₀ ∧ r = r₀.map (shiftC L) :=
-  ⟨RegionAt.unshift rfl, fun ⟨_, h, he⟩ => he ▸ h.shift L⟩
-
 theorem RegionExec.shift_iff {rg : Region} (L : Log) :
     RegionExec ctx (cst.shift L) rg r ↔ ∃ r₀, RegionExec ctx cst rg r₀ ∧ r = r₀.map (shiftC L) :=
   ⟨RegionExec.unshift rfl, fun ⟨_, h, he⟩ => he ▸ h.shift L⟩
-
-theorem LoopExec.shift_iff {l : LoopRegion} (L : Log) :
-    LoopExec ctx (cst.shift L) l r ↔ ∃ r₀, LoopExec ctx cst l r₀ ∧ r = r₀.map (shiftC L) :=
-  ⟨LoopExec.unshift rfl, fun ⟨_, h, he⟩ => he ▸ h.shift L⟩
-
-theorem LoopGuard.shift_iff {l : LoopRegion} (L : Log) :
-    LoopGuard ctx (cst.shift L) l r ↔ ∃ r₀, LoopGuard ctx cst l r₀ ∧ r = r₀.map (shiftC L) :=
-  ⟨LoopGuard.unshift rfl, fun ⟨_, h, he⟩ => he ▸ h.shift L⟩
-
-theorem LoopIter.shift_iff {l : LoopRegion} (L : Log) :
-    LoopIter ctx (cst.shift L) l r ↔ ∃ r₀, LoopIter ctx cst l r₀ ∧ r = r₀.map (shiftC L) :=
-  ⟨LoopIter.unshift rfl, fun ⟨_, h, he⟩ => he ▸ h.shift L⟩
-
-theorem LoopTail.shift_iff {l : LoopRegion} (L : Log) :
-    LoopTail ctx (cst.shift L) l r ↔ ∃ r₀, LoopTail ctx cst l r₀ ∧ r = r₀.map (shiftC L) :=
-  ⟨LoopTail.unshift rfl, fun ⟨_, h, he⟩ => he ▸ h.shift L⟩
-
-theorem CondExec.shift_iff {brs : List (Option Expr × Region)} (L : Log) :
-    CondExec ctx (cst.shift L) brs r ↔ ∃ r₀, CondExec ctx cst brs r₀ ∧ r = r₀.map (shiftC L) :=
-  ⟨CondExec.unshift rfl, fun ⟨_, h, he⟩ => he ▸ h.shift L⟩
-
-/-- The form used by congruence proofs: a block run from a state with log
-`L` is a run from the same state with the empty log, whose final log `δ`
-becomes `L.seq δ`. -/
-theorem BlockExec.log_iff {b : Block} (L : Log) :
-    BlockExec ctx { cst with log := L } b r ↔
-      ∃ r₀, BlockExec ctx { cst with log := Log.empty } b r₀ ∧ r = r₀.map (shiftC L) := by
-  rw [CSt.withLog_eq_shift]
-  exact BlockExec.shift_iff L
-
-theorem StateExec.log_iff {s : State} (L : Log) :
-    StateExec ctx { cst with log := L } s r ↔
-      ∃ r₀, StateExec ctx { cst with log := Log.empty } s r₀ ∧ r = r₀.map (shiftC L) := by
-  rw [CSt.withLog_eq_shift]
-  exact StateExec.shift_iff L
-
-theorem RegionAt.log_iff {rg : Region} {bid : BlockId} (L : Log) :
-    RegionAt ctx rg { cst with log := L } bid r ↔
-      ∃ r₀, RegionAt ctx rg { cst with log := Log.empty } bid r₀ ∧ r = r₀.map (shiftC L) := by
-  rw [CSt.withLog_eq_shift]
-  exact RegionAt.shift_iff L
-
-theorem RegionExec.log_iff {rg : Region} (L : Log) :
-    RegionExec ctx { cst with log := L } rg r ↔
-      ∃ r₀, RegionExec ctx { cst with log := Log.empty } rg r₀ ∧ r = r₀.map (shiftC L) := by
-  rw [CSt.withLog_eq_shift]
-  exact RegionExec.shift_iff L
 
 /-! ### Related start states (control flow) -/
 
@@ -1241,74 +901,18 @@ theorem BlockExec.rel {b : Block} {a' a : CSt} (h : CSt.Rel a' a) :
     (∀ r', BlockExec ctx a' b r' → ∃ r, BlockExec ctx a b r ∧ Res.Rel CtlRel r' r) :=
   CSt.Rel.transfer (X := fun a r => BlockExec ctx a b r) (fun _ L _ => BlockExec.shift_iff L) h
 
-theorem StateExec.rel {s : State} {a' a : CSt} (h : CSt.Rel a' a) :
-    (∀ r, StateExec ctx a s r → ∃ r', StateExec ctx a' s r' ∧ Res.Rel CtlRel r' r) ∧
-    (∀ r', StateExec ctx a' s r' → ∃ r, StateExec ctx a s r ∧ Res.Rel CtlRel r' r) :=
-  CSt.Rel.transfer (X := fun a r => StateExec ctx a s r) (fun _ L _ => StateExec.shift_iff L) h
-
-theorem RegionAt.rel {rg : Region} {bid : BlockId} {a' a : CSt} (h : CSt.Rel a' a) :
-    (∀ r, RegionAt ctx rg a bid r → ∃ r', RegionAt ctx rg a' bid r' ∧ Res.Rel CtlRel r' r) ∧
-    (∀ r', RegionAt ctx rg a' bid r' → ∃ r, RegionAt ctx rg a bid r ∧ Res.Rel CtlRel r' r) :=
-  CSt.Rel.transfer (X := fun a r => RegionAt ctx rg a bid r) (fun _ L _ => RegionAt.shift_iff L) h
-
 theorem RegionExec.rel {rg : Region} {a' a : CSt} (h : CSt.Rel a' a) :
     (∀ r, RegionExec ctx a rg r → ∃ r', RegionExec ctx a' rg r' ∧ Res.Rel CtlRel r' r) ∧
     (∀ r', RegionExec ctx a' rg r' → ∃ r, RegionExec ctx a rg r ∧ Res.Rel CtlRel r' r) :=
   CSt.Rel.transfer (X := fun a r => RegionExec ctx a rg r) (fun _ L _ => RegionExec.shift_iff L) h
 
-theorem LoopExec.rel {l : LoopRegion} {a' a : CSt} (h : CSt.Rel a' a) :
-    (∀ r, LoopExec ctx a l r → ∃ r', LoopExec ctx a' l r' ∧ Res.Rel CtlRel r' r) ∧
-    (∀ r', LoopExec ctx a' l r' → ∃ r, LoopExec ctx a l r ∧ Res.Rel CtlRel r' r) :=
-  CSt.Rel.transfer (X := fun a r => LoopExec ctx a l r) (fun _ L _ => LoopExec.shift_iff L) h
-
-theorem LoopGuard.rel {l : LoopRegion} {a' a : CSt} (h : CSt.Rel a' a) :
-    (∀ r, LoopGuard ctx a l r → ∃ r', LoopGuard ctx a' l r' ∧ Res.Rel CtlRel r' r) ∧
-    (∀ r', LoopGuard ctx a' l r' → ∃ r, LoopGuard ctx a l r ∧ Res.Rel CtlRel r' r) :=
-  CSt.Rel.transfer (X := fun a r => LoopGuard ctx a l r) (fun _ L _ => LoopGuard.shift_iff L) h
-
-theorem LoopIter.rel {l : LoopRegion} {a' a : CSt} (h : CSt.Rel a' a) :
-    (∀ r, LoopIter ctx a l r → ∃ r', LoopIter ctx a' l r' ∧ Res.Rel CtlRel r' r) ∧
-    (∀ r', LoopIter ctx a' l r' → ∃ r, LoopIter ctx a l r ∧ Res.Rel CtlRel r' r) :=
-  CSt.Rel.transfer (X := fun a r => LoopIter ctx a l r) (fun _ L _ => LoopIter.shift_iff L) h
-
-theorem LoopTail.rel {l : LoopRegion} {a' a : CSt} (h : CSt.Rel a' a) :
-    (∀ r, LoopTail ctx a l r → ∃ r', LoopTail ctx a' l r' ∧ Res.Rel CtlRel r' r) ∧
-    (∀ r', LoopTail ctx a' l r' → ∃ r, LoopTail ctx a l r ∧ Res.Rel CtlRel r' r) :=
-  CSt.Rel.transfer (X := fun a r => LoopTail ctx a l r) (fun _ L _ => LoopTail.shift_iff L) h
-
-theorem CondExec.rel {brs : List (Option Expr × Region)} {a' a : CSt} (h : CSt.Rel a' a) :
-    (∀ r, CondExec ctx a brs r → ∃ r', CondExec ctx a' brs r' ∧ Res.Rel CtlRel r' r) ∧
-    (∀ r', CondExec ctx a' brs r' → ∃ r, CondExec ctx a brs r ∧ Res.Rel CtlRel r' r) :=
-  CSt.Rel.transfer (X := fun a r => CondExec ctx a brs r) (fun _ L _ => CondExec.shift_iff L) h
-
 end Control
 
-/-! ## Dataflow: `log_iff` forms and related start states -/
+/-! ## Dataflow: states that differ only in their logs -/
 
 section DataflowRel
 
 variable {ctx : Ctx} {ρ : Valuation} {s : State}
-
-theorem NodeExec.log_iff {n : DNode} {st : St} {r : Res St} (L : Log) :
-    NodeExec ctx ρ s n { st with log := L } r ↔
-      ∃ r₀, NodeExec ctx ρ s n { st with log := Log.empty } r₀ ∧ r = r₀.map (St.shift L) := by
-  rw [St.withLog_eq_shift]
-  exact NodeExec.shift_iff L
-
-theorem SeqExec.log_iff {ids : List NodeId} {st : St} {r : Res (St × List (NodeId × Log))} (L : Log) :
-    SeqExec ctx ρ s ids { st with log := L } r ↔
-      ∃ r₀, SeqExec ctx ρ s ids { st with log := Log.empty } r₀ ∧ r = r₀.map (Prod.map (St.shift L) id) := by
-  rw [St.withLog_eq_shift]
-  exact SeqExec.shift_iff L
-
-theorem OrderedExec.log_iff {all direct : List NodeId} {st : St} {r : Res St} (L : Log) :
-    OrderedExec ctx ρ s all direct { st with log := L } r ↔
-      ∃ r₀, OrderedExec ctx ρ s all direct { st with log := Log.empty } r₀ ∧ r = r₀.map (St.shift L) := by
-  rw [St.withLog_eq_shift]
-  exact OrderedExec.shift_iff L
-
-theorem St.Rel.shift {g' g : Log} (h : Log.Le g' g) (x : St) : St.Rel (x.shift g') (x.shift g) :=
-  ⟨rfl, Log.Le.seq h (Log.Le.refl _), fun _ => rfl⟩
 
 /-- Two states with the same memory and code-edge values are shifts of one
 state. -/
@@ -1318,40 +922,6 @@ theorem St.eq_shift_of {a' a : St} (hm : a'.mem = a.mem) (hv : a'.vals = a.vals)
   simp only at hm hv
   subst hm hv
   exact ⟨by simp [St.shift, Log.seq_empty], by simp [St.shift, Log.seq_empty]⟩
-
-/-- Generic transfer for the dataflow relations: start states with the same
-memory and code-edge values whose logs are `Log.Le`-related. -/
-theorem St.transfer {β : Type} {X : St → Res β → Prop} {sh : Log → β → β} {Rb : β → β → Prop}
-    (hX : ∀ a L r, X (a.shift L) r ↔ ∃ r₀, X a r₀ ∧ r = r₀.map (sh L))
-    (hR : ∀ {g' g : Log}, Log.Le g' g → ∀ x, Rb (sh g' x) (sh g x))
-    {a' a : St} (hm : a'.mem = a.mem) (hv : a'.vals = a.vals) (hle : Log.Le a'.log a.log) :
-    (∀ r, X a r → ∃ r', X a' r' ∧ Res.Rel Rb r' r) ∧ (∀ r', X a' r' → ∃ r, X a r ∧ Res.Rel Rb r' r) := by
-  obtain ⟨h', h⟩ := St.eq_shift_of hm hv
-  rw [h', h]
-  exact Res.rel_of_shift (shα := St.shift) hX (hR hle) _
-
-theorem NodeExec.rel {n : DNode} {a' a : St} (hm : a'.mem = a.mem) (hv : a'.vals = a.vals)
-    (hle : Log.Le a'.log a.log) :
-    (∀ r, NodeExec ctx ρ s n a r → ∃ r', NodeExec ctx ρ s n a' r' ∧ Res.Rel St.Rel r' r) ∧
-    (∀ r', NodeExec ctx ρ s n a' r' → ∃ r, NodeExec ctx ρ s n a r ∧ Res.Rel St.Rel r' r) :=
-  St.transfer (X := fun a r => NodeExec ctx ρ s n a r) (fun _ L _ => NodeExec.shift_iff L) St.Rel.shift hm hv hle
-
-theorem OrderedExec.rel {all direct : List NodeId} {a' a : St} (hm : a'.mem = a.mem) (hv : a'.vals = a.vals)
-    (hle : Log.Le a'.log a.log) :
-    (∀ r, OrderedExec ctx ρ s all direct a r → ∃ r', OrderedExec ctx ρ s all direct a' r' ∧ Res.Rel St.Rel r' r) ∧
-    (∀ r', OrderedExec ctx ρ s all direct a' r' → ∃ r, OrderedExec ctx ρ s all direct a r ∧ Res.Rel St.Rel r' r) :=
-  St.transfer (X := fun a r => OrderedExec ctx ρ s all direct a r) (fun _ L _ => OrderedExec.shift_iff L)
-    St.Rel.shift hm hv hle
-
-/-- Related sequential outcomes: `St.Rel` final states, equal traces. -/
-def SeqRel (x' x : St × List (NodeId × Log)) : Prop := St.Rel x'.1 x.1 ∧ x'.2 = x.2
-
-theorem SeqExec.rel {ids : List NodeId} {a' a : St} (hm : a'.mem = a.mem) (hv : a'.vals = a.vals)
-    (hle : Log.Le a'.log a.log) :
-    (∀ r, SeqExec ctx ρ s ids a r → ∃ r', SeqExec ctx ρ s ids a' r' ∧ Res.Rel SeqRel r' r) ∧
-    (∀ r', SeqExec ctx ρ s ids a' r' → ∃ r, SeqExec ctx ρ s ids a r ∧ Res.Rel SeqRel r' r) :=
-  St.transfer (X := fun a r => SeqExec ctx ρ s ids a r) (fun _ L _ => SeqExec.shift_iff L)
-    (fun h x => ⟨St.Rel.shift h x.1, rfl⟩) hm hv hle
 
 end DataflowRel
 

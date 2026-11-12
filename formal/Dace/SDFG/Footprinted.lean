@@ -280,22 +280,12 @@ theorem Plain.unionAll {gs : List Log} (h : ∀ g ∈ gs, g.Plain) : (Log.unionA
   ⟨by simp only [Log.unionAll, List.flatMap_eq_nil_iff]; exact fun g hg => (h g hg).aliasSets,
    by simp only [Log.unionAll, List.flatMap_eq_nil_iff]; exact fun g hg => (h g hg).queues⟩
 
-theorem Plain.of_le {g' g : Log} (hle : Le g' g) (h : g.Plain) : g'.Plain :=
-  ⟨List.eq_nil_iff_forall_not_mem.2 fun x hx => by
-      have := (hle.aliasSets.mem_iff x).1 hx; rw [h.aliasSets] at this; simp at this,
-   List.eq_nil_iff_forall_not_mem.2 fun x hx => by
-      have := (hle.queues.mem_iff x).1 hx; rw [h.queues] at this; simp at this⟩
-
 theorem apply_aliases (g : Log) (w : WcrSem) (m : Mem) :
     (g.apply w m).aliases = aliasTable m.aliases g.aliasSets := by
   rw [apply_eq]
 
 theorem Plain.apply_aliases {g : Log} (h : g.Plain) (w : WcrSem) (m : Mem) : (g.apply w m).aliases = m.aliases := by
   rw [Log.apply_aliases, h.aliasSets]
-  rfl
-
-theorem Plain.apply_queues {g : Log} (h : g.Plain) (w : WcrSem) (m : Mem) : (g.apply w m).queues = m.queues := by
-  rw [apply_eq, h.queues]
   rfl
 
 theorem apply_cells (g : Log) (w : WcrSem) (m : Mem) (l : Loc) :
@@ -361,10 +351,6 @@ theorem refl (R : List Loc) (m : Mem) : Mem.Agree R m m := ⟨rfl, fun _ _ => rf
 theorem symm {R : List Loc} {m₂ m : Mem} (h : Mem.Agree R m₂ m) : Mem.Agree R m m₂ :=
   ⟨h.1.symm, fun l hl => (h.2 l hl).symm⟩
 
-theorem trans {R : List Loc} {m₁ m₂ m₃ : Mem} (h₁ : Mem.Agree R m₁ m₂) (h₂ : Mem.Agree R m₂ m₃) :
-    Mem.Agree R m₁ m₃ :=
-  ⟨h₁.1.trans h₂.1, fun l hl => (h₁.2 l hl).trans (h₂.2 l hl)⟩
-
 theorem mono {R R' : List Loc} {m₂ m : Mem} (h : Mem.Agree R m₂ m) (hR : ∀ l ∈ R', l ∈ R) : Mem.Agree R' m₂ m :=
   ⟨h.1, fun l hl => h.2 l (hR l hl)⟩
 
@@ -380,11 +366,6 @@ theorem seq_right {a b : Log} (w : WcrSem) {m₂ m : Mem} (h : Mem.Agree (a.seq 
   by_cases hw : l ∈ a.writeLocs
   · exact .inr hw
   · exact .inl (h.2 l (Log.mem_seq_reads.2 (.inr ⟨hl, hw⟩)))
-
-/-- Applying the same log keeps agreement on any set. -/
-theorem apply {R : List Loc} {m₂ m : Mem} (h : Mem.Agree R m₂ m) (g : Log) (w : WcrSem) :
-    Mem.Agree R (g.apply w m₂) (g.apply w m) :=
-  ⟨by rw [Log.apply_aliases, Log.apply_aliases, h.1], fun l hl => Log.apply_cells_congr g w (.inl (h.2 l hl))⟩
 
 end Mem.Agree
 
@@ -427,10 +408,6 @@ def Foot (w : WcrSem) (f : St → Res St) : Prop :=
 namespace FootA
 
 variable {w : WcrSem} {α β γ : Type}
-
-theorem congr {f g : St → Res (α × St)} (h : FootA w f) (he : ∀ st, g st = f st) : FootA w g := by
-  have : g = f := funext he
-  rw [this]; exact h
 
 theorem pure (a : α) : FootA w (fun st => .ok (a, st)) := by
   intro st a' st' h
@@ -489,10 +466,6 @@ end FootA
 namespace Foot
 
 variable {w : WcrSem} {α β γ : Type}
-
-theorem congr {f g : St → Res St} (h : Foot w f) (he : ∀ st, g st = f st) : Foot w g := by
-  have : g = f := funext he
-  rw [this]; exact h
 
 theorem pure : Foot w (fun st => .ok st) := by
   intro st st' h
@@ -567,10 +540,6 @@ theorem _root_.Dace.FootA.ofVals {α : Type} (f : List ((NodeId × Conn) × Val)
   obtain ⟨rfl, rfl⟩ := h
   exact ⟨Log.empty, Log.Plain.empty, (St.step_empty w st).symm, fun st₂ _ hv => by
     rw [St.step_empty]; dsimp only; rw [hv]⟩
-
-/-- Forget the result of a footprinted action. -/
-theorem ofA {f : St → Res (α × St)} (hf : FootA w f) : Foot w (fun st => f st >>= fun p => .ok p.2) :=
-  bindA hf fun _ => pure
 
 end Foot
 
@@ -658,53 +627,6 @@ theorem readMany_foot (w : WcrSem) (n : Name) (pts : List Idx) (oob : Bool) :
   unfold readMany
   refine FootA.foldlM pts (fun p _ acc => ?_) []
   exact FootA.bind (read_foot ctx ρ w n p oob) (fun v => FootA.pure _)
-
-theorem logged_reads_logged (st : St) (a b : List Loc) :
-    (st.logged { reads := a }).logged { reads := b } = st.logged { reads := a ++ b } := by
-  simp only [logged, Log.seq_assoc]
-  congr 2
-  simp [Log.seq]
-
-theorem logged_reads_nil (st : St) : st.logged { reads := [] } = st := by
-  cases st
-  simp only [logged]
-  congr
-  exact Log.seq_empty _
-
-/-- A normal `readMany` reads the elements at the locations of its points,
-logging exactly those reads. -/
-theorem readMany_ok {n : Name} {oob : Bool} :
-    ∀ (pts : List Idx) (acc : List Val) (st : St) (vs : List Val) (st' : St),
-      pts.foldlM (fun (acc, st) p => do
-        let (v, st) ← st.read ctx ρ n p oob
-        pure (acc ++ [v], st)) (acc, st) = .ok (vs, st') →
-      ∃ ls : List Loc, List.Forall₂ (fun p l => ctx.loc ρ st.mem n p oob = .ok l) pts ls ∧
-        vs = acc ++ ls.map st.mem.read ∧ st' = st.logged { reads := ls.map st.mem.resolve } ∧
-        ∀ l ∈ ls, (st.mem.read l).isUndef = false
-  | [], acc, st, vs, st', h => by
-    simp only [List.foldlM_nil, Res.pure_eq, Res.ok_inj, Prod.mk.injEq] at h
-    obtain ⟨rfl, rfl⟩ := h
-    exact ⟨[], .nil, by simp, by simp [logged_reads_nil], by simp⟩
-  | p :: ps, acc, st, vs, st', h => by
-    simp only [List.foldlM_cons] at h
-    cases hl : ctx.loc ρ st.mem n p oob with
-    | err e =>
-      simp only [read, hl] at h
-      cases h
-    | ok l =>
-      cases hu : (st.mem.read l).isUndef with
-      | true => simp only [read, hl, hu, Res.ok_bind, if_true, Res.err_bind] at h; cases h
-      | false =>
-        simp only [read, hl, hu, Res.ok_bind, Bool.false_eq_true, if_false, Res.pure_eq] at h
-        obtain ⟨ls, hf, hv, hs, hd⟩ := readMany_ok ps _ _ vs st' h
-        refine ⟨l :: ls, .cons hl hf, by rw [hv]; simp [logged], ?_, ?_⟩
-        · rw [hs, logged_reads_logged]
-          rfl
-        · intro l' hl'
-          rcases List.mem_cons.1 hl' with rfl | hl'
-          · exact hu
-          · have := hd l' hl'
-            simpa [logged] using this
 
 end St
 

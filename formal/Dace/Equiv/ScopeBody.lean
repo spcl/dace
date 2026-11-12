@@ -1530,12 +1530,4 @@ theorem Congr.mapBody {g : SDFG} {p : List PathStep} {i : BlockId} {s : State} {
     (hsup : Supported g.prog) : Refines (g.setBlockAt p i (.state (s.withBody M bn be))).prog g.prog :=
   Congr.scopeBody hat hchk (State.withBody_outer hfit).1 (State.withBody_outer hfit).2 hbody hsup
 
-/-- An unchanged body matches itself (the trivial instance). -/
-theorem BodyMatchedE.refl (ctx : Ctx) (s : State) (M : NodeId) : BodyMatchedE ctx s s M :=
-  fun _ _ _ h => MatchedE.of_rel h (by
-    rename_i r'
-    cases r' with
-    | ok a => exact Log.Le.refl _
-    | err e => rfl)
-
 end Dace

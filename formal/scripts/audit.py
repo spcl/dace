@@ -6,8 +6,8 @@ Runs ``scripts/audit.lean`` once per import group (the library and each executab
 functions cannot be imported together), builds the dependency graph of the user-written declarations and
 reports:
 
-* declarations unreachable from the roots: the executables' ``main``, the theorems checked in
-  ``tests/Headlines.lean`` and the declarations the other ``tests/*.lean`` files mention;
+* declarations unreachable from the roots: the executables, the theorems checked in
+  ``tests/Headlines.lean`` and the definitions the other ``tests/*.lean`` files mention;
 * theorems with identical statements;
 * theorems whose statement mentions no constant of the library (candidates for ``Core/ListLemmas.lean``
   or for a Mathlib lemma);
@@ -24,7 +24,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Set
 
 FORMAL = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_GROUPS = ['Dace', 'Dace,Tools.Interp', 'Dace,Tools.Equiv']
@@ -88,12 +88,16 @@ def owners(decls: Dict[str, Decl]) -> Dict[str, str]:
     return owner
 
 
-def test_roots(decls: Set[str], headlines_only: bool) -> Set[str]:
-    """Declarations named in ``tests/Headlines.lean`` and mentioned by the other tests."""
+def test_roots(decls: Dict[str, Decl]) -> Set[str]:
+    """Theorems checked in ``tests/Headlines.lean`` and definitions the other tests mention.
+
+    The other tests only run code, so an identifier in them never keeps a theorem alive.
+    """
     roots: Set[str] = set()
     short = collections.defaultdict(set)
-    for n in decls:
-        short[n.rsplit('.', 1)[-1]].add(n)
+    for n, d in decls.items():
+        if d.kind != 'thm':
+            short[n.rsplit('.', 1)[-1]].add(n)
     for path in sorted((FORMAL / 'tests').glob('*.lean')):
         text = path.read_text()
         if path.name == 'Headlines.lean':
@@ -101,7 +105,7 @@ def test_roots(decls: Set[str], headlines_only: bool) -> Set[str]:
                 if n not in decls:
                     sys.exit(f'tests/Headlines.lean: unknown declaration {n}')
                 roots.add(n)
-        elif not headlines_only:
+        else:
             for tok in IDENT.findall(text):
                 roots |= short.get(tok.rsplit('.', 1)[-1], set())
     return roots
@@ -125,7 +129,7 @@ def main() -> int:
             continue
         uses[o] |= {owner[x] for x in d.deps if x in owner and owner[x] != o}
 
-    roots = {n for n in user if n == 'main' or n.endswith('.main')} | test_roots(set(user), False)
+    roots = {n for n in user if n == 'main' or n.endswith('.main')} | test_roots(user)
     roots |= {n for n, d in user.items() if d.module.startswith('Tools.')}
     seen, stack = set(roots), list(roots)
     while stack:

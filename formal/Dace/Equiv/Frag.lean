@@ -9,11 +9,9 @@ Building blocks of the congruence proofs: relations between
 the intermediate states of two executions and the matching of one outcome
 by the outcome set of a fragment.
 
-* `St.Rel a' a`: two sequential dataflow states agree on the local memory
-  and the code-edge values, and `a'`'s log refines `a`'s (`Log.Le`: reads at
-  most what `a` reads, same effects up to commuting reorderings);
 * `CSt.Rel a' a`: two control-flow states agree on valuation and memory, and
-  `a'`'s log refines `a`'s;
+  `a'`'s log refines `a`'s (`Log.Le`: reads at most what `a` reads, same
+  effects up to commuting reorderings);
 * `Matched R X r'`: the outcome `r'` is matched by the outcome set `X`: either
   `X` contains undefined behavior, or `r'` is normal and `R`-related to a
   normal outcome of `X`.  `Refines` is `Matched obsEq` pointwise
@@ -74,17 +72,10 @@ theorem Refines_iff_matched {Q P : Prog} :
 
 /-! ## Related states -/
 
-/-- Two sequential dataflow states: same local memory and code-edge values,
-the log of `a'` refines the log of `a`. -/
-def St.Rel (a' a : St) : Prop :=
-  a'.mem = a.mem ∧ Log.Le a'.log a.log ∧ ∀ k, a'.val? k = a.val? k
-
 /-- Two control-flow states: same valuation and memory, the log of `a'`
 refines the log of `a`. -/
 def CSt.Rel (a' a : CSt) : Prop :=
   a'.ρ = a.ρ ∧ a'.mem = a.mem ∧ Log.Le a'.log a.log
-
-theorem St.Rel.refl (a : St) : St.Rel a a := ⟨rfl, Log.Le.refl _, fun _ => rfl⟩
 
 theorem CSt.Rel.refl (a : CSt) : CSt.Rel a a := ⟨rfl, rfl, Log.Le.refl _⟩
 

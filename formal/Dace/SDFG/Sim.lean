@@ -55,11 +55,6 @@ theorem bind {a₂ a₁ : Option α} {f₂ f₁ : α → Option β} (h : OptLe a
     | none => exact .inl rfl
     | some x => exact hf x
 
-theorem map {a₂ a₁ : Option α} (f : α → β) (h : OptLe a₂ a₁) : OptLe (a₂.map f) (a₁.map f) := by
-  rcases h with rfl | rfl
-  · exact .inl rfl
-  · exact .inr rfl
-
 theorem some_iff {a₂ : Option α} {b : α} : OptLe a₂ (some b) ↔ a₂ = none ∨ a₂ = some b := Iff.rfl
 
 end OptLe
@@ -178,15 +173,6 @@ theorem filterMapM_mem {τ : Type} {f₂ f₁ : τ → Res (Option α)} :
     cases b with
     | none => exact filterMapM_mem xs fun x' hx' => hf x' (List.mem_cons_of_mem _ hx')
     | some b => exact fmapEq _ (filterMapM_mem xs fun x' hx' => hf x' (List.mem_cons_of_mem _ hx'))
-
-/-- If the simulating side fails, it is undefined behavior or the simulated
-side fails the same way. -/
-theorem err_inv' {r₂ : Res α} {r₁ : Res β} {e : ErrReason} (h : ResSim R r₂ r₁) (he : r₂ = .err e) :
-    ∃ e', e' = e ∧ (e.isUB = true ∨ r₁ = .err e) := by
-  rcases h with ⟨e', rfl, hu⟩ | ⟨e', h₁, rfl⟩ | ⟨a, b, rfl, -, -⟩
-  · cases he; exact ⟨_, rfl, .inl hu⟩
-  · cases he; exact ⟨_, rfl, .inr h₁⟩
-  · cases he
 
 theorem err_inv {r₂ : Res α} {e : ErrReason} (h : ResSim R r₂ (.err e : Res β)) :
     ∃ e', r₂ = .err e' ∧ (e'.isUB = true ∨ e' = e) := by

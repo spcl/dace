@@ -256,19 +256,6 @@ theorem popN_steps (n : Name) (idx : Idx) (k : Nat) : StepsA w kv (fun st => st.
         exact ⟨{ queues := [(st.mem.resolve l, .exclusive ((st.mem.queues (st.mem.resolve l)).drop k))] },
           by rw [apply_queues_one], rfl, fun _ => rfl⟩
 
-theorem queue_steps (n : Name) (idx : Idx) : StepsA w kv (fun st => do
-    let q ← st.queue ctx ρ n idx
-    pure (q, st)) := by
-  intro st a st' h
-  dsimp only at h
-  cases hq : st.queue ctx ρ n idx with
-  | err e => rw [hq] at h; cases h
-  | ok q =>
-    rw [hq] at h
-    simp only [Res.ok_bind, Res.pure_eq, Res.ok_inj, Prod.mk.injEq] at h
-    obtain ⟨-, rfl⟩ := h
-    exact St.StepTo.refl w st
-
 theorem bindAlias_steps (n : Name) (b : AliasBinding) : Steps w kv (fun st => .ok (st.bindAlias n b)) := by
   intro st st' h
   simp only [Res.ok_inj] at h
@@ -783,31 +770,5 @@ theorem OrderedExec.coherent' {ρ : Valuation} {all direct : List NodeId} {st st
 end Nodes
 
 /-! ## Views -/
-
-/-- No container of the context is a view (the prologue of a sequential
-execution binds nothing). -/
-def Ctx.noViews? (ctx : Ctx) : Bool := ctx.g.arrays.all fun (_, d) => !d.isView
-
-theorem Ctx.noViews?_sound {ctx : Ctx} (h : ctx.noViews? = true) (n : Name) : ctx.isView n = false := by
-  unfold Ctx.isView
-  cases hd : ctx.desc? n with
-  | none => rfl
-  | some d =>
-    simp only [Ctx.desc?, SDFG.array?, Option.map_eq_some_iff] at hd
-    obtain ⟨x, hx, rfl⟩ := hd
-    have := List.all_eq_true.1 h x (List.mem_of_find?_eq_some hx)
-    simpa using this
-
-theorem bindViews_eq_of {ctx : Ctx} {ρ : Valuation} {s : State} (hv : ∀ n, ctx.isView n = false)
-    (ids : List NodeId) (st : St) : bindViews ctx ρ s ids st = .ok st := by
-  unfold bindViews
-  simp only [hv, Bool.false_eq_true, ↓reduceIte]
-  induction ids generalizing st with
-  | nil => rfl
-  | cons id ids ih =>
-    simp only [List.foldlM_cons]
-    split
-    · split <;> exact ih st
-    · exact ih st
 
 end Dace

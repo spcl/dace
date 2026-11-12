@@ -7,20 +7,18 @@ import Dace.SDFG.LogShift
 
 The schedule-tree analogue of `Dace.SDFG.LogShift`: no execution relation
 of the tree semantics reads the log of the control-flow state it starts
-from.  With `CSt.shift L cst` (prefix `L` to the log):
-
-* `NodeExec` (`Res NodeOut`), `ListExec`, `LoopExec`, `LoopGuard`,
-  `LoopIter`, `LoopTail` (`Res (TCtl × CSt)`):
-  `R … (cst.shift L) r ↔ ∃ r₀, R … cst r₀ ∧ r = r₀.map (shift L)`
-  (`STree.*.shift_iff`; `STree.NodeExec.log_iff`, `STree.ListExec.log_iff`
-  for `{cst with log := L}` versus `{cst with log := .empty}`);
-* `IterExec` and `ConsumeTasks` do not depend on the log of the pre-scope
-  state at all (`STree.*.shift_iff`).
+from.  With `CSt.shift L cst` (prefix `L` to the log),
+a run of `NodeExec` (`Res NodeOut`), `ListExec`, `LoopExec`, `LoopGuard`,
+`LoopIter` or `LoopTail` (`Res (TCtl × CSt)`) from `cst.shift L` is a run
+from `cst` whose outcome is shifted by `L` (`STree.*.unshift`;
+`STree.ListExec.of_log` for `{cst with log := L}` versus
+`{cst with log := .empty}`).  `IterExec` and `ConsumeTasks` do not depend on
+the log of the pre-scope state at all (`STree.IterExec.of_eq`,
+`STree.ConsumeTasks.of_eq`).
 
 The leaf functions of `Dace.STree.Semantics.Leaf` commute with the shift
 (through the SDFG leaf lemmas); the relations go by mutual recursion on the
-derivation.  Corollaries (`STree.*.rel`): runs from `CSt.Rel`-related start
-states have related outcomes, in both directions.
+derivation.
 -/
 
 set_option autoImplicit false
@@ -247,11 +245,6 @@ theorem STree.IterExec.of_eq {params : List Sym} {body : List SNode} {priv : Lis
   | .cons hb hl hr =>
     .cons (by unfold iterStartT at hb ⊢; rw [hρ, hm]; exact hb) hl (STree.IterExec.of_eq hρ hm hr)
 
-theorem STree.IterExec.shift_iff {params : List Sym} {body : List SNode} {priv : List Name} {pre : CSt}
-    {pts : List Idx} {r : Res (List Log)} (L : Log) :
-    STree.IterExec tc params body priv (pre.shift L) pts r ↔ STree.IterExec tc params body priv pre pts r :=
-  ⟨STree.IterExec.of_eq rfl rfl, STree.IterExec.of_eq rfl rfl⟩
-
 /-- The consume tasks depend on the pre-scope state only through its memory. -/
 theorem STree.ConsumeTasks.of_eq {ρ : Valuation} {c : ConsumeNode} {d : Name} {body : List SNode} {l : Loc}
     {np : Int} {priv : List Name} {pre pre' : CSt} {q : List Val} {r : Res (List Log × List Val × List Val)}
@@ -265,11 +258,6 @@ theorem STree.ConsumeTasks.of_eq {ρ : Valuation} {c : ConsumeNode} {d : Name} {
   | .step hc hq hp hb ho hr =>
     .step (hm ▸ hc) hq hp (by unfold taskStartT at hb ⊢; rw [hm]; exact hb) ho (STree.ConsumeTasks.of_eq hm hr)
 
-theorem STree.ConsumeTasks.shift_iff {ρ : Valuation} {c : ConsumeNode} {d : Name} {body : List SNode} {l : Loc}
-    {np : Int} {priv : List Name} {pre : CSt} {q : List Val} {r : Res (List Log × List Val × List Val)} (L : Log) :
-    STree.ConsumeTasks tc ρ c d body l np priv (pre.shift L) q r ↔ STree.ConsumeTasks tc ρ c d body l np priv pre q r :=
-  ⟨STree.ConsumeTasks.of_eq rfl, STree.ConsumeTasks.of_eq rfl⟩
-
 end Scopes
 
 /-! ## The mutual family -/
@@ -277,100 +265,6 @@ end Scopes
 section Rel
 
 variable {tc : TCtx}
-
-mutual
-
-theorem STree.NodeExec.shift {sc : SibCtx} {n : SNode} {cst : CSt} {r : Res NodeOut} (L : Log) :
-    STree.NodeExec tc sc n cst r → STree.NodeExec tc sc n (cst.shift L) (r.map (shiftOut L))
-  | .pendingErr hn hp => .pendingErr hn hp
-  | .leaf hp h => .leaf hp (by rw [stepLeaf_shift, h]; rfl)
-  | .namedRegion hp h => by
-    rw [← scopeOut_shift]
-    exact .namedRegion hp (STree.ListExec.shift L h)
-  | .gblock hp h => by
-    rw [← scopeOut_shift]
-    exact .gblock hp (STree.ListExec.shift L h)
-  | .ifCondErr hp hc => .ifCondErr hp hc
-  | .ifSkip hp hc => .ifSkip hp hc
-  | .ifTaken hp hc h => by
-    rw [← chainOut_shift]
-    exact .ifTaken hp hc (STree.ListExec.shift L h)
-  | .stateIfCondErr hp hc => .stateIfCondErr hp hc
-  | .stateIfSkip hp hc => .stateIfSkip hp hc
-  | .stateIfTaken hp hc h => by
-    rw [← scopeOut_shift]
-    exact .stateIfTaken hp hc (STree.ListExec.shift L h)
-  | .elifNoChain hp hc => .elifNoChain hp hc
-  | .elifAfterTaken hp hc => .elifAfterTaken hp hc
-  | .elifCondErr hp hc he => .elifCondErr hp hc he
-  | .elifSkip hp hc he => .elifSkip hp hc he
-  | .elifTaken hp hc he h => by
-    rw [← chainOut_shift]
-    exact .elifTaken hp hc he (STree.ListExec.shift L h)
-  | .elseNoChain hp hc => .elseNoChain hp hc
-  | .elseAfterTaken hp hc => .elseAfterTaken hp hc
-  | .elseTaken hp hc h => by
-    rw [← scopeOut_shift]
-    exact .elseTaken hp hc (STree.ListExec.shift L h)
-  | .loop hp hl h => by
-    rw [← scopeOut_shift]
-    exact .loop hp hl (STree.LoopExec.shift L h)
-  | .mapSetupErr hs => .mapSetupErr hs
-  | .mapIterErr hs hi => .mapIterErr hs (STree.IterExec.of_eq (by rfl) (by rfl) hi)
-  | .mapScope hs hi => by
-    rw [← dataflowOut_shift, ← scopeFinishT_shift]
-    exact .mapScope hs (STree.IterExec.of_eq (by rfl) (by rfl) hi)
-  | .consumeSetupErr hs => .consumeSetupErr hs
-  | .consumeTasksErr hs ht => .consumeTasksErr hs (STree.ConsumeTasks.of_eq (by rfl) ht)
-  | .consumeScope hs ht => by
-    rw [← dataflowOut_shift, ← consumeFinishT_shift]
-    exact .consumeScope hs (STree.ConsumeTasks.of_eq (by rfl) ht)
-
-theorem STree.ListExec.shift {full : List SNode} {gb : Bool} {sc : SibCtx} {nodes : List SNode} {cst : CSt}
-    {r : Res (TCtl × CSt)} (L : Log) :
-    STree.ListExec tc full gb sc nodes cst r → STree.ListExec tc full gb sc nodes (cst.shift L) (r.map (shiftT L))
-  | .nil hp => .nil hp
-  | .nilPending hp => .nilPending hp
-  | .headErr h => .headErr (STree.NodeExec.shift L h)
-  | .step h hr => .step (STree.NodeExec.shift L h) (STree.ListExec.shift L hr)
-  | .jump h hc => .jump (STree.NodeExec.shift L h) hc
-  | .gotoResume h hl hr => .gotoResume (STree.NodeExec.shift L h) hl (STree.ListExec.shift L hr)
-  | .gotoEscape h hl => .gotoEscape (STree.NodeExec.shift L h) hl
-
-theorem STree.LoopExec.shift {l : LoopMeta} {body : List SNode} {cst : CSt} {r : Res (TCtl × CSt)} (L : Log) :
-    STree.LoopExec tc l body cst r → STree.LoopExec tc l body (cst.shift L) (r.map (shiftT L))
-  | .initErr hi => .initErr ((applyAssign?_shift ..).trans (congrArg _ hi))
-  | .guardFirst hi hv hg =>
-    .guardFirst ((applyAssign?_shift ..).trans (congrArg _ hi)) hv (STree.LoopGuard.shift L hg)
-  | .bodyFirst hi hv hb =>
-    .bodyFirst ((applyAssign?_shift ..).trans (congrArg _ hi)) hv (STree.LoopIter.shift L hb)
-
-theorem STree.LoopGuard.shift {l : LoopMeta} {body : List SNode} {cst : CSt} {r : Res (TCtl × CSt)} (L : Log) :
-    STree.LoopGuard tc l body cst r → STree.LoopGuard tc l body (cst.shift L) (r.map (shiftT L))
-  | .condErr hc => .condErr hc
-  | .exit hc => .exit hc
-  | .enter hc hb => .enter hc (STree.LoopIter.shift L hb)
-
-theorem STree.LoopIter.shift {l : LoopMeta} {body : List SNode} {cst : CSt} {r : Res (TCtl × CSt)} (L : Log) :
-    STree.LoopIter tc l body cst r → STree.LoopIter tc l body (cst.shift L) (r.map (shiftT L))
-  | .bodyErr hb => .bodyErr (STree.ListExec.shift L hb)
-  | .ret hb => .ret (STree.ListExec.shift L hb)
-  | .brk hb => .brk (STree.ListExec.shift L hb)
-  | .gotoOut hb => .gotoOut (STree.ListExec.shift L hb)
-  | .tail hb hc ht => .tail (STree.ListExec.shift L hb) hc (STree.LoopTail.shift L ht)
-
-theorem STree.LoopTail.shift {l : LoopMeta} {body : List SNode} {cst : CSt} {r : Res (TCtl × CSt)} (L : Log) :
-    STree.LoopTail tc l body cst r → STree.LoopTail tc l body (cst.shift L) (r.map (shiftT L))
-  | .updateErr hv hu => .updateErr hv ((applyAssign?_shift ..).trans (congrArg _ hu))
-  | .updateGuard hv hu hg =>
-    .updateGuard hv ((applyAssign?_shift ..).trans (congrArg _ hu)) (STree.LoopGuard.shift L hg)
-  | .condFirstErr hv hc => .condFirstErr hv hc
-  | .condFirstExit hv hc => .condFirstExit hv hc
-  | .condFirstUpdateErr hv hc hu => .condFirstUpdateErr hv hc ((applyAssign?_shift ..).trans (congrArg _ hu))
-  | .condFirstNext hv hc hu hb =>
-    .condFirstNext hv hc ((applyAssign?_shift ..).trans (congrArg _ hu)) (STree.LoopIter.shift L hb)
-
-end
 
 mutual
 
@@ -569,104 +463,12 @@ theorem STree.LoopTail.unshift {l : LoopMeta} {body : List SNode} {cst' cst : CS
 
 end
 
-/-! ### Logs are write-only (schedule trees) -/
-
-variable {cst : CSt}
-
-theorem STree.NodeExec.shift_iff {sc : SibCtx} {n : SNode} {r : Res NodeOut} (L : Log) :
-    STree.NodeExec tc sc n (cst.shift L) r ↔ ∃ r₀, STree.NodeExec tc sc n cst r₀ ∧ r = r₀.map (shiftOut L) :=
-  ⟨STree.NodeExec.unshift rfl, fun ⟨_, h, he⟩ => he ▸ h.shift L⟩
-
-theorem STree.ListExec.shift_iff {full : List SNode} {gb : Bool} {sc : SibCtx} {nodes : List SNode}
-    {r : Res (TCtl × CSt)} (L : Log) :
-    STree.ListExec tc full gb sc nodes (cst.shift L) r ↔
-      ∃ r₀, STree.ListExec tc full gb sc nodes cst r₀ ∧ r = r₀.map (shiftT L) :=
-  ⟨STree.ListExec.unshift rfl, fun ⟨_, h, he⟩ => he ▸ h.shift L⟩
-
-theorem STree.LoopExec.shift_iff {l : LoopMeta} {body : List SNode} {r : Res (TCtl × CSt)} (L : Log) :
-    STree.LoopExec tc l body (cst.shift L) r ↔ ∃ r₀, STree.LoopExec tc l body cst r₀ ∧ r = r₀.map (shiftT L) :=
-  ⟨STree.LoopExec.unshift rfl, fun ⟨_, h, he⟩ => he ▸ h.shift L⟩
-
-theorem STree.LoopGuard.shift_iff {l : LoopMeta} {body : List SNode} {r : Res (TCtl × CSt)} (L : Log) :
-    STree.LoopGuard tc l body (cst.shift L) r ↔ ∃ r₀, STree.LoopGuard tc l body cst r₀ ∧ r = r₀.map (shiftT L) :=
-  ⟨STree.LoopGuard.unshift rfl, fun ⟨_, h, he⟩ => he ▸ h.shift L⟩
-
-theorem STree.LoopIter.shift_iff {l : LoopMeta} {body : List SNode} {r : Res (TCtl × CSt)} (L : Log) :
-    STree.LoopIter tc l body (cst.shift L) r ↔ ∃ r₀, STree.LoopIter tc l body cst r₀ ∧ r = r₀.map (shiftT L) :=
-  ⟨STree.LoopIter.unshift rfl, fun ⟨_, h, he⟩ => he ▸ h.shift L⟩
-
-theorem STree.LoopTail.shift_iff {l : LoopMeta} {body : List SNode} {r : Res (TCtl × CSt)} (L : Log) :
-    STree.LoopTail tc l body (cst.shift L) r ↔ ∃ r₀, STree.LoopTail tc l body cst r₀ ∧ r = r₀.map (shiftT L) :=
-  ⟨STree.LoopTail.unshift rfl, fun ⟨_, h, he⟩ => he ▸ h.shift L⟩
-
-/-- The form used by congruence proofs: a node run from a state with log `L`
-is a run from the same state with the empty log, whose final log `δ`
-becomes `L.seq δ`. -/
-theorem STree.NodeExec.log_iff {sc : SibCtx} {n : SNode} {r : Res NodeOut} (L : Log) :
-    STree.NodeExec tc sc n { cst with log := L } r ↔
-      ∃ r₀, STree.NodeExec tc sc n { cst with log := Log.empty } r₀ ∧ r = r₀.map (shiftOut L) := by
-  rw [CSt.withLog_eq_shift]
-  exact STree.NodeExec.shift_iff L
-
-theorem STree.ListExec.log_iff {full : List SNode} {gb : Bool} {sc : SibCtx} {nodes : List SNode}
-    {r : Res (TCtl × CSt)} (L : Log) :
-    STree.ListExec tc full gb sc nodes { cst with log := L } r ↔
-      ∃ r₀, STree.ListExec tc full gb sc nodes { cst with log := Log.empty } r₀ ∧ r = r₀.map (shiftT L) := by
-  rw [CSt.withLog_eq_shift]
-  exact STree.ListExec.shift_iff L
-
-/-! ### Related start states (schedule trees) -/
-
-/-- Related tree node outcomes: same sibling context and signal, `CSt.Rel` states. -/
-def NodeOutRel (x' x : NodeOut) : Prop := x'.1 = x.1 ∧ x'.2.1 = x.2.1 ∧ CSt.Rel x'.2.2 x.2.2
-
-/-- Related tree control outcomes: same signal, `CSt.Rel` states. -/
-def TCtlRel (x' x : TCtl × CSt) : Prop := x'.1 = x.1 ∧ CSt.Rel x'.2 x.2
-
-theorem NodeOutRel.shiftOut {g' g : Log} (h : Log.Le g' g) (x : NodeOut) : NodeOutRel (shiftOut g' x) (shiftOut g x) :=
-  ⟨rfl, rfl, CSt.Rel.shift h x.2.2⟩
-
-theorem TCtlRel.shiftT {g' g : Log} (h : Log.Le g' g) (x : TCtl × CSt) : TCtlRel (shiftT g' x) (shiftT g x) :=
-  ⟨rfl, CSt.Rel.shift h x.2⟩
-
-theorem STree.NodeExec.rel {sc : SibCtx} {n : SNode} {a' a : CSt} (h : CSt.Rel a' a) :
-    (∀ r, STree.NodeExec tc sc n a r → ∃ r', STree.NodeExec tc sc n a' r' ∧ Res.Rel NodeOutRel r' r) ∧
-    (∀ r', STree.NodeExec tc sc n a' r' → ∃ r, STree.NodeExec tc sc n a r ∧ Res.Rel NodeOutRel r' r) :=
-  CSt.Rel.transferWith (X := fun a r => STree.NodeExec tc sc n a r) (fun _ L _ => STree.NodeExec.shift_iff L)
-    NodeOutRel.shiftOut h
-
-theorem STree.ListExec.rel {full : List SNode} {gb : Bool} {sc : SibCtx} {nodes : List SNode} {a' a : CSt}
-    (h : CSt.Rel a' a) :
-    (∀ r, STree.ListExec tc full gb sc nodes a r →
-      ∃ r', STree.ListExec tc full gb sc nodes a' r' ∧ Res.Rel TCtlRel r' r) ∧
-    (∀ r', STree.ListExec tc full gb sc nodes a' r' →
-      ∃ r, STree.ListExec tc full gb sc nodes a r ∧ Res.Rel TCtlRel r' r) :=
-  CSt.Rel.transferWith (X := fun a r => STree.ListExec tc full gb sc nodes a r)
-    (fun _ L _ => STree.ListExec.shift_iff L) TCtlRel.shiftT h
-
-theorem STree.LoopExec.rel {l : LoopMeta} {body : List SNode} {a' a : CSt} (h : CSt.Rel a' a) :
-    (∀ r, STree.LoopExec tc l body a r → ∃ r', STree.LoopExec tc l body a' r' ∧ Res.Rel TCtlRel r' r) ∧
-    (∀ r', STree.LoopExec tc l body a' r' → ∃ r, STree.LoopExec tc l body a r ∧ Res.Rel TCtlRel r' r) :=
-  CSt.Rel.transferWith (X := fun a r => STree.LoopExec tc l body a r) (fun _ L _ => STree.LoopExec.shift_iff L)
-    TCtlRel.shiftT h
-
-theorem STree.LoopGuard.rel {l : LoopMeta} {body : List SNode} {a' a : CSt} (h : CSt.Rel a' a) :
-    (∀ r, STree.LoopGuard tc l body a r → ∃ r', STree.LoopGuard tc l body a' r' ∧ Res.Rel TCtlRel r' r) ∧
-    (∀ r', STree.LoopGuard tc l body a' r' → ∃ r, STree.LoopGuard tc l body a r ∧ Res.Rel TCtlRel r' r) :=
-  CSt.Rel.transferWith (X := fun a r => STree.LoopGuard tc l body a r) (fun _ L _ => STree.LoopGuard.shift_iff L)
-    TCtlRel.shiftT h
-
-theorem STree.LoopIter.rel {l : LoopMeta} {body : List SNode} {a' a : CSt} (h : CSt.Rel a' a) :
-    (∀ r, STree.LoopIter tc l body a r → ∃ r', STree.LoopIter tc l body a' r' ∧ Res.Rel TCtlRel r' r) ∧
-    (∀ r', STree.LoopIter tc l body a' r' → ∃ r, STree.LoopIter tc l body a r ∧ Res.Rel TCtlRel r' r) :=
-  CSt.Rel.transferWith (X := fun a r => STree.LoopIter tc l body a r) (fun _ L _ => STree.LoopIter.shift_iff L)
-    TCtlRel.shiftT h
-
-theorem STree.LoopTail.rel {l : LoopMeta} {body : List SNode} {a' a : CSt} (h : CSt.Rel a' a) :
-    (∀ r, STree.LoopTail tc l body a r → ∃ r', STree.LoopTail tc l body a' r' ∧ Res.Rel TCtlRel r' r) ∧
-    (∀ r', STree.LoopTail tc l body a' r' → ∃ r, STree.LoopTail tc l body a r ∧ Res.Rel TCtlRel r' r) :=
-  CSt.Rel.transferWith (X := fun a r => STree.LoopTail tc l body a r) (fun _ L _ => STree.LoopTail.shift_iff L)
-    TCtlRel.shiftT h
+/-- **Logs are write-only**: a run from a state whose log is `L` is a run
+from the same state with an empty log, the outcome's log prefixed by `L`. -/
+theorem STree.ListExec.of_log {full : List SNode} {gb : Bool} {sc : SibCtx} {nodes : List SNode} {cst : CSt}
+    {r : Res (TCtl × CSt)} (L : Log) (h : STree.ListExec tc full gb sc nodes { cst with log := L } r) :
+    ∃ r₀, STree.ListExec tc full gb sc nodes { cst with log := Log.empty } r₀ ∧ r = r₀.map (shiftT L) :=
+  STree.ListExec.unshift (CSt.withLog_eq_shift cst L) h
 
 end Rel
 

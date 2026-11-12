@@ -2278,7 +2278,7 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
           rb = r₀.map (shiftT cst.log) := by
       intro rb hb'
       have hb'' : STree.ListExec tc body false {} body { cst with log := cst.log } rb := hb'
-      obtain ⟨r₀, h₀, hr₀⟩ := (STree.ListExec.log_iff cst.log).1 hb''
+      obtain ⟨r₀, h₀, hr₀⟩ := STree.ListExec.of_log cst.log hb''
       refine ⟨r₀, ?_, hr₀⟩
       have hst : ({ cst with log := Log.empty } : CSt) = { ρ := cst.ρ, mem := st.forNode.mem } := by
         simp only [St.forNode, hrel.1]

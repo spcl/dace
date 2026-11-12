@@ -51,9 +51,6 @@ theorem refl (a : St) : St.Eqv a a := ⟨rfl, rfl, Log.Le.refl _, Log.Le.refl _�
 theorem trans {a b c : St} (h₁ : St.Eqv a b) (h₂ : St.Eqv b c) : St.Eqv a c :=
   ⟨h₁.1.trans h₂.1, h₁.2.1.trans h₂.2.1, h₁.2.2.1.trans h₂.2.2.1, h₂.2.2.2.trans h₁.2.2.2⟩
 
-theorem rel {a b : St} (h : St.Eqv a b) : St.Rel a b :=
-  ⟨h.1, h.2.2.1, fun k => by simp only [St.val?, h.2.1]⟩
-
 end St.Eqv
 
 theorem St.afterNode_step' (w : WcrSem) (st : St) (δ : Log) :
