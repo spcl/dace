@@ -363,4 +363,3 @@ class MinimizeStridePermutation(ppl.Pass):
         )
         nest[depth], nest[depth + 1] = inner_entry, outer_entry
         return True
-

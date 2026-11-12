@@ -2362,11 +2362,8 @@ def test_a_container_both_states_write_is_ordered_by_its_write_write_edge():
     fused = copy.deepcopy(sdfg)
     fused.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
     state = fused.start_state
-    first_a, second_a = (
-        next(n for n in state.data_nodes() if n.data == "A" and state.in_edges(n)[0].src.label == label)
-        for label in ("both", "rewrite")
-    )
-    assert nx.has_path(state._nx, first_a, second_a)
+    exits = {n.map.label: n for n in state.nodes() if isinstance(n, dnodes.MapExit)}
+    assert nx.has_path(state._nx, exits["both_map"], exits["rewrite_map"])
 
 
 def test_two_reads_of_one_container_bind_to_its_one_writer():
