@@ -1260,6 +1260,14 @@ class BreakAntiDependence(ppl.Pass):
         unproven = [g for plan in plans for g in plan[2] if not symbolic.provably_le(one, g, facts)]
         unproven += self._unproven_offsets
         unproven = list(dict.fromkeys(unproven))
+        # An offset the facts prove below 1 (as in the original loop of a versioning on it) is never broken here
+        disproven = {
+            g
+            for g in unproven
+            if symbolic.ask(symbolic.Relation(symbolic.RelationKind.LE, one, g), facts) is symbolic.Truth.FALSE
+        }
+        plans = [plan for plan in plans if not set(plan[2]) & disproven]
+        unproven = [g for g in unproven if g not in disproven]
         if not unproven:
             return self.break_forward_reads(loop, sdfg, plans)
         proven = [plan for plan in plans if not set(plan[2]) & set(unproven)]
@@ -1403,6 +1411,10 @@ class BreakAntiDependence(ppl.Pass):
             needed = type(sym_guards)(g for g in sym_guards if not symbolic.provably_le(least, g, facts))
             self._snapshot_and_redirect(loop, name, sdfg, guards=needed, array_guards=array_guards)
         self.forwardize_reverse_iterator(loop, sdfg)
+        # As a version's clone (``specialize_loop_under_condition``): an earlier specialization's fallback pin does
+        # not hold where the facts prove what the rename needs (LoopToScan's ``K < 0`` fallback knows ``0 <= K``)
+        if renames:
+            loop.pinned_sequential = False
         return len(renames)
 
     def version_on_offset_sign(self, loop: LoopRegion, sdfg: SDFG, offsets: list) -> int:

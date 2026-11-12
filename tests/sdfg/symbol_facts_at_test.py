@@ -6,7 +6,7 @@ import sympy
 
 import dace
 from dace import symbolic
-from dace.sdfg.state import LoopRegion, SymbolResolver
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SymbolResolver
 from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
 
 ZERO = symbolic.pystr_to_symbolic("0")
@@ -450,6 +450,75 @@ def test_a_start_block_entered_again_by_a_back_edge_knows_none_of_its_assignment
     assert symbolic.ask(le("3", "s"), SymbolResolver().facts_at(c)) is symbolic.Truth.TRUE
 
 
+def branches(*conditions: str | None, **symbols) -> list[ControlFlowRegion]:
+    """``if conditions[0]: ... elif conditions[1]: ... else: ...`` over ``k`` and ``N`` (integers), ``M`` (positive)
+    and ``symbols``; returns the branches, each holding one start state."""
+    sdfg = dace.SDFG(f"facts_branches_{abs(hash((conditions, tuple(symbols))))}")
+    sdfg.add_symbol("M", dace.int64, predicates=frozenset({symbolic.Predicate.POSITIVE}))
+    for name, dtype in {"k": dace.int64, "N": dace.int64, **symbols}.items():
+        sdfg.add_symbol(name, dtype)
+    sdfg.add_array("la", [4], dace.int64)
+    conditional = ConditionalBlock("cond")
+    sdfg.add_node(conditional, is_start_block=True)
+    regions = []
+    for index, condition in enumerate(conditions):
+        region = ControlFlowRegion(f"branch_{index}", sdfg=sdfg)
+        region.add_state(f"start_{index}", is_start_block=True)
+        conditional.add_branch(condition, region)
+        regions.append(region)
+    return regions
+
+
+def test_a_branch_knows_its_condition_and_the_failed_earlier_ones():
+    """``if k < N`` / ``elif k < 2 * N`` / ``else``: each branch starts knowing its condition and the negation of each
+    earlier one."""
+    first, second, last = branches("k < N", "k < 2 * N", None)
+    facts = [SymbolResolver().facts_at(region.start_block) for region in (first, second, last)]
+    assert symbolic.ask(le("k + 1", "N"), facts[0]) is symbolic.Truth.TRUE
+    assert symbolic.ask(le("N", "k"), facts[1]) is symbolic.Truth.TRUE
+    assert symbolic.ask(le("k + 1", "2 * N"), facts[1]) is symbolic.Truth.TRUE
+    assert symbolic.ask(le("2 * N", "k"), facts[2]) is symbolic.Truth.TRUE
+
+
+def test_the_else_of_a_disjunction_knows_each_negated_part():
+    """``if k < 0 or k >= N``: the branch knows neither part, the else both negations, ``0 <= k < N``."""
+    then, orelse = branches("k < 0 or k >= N", None)
+    assert symbolic.ask(le("0", "k"), SymbolResolver().facts_at(then.start_block)) is symbolic.Truth.UNKNOWN
+    facts = SymbolResolver().facts_at(orelse.start_block)
+    assert symbolic.ask(le("0", "k"), facts) is symbolic.Truth.TRUE
+    assert symbolic.ask(le("k + 1", "N"), facts) is symbolic.Truth.TRUE
+
+
+def test_a_branch_condition_ends_where_the_branch_reassigns_its_symbol():
+    (then,) = branches("k < N")
+    later = then.add_state("later")
+    then.add_edge(then.start_block, later, dace.InterstateEdge(assignments={"k": "N + 5"}))
+    assert symbolic.ask(le("k + 1", "N"), SymbolResolver().facts_at(later)) is symbolic.Truth.FALSE
+    assert symbolic.ask(le("k + 1", "N"), SymbolResolver().facts_at(then.start_block)) is symbolic.Truth.TRUE
+
+
+def test_a_branch_condition_ends_where_the_branch_writes_the_container_it_reads():
+    (then,) = branches("la[0] < N")
+    start = then.start_block
+    later = then.add_state_after(start, "later")
+    assert symbolic.ask(le("la[0]", "N"), SymbolResolver().facts_at(later)) is symbolic.Truth.TRUE
+    start.add_edge(start.add_tasklet("t", {}, {"o"}, "o = 7"), "o", start.add_write("la"), None, dace.Memlet("la[0]"))
+    assert symbolic.ask(le("la[0]", "N"), SymbolResolver().facts_at(later)) is symbolic.Truth.UNKNOWN
+
+
+def test_a_failed_comparison_of_a_float_is_no_fact():
+    """``x < N`` fails for a NaN ``x`` too, so the else knows nothing; the branch itself knows ``x < N``."""
+    then, orelse = branches("x < N", None, x=dace.float64)
+    assert symbolic.ask(le("x", "N"), SymbolResolver().facts_at(then.start_block)) is symbolic.Truth.TRUE
+    assert symbolic.ask(le("N", "x"), SymbolResolver().facts_at(orelse.start_block)) is symbolic.Truth.UNKNOWN
+
+
+def test_a_branch_the_facts_prove_dead_knows_less_rather_than_a_contradiction():
+    """``M`` is positive, so the else of ``M > 0`` never runs: its ``M <= 0`` is dropped, not a contradiction."""
+    _, orelse = branches("M > 0", None)
+    assert symbolic.ask(le("1", "M"), SymbolResolver().facts_at(orelse.start_block)) is symbolic.Truth.TRUE
+
+
 if __name__ == "__main__":
     test_loop_body_knows_the_iterator_range()
     test_loop_header_does_not_know_the_iterator_range()
@@ -494,3 +563,9 @@ if __name__ == "__main__":
     test_an_increment_is_not_an_equation()
     test_a_merge_knows_no_assignment_of_either_branch()
     test_a_start_block_entered_again_by_a_back_edge_knows_none_of_its_assignments()
+    test_a_branch_knows_its_condition_and_the_failed_earlier_ones()
+    test_the_else_of_a_disjunction_knows_each_negated_part()
+    test_a_branch_condition_ends_where_the_branch_reassigns_its_symbol()
+    test_a_branch_condition_ends_where_the_branch_writes_the_container_it_reads()
+    test_a_failed_comparison_of_a_float_is_no_fact()
+    test_a_branch_the_facts_prove_dead_knows_less_rather_than_a_contradiction()
