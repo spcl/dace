@@ -131,7 +131,8 @@ def viewed_window(state: SDFGState, edge: MultiConnectorEdge) -> tuple[nodes.Acc
     a View of a View, a reshape, a strided window.
     """
     view_node = edge.src
-    if not isinstance(view_node, nodes.AccessNode):
+    # an empty memlet only orders the two nodes: it reads nothing
+    if not isinstance(view_node, nodes.AccessNode) or edge.data.is_empty():
         return None
     view = view_node.desc(state.sdfg)
     feeds = state.in_edges(view_node)
