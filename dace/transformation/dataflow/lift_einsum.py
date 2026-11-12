@@ -253,6 +253,7 @@ class LiftEinsum(xf.SingleStateTransformation):
 
     def apply(self, state: SDFGState, sdfg: SDFG):
         from dace.libraries import blas
+        from dace.transformation.passes.canonicalize.zero_prior import zero_before_scope  # Avoid import loop
 
         map_exit = state.exit_node(self.map_entry)
 
@@ -339,14 +340,17 @@ class LiftEinsum(xf.SingleStateTransformation):
         # (beta=0 on a pre-filled one) both miscompile. Decide from three signals,
         # in order:
         #   1. The WCR carries an identity (a Sum WCR's identity is 0, materialized
-        #      as ``setzero`` on the accumulator AccessNode, e.g. 3mm ``E(1,+,0)``)
-        #      -> the slot is initialized to 0 -> OVERWRITE (beta=0).
+        #      as ``setzero`` on the accumulator AccessNode, e.g. 3mm ``E(1,+,0)``,
+        #      or as the zeros stored right before the sum, e.g. the init map
+        #      ``MapReduceFusion`` puts ahead of it, see ``zero_prior``) -> the slot
+        #      is initialized to 0 -> OVERWRITE (beta=0).
         #   2. Else there is an in-SDFG prior writer (e.g. gemm's ``C = beta*C``
         #      map, or a materialized zero-init) -> FOLD onto it (beta=1).
         #   3. Else the output is a non-transient argument -> the CALLER provides
         #      the prior value (a bare ``C += A@B`` over an input) -> FOLD (beta=1).
         #   4. Else it is a fresh, uninitialized transient -> OVERWRITE (beta=0)
         #      rather than fold garbage (the accumulator-seed hazard).
+        fill = None
         if out_edge.data.wcr is not None:
             # Only a tensor output (a free output index) reaches here -- can_be_applied refuses
             # a scalar-output dot (``i,i->``), which stays a WCR reduction. The output matrix's
@@ -361,7 +365,13 @@ class LiftEinsum(xf.SingleStateTransformation):
                 for st in sdfg.states()
                 for n in st.data_nodes()
             )
-            if has_identity:
+            outermost = self.map_entry
+            while state.entry_node(outermost) is not None:
+                outermost = state.entry_node(outermost)
+            fill = None if has_identity else zero_before_scope(state, out_node, outermost)
+            if fill is not None and not fill.subset.covers(state.memlet_path(out_edge)[-1].data.subset, sdfg.facts()):
+                fill = None  # some element the sum writes keeps a prior value other than zero
+            if has_identity or fill is not None:
                 einsum.beta = 0.0
             elif has_prior_writer or not sdfg.arrays[out_data].transient:
                 einsum.beta = 1.0
@@ -402,3 +412,9 @@ class LiftEinsum(xf.SingleStateTransformation):
 
         # Remove old scope
         state.remove_nodes_from(scope.nodes())
+
+        # The zero fill is dead once the overwriting einsum writes every element it fills.
+        if fill is not None and not fill.observed and not restrict:
+            written = [e.data.subset for e in state.in_edges(out_node) if not e.data.is_empty()]
+            if len(written) == 1 and written[0].covers(fill.subset, sdfg.facts()):
+                fill.remove()

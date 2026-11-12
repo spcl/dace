@@ -52,6 +52,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.loop_iteration_value import perfect_nest, replace_loop_with_state
 from dace.transformation.passes.canonicalize.split_statements import value_edges
+from dace.transformation.passes.canonicalize.zero_prior import zero_before_block
 from dace.transformation.transformation import explicit_cf_compatible
 
 
@@ -516,7 +517,8 @@ def _fold_coefficient(sdfg: SDFG, array: str, write_node: nodes.AccessNode | Non
     memory and discarding a meaningful prior both miscompile:
 
     1. The accumulator carries a zero identity (``setzero``) -> it starts at 0, so
-       OVERWRITE (beta=0).
+       OVERWRITE (beta=0). Zeros stored just before a lifted loop nest count too: the
+       lift turns its fold onto them into an overwrite (``zero_prior``).
     2. Else there is another in-SDFG writer of the array (a reset / pre-scale loop, e.g.
        atax's ``y[:] = 0`` before the matvec) -> FOLD onto it (beta=1).
     3. Else a non-transient output: the CALLER supplies the prior value that ``+=`` reads
@@ -691,6 +693,12 @@ class LoopToEinsum(ppl.Pass):
         state.add_edge(
             node, out_conn, state.add_write(out_array), None, Memlet(data=out_array, subset=copy.deepcopy(out_subset))
         )
+        # Folding onto zeros stored just before the nest (``C[:] = 0``) is overwriting; covered, they are dead.
+        zeros = zero_before_block(state, out_array) if symbolic.equal_valued(1, node.beta) else None
+        if zeros is not None and zeros.subset.covers(out_subset, state.sdfg.facts()):
+            node.beta = 0
+            if not zeros.observed and out_subset.covers(zeros.subset, state.sdfg.facts()):
+                zeros.remove()
 
     def _replace_map_with_einsum(self, state: SDFGState, entry: nodes.MapEntry, spec: EinsumSpec) -> None:
         """Swap a map scope for an ``Einsum`` node in place, reusing the AccessNodes
