@@ -100,6 +100,15 @@ DACE_EXPORTED void unload_library(void *hLibrary) {
     Dl_info owner;
     if (dladdr(query, &owner) && owner.dli_fname) dlopen(owner.dli_fname, RTLD_NOW | RTLD_NODELETE);
   }
+  // The GPU runtime the library links is pinned the same way: unmapped with the last library that
+  // loaded it, the HIP/HSA runtime cannot start again in this process, so any later user (CuPy, the
+  // next program) finds no device.
+  const char *gpu_symbols[] = {"hipGetDevice", "cudaGetDevice"};
+  for (const char *gpu_symbol : gpu_symbols) {
+    void *query = dlsym(hLibrary, gpu_symbol);
+    Dl_info owner;
+    if (query && dladdr(query, &owner) && owner.dli_fname) dlopen(owner.dli_fname, RTLD_NOW | RTLD_NODELETE);
+  }
   dlclose(hLibrary);
 #endif
 }
