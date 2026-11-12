@@ -622,8 +622,8 @@ def tile_per_cta(state: SDFGState, kernel: nodes.MapEntry) -> bool:
 
     The arrays code outside every inner map touches get one copy per CTA in global memory (a row of an array with a
     leading CTA dimension); every inner map is strided across the lanes, every library node takes its thread-block
-    lowering, and a statement writing a per-CTA array runs on lane 0 between two barriers. Sequential loops and
-    scalar statements run on every lane alike. ``False``, with nothing changed, if a per-CTA array has no capacity
+    lowering, and a statement writing a per-CTA array runs on lane 0; :func:`place_barriers` fences them. Sequential
+    loops and scalar statements run on every lane alike. ``False``, with nothing changed, if a per-CTA array has no capacity
     known at the launch.
     """
     if len(kernel.map.params) != 1:
