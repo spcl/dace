@@ -259,7 +259,7 @@ def expand_in_place(node: nodes.LibraryNode, state: SDFGState) -> list[nodes.Map
 
 def fill_as_one_map(entry: nodes.MapEntry, state: SDFGState) -> nodes.MapEntry | None:
     """Rebuild a sequential leaf map whose whole body is one static fill as ONE worksharing map over the
-    map's positions and the fill's elements: ``SpecializeCpuTransfers``' row loop around a row memset
+    map's positions and the fill's elements: a sequential row loop around a row memset
     goes back to the map it came from, so the body keeps one extent and the strip-mining cuts its columns.
 
     :returns: the new map's entry, or ``None`` if the map is not that shape.

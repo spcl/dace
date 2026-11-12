@@ -35,9 +35,7 @@ Order within the stage, and why:
    -- the small facts decide: nested parallel scopes, small maps and data segments under a long loop run
    sequentially, and a map's leading ``SMALL`` axes are shared out with the first larger one. After the reduction
    split, which it then rules on.
-7. :class:`~dace.transformation.passes.cpu_specialization.specialize_cpu_transfers.SpecializeCpuTransfers`
-   -- gives the transfers step 6 just sequentialized their single ``memcpy`` / ``memset`` back, so
-   the parallel-by-default copy expansion costs nothing when the cost model refuses it.
+   A copy or fill it sequentializes picks its single ``memcpy`` / ``memset`` itself, at implementation selection.
 7a. :class:`~dace.transformation.passes.cpu_specialization.bound_masked_maps.BoundMaskedMaps` -- on the final shapes:
    a map over padded slots stops at the count that masks them, and ``ChooseOmpSchedule`` then sees the uneven work.
 8. :class:`~dace.transformation.passes.privatize_scatter_reduction.PrivatizeScatterReduction` then
@@ -74,7 +72,6 @@ from dace.transformation.passes.cpu_specialization.recompute_oversized_intermedi
 )
 from dace.transformation.passes.cpu_specialization.sequentialize_reduction_axes import SequentializeReductionAxes
 from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import SequentializeSmallAxes
-from dace.transformation.passes.cpu_specialization.specialize_cpu_transfers import SpecializeCpuTransfers
 from dace.transformation.passes.privatize_scatter_reduction import PrivatizeScatterReduction
 from dace.transformation.passes.specialize_small_gemms import SpecializeSmallGemms
 
@@ -107,7 +104,6 @@ def cpu_specialize(sdfg: SDFG, validate: bool = False) -> SDFG:
     BoundMaskedMaps().apply_pass(sdfg, {})
     PrivatizeScatterReduction().apply_pass(sdfg, {})
     RangePrivatizeScatterReductions().apply_pass(sdfg, {})
-    SpecializeCpuTransfers().apply_pass(sdfg, {})
     SpecializeSmallGemms(dtypes.DeviceType.CPU).apply_pass(sdfg, {})
     ChooseOmpSchedule().apply_pass(sdfg, {})
 

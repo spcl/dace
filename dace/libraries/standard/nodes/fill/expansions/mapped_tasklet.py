@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import dace
 from dace import library
+from dace.libraries.standard.helper import transfer_runs_on_one_core
 from dace.libraries.standard.nodes.fill.common import VALUE_CONNECTOR_NAME, make_fill_skeleton, python_literal
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.sdfg.scope import is_devicelevel_gpu
@@ -48,6 +49,8 @@ class ExpandPure(ExpandTransformation):
             schedule = dace.dtypes.ScheduleType.Sequential
         elif out.storage == dace.dtypes.StorageType.GPU_Global:
             schedule = dace.dtypes.ScheduleType.GPU_Device
+        elif transfer_runs_on_one_core(node, parent_state):
+            schedule = dace.dtypes.ScheduleType.Sequential
         else:
             schedule = dace.dtypes.ScheduleType.Default
         input_nodes = None

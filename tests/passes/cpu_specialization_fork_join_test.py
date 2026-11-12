@@ -1,11 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""The CPU fork/join cost model and the transfer specialization that follows it.
+"""The CPU fork/join cost model and the transfer selection that follows it.
 
 Pins the decisions of
 :class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes`
-and
-:class:`~dace.transformation.passes.cpu_specialization.specialize_cpu_transfers.SpecializeCpuTransfers`
--- the single home of "make it sequential again" on CPU. The canonical form these run on is the
+and of :func:`~dace.libraries.standard.helper.transfer_runs_on_one_core`, which a copy / fill reads when it picks
+its implementation and the schedule of its element map -- the homes of "make it sequential again" on CPU. The canonical form these run on is the
 maximally parallel one, so every assertion here is about what the SPECIALIZATION takes away, never
 about what canonicalization produced.
 
@@ -21,16 +20,16 @@ import pytest
 
 import dace
 from dace import dtypes
+from dace.libraries.standard.helper import transfer_runs_on_one_core
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
+from dace.libraries.standard.nodes.copy.select import select_copy_implementation
 from dace.libraries.standard.nodes.fill import FillLibraryNode
+from dace.libraries.standard.nodes.fill.select import select_fill_implementation
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
-from dace.transformation.passes.cpu_specialization import (
-    SequentializeSmallAxes,
-    SpecializeCpuTransfers,
-)
+from dace.transformation.passes.cpu_specialization import SequentializeSmallAxes
 from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import release_few_trip_maps
 
 N = dace.symbol("N")
@@ -607,14 +606,19 @@ def transfer_sdfg(name, loop_end, kind, subset="0:N"):
     return sdfg, node
 
 
+def selected(kind, node, sdfg):
+    """The implementation the copy / fill selector picks for ``node``."""
+    state = next(st for st in sdfg.states() if node in st.nodes())
+    select = select_copy_implementation if kind == "copy" else select_fill_implementation
+    return select(node, state), transfer_runs_on_one_core(node, state)
+
+
 @pytest.mark.parametrize("kind,implementation", [("copy", "MemcpyCPU"), ("memset", "CPU")])
 def test_re_entered_transfer_collapses_to_libc(kind, implementation):
-    """stockham_fft's inner copy: re-entered at a size the loop changes -> Sequential, and a contiguous
-    sequential transfer is one libc call, not a serial element loop."""
+    """stockham_fft's inner copy: re-entered at a size the loop changes -> one core, and a contiguous
+    transfer on one core is one libc call, not a serial element loop."""
     sdfg, node = transfer_sdfg(f"{kind}_in_loop", "N", kind, subset="0:it + 1")
-    SpecializeCpuTransfers().apply_pass(sdfg, {})
-    assert node.schedule == dtypes.ScheduleType.Sequential
-    assert node.implementation == implementation
+    assert selected(kind, node, sdfg) == (implementation, True)
 
 
 def test_a_re_entered_copy_out_of_a_stack_array_is_sequential():
@@ -623,14 +627,11 @@ def test_a_re_entered_copy_out_of_a_stack_array_is_sequential():
     sdfg, node = transfer_sdfg("copy_from_stack_in_loop", "N", "copy", subset="0:it + 1")
     sdfg.arrays["src"].transient = True
     sdfg.arrays["src"].storage = dtypes.StorageType.Register
-    SpecializeCpuTransfers().apply_pass(sdfg, {})
-    assert node.schedule == dtypes.ScheduleType.Sequential
+    assert selected("copy", node, sdfg) == ("MemcpyCPU", True)
 
 
 def test_a_small_copy_out_of_a_host_stack_array_is_one_memcpy():
-    """Copy selection reads a host-level ``Register`` array as host memory too, as the transfer pass does."""
-    from dace.libraries.standard.nodes.copy.select import select_copy_implementation
-
+    """Copy selection reads a host-level ``Register`` array as host memory too."""
     sdfg, node = transfer_sdfg("copy_from_stack_top_level", None, "copy", subset="0:8")
     sdfg.arrays["src"].transient = True
     sdfg.arrays["src"].storage = dtypes.StorageType.Register
@@ -638,52 +639,47 @@ def test_a_small_copy_out_of_a_host_stack_array_is_one_memcpy():
     assert select_copy_implementation(node, state) == "MemcpyCPU"
 
 
-@pytest.mark.parametrize("kind", ["copy", "memset"])
-def test_a_loop_that_keeps_the_transfer_size_does_not_sequentialize_it(kind):
+@pytest.mark.parametrize("kind,parallel", [("copy", "MappedTasklet"), ("memset", "pure")])
+def test_a_loop_that_keeps_the_transfer_size_does_not_sequentialize_it(kind, parallel):
     """bicgstab's per-iteration ``N``-element memsets: every entry is the same size, so the entry count cancels
     out of the fork-or-not decision and only the size decides -- not the loop around it."""
     sdfg, node = transfer_sdfg(f"{kind}_invariant_in_loop", "N", kind)
-    SpecializeCpuTransfers().apply_pass(sdfg, {})
-    assert node.schedule == dtypes.ScheduleType.Default
-    assert node.implementation in (None, "Auto")
+    assert selected(kind, node, sdfg) == (parallel, False)
 
 
-@pytest.mark.parametrize("kind", ["copy", "memset"])
-def test_top_level_transfer_keeps_the_parallel_element_map(kind):
-    """A bulk transfer nobody re-enters keeps the canonical parallel element map, and no
-    implementation is forced on it -- ``memcpy`` is not the default."""
+@pytest.mark.parametrize("kind,parallel", [("copy", "MappedTasklet"), ("memset", "pure")])
+def test_top_level_transfer_keeps_the_parallel_element_map(kind, parallel):
+    """A bulk transfer nobody re-enters keeps the canonical parallel element map -- ``memcpy`` is not the
+    default."""
     sdfg, node = transfer_sdfg(f"{kind}_top_level", None, kind)
-    SpecializeCpuTransfers().apply_pass(sdfg, {})
-    assert node.schedule == dtypes.ScheduleType.Default
-    assert node.implementation in (None, "Auto")
+    assert selected(kind, node, sdfg) == (parallel, False)
 
 
 def test_passes_are_idempotent():
-    """Both passes run in the canonicalize band AND in the ``finalize_for_target`` tail, so a
+    """The pass runs in the canonicalize band AND in the ``finalize_for_target`` tail, so a
     second application must find nothing left to do."""
     sdfg = one_map_sdfg("idempotent_map", [BELOW_BREAK_EVEN], [f"0:{BELOW_BREAK_EVEN}"], loop_end="N")
     assert SequentializeSmallAxes().apply_pass(sdfg, {}) == 1
     assert SequentializeSmallAxes().apply_pass(sdfg, {}) is None
 
-    transfers, _node = transfer_sdfg("idempotent_copy", "N", "copy", subset="0:it + 1")
-    assert SpecializeCpuTransfers().apply_pass(transfers, {}) == 2
-    assert SpecializeCpuTransfers().apply_pass(transfers, {}) is None
 
-
-def test_strided_re_entered_copy_is_sequential_but_not_memcpy():
-    """A non-contiguous copy has no single-``memcpy`` form: it is still sequentialized, but the
-    implementation is left to the library node's own selector."""
+def test_strided_re_entered_copy_is_a_sequential_element_map():
+    """A non-contiguous copy has no single-``memcpy`` form: it expands to an element map, sequential because a
+    long loop re-enters it."""
     sdfg, node = transfer_sdfg("strided_copy_in_loop", "N", "copy", subset="0:it + 1:2")
-    SpecializeCpuTransfers().apply_pass(sdfg, {})
-    assert node.schedule == dtypes.ScheduleType.Sequential
-    assert node.implementation in (None, "Auto")
+    assert selected("copy", node, sdfg) == ("MappedTasklet", True)
+    state = next(st for st in sdfg.states() if node in st.nodes())
+    node.implementation = "MappedTasklet"
+    expanded = node.expand(state.sdfg, state)
+    maps = [n for n, _ in state.sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
+    assert expanded and maps and all(m.map.schedule == dtypes.ScheduleType.Sequential for m in maps)
 
 
 def test_converting_re_entered_copy_is_not_memcpy():
     """A converting copy is a cast, so a ``memcpy`` cannot do it: the values must be converted."""
-    sdfg, _ = transfer_sdfg("converting_copy_in_loop", "N", "copy")
+    sdfg, node = transfer_sdfg("converting_copy_in_loop", "N", "copy")
     sdfg.arrays["dst"].dtype = dace.float32
-    SpecializeCpuTransfers().apply_pass(sdfg, {})
+    assert selected("copy", node, sdfg)[0] != "MemcpyCPU"
 
     src = np.arange(1, 9, dtype=np.float64)
     dst = np.zeros(8, dtype=np.float32)

@@ -999,7 +999,7 @@ def test_strip_mine_narrows_a_whole_fill_to_what_is_read():
 
 
 def test_strip_mine_takes_a_row_fill_loop_as_one_map():
-    """``SpecializeCpuTransfers``' shape: a sequential row loop around a row fill. It is rebuilt as one map
+    """A sequential row loop around a row fill. It is rebuilt as one map
     over rows and columns, so its column axis is cut like every other map's."""
     from dace.libraries.standard.nodes.fill import FillLibraryNode
 
