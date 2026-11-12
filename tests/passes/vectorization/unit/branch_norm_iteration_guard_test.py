@@ -183,6 +183,8 @@ def test_branch_normalization_refuses_transitive_iteration_guard():
     refuse -- ``a[ip1]`` with ``ip1 = N`` on the last lane is the same out-of-range read.
     """
     sdfg, cb = build_loop_with_cb()
+    # Sized exactly ``N``: the facts know ``ip1 == i + 1 <= N``, so one more element would put ``a[ip1]`` in range
+    sdfg.arrays["a"].shape = (N,)
     sdfg.add_symbol("ip1", dace.int64)
     # Rebind cb's in-edge to carry ip1 = i + 1.
     loop = [b for b in sdfg.all_control_flow_blocks() if isinstance(b, LoopRegion)][0]

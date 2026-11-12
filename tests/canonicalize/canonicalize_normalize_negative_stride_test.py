@@ -140,5 +140,59 @@ def test_loop_whose_body_reassigns_its_start_symbol_is_left_unchanged():
     assert np.array_equal(a[:13], np.arange(13)) and np.all(a[13:] == -1)
 
 
+def _down_by_symbol(predicates):
+    """``for i = N - 1; i >= 0; i -= S: a[i] = i``, with ``S`` declared ``predicates``."""
+    sdfg = dace.SDFG("negative_stride_symbolic")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("S", dace.int64, predicates=predicates)
+    sdfg.add_array("a", ["N"], dace.int64)
+    loop = LoopRegion("L", "i >= 0", "i", "i = N - 1", "i = i - S")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    body.add_edge(body.add_tasklet("t", {}, {"o"}, "o = i"), "o", body.add_write("a"), None, dace.Memlet("a[i]"))
+    return sdfg
+
+
+def test_symbolic_stride_the_facts_prove_negative_normalizes():
+    """``i -= S`` with ``S`` positive steps by ``-S``, provably negative: rewritten, same indices touched."""
+    sdfg = _down_by_symbol(frozenset({dace.symbolic.Predicate.POSITIVE}))
+    assert NormalizeNegativeStride().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert loop_analysis.get_loop_stride(_loops(sdfg)[0]) == 1
+    a = np.full(9, -1, dtype=np.int64)
+    sdfg(a=a, N=9, S=2)
+    ref = np.full(9, -1, dtype=np.int64)
+    ref[8::-2] = np.arange(8, -1, -2)
+    assert np.array_equal(a, ref)
+
+
+def test_symbolic_stride_of_unknown_sign_is_left_unchanged():
+    """``i -= S`` with nothing known of ``S``: ``-S`` may be zero or positive, so the loop stays."""
+    sdfg = _down_by_symbol(frozenset())
+    assert NormalizeNegativeStride().apply_pass(sdfg, {}) is None
+
+
+def test_the_rebound_iterator_keeps_its_range():
+    """After the rewrite ``i`` is an interstate-assigned symbol, ``i = N - 1 - _loop_pos_``; the body still knows
+    ``0 <= i <= N - 1`` from that assignment and the new iterator's range."""
+    from dace import symbolic
+    from dace.sdfg.state import SymbolResolver
+
+    sdfg = dace.SDFG("negative_stride_rebound_range")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("a", ["N"], dace.int64)
+    loop = LoopRegion("L", "i >= 0", "i", "i = N - 1", "i = i - 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    body.add_edge(body.add_tasklet("t", {}, {"o"}, "o = i"), "o", body.add_write("a"), None, dace.Memlet("a[i]"))
+    assert NormalizeNegativeStride().apply_pass(sdfg, {}) == 1
+    facts = SymbolResolver().facts_at(body)
+    for lhs, rhs in (("0", "i"), ("i", "N - 1")):
+        relation = symbolic.Relation(
+            symbolic.RelationKind.LE, symbolic.pystr_to_symbolic(lhs), symbolic.pystr_to_symbolic(rhs)
+        )
+        assert symbolic.ask(relation, facts) is symbolic.Truth.TRUE, (lhs, rhs)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -22,6 +22,7 @@ from typing import Any, NamedTuple
 from dace import data as dt
 from dace import subsets, symbolic
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
+from dace.libraries.standard.nodes.scan import Scan, ScanOp, segmented
 from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg.analysis.cfg import collect_enclosing_conditions
@@ -431,12 +432,41 @@ def only_grows(loop: LoopRegion, acc: str, nonneg: set[str]) -> bool:
     return True
 
 
+def scan_fact(state: SDFGState, name: str, nonneg: set[str]) -> ArrayFact | None:
+    """``NONDECREASING`` over the elements a prefix ``Scan``, ``state``'s one store into ``name``, writes: a running
+    maximum, or a running sum of nonnegative values (a seed or an exclusive scan's identity only shifts it)."""
+    edges = write_edges(state, name)
+    if len(edges) != 1 or not isinstance(edges[0][1].src, Scan):
+        return None
+    edge = edges[0][1]
+    node = edge.src
+    if node.chains != 1 or segmented(node) or not symbolic.equal_valued(1, node.stride):
+        return None
+    if node.op is ScanOp.SUM:
+        inputs = [e.data.data for e in state.in_edges(node) if e.dst_conn == Scan.INPUT_CONNECTOR_NAME]
+        if len(inputs) != 1 or not (
+            inputs[0] in nonneg or any(f.kind is FactKind.NONNEGATIVE for f in declared_facts(state, inputs[0]))
+        ):
+            return None
+    elif node.op is not ScanOp.MAX:
+        return None
+    subset = edge.data.dst_subset or edge.data.subset
+    if subset.dims() != 1 or subset[0][2] != 1:
+        return None
+    return ArrayFact(
+        FactKind.NONDECREASING, name, subset[0][0], subset[0][1], None, f"prefix {node.op.value} {node.label}"
+    )
+
+
 def nondecreasing_fact(chain: list[ControlFlowBlock], name: str, desc: dt.Data, nonneg: set[str]) -> ArrayFact | None:
-    """``NONDECREASING`` from the nearest writers of ``name``: a running-sum loop storing the sum at ``i + b`` on
-    every iteration, optionally followed by one store of the final sum at ``end + b + 1``."""
+    """``NONDECREASING`` from the nearest writers of ``name``: a prefix ``Scan`` (:func:`scan_fact`), or a running-sum
+    loop storing the sum at ``i + b`` on every iteration, optionally followed by one store of the final sum at
+    ``end + b + 1``."""
     if len(desc.shape) != 1:
         return None
     writers = [b for b in chain if writes(b, name)]
+    if writers and isinstance(writers[0], SDFGState) and (fact := scan_fact(writers[0], name, nonneg)) is not None:
+        return fact
     tail = writers[0] if writers and isinstance(writers[0], SDFGState) else None
     if tail is not None:
         writers = writers[1:]
@@ -541,6 +571,11 @@ def nonnegative_containers(
         if isinstance(node, FillLibraryNode):
             constant = integer_constant(repr(node.value))
             return node.value_edge(state) is None and constant is not None and constant >= 0
+        if isinstance(node, Scan):
+            # Sums, products, minima and maxima of nonnegative values, from a nonnegative seed, are nonnegative
+            seeded = not node.exclusive or node.identity is None or parses_nonnegative(str(node.identity), known)
+            reads = [e.data.data for e in state.in_edges(node) if not e.data.is_empty()]
+            return node.op is not ScanOp.AFFINE and seeded and all(data in known for data in reads)
         if isinstance(node, nodes.NestedSDFG):
             inputs = {e.dst_conn for e in state.in_edges(node) if e.dst_conn and e.data.data in known}
             inputs |= {k for k, v in node.symbol_mapping.items() if parses_nonnegative(str(v), known)}
