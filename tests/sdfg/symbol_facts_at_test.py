@@ -435,6 +435,21 @@ def test_a_merge_knows_no_assignment_of_either_branch():
     assert symbolic.ask(le("3", "s"), SymbolResolver().facts_at(merge)) is symbolic.Truth.UNKNOWN
 
 
+def test_a_start_block_entered_again_by_a_back_edge_knows_none_of_its_assignments():
+    """Unstructured ``A -> B -> A``: ``A`` also runs first, before ``B -> A`` assigned ``t``; the walk ends."""
+    sdfg = dace.SDFG("facts_assigned_back_edge")
+    sdfg.add_symbol("N", dace.int64, predicates=frozenset({symbolic.Predicate.POSITIVE}))
+    for name in ("s", "t"):
+        sdfg.add_symbol(name, dace.int64)
+    a = sdfg.add_state("a", is_start_block=True)
+    b, c = sdfg.add_state("b"), sdfg.add_state("c")
+    sdfg.add_edge(a, b, dace.InterstateEdge(assignments={"s": "N + 2"}))
+    sdfg.add_edge(b, a, dace.InterstateEdge("s < 0", assignments={"t": "5"}))
+    sdfg.add_edge(b, c, dace.InterstateEdge("s >= 0"))
+    assert symbolic.ask(le("5", "t"), SymbolResolver().facts_at(a)) is symbolic.Truth.UNKNOWN
+    assert symbolic.ask(le("3", "s"), SymbolResolver().facts_at(c)) is symbolic.Truth.TRUE
+
+
 if __name__ == "__main__":
     test_loop_body_knows_the_iterator_range()
     test_loop_header_does_not_know_the_iterator_range()
@@ -478,3 +493,4 @@ if __name__ == "__main__":
     test_a_loop_body_reassigning_the_symbol_does_not_know_its_value()
     test_an_increment_is_not_an_equation()
     test_a_merge_knows_no_assignment_of_either_branch()
+    test_a_start_block_entered_again_by_a_back_edge_knows_none_of_its_assignments()

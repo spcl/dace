@@ -3432,7 +3432,13 @@ class SymbolResolver:
             return ()
         path: list[tuple[ControlFlowBlock, ControlFlowBlock | None, dace.sdfg.InterstateEdge | None]] = []
         current: ControlFlowBlock | None = block
+        seen: set[ControlFlowBlock] = set()
+        # A cycle of single-entry blocks (unstructured control flow) has no first assignment to start from
         while current is not None and current not in self._assignment_facts:
+            if current in seen:
+                current = None
+                break
+            seen.add(current)
             region = current.parent_graph
             previous: ControlFlowBlock | None = None
             edge = None
@@ -3441,7 +3447,8 @@ class SymbolResolver:
                 previous = region
             elif region is not None and not isinstance(current, dace.SDFG):
                 edges = region.in_edges(current)
-                if len(edges) == 1:
+                # A start block with an incoming edge is also entered without it, where its region starts
+                if len(edges) == 1 and not self.starts(region, current):
                     previous, edge = edges[0].src, edges[0].data
                 elif not edges and region.source_nodes() == [current] and not isinstance(region, dace.SDFG):
                     # A body starts where its loop does, any other region's start block where the region does
@@ -3459,6 +3466,14 @@ class SymbolResolver:
                 found = self.edge_facts(target.sdfg, edge, found)
             self._assignment_facts[target] = found
         return found
+
+    @staticmethod
+    def starts(region: "ControlFlowRegion", block: "ControlFlowBlock") -> bool:
+        """Whether ``block`` is where ``region`` starts, or ``region``'s start is ambiguous."""
+        try:
+            return region.start_block is block
+        except ValueError:
+            return True
 
     @staticmethod
     def edge_facts(
