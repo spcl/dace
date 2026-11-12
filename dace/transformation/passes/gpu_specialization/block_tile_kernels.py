@@ -30,7 +30,7 @@ from typing import Any
 
 from ordered_set import OrderedSet
 
-from dace import SDFG, Memlet, SDFGState, data, dtypes, properties
+from dace import SDFG, Memlet, SDFGState, data, dtypes, properties, subsets, symbolic
 from dace import graphlib as nx
 from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS
 from dace.optionals import required
@@ -473,6 +473,29 @@ def lane_level_states(body: SDFG, skip: set[SDFGState]) -> OrderedSet[SDFGState]
     return found
 
 
+def every_lane(subset: subsets.Subset | None) -> subsets.Subset | None:
+    """What all lanes of a block touch through ``subset``: as is without ``__tid``; a lane-strided dimension
+    ``b + c * __tid : e : s`` (``c > 0``) spans ``b : e``; anything else ``None``, the whole container."""
+    if subset is None or "__tid" not in {str(sym) for sym in subset.free_symbols}:
+        return subset
+    if not isinstance(subset, subsets.Range):
+        return None
+    dims = []
+    for begin, end, step in subset.ranges:
+        lanes = [sym for sym in getattr(begin, "free_symbols", ()) if str(sym) == "__tid"]
+        if any(str(sym) == "__tid" for sym in getattr(end, "free_symbols", ())):
+            return None
+        if not lanes:
+            dims.append((begin, end, step))
+            continue
+        coefficient = begin.coeff(lanes[0])
+        rest = begin - coefficient * lanes[0]
+        if not (coefficient.is_number and coefficient > 0) or lanes[0] in rest.free_symbols:
+            return None
+        dims.append((rest, end, 1))
+    return subsets.Range(dims)
+
+
 def place_barriers(state: SDFGState, lane_zero: OrderedSet[nodes.Node]) -> None:
     """Run the steps of ``state``, whose code every lane of a block runs (code nodes and maps outside every map), one
     after another in a topological order, with a barrier before a step only where it reads what another lane wrote
@@ -486,42 +509,52 @@ def place_barriers(state: SDFGState, lane_zero: OrderedSet[nodes.Node]) -> None:
         if scope[node] is None and isinstance(node, (nodes.CodeNode, nodes.MapEntry))
     ]
 
-    def shared(edges, outward: bool) -> OrderedSet[str]:
-        # A view is named by the container it views: ``Z`` written and its viewed ``__tmp23`` read are one array.
-        found = OrderedSet()
+    facts = state.sdfg.facts()
+
+    def shared(edges, outward: bool) -> list[tuple[str, Any]]:
+        """The shared containers ``edges`` move, each with its subset; a view is named by the container it views
+        (``Z`` written and its viewed ``__tmp23`` read are one array), whole, and a view left unresolved is shared."""
+        found = []
         for edge in edges:
             node = edge.dst if outward else edge.src
             if edge.data.is_empty():
                 continue
+            subset = edge.data.subset
             if isinstance(node, nodes.AccessNode) and isinstance(node.desc(state.sdfg), data.View):
-                node = sdutil.get_last_view_node(state, node) or node
+                node, subset = sdutil.get_last_view_node(state, node) or node, None
             name = node.data if isinstance(node, nodes.AccessNode) else edge.data.data
+            subset = every_lane(subset) if name == edge.data.data else None
             desc = state.sdfg.arrays[name]
-            # A view left unresolved counts as shared
             if isinstance(desc, data.View) or not (desc.transient and desc.storage in LANE_PRIVATE_STORAGE):
-                found.add(name)
+                found.append((name, subset))
         return found
 
-    def by_others(seen: dict[str, set[bool]], names: OrderedSet[str], zero: bool) -> bool:
-        return any(seen.get(name, set()) - ({True} if zero else set()) for name in names)
+    def by_others(seen: dict[str, list], accesses: list, zero: bool) -> bool:
+        # Lane 0 after lane 0 is one thread; provably disjoint elements need no order either.
+        return any(
+            not (zero and was_zero)
+            and (subset is None or other is None or subsets.intersects(subset, other, facts) is not symbolic.Truth.FALSE)
+            for name, subset in accesses
+            for other, was_zero in seen.get(name, ())
+        )
 
-    # Who touched each shared container since the last barrier: True for lane 0 alone, False for every lane.
-    read: dict[str, set[bool]] = {}
-    written: dict[str, set[bool]] = {}
+    # What each shared container had read and written since the last barrier: (subset, by lane 0 alone).
+    read: dict[str, list] = {}
+    written: dict[str, list] = {}
     last = None
     for step in steps:
         end = state.exit_node(step) if isinstance(step, nodes.MapEntry) else step
         zero = step in lane_zero
         reads, writes = shared(state.in_edges(step), False), shared(state.out_edges(end), True)
         if last is not None:
-            if by_others(written, reads | writes, zero) or by_others(read, writes, zero):
+            if by_others(written, reads + writes, zero) or by_others(read, writes, zero):
                 fence = barrier(state)
                 state.add_edge(last, None, fence, None, Memlet())
                 last, read, written = fence, {}, {}
             state.add_edge(last, None, step, None, Memlet())
-        for seen, names in ((read, reads), (written, writes)):
-            for name in names:
-                seen.setdefault(name, set()).add(zero)
+        for seen, accesses in ((read, reads), (written, writes)):
+            for name, subset in accesses:
+                seen.setdefault(name, []).append((subset, zero))
         last = end
     if read or written:
         state.add_edge(last, None, barrier(state), None, Memlet())
