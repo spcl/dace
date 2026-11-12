@@ -360,7 +360,14 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         )
 
     def _begin_and_length_from_ranges(
-        self, sdfg: dace.SDFG, range_list: dict, in_subset, in_data: str | None, out_subset, out_data: str | None
+        self,
+        sdfg: dace.SDFG,
+        range_list: dict,
+        in_subset,
+        in_data: str | None,
+        out_subset,
+        out_data: str | None,
+        per_iteration=1,
     ) -> tuple[list | None, list | None, dace.symbolic.SymExpr | None]:
         """Substitute ``range_list`` into the in/out subsets, reject non-contiguous or
         length-mismatched transfers, and return the source begin range, destination begin
@@ -373,6 +380,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         :param in_data: source array name, or ``None`` for a memset.
         :param out_subset: destination memlet subset.
         :param out_data: destination array name.
+        :param per_iteration: elements the body writes per iteration (one for a tasklet).
         :returns: ``(begin_subset, exit_subset, copy_length)`` or all-``None`` on bail.
         """
         has_in = in_data is not None
@@ -418,7 +426,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         # measured the widened volume the guard would spuriously reject every overapproximated
         # sub-range copy; measuring the substituted volume still rejects ``A[i, i]`` / ``A[2*i]``,
         # whose substituted box is already strictly larger than the trip count before any widening.
-        trip_count = dace.symbolic.SymExpr(1)
+        trip_count = dace.symbolic.SymExpr(per_iteration)
         for b2, e2, _s2 in range_list.values():
             trip_count *= (e2 + 1) - b2
         if dace.symbolic.simplify(self._collapsed_length(subst_out) - trip_count) != 0:
@@ -926,6 +934,14 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             return None
         body = blocks[0]
 
+        # A row zeroed by an earlier map lift, alone in a loop over the rows: the loop widens it
+        if is_memset and len(body.nodes()) == 2:
+            fills = [n for n in body.nodes() if isinstance(n, fill.FillLibraryNode) and body.in_degree(n) == 0]
+            if len(fills) == 1 and body.out_degree(fills[0]) == 1:
+                oe = body.out_edges(fills[0])[0]
+                if isinstance(oe.dst, dace.nodes.AccessNode) and oe.data.wcr is None:
+                    return body, fills[0], None, oe.dst, start, end, stride
+
         tasklets = [n for n in body.nodes() if isinstance(n, dace.nodes.Tasklet)]
         if len(tasklets) != 1:
             return None
@@ -994,8 +1010,11 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         in_edge = body.in_edges(tasklet)[0] if not is_memset else None
         in_subset = in_edge.data.subset if in_edge is not None else None
         in_data = in_edge.data.data if in_edge is not None else None
+        # A widened fill writes its whole subset per iteration, a tasklet one element
+        widened = tasklet if isinstance(tasklet, fill.FillLibraryNode) else None
+        per_iteration = out_edge.data.subset.num_elements() if widened is not None else 1
         begin_subset, exit_subset, copy_length = self._begin_and_length_from_ranges(
-            sdfg, range_list, in_subset, in_data, out_edge.data.subset, out_edge.data.data
+            sdfg, range_list, in_subset, in_data, out_edge.data.subset, out_edge.data.data, per_iteration
         )
         if copy_length is None:
             if verbose:
@@ -1031,7 +1050,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         is_start = parent.start_block is loop
         new_state = parent.add_state(f"{loop.label}_lifted", is_start_block=is_start)
         if is_memset:
-            libnode = fill.FillLibraryNode(name=f"memsetLib_{dst_access.data}_{self.rmid}")
+            libnode = fill.FillLibraryNode(
+                name=f"memsetLib_{dst_access.data}_{self.rmid}", value=widened.value if widened is not None else 0
+            )
             new_state.add_node(libnode)
             new_state.add_edge(
                 libnode,

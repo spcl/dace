@@ -129,6 +129,29 @@ def test_zero_loop_lifts_to_memset_libnode():
     assert np.all(dst == 0.0)
 
 
+@dace.program
+def zero_row_loop(z: dace.float64[3, N]):
+    for r in range(3):
+        z[r, :] = 0.0
+
+
+@temporarily_disable_autoopt_and_serialization
+def testzero_row_loop_lifts_to_one_memset_over_all_rows():
+    """The row map lifts to a row fill first; the loop around it then widens it to ``z[0:3, 0:N]``."""
+    sdfg = zero_row_loop.to_sdfg(simplify=True)
+
+    assert AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {}) == 2
+    (fill,) = [(n, s) for n, s in sdfg.all_nodes_recursive() if isinstance(n, FillLibraryNode)]
+    assert str(fill[1].out_edges(fill[0])[0].data.subset) == "0:3, 0:N"
+    assert not _has_loop(sdfg)
+
+    sdfg.expand_library_nodes(recursive=True)
+    sdfg.validate()
+    z = np.ones((3, 20), dtype=np.float64)
+    sdfg(z=z, N=20)
+    assert np.all(z == 0.0)
+
+
 @temporarily_disable_autoopt_and_serialization
 def test_self_referential_copy_loop_is_not_lifted():
     """``for i: a[i] = a[i - 1]`` is a carried dependence (same array), not a pure copy -- left alone."""

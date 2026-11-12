@@ -999,33 +999,28 @@ def test_strip_mine_narrows_a_whole_fill_to_what_is_read():
 
 
 def test_strip_mine_takes_a_row_fill_loop_as_one_map():
-    """``SpecializeCpuTransfers``' shape: a sequential row loop around a row fill. It is rebuilt as one map
-    over rows and columns, so its column axis is cut like every other map's."""
-    from dace.libraries.standard.nodes.fill import FillLibraryNode
+    """A loop zeroing one row per trip lifts to ONE fill over every row, not a row loop around a row fill, so its
+    column axis is cut like every other map's."""
+    from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import (
+        AssignmentAndCopyKernelToMemsetAndMemcpy,
+    )
 
     sdfg = dace.SDFG("tile_row_fill")
     sdfg.add_array("a", [N, N], dace.float64)
     sdfg.add_transient("z", [3, N], dace.float64)
     outer = loop_region(sdfg, "outer", "N - 1")
-    clear = outer.add_state("clear", is_start_block=True)
-    entry, exit_node = clear.add_map("rows", {"r": "0:3"}, schedule=dtypes.ScheduleType.Sequential)
-    fill = FillLibraryNode("clear_row", value=1.5)
-    clear.add_node(fill)
-    clear.add_nedge(entry, fill, dace.Memlet())
-    clear.add_memlet_path(
-        fill,
-        exit_node,
-        clear.add_write("z"),
-        src_conn=FillLibraryNode.OUTPUT_CONNECTOR_NAME,
-        memlet=dace.Memlet("z[r, 0:N]"),
+    rows = loop_region(outer, "rows", "3", var="r")
+    rows.add_state("clear", is_start_block=True).add_mapped_tasklet(
+        "clear_row", {"j": "0:N"}, {}, "out = 0.0", {"out": dace.Memlet("z[r, j]")}, external_edges=True
     )
     sweep = sweep_state(outer, "sweep", "a[it + 1, i]", "out = in0 + in1", {"i": "0:N"}, ["a[it, i]", "z[1, i]"])
-    chain(outer, clear, sweep)
+    chain(outer, rows, sweep)
     sdfg.validate()
+    assert AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {}) == 2
     assert tiled(sdfg) == 1
     assert not any(isinstance(n, nd.LibraryNode) for n, _ in sdfg.all_nodes_recursive())
     a = np.random.default_rng(11).random((37, 37))
-    ref = sweep_reference(a, lambda prev, cur: prev + 1.5)
+    ref = sweep_reference(a, lambda prev, cur: prev.copy())
     matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
 
 
