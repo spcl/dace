@@ -15,8 +15,8 @@ from dace import dtypes
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.sdfg import infer_types, nodes
 from dace.symbolic import Scale
+from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import DecideCpuParallelAxes
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
-from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import SequentializeSmallAxes
 
 PAR = dtypes.ScheduleType.CPU_Multicore
 SEQ = dtypes.ScheduleType.Sequential
@@ -96,7 +96,7 @@ def check_values(sdfg: dace.SDFG) -> None:
 
 def test_a_leading_block_axis_is_collapsed_with_the_next():
     sdfg = one_map("cpu_block_first")
-    assert SequentializeSmallAxes().apply_pass(sdfg, {}) == 1
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) == 1
     sdfg.validate()
     assert map_nest(sdfg) == [(["b", "i"], PAR)]
     assert collapse_of(sdfg) == 2
@@ -105,7 +105,7 @@ def test_a_leading_block_axis_is_collapsed_with_the_next():
 
 def test_a_block_map_around_a_row_map_shares_out_the_rows():
     sdfg = nested_maps("cpu_block_around_rows")
-    assert SequentializeSmallAxes().apply_pass(sdfg, {}) == 1
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) == 1
     sdfg.validate()
     assert map_nest(sdfg) == [(["b", "i"], PAR)]
     assert collapse_of(sdfg) == 2
@@ -115,7 +115,7 @@ def test_a_block_map_around_a_row_map_shares_out_the_rows():
 def test_a_row_map_whose_range_reads_the_block_shares_out_the_rows():
     """The rows depend on the block; nothing collapses, the block map turns sequential and the rows are shared out."""
     sdfg = nested_maps("cpu_block_dependent_rows", inner_range="0:nproma - b")
-    assert SequentializeSmallAxes().apply_pass(sdfg, {}) == 1
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) == 1
     sdfg.validate()
     assert map_nest(sdfg) == [(["b"], SEQ), (["i"], PAR)]
 
@@ -133,7 +133,7 @@ def test_a_block_map_without_a_large_axis_runs_sequentially():
         schedule=PAR,
         external_edges=True,
     )
-    assert SequentializeSmallAxes().apply_pass(sdfg, {}) == 1
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) == 1
     assert map_nest(sdfg) == [(["b"], SEQ)]
 
 
@@ -150,13 +150,13 @@ def test_a_block_axis_after_a_large_one_keeps_its_place():
         schedule=PAR,
         external_edges=True,
     )
-    assert SequentializeSmallAxes().apply_pass(sdfg, {}) is None
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) is None
     assert map_nest(sdfg) == [(["i", "b"], PAR)]
 
 
 def test_without_small_symbols_nothing_changes():
     sdfg = one_map("cpu_no_small", small=False)
-    assert SequentializeSmallAxes().apply_pass(sdfg, {}) is None
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) is None
     assert map_nest(sdfg) == [(["b", "i"], PAR)]
 
 
@@ -176,7 +176,7 @@ def test_a_leading_literal_small_axis_is_collapsed_with_the_next():
         schedule=PAR,
         external_edges=True,
     )
-    assert SequentializeSmallAxes().apply_pass(sdfg, {}) == 1
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) == 1
     sdfg.validate()
     assert map_nest(sdfg) == [(["b", "i"], PAR)]
     assert collapse_of(sdfg) == 2
@@ -224,7 +224,7 @@ def expanded_fill_maps(small: bool) -> list[tuple[list[str], dtypes.ScheduleType
 
 
 def test_a_library_expansion_never_shares_out_a_block_axis():
-    """A library node expands at code generation, after ``SequentializeSmallAxes``: a whole-array fill of a
+    """A library node expands at code generation, after ``DecideCpuParallelAxes``: a whole-array fill of a
     ``(nblks, nproma)`` temporary was one map shared out over ``nblks`` -- velocity_tendencies at one block
     filled five ``(nblks, nlev, nproma)`` temporaries per call on one thread each."""
     assert expanded_fill_maps(small=True) == [(["__i0", "__i1"], PAR, 2)]

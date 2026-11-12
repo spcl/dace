@@ -765,7 +765,7 @@ def axis_choices(shapes: list[Shape], facts: symbolic.Facts | None = None) -> li
 
     A ``SMALL`` extent (``nblks``: a handful, under ``facts``) is never a candidate: its tiles could not
     occupy the team. Nor does it hide the axis it sits under from being innermost:
-    :class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes`
+    :class:`~dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes.DecideCpuParallelAxes`
     moves ``SMALL`` axes into an inner sequential map, so ``velocity_tendencies``' ``(nproma)`` maps each hold
     an ``(nblks)`` one, and reading ``nblks`` as the innermost axis moved ``nproma`` outside the carry WHOLE
     -- one column per tile, every level of it at stride ``nproma``.

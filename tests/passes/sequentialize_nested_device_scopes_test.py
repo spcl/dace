@@ -15,7 +15,7 @@ from dace import dtypes
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.cpu_specialization import SequentializeSmallAxes
+from dace.transformation.passes.cpu_specialization import DecideCpuParallelAxes
 from dace.transformation.passes.gpu_specialization.sequentialize_nested_device_scopes import (
     SequentializeNestedDeviceScopes,
 )
@@ -61,12 +61,14 @@ def test_default_map_in_a_kernel_is_sequentialized():
     assert schedules(sdfg)["inner"] == dtypes.ScheduleType.Sequential
 
 
-def test_cpu_cost_model_never_touches_device_maps():
-    """The CPU band decides CPU schedules only -- a GPU graph is not its business."""
-    sdfg = nested_device_maps()
-    SequentializeSmallAxes().apply_pass(sdfg, {})
+@pytest.mark.parametrize("inner", [dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.Default])
+def test_cpu_cost_model_never_touches_device_maps(inner):
+    """The CPU band decides CPU schedules only -- a GPU graph is not its business, an unscheduled map in a kernel
+    included: schedule inference resolves it."""
+    sdfg = nested_device_maps(inner)
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
     assert schedules(sdfg)["outer"] == dtypes.ScheduleType.GPU_Device
-    assert schedules(sdfg)["inner"] == dtypes.ScheduleType.GPU_Device
+    assert schedules(sdfg)["inner"] == inner
 
 
 @pytest.mark.parametrize("trips", ["N", "4"])

@@ -2,7 +2,7 @@
 """The CPU fork/join cost model and the transfer selection that follows it.
 
 Pins the decisions of
-:class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes`
+:class:`~dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes.DecideCpuParallelAxes`
 and of :func:`~dace.libraries.standard.helper.transfer_runs_on_one_core`, which a copy / fill reads when it picks
 its implementation and the schedule of its element map -- the homes of "make it sequential again" on CPU. The canonical form these run on is the
 maximally parallel one, so every assertion here is about what the SPECIALIZATION takes away, never
@@ -29,8 +29,7 @@ from dace.libraries.standard.nodes.reduce import Reduce
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
-from dace.transformation.passes.cpu_specialization import SequentializeSmallAxes
-from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import release_few_trip_maps
+from dace.transformation.passes.cpu_specialization import DecideCpuParallelAxes
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -90,23 +89,23 @@ def schedules(sdfg):
 def test_map_below_break_even_goes_sequential():
     """A constant trip count under the threshold cannot pay for a fork/join, at any nesting."""
     sdfg = one_map_sdfg("small_top_level", [BELOW_BREAK_EVEN], [f"0:{BELOW_BREAK_EVEN}"])
-    SequentializeSmallAxes().apply_pass(sdfg, {})
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
     assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Sequential
 
 
 def test_map_above_break_even_stays_parallel():
     """A constant trip count above the threshold keeps its region."""
     sdfg = one_map_sdfg("large_top_level", [ABOVE_BREAK_EVEN], [f"0:{ABOVE_BREAK_EVEN}"])
-    SequentializeSmallAxes().apply_pass(sdfg, {})
-    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Default
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
+    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.CPU_Multicore
 
 
 def test_symbolic_extent_stays_parallel():
     """A symbolic extent not provably below break-even keeps its parallel map: a symbol is assumed big."""
     sdfg = one_map_sdfg("symbolic_top_level", [N], ["0:N-1"])
-    SequentializeSmallAxes().apply_pass(sdfg, {})
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
     entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
-    assert entry.map.schedule == dtypes.ScheduleType.Default
+    assert entry.map.schedule == dtypes.ScheduleType.CPU_Multicore
 
 
 def test_map_re_entered_by_symbolic_loop_stays_parallel():
@@ -117,8 +116,8 @@ def test_map_re_entered_by_symbolic_loop_stays_parallel():
     :func:`test_symbolic_extent_stays_parallel`, which the enclosing loop does not overturn. This is npbench ``cavity_flow``'s shape, whose 1,044,484-element pressure map
     was pinned ``Sequential`` by the old work-vs-entries comparison."""
     sdfg = one_map_sdfg("map_in_long_loop", [N], ["0:N"], loop_end="N")
-    assert SequentializeSmallAxes().apply_pass(sdfg, {}) is None
-    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Default
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) is None
+    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.CPU_Multicore
 
 
 def csr_segment_sdfg(name, in_loop):
@@ -142,13 +141,13 @@ def test_a_data_segment_map_in_a_sequential_loop_goes_sequential(in_loop):
     """ilu0's shape: inside a sequential loop, a map over a range read from data forks once per outer iteration over a
     few elements (1.5 s against numba's 11 ms). At top level the same map is one region and keeps it."""
     sdfg = csr_segment_sdfg(f"csr_segment_{in_loop}", in_loop)
-    SequentializeSmallAxes().apply_pass(sdfg, {})
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
     entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
     if in_loop:
         assert entry.map.schedule == dtypes.ScheduleType.Sequential
         assert "run sequentially on CPU -- its range b:e - 1 is read from data" in entry.specialization_hint
     else:
-        assert entry.map.schedule == dtypes.ScheduleType.Default
+        assert entry.map.schedule == dtypes.ScheduleType.CPU_Multicore
 
 
 def row_count_sdfg(name: str, count: str, assign_in_loop: bool) -> dace.SDFG:
@@ -174,7 +173,7 @@ def test_a_row_length_map_in_a_sequential_loop_goes_sequential():
     """amg_setup's per-row gather: a map over ``0:cnt``, ``cnt`` read from data every row, forks once per row over a
     few elements (9.5 s against 0.55 s sequential)."""
     sdfg = row_count_sdfg("row_count", "indptr[it + 1] - indptr[it]", assign_in_loop=True)
-    SequentializeSmallAxes().apply_pass(sdfg, {})
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
     assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Sequential
 
 
@@ -205,8 +204,8 @@ def test_a_counter_of_a_row_segment_goes_sequential(inner_reads_data):
     body = map_state(rows, sdfg, "body", ["0:cnt"])
     rows.add_edge(segment, body, dace.InterstateEdge())
     sdfg.validate()
-    SequentializeSmallAxes().apply_pass(sdfg, {})
-    expected = dtypes.ScheduleType.Sequential if inner_reads_data else dtypes.ScheduleType.Default
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
+    expected = dtypes.ScheduleType.Sequential if inner_reads_data else dtypes.ScheduleType.CPU_Multicore
     assert schedules(sdfg)["body_map"] == expected
 
 
@@ -221,8 +220,8 @@ def test_a_stencil_width_map_in_a_sequential_loop_goes_sequential(order_is_small
         sdfg.set_symbol_scale("order", dace.symbolic.Scale.SMALL)
     entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
     entry.map.range = dace.subsets.Range.from_string("0:order + 2 - cnt")
-    SequentializeSmallAxes().apply_pass(sdfg, {})
-    expected = dtypes.ScheduleType.Sequential if order_is_small else dtypes.ScheduleType.Default
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
+    expected = dtypes.ScheduleType.Sequential if order_is_small else dtypes.ScheduleType.CPU_Multicore
     assert schedules(sdfg)["body_map"] == expected
 
 
@@ -238,23 +237,23 @@ def test_a_level_size_read_from_data_in_a_short_loop_stays_parallel():
     body = map_state(levels, sdfg, "body", ["0:cnt"])
     levels.add_edge(read, body, dace.InterstateEdge(assignments={"cnt": "indptr[it]"}))
     sdfg.validate()
-    assert SequentializeSmallAxes().apply_pass(sdfg, {}) is None
-    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Default
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) is None
+    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.CPU_Multicore
 
 
 def test_an_extent_read_from_data_once_before_the_loop_stays_parallel():
     """The same extent read once, before the loop, is the same size every iteration: the enclosing loop cancels
     out of the fork/join algebra and the map keeps its region."""
     sdfg = row_count_sdfg("count_before_loop", "indptr[N]", assign_in_loop=False)
-    assert SequentializeSmallAxes().apply_pass(sdfg, {}) is None
-    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Default
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) is None
+    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.CPU_Multicore
 
 
 def test_an_extent_only_the_loop_variable_moves_stays_parallel():
     """A triangular ``0:it`` grows with the loop and reads no data: it keeps its region."""
     sdfg = row_count_sdfg("triangular", "it", assign_in_loop=True)
-    assert SequentializeSmallAxes().apply_pass(sdfg, {}) is None
-    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Default
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) is None
+    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.CPU_Multicore
 
 
 def test_map_inside_a_conditional_is_decided():
@@ -273,7 +272,7 @@ def test_map_inside_a_conditional_is_decided():
     sdfg.add_node(branch, is_start_block=True)
     sdfg.validate()
 
-    SequentializeSmallAxes().apply_pass(sdfg, {})
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
     assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Sequential
 
 
@@ -281,8 +280,6 @@ def test_one_trip_map_releases_the_maps_in_its_body():
     """A peeled first trip ``14:Min(14, N - 1) + 1`` is at most one iteration: it runs sequentially, and the
     map in its body keeps its region through schedule inference and the cost model instead of being pinned
     under it (``cloudsc_monolith``'s first vertical level, 3.7 s serial at 24 threads)."""
-    from dace.sdfg import infer_types
-
     inner = dace.SDFG("one_trip_body")
     inner.add_array("a", [N], dace.float64)
     map_state(inner, inner, "plane", ["0:N"])
@@ -294,9 +291,7 @@ def test_one_trip_map_releases_the_maps_in_its_body():
     state.add_nedge(entry, nsdfg, dace.Memlet())
     state.add_memlet_path(nsdfg, exit_node, state.add_write("a"), src_conn="a", memlet=dace.Memlet("a[0:N]"))
     sdfg.validate()
-    assert release_few_trip_maps(sdfg) == 1
-    infer_types.set_default_schedule_and_storage_types(sdfg, None)
-    SequentializeSmallAxes().apply_pass(sdfg, {})
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
     assert schedules(sdfg) == {"peeled": dtypes.ScheduleType.Sequential, "plane_map": dtypes.ScheduleType.CPU_Multicore}
 
 
@@ -318,7 +313,7 @@ def test_map_of_at_most_one_trip_by_the_sdfg_facts_is_released():
     state.add_nedge(entry, nsdfg, dace.Memlet())
     state.add_memlet_path(nsdfg, exit_node, state.add_write("a"), src_conn="a", memlet=dace.Memlet("a[0:N]"))
     sdfg.validate()
-    assert release_few_trip_maps(sdfg) == 1
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
     assert schedules(sdfg)["peeled"] == dtypes.ScheduleType.Sequential
 
 
@@ -357,7 +352,7 @@ def test_released_maps_get_their_own_staged_scalars():
             nsdfg, exit_node, state.add_write(name), src_conn=name, memlet=dace.Memlet(f"{name}[0:N]")
         )
     sdfg.validate()
-    assert release_few_trip_maps(sdfg) == 1
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
     sdfg.validate()
     assert schedules(sdfg) == {
         "peeled": dtypes.ScheduleType.Sequential,
@@ -392,8 +387,8 @@ def test_a_map_reading_a_shared_scalar_first_stays_under_its_parent():
     nsdfg = state.add_nested_sdfg(inner, {}, {"a"}, symbol_mapping={"N": N})
     state.add_nedge(entry, nsdfg, dace.Memlet())
     state.add_memlet_path(nsdfg, exit_node, state.add_write("a"), src_conn="a", memlet=dace.Memlet("a[0:N]"))
-    assert release_few_trip_maps(sdfg) == 1
-    assert reader.map.schedule == dtypes.ScheduleType.Default
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
+    assert schedules(sdfg) == {"peeled": dtypes.ScheduleType.Sequential, "reader": dtypes.ScheduleType.Sequential}
 
 
 def atoms_sdfg(name, outer, inner="0:N"):
@@ -417,13 +412,9 @@ def atoms_sdfg(name, outer, inner="0:N"):
 
 
 def specialize_atoms(sdfg):
-    """The CPU tail of ``finalize_stages`` on ``sdfg``: release, inference, the fork/join model."""
-    from dace.sdfg import infer_types
-
-    released = release_few_trip_maps(sdfg)
-    infer_types.set_default_schedule_and_storage_types(sdfg, None)
-    SequentializeSmallAxes().apply_pass(sdfg, {})
-    return released
+    """Decide ``sdfg`"'s schedules as ``cpu_specialize`` does; ``1`` if the atom map handed the team to the plane map."""
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
+    return int(schedules(sdfg)["plane"] == dtypes.ScheduleType.CPU_Multicore)
 
 
 def test_few_atoms_give_the_team_to_the_inner_map():
@@ -457,10 +448,19 @@ def test_a_literal_below_the_core_count_releases_its_body(monkeypatch, cores, re
     """80 atoms is not ``SMALL``, but fewer than 96 cores: the release follows the host's core count."""
     from types import SimpleNamespace
 
-    from dace.transformation.passes.cpu_specialization import sequentialize_small_axes
+    from dace.transformation.passes.cpu_specialization import decide_cpu_parallel_axes
 
-    monkeypatch.setattr(sequentialize_small_axes, "topology", lambda: SimpleNamespace(physical_cores=cores))
-    assert release_few_trip_maps(atoms_sdfg(f"atoms_on_{cores}_cores", 80)) == released
+    monkeypatch.setattr(decide_cpu_parallel_axes, "topology", lambda: SimpleNamespace(physical_cores=cores))
+    assert specialize_atoms(atoms_sdfg(f"atoms_on_{cores}_cores", 80)) == released
+
+
+def test_cpu_specialize_decides_before_inference_pins_the_body():
+    """``cpu_specialize`` decides the map schedules before schedule inference runs: inferred first, the plane map
+    would be pinned ``Sequential`` under the atom map for good."""
+    from dace.transformation.passes.cpu_specialization import cpu_specialize
+
+    sdfg = cpu_specialize(atoms_sdfg("few_atoms_specialized", 5))
+    assert schedules(sdfg) == {"atom": dtypes.ScheduleType.Sequential, "plane": dtypes.ScheduleType.CPU_Multicore}
 
 
 def test_triangular_map_in_loop_stays_parallel():
@@ -472,23 +472,23 @@ def test_triangular_map_in_loop_stays_parallel():
     outer = loop(sdfg, "outer", "N", var="j")
     map_state(outer, sdfg, "body", ["j+1:N"])
     sdfg.validate()
-    assert SequentializeSmallAxes().apply_pass(sdfg, {}) is None
-    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Default
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) is None
+    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.CPU_Multicore
 
 
 def test_wide_map_in_time_loop_stays_parallel():
     """jacobi / heat: ``for t: map[i, j]`` keeps its map. Symbolic work, so above break-even."""
     sdfg = one_map_sdfg("wide_map_in_loop", [N, M], ["0:N", "0:M"], loop_end="N")
-    SequentializeSmallAxes().apply_pass(sdfg, {})
-    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Default
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
+    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.CPU_Multicore
 
 
 def test_provably_short_loop_is_not_re_entry():
     """A provably short loop around real work keeps the map parallel -- the trip-count awareness
     that ``libnode_is_sequential`` lacks (it counts ANY enclosing loop as re-entry)."""
     sdfg = one_map_sdfg("map_in_short_loop", [N], ["0:N"], loop_end="4")
-    SequentializeSmallAxes().apply_pass(sdfg, {})
-    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Default
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
+    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.CPU_Multicore
 
 
 def test_nested_parallel_map_is_always_sequentialized():
@@ -506,7 +506,7 @@ def test_nested_parallel_map_is_always_sequentialized():
     state.add_memlet_path(tasklet, inner_exit, outer_exit, access, src_conn="out", memlet=dace.Memlet("a[i, j]"))
     sdfg.validate()
 
-    SequentializeSmallAxes().apply_pass(sdfg, {})
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
 
     assert schedules(sdfg)["outer"] == dtypes.ScheduleType.CPU_Multicore
     assert schedules(sdfg)["inner"] == dtypes.ScheduleType.Sequential
@@ -549,7 +549,7 @@ def test_library_node_in_long_loop_stays_parallel():
     """A library node is a map over a blackbox: a loop around it multiplies its fork and its work alike
     (cp2k_trs4's iteration loop over a 1.2M-block batched einsum ran single-core)."""
     sdfg, node = reduce_in_loop("reduce_long_loop", "N")
-    SequentializeSmallAxes().apply_pass(sdfg, {})
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
     assert node.schedule == dtypes.ScheduleType.CPU_Multicore
 
 
@@ -571,14 +571,14 @@ def test_library_node_over_a_data_segment_in_a_loop_goes_sequential():
     state.add_edge(state.add_access("row"), None, node, "_in", dace.Memlet("row[b:e]"))
     state.add_edge(node, "_out", state.add_access("acc"), None, dace.Memlet("acc[it]"))
     sdfg.validate()
-    SequentializeSmallAxes().apply_pass(sdfg, {})
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
     assert node.schedule == dtypes.ScheduleType.Sequential
 
 
 def test_library_node_in_short_loop_stays_parallel():
     """A provably short loop is no re-entry either."""
     sdfg, node = reduce_in_loop("reduce_short_loop", "4")
-    SequentializeSmallAxes().apply_pass(sdfg, {})
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
     assert node.schedule == dtypes.ScheduleType.CPU_Multicore
 
 
@@ -659,8 +659,8 @@ def test_passes_are_idempotent():
     """The pass runs in the canonicalize band AND in the ``finalize_for_target`` tail, so a
     second application must find nothing left to do."""
     sdfg = one_map_sdfg("idempotent_map", [BELOW_BREAK_EVEN], [f"0:{BELOW_BREAK_EVEN}"], loop_end="N")
-    assert SequentializeSmallAxes().apply_pass(sdfg, {}) == 1
-    assert SequentializeSmallAxes().apply_pass(sdfg, {}) is None
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) == 1
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) is None
 
 
 def test_strided_re_entered_copy_is_a_sequential_element_map():
@@ -706,13 +706,13 @@ def test_a_short_map_over_a_pinned_inner_map_counts_the_whole_nest():
     """The inner map is already ``Sequential`` (a reduction axis split off), so no release gives its work to
     another region: the outer map's fork pays for ``BELOW * N`` iterations, not ``BELOW`` (gem's tail points)."""
     sdfg = short_map_over_a_pinned_inner_map("short_over_pinned_big", "N")
-    SequentializeSmallAxes().apply_pass(sdfg, {})
-    assert schedules(sdfg)["outer"] == dtypes.ScheduleType.Default
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
+    assert schedules(sdfg)["outer"] == dtypes.ScheduleType.CPU_Multicore
 
 
 def test_a_short_map_over_a_short_pinned_inner_map_goes_sequential():
     sdfg = short_map_over_a_pinned_inner_map("short_over_pinned_small", 1)
-    SequentializeSmallAxes().apply_pass(sdfg, {})
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
     assert schedules(sdfg)["outer"] == dtypes.ScheduleType.Sequential
 
 

@@ -132,7 +132,7 @@ from dace.sdfg.state import (
 )
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import small_count
+from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import small_count
 from dace.transformation.passes.loop_fission import LoopFission, _block_rw, _independent_block_groups
 
 #: The schedule whose maps become ``#pragma omp for`` once a ``CPU_Persistent`` scope encloses them.
@@ -225,7 +225,7 @@ def elementwise(node: nodes.Node) -> bool:
 
 
 def small_reduction(node: nodes.Node, state: SDFGState, resolver: SymbolResolver) -> bool:
-    """Whether ``node`` is a ``Reduce`` over provably few input elements (``SequentializeSmallAxes``' notion of
+    """Whether ``node`` is a ``Reduce`` over provably few input elements (``DecideCpuParallelAxes``' notion of
     small): one thread finishes it in about the time a fork takes, so in a team it is a statement run once.
 
     :param node: a node at the top level of ``state``.

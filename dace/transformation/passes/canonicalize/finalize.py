@@ -70,7 +70,6 @@ from dace.transformation.passes.cpu_specialization.demote_level_maps import (
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
 from dace.transformation.passes.cpu_specialization.interchange_loops_into_lane_maps import InterchangeLoopsIntoLaneMaps
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
-from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import release_few_trip_maps
 from dace.transformation.passes.cpu_specialization.strip_mine_interchange import StripMineInterchange
 from dace.transformation.passes.equalize_symbol_dtypes import equalized
 from dace.transformation.passes.fuse_maps import FuseMaps
@@ -976,14 +975,15 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     # iteration) to ``Sequential`` and a top-level one to the device default. A ``Sequential``
     # Reduce/Scan/Copy/Fill must lower to its efficient single-core expansion, NOT open its own
     # (nested) OpenMP region per outer iteration -- the "constant parallel reductions" slowdown.
+    # On CPU, ``cpu_specialize`` infers them itself, once it has decided the maps' schedules.
     if device == dtypes.DeviceType.CPU:
-        # While canonicalization's maps are still ``Default``: inferred under a one- or few-trip map, a map would be
-        # pinned ``Sequential`` for good, and a demoted level map's plane maps must be inferred top-level.
+        # While canonicalization's maps are still ``Default``: a demoted level map's plane maps must be decided
+        # top-level.
         demote_strided_level_maps(sdfg)
-        release_few_trip_maps(sdfg)
         # A sequential loop over maps of one lane axis becomes one parallel map over it, the loop inside
         InterchangeLoopsIntoLaneMaps().apply_pass(sdfg, {})
-    infer_types.set_default_schedule_and_storage_types(sdfg, None)
+    else:
+        infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
     # Canonicalization stops at the maximally parallel form, so the target's specialization stage
     # runs here -- BEFORE library selection, so libnode_is_sequential sees the corrected schedules.
