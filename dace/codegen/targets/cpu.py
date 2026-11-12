@@ -3982,7 +3982,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 continue
             oedge = out_edges[0]
             # Through the exits of enclosing sequential maps: a loop over a SMALL axis around this map
-            # (``SequentializeReductionAxes``) re-enters it per trip, and each trip is one reduction
+            # (``DecideCpuParallelAxes``) re-enters it per trip, and each trip is one reduction
             while (
                 isinstance(oedge.dst, nodes.MapExit)
                 and oedge.dst.map.schedule == dtypes.ScheduleType.Sequential

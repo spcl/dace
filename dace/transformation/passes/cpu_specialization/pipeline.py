@@ -27,26 +27,23 @@ Order within the stage, and why:
    verdict the fork/join model exists to give.
 3. :class:`~dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates.RecomputeIntermediates`
    -- recomputes a producer map inside every consumer map and drops the intermediate, wherever legal.
-5. :class:`~dace.transformation.passes.cpu_specialization.sequentialize_reduction_axes.SequentializeReductionAxes`
-   -- a parallel map that reduces over some of its axes shares out the others and walks the reduced
-   ones in an inner sequential map, so its writes need no atomic. Before the cost model, which then
-   rules on the split shape.
-6. :class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes`
-   -- the small facts decide: nested parallel scopes, small maps and data segments under a long loop run
-   sequentially, and a map's leading ``SMALL`` axes are shared out with the first larger one. After the reduction
-   split, which it then rules on.
+4. :class:`~dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes.DecideCpuParallelAxes`
+   -- the one decision on parallel axes, top-down, while the schedules are still unset: a one- or few-trip map
+   hands the team to its body maps, a reducing map shares out the axes its outputs are indexed by and walks the
+   reduced ones inside, small maps and data segments under a long loop run sequentially, and a map's leading
+   ``SMALL`` axes are shared out with the first larger one. Schedule inference then resolves what it left unset.
    A copy or fill it sequentializes picks its single ``memcpy`` / ``memset`` itself, at implementation selection.
-7a. :class:`~dace.transformation.passes.cpu_specialization.bound_masked_maps.BoundMaskedMaps` -- on the final shapes:
+5. :class:`~dace.transformation.passes.cpu_specialization.bound_masked_maps.BoundMaskedMaps` -- on the final shapes:
    a map over padded slots stops at the count that masks them, and ``ChooseOmpSchedule`` then sees the uneven work.
-8. :class:`~dace.transformation.passes.privatize_scatter_reduction.PrivatizeScatterReduction` then
+6. :class:`~dace.transformation.passes.privatize_scatter_reduction.PrivatizeScatterReduction` then
    :class:`~dace.transformation.passes.cpu_specialization.range_privatize_scatter_reductions.RangePrivatizeScatterReductions`
    -- after the schedules are final: a parallel map scattering into an array through data-dependent
    indices reduces into a private copy (an OpenMP array-section ``reduction``), of only the rows its chunk writes
    where that is smaller than the whole array.
-9. :class:`~dace.transformation.passes.specialize_small_gemms.SpecializeSmallGemms` -- a small GEMM a map or
+7. :class:`~dace.transformation.passes.specialize_small_gemms.SpecializeSmallGemms` -- a small GEMM a map or
    loop repeats runs as the row-wise loop nest in the iteration's thread, not as a BLAS call per iteration.
-10. :class:`~dace.transformation.passes.cpu_specialization.choose_omp_schedule.ChooseOmpSchedule` -- once the parallel
-    maps are final: one whose iterations do data-dependent work (a loop over a CSR row) is scheduled ``guided``.
+8. :class:`~dace.transformation.passes.cpu_specialization.choose_omp_schedule.ChooseOmpSchedule` -- once the parallel
+   maps are final: one whose iterations do data-dependent work (a loop over a CSR row) is scheduled ``guided``.
 
 The two terminal hygiene passes run again at the end because this stage builds states and indices
 of its own: ``ChunkAntiDependence`` emits prologue and seam blocks, which orphan the entry guard
@@ -63,6 +60,7 @@ from dace.transformation.passes.canonicalize.normalize_floor_division import Nor
 from dace.transformation.passes.cpu_specialization.bound_masked_maps import BoundMaskedMaps
 from dace.transformation.passes.cpu_specialization.choose_omp_schedule import ChooseOmpSchedule
 from dace.transformation.passes.cpu_specialization.chunk_anti_dependence import ChunkAntiDependence
+from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import DecideCpuParallelAxes
 from dace.transformation.passes.cpu_specialization.if_convert_map_bodies import IfConvertParallelMapBodies
 from dace.transformation.passes.cpu_specialization.range_privatize_scatter_reductions import (
     RangePrivatizeScatterReductions,
@@ -70,8 +68,6 @@ from dace.transformation.passes.cpu_specialization.range_privatize_scatter_reduc
 from dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates import (
     RecomputeIntermediates,
 )
-from dace.transformation.passes.cpu_specialization.sequentialize_reduction_axes import SequentializeReductionAxes
-from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import SequentializeSmallAxes
 from dace.transformation.passes.cpu_specialization.split_invariant_map_nests import SplitInvariantMapNests
 from dace.transformation.passes.privatize_scatter_reduction import PrivatizeScatterReduction
 from dace.transformation.passes.specialize_small_gemms import SpecializeSmallGemms
@@ -88,20 +84,17 @@ def cpu_specialize(sdfg: SDFG, validate: bool = False) -> SDFG:
     :param validate: Validate the SDFG once at the end.
     :returns: The same ``sdfg`` instance, specialized.
     """
-    # Canonicalization leaves schedules unset (``Default``), which is not a decision but the absence
-    # of one: codegen reads a top-level ``Default`` as ``CPU_Multicore`` and a nested one as
-    # ``Sequential``. Resolve them first so the cost model below rules on the schedules that will
-    # actually be emitted, and so this stage's output states its verdicts outright instead of
-    # leaving half of them implicit in a codegen rule.
-    infer_types.set_default_schedule_and_storage_types(sdfg, None)
-
     hoist_invariant_guards(sdfg, require_full_hoist=False)
     # The canonical form keeps map nests whole; here an outer map with enough trips feeds the team alone.
     SplitInvariantMapNests().apply_pass(sdfg, {})
     ChunkAntiDependence().apply_pass(sdfg, {})
     RecomputeIntermediates().apply_pass(sdfg, {})
-    SequentializeReductionAxes().apply_pass(sdfg, {})
-    SequentializeSmallAxes().apply_pass(sdfg, {})
+    # Canonicalization leaves schedules unset (``Default``), which is not a decision but the absence
+    # of one. The CPU maps' schedules are decided first, before inference would pin every nested map
+    # ``Sequential``; inference then resolves the rest (library nodes, storage), so this stage's
+    # output states its verdicts outright instead of leaving half of them implicit in a codegen rule.
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
+    infer_types.set_default_schedule_and_storage_types(sdfg, None)
     # After the schedules are final: only a body that stays a parallel map is if-converted.
     IfConvertParallelMapBodies().apply_pass(sdfg, {})
     BoundMaskedMaps().apply_pass(sdfg, {})

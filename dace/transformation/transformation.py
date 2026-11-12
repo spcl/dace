@@ -768,7 +768,7 @@ def adopt_top_level_schedule(expansion: SDFG, schedule: ScheduleType) -> None:
 def share_out_no_small_axis(expansion: SDFG) -> None:
     """Share out the leading ``SMALL`` axes of the ``CPU_Multicore`` maps a library expansion just made together with
     the first larger one, as
-    :class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes` does
+    :class:`~dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes.DecideCpuParallelAxes` does
     for the maps that exist before code generation. A library node expands at code generation, after that
     pass: velocity_tendencies at one block filled each ``(nblks, nlev, nproma)`` temporary in a map shared out
     over ``nblks``, on one thread. A literal extent below ``SMALL_CONSTANT_EXTENT`` is ``SMALL`` too.

@@ -299,7 +299,7 @@ def is_short_loop(loop, cache: dict[int, bool] | None = None) -> bool:
                  the same enclosing loops (a CPU-specialization pass visits one transfer at a time,
                  but the loop nest above it repeats). Valid only for as long as the pass that owns
                  it runs without mutating any ``LoopRegion``'s bounds --
-                 :class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes`
+                 :class:`~dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes.DecideCpuParallelAxes`
                  does not; it only sets ``schedule`` on library and map nodes.
     :returns: ``True`` only when the trip count is provably short; an unanalyzable, descending or
               symbolic-length loop answers ``False``.
@@ -382,7 +382,7 @@ def transfer_size_symbols(node: nodes.LibraryNode, state: dace.SDFGState) -> set
     """The free symbols of a copy's or memset's element count; ``None`` for any other library node.
 
     A loop that re-enters a transfer of a size it does not change is the map case of
-    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes`:
+    :mod:`~dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes`:
     ``E`` entries cost ``E * (fork + work / P)`` against ``E * work``, so the entry count cancels and
     only the size decides (bicgstab's per-iteration ``N``-element memsets). A size the loop varies
     is not one size: npbench ``stockham_fft``'s ``R**i``-element copy is tiny on most of its 349,525

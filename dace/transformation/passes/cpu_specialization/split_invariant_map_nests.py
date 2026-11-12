@@ -12,7 +12,7 @@ from dace import properties
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState, SymbolResolver
 from dace.transformation import transformation as xf
-from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import CPU_PARALLEL_SCHEDULES, few_trips
+from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import CPU_PARALLEL_SCHEDULES, few_trips
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
 
 
