@@ -348,22 +348,43 @@ def release_kernel_block_size(node: nodes.Node, state: SDFGState) -> None:
 
 
 def spread_over_lanes(sdfg: SDFG, label: str) -> SDFG:
-    """Run each outermost map of ``sdfg`` on the block's lanes, the innermost axis strided across them so adjacent
-    lanes touch adjacent elements; a barrier after the lane map publishes the writes to every lane."""
+    """Run each outermost map of ``sdfg`` on the block's lanes, its iteration space strided across them
+    (:func:`stride_over_lanes`); a barrier after the lane map publishes the writes to every lane."""
     from dace.sdfg.propagation import propagate_memlets_state
 
     for state in sdfg.states():
         for entry in [n for n in state.scope_children()[None] if isinstance(n, nodes.MapEntry)]:
             lanes, lanes_exit = add_block_lane_map(state, f"{label}_lanes")
             lanes.map.gpu_force_syncthreads = True
-            begin, end, step = entry.map.range[-1]
-            lane = symbolic.pystr_to_symbolic("__lane")
-            entry.map.range[-1] = (begin + lane * step, end, step * BLOCK_COLLECTIVE_THREADS)
+            stride_over_lanes(state, entry)
             entry.map.schedule = dtypes.ScheduleType.Sequential
             reroute_through(state, entry, lanes, inward=True)
             reroute_through(state, state.exit_node(entry), lanes_exit, inward=False)
         propagate_memlets_state(sdfg, state)
     return sdfg
+
+
+def stride_over_lanes(state: SDFGState, entry: nodes.MapEntry) -> None:
+    """Stride the whole iteration space of ``entry``, linearized row-major, across the lanes: lane ``t`` takes flat
+    iterations ``t, t + B, ...``, so adjacent lanes touch adjacent innermost elements and a map of several narrow
+    axes (3 x 5) still fills the block instead of its innermost axis alone."""
+    from dace.sdfg.replace import replace_dict
+
+    lane = symbolic.pystr_to_symbolic("__lane")
+    if len(entry.map.params) == 1:
+        begin, end, step = entry.map.range[0]
+        entry.map.range[0] = (begin + lane * step, end, step * BLOCK_COLLECTIVE_THREADS)
+        return
+    flat = symbolic.pystr_to_symbolic(state.sdfg.find_new_symbol("__lane_iter"))
+    repl, inner = {}, 1
+    axes = list(zip(entry.map.params, entry.map.range, entry.map.range.size()))
+    for axis, (param, (begin, _, step), size) in reversed(list(enumerate(axes))):
+        index = symbolic.int_floor(flat, inner)
+        repl[param] = symbolic.symstr(begin + step * (index if axis == 0 else index % size))
+        inner = inner * size
+    replace_dict(state.scope_subgraph(entry), repl)
+    entry.map.params = [str(flat)]
+    entry.map.range = subsets.Range([(lane, inner - 1, BLOCK_COLLECTIVE_THREADS)])
 
 
 def reroute_through(state: SDFGState, scope_node: nodes.Node, outer: nodes.Node, inward: bool) -> None:
