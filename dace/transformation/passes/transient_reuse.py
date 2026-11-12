@@ -172,13 +172,16 @@ def inside_parallel_map(sdfg: SDFG) -> bool:
 
 
 def sharing_storages(sdfg: SDFG, global_storages: tuple) -> tuple:
-    """The storages :class:`BufferSharing` may share in ``sdfg``. Each run of an SDFG nested in a host parallel map has
-    its own frame, so its stack arrays may share one buffer as the arrays of a sequential SDFG do; a device thread's
-    have no frame, and nothing global can be shared there: it would be shared with the iterations running at once."""
+    """The storages :class:`BufferSharing` may share in ``sdfg``. Each run of an SDFG nested in a parallel map, host
+    or device, has its own registers and stack, so its register arrays may share one buffer as the arrays of a
+    sequential SDFG do; nothing global can be shared there: it would be shared with the iterations running at once."""
     schedules = enclosing_schedules(sdfg)
     if all(schedule == dtypes.ScheduleType.Sequential for schedule in schedules):
         return global_storages
-    if all(schedule in (dtypes.ScheduleType.Sequential, *dtypes.CPU_SCHEDULES) for schedule in schedules):
+    if all(
+        schedule in (dtypes.ScheduleType.Sequential, *dtypes.CPU_SCHEDULES, *dtypes.GPU_SCHEDULES)
+        for schedule in schedules
+    ):
         return (dtypes.StorageType.Register,)
     return ()
 
