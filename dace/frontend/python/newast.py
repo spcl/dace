@@ -2593,7 +2593,18 @@ class ProgramVisitor(ExtNodeVisitor):
                     write_node = exit_node
                     if exit_node is None:
                         write_node = state.add_write(memlet.data, debuginfo=self.current_lineinfo)
-                    add_indirection_subgraph(self.sdfg, state, internal_node, write_node, memlet, conn, self, True)
+                    # A conflict-resolved output (``x >> a(1, op)[idx[i]]``) keeps its WCR on the indirected write
+                    add_indirection_subgraph(
+                        self.sdfg,
+                        state,
+                        internal_node,
+                        write_node,
+                        memlet,
+                        conn,
+                        self,
+                        True,
+                        with_wcr=memlet.wcr is not None,
+                    )
                     continue
                 inner_memlet = memlet
                 if memlet.data not in self.sdfg.arrays:
