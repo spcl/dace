@@ -51,18 +51,18 @@ def test_the_reduce_keeps_reducing_the_row_after_widening():
         assert wide and (node.axes is None or set(wide) <= set(node.axes)), (str(edge.data), node.axes)
 
 
-def test_the_result_copy_lands_on_its_row():
+def test_the_result_lands_on_its_row():
+    """Each row's result is written to ``s[jl]``: a write of a fixed number of elements names the row it lands on."""
     sdfg = vectorized_row_sums()
-    copies = [
-        (e, state)
-        for e, state in sdfg.all_edges_recursive()
+    writes = [
+        e.data.subset
+        for e, _ in sdfg.all_edges_recursive()
         if isinstance(e.data, dace.Memlet)
-        and isinstance(e.dst, dace.nodes.AccessNode)
-        and e.dst.data == "s"
-        and isinstance(e.src, dace.nodes.AccessNode)
+        and e.data.data == "s"
+        and isinstance(e.dst, (dace.nodes.AccessNode, dace.nodes.ExitNode))
     ]
-    assert copies
-    assert all(e.data.get_dst_subset(e, state).free_symbols for e, state in copies), [str(e.data) for e, _ in copies]
+    rows = [subset for subset in writes if subset is not None and not dace.symbolic.issymbolic(subset.num_elements())]
+    assert rows and all(subset.free_symbols for subset in rows), [str(subset) for subset in writes]
 
 
 @pytest.mark.gpu

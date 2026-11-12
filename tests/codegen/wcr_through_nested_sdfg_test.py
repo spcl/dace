@@ -422,3 +422,42 @@ def test_nested_row_reduction_that_also_shares_an_element_stays_atomic():
     sdfg = _build_row_reduction_through_window(37, 23, also_accumulate_row_zero=True)
     state, edge = _row_reduction_wcr_edge(sdfg)
     assert cpp.is_write_conflicted(state, edge)
+
+
+def _seed_then_accumulate(n: int, m: int, row: str) -> dace.SDFG:
+    """The inlined form of a seed-then-accumulate body: in a parallel map over ``i``, ``out[row] = 0``, then a
+    sequential map adds ``src[i, j]`` into ``out[row]`` through a WCR; both writes leave through the map's exit."""
+    sdfg = dace.SDFG(f"seed_then_accumulate_{row}")
+    sdfg.add_array("src", [n, m], dace.float64)
+    sdfg.add_array("out", [n], dace.float64)
+    state = sdfg.add_state()
+    rows_entry, rows_exit = state.add_map("rows", {"i": f"0:{n}"}, schedule=dace.ScheduleType.CPU_Multicore)
+    out = state.add_write("out")
+    seed = state.add_tasklet("seed", {}, {"o"}, "o = 0")
+    state.add_nedge(rows_entry, seed, dace.Memlet())
+    state.add_memlet_path(seed, rows_exit, out, src_conn="o", memlet=dace.Memlet(f"out[{row}]"))
+    reduce_entry, reduce_exit = state.add_map("reduce_row", {"j": f"0:{m}"}, schedule=dace.ScheduleType.Sequential)
+    add = state.add_tasklet("add", {"v"}, {"o"}, "o = v")
+    state.add_memlet_path(
+        state.add_read("src"), rows_entry, reduce_entry, add, dst_conn="v", memlet=dace.Memlet("src[i, j]")
+    )
+    state.add_memlet_path(
+        add, reduce_exit, rows_exit, out, src_conn="o", memlet=dace.Memlet(f"out[{row}]", wcr="lambda a, b: a + b")
+    )
+    state.add_nedge(seed, reduce_entry, dace.Memlet())
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("row, conflicted", [("i", False), ("0", True)])
+def test_a_seed_and_an_accumulation_into_one_element_conflict_only_across_iterations(row, conflicted):
+    """Seeded and accumulated, ``out[i]`` is owned by its iteration: the two writes meet only inside it, so the
+    accumulation needs no atomic. ``out[0]`` is the same element in every iteration, so it stays atomic."""
+    from dace.codegen.targets import cpp
+
+    sdfg = _seed_then_accumulate(37, 23, row)
+    state = sdfg.start_block
+    edge = next(e for e in state.edges() if isinstance(e.src, dace.nodes.MapExit) and e.src.map.label == "reduce_row")
+    assert cpp.is_write_conflicted(state, edge) is conflicted
+    code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    assert ("reduce_atomic" in code) is conflicted
