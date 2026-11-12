@@ -244,6 +244,8 @@ def test_an_in_place_update_outside_the_inner_map_runs_on_lane_zero_between_barr
         n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet) and n.label == "lane_barrier"
     ]
     assert len(barriers) == 2
+    # A side effect: fusion keeps the states fencing the guard apart
+    assert all(n.side_effects for n in barriers)
     code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
     assert code.count("__syncthreads();") >= 2
 

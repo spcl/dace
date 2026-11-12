@@ -428,7 +428,7 @@ def single_lane_nodes(
 
 def barrier(state: SDFGState) -> nodes.Tasklet:
     """A ``__syncthreads()`` tasklet (CUDA and HIP spell it alike)."""
-    return state.add_tasklet("lane_barrier", {}, {}, "__syncthreads();", dtypes.Language.CPP)
+    return state.add_tasklet("lane_barrier", {}, {}, "__syncthreads();", dtypes.Language.CPP, side_effects=True)
 
 
 def run_on_lane_zero(tasklet: nodes.Tasklet, state: SDFGState) -> None:
