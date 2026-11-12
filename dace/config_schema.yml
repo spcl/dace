@@ -478,6 +478,16 @@ required:
                             memory beyond this size is requested from the device at kernel launch. If 0, the
                             limit of the GPU backend is used (48 KiB on CUDA, 64 KiB on HIP).
 
+                    shared_memory_reuse:
+                        type: bool
+                        default: true
+                        title: Reuse shared memory
+                        description: >
+                            If true, shared memory containers of a GPU kernel that are never in use at the same
+                            time (according to the dataflow of the kernel) may occupy the same bytes of dynamic
+                            shared memory (see ``SharedMemoryInterference``). If false, every container of a kernel
+                            has bytes of its own, e.g., to find out whether reuse causes a miscompilation.
+
                     persistent_map_SM_fraction:
                         type: float
                         title: Fraction of SMs to use for persistent GPU map
