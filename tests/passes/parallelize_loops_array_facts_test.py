@@ -339,6 +339,68 @@ def test_a_constant_fill_is_nonnegative_before_validation_drops_its_unwired_valu
     assert "a" in known and "b" not in known
 
 
+def prefix_scan(op, fill: int | None) -> tuple[dace.SDFG, LoopRegion]:
+    """``w`` (a transient filled with ``fill``, else a caller's array), ``ptr = Scan(op)(w)``, then a loop reading
+    ``ptr``; returns the SDFG and that loop."""
+    from dace.libraries.standard.nodes.scan import Scan
+
+    sdfg = dace.SDFG(f"prefix_scan_{op.value}_{'caller' if fill is None else 'fill' if fill >= 0 else 'negative'}")
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_array("w", ["M"], dace.int64, transient=fill is not None)
+    sdfg.add_array("ptr", ["M"], dace.int64, transient=True)
+    sdfg.add_array("out", ["M"], dace.int64)
+    first = sdfg.add_state("fill", is_start_block=True)
+    if fill is not None:
+        node = FillLibraryNode("fill_w", value=fill)
+        first.add_node(node)
+        first.add_edge(node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, first.add_write("w"), None, dace.Memlet("w[0:M]"))
+    scan_state = sdfg.add_state_after(first, "scan")
+    scan = Scan("scan", op=op)
+    scan_state.add_node(scan)
+    scan_state.add_edge(scan_state.add_read("w"), None, scan, Scan.INPUT_CONNECTOR_NAME, dace.Memlet("w[0:M]"))
+    scan_state.add_edge(scan, Scan.OUTPUT_CONNECTOR_NAME, scan_state.add_write("ptr"), None, dace.Memlet("ptr[0:M]"))
+    loop = LoopRegion("use", "r < M", "r", "r = 0", "r = r + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(scan_state, loop, dace.InterstateEdge())
+    body = loop.add_state("body", is_start_block=True)
+    t = body.add_tasklet("t", {"x"}, {"o"}, "o = x")
+    body.add_edge(body.add_read("ptr"), None, t, "x", dace.Memlet("ptr[r]"))
+    body.add_edge(t, "o", body.add_write("out"), None, dace.Memlet("out[r]"))
+    return sdfg, loop
+
+
+def kinds(sdfg: dace.SDFG, loop: LoopRegion) -> set:
+    return {f.kind for f in array_facts.facts_at(sdfg, loop, ["ptr"])}
+
+
+def test_a_prefix_sum_of_nonnegative_values_is_nondecreasing_and_nonnegative():
+    from dace.libraries.standard.nodes.scan import ScanOp
+
+    sdfg, loop = prefix_scan(ScanOp.SUM, 2)
+    (fact,) = [f for f in array_facts.facts_at(sdfg, loop, ["ptr"]) if f.kind is array_facts.FactKind.NONDECREASING]
+    assert (str(fact.lo), str(fact.hi)) == ("0", "M - 1")
+    assert "ptr" in array_facts.nonnegative_containers(sdfg)
+
+
+def test_a_prefix_sum_of_values_of_unknown_sign_is_neither():
+    from dace.libraries.standard.nodes.scan import ScanOp
+
+    sdfg, loop = prefix_scan(ScanOp.SUM, None)
+    assert kinds(sdfg, loop) == set()
+    assert "ptr" not in array_facts.nonnegative_containers(sdfg)
+    sdfg, loop = prefix_scan(ScanOp.SUM, -1)
+    assert kinds(sdfg, loop) == set()
+
+
+def test_a_running_maximum_is_nondecreasing_whatever_it_reads():
+    from dace.libraries.standard.nodes.scan import ScanOp
+
+    sdfg, loop = prefix_scan(ScanOp.MAX, None)
+    assert kinds(sdfg, loop) == {array_facts.FactKind.NONDECREASING}
+    sdfg, loop = prefix_scan(ScanOp.MIN, 2)
+    assert array_facts.FactKind.NONDECREASING not in kinds(sdfg, loop)
+
+
 if __name__ == "__main__":
     import sys
 
