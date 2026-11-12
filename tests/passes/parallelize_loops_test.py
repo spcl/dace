@@ -14,6 +14,7 @@ that let the pass reuse analysis across probes:
 import copy
 from collections import Counter
 from typing import Any
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -22,7 +23,8 @@ import dace
 from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
-from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion, SymbolResolver
 from dace.transformation.interstate.loop_to_map import (
     LiftContext,
     LoopLift,
@@ -35,6 +37,7 @@ from dace.transformation.interstate.loop_to_map import (
     read_before_written,
 )
 from dace.transformation.passes.analysis import smt_dependence
+from dace.transformation.passes.parallelization import parallelize_loops
 from dace.transformation.passes.parallelization.parallelize_loops import (
     ParallelizeLoops,
     candidate_loops,
@@ -456,6 +459,57 @@ def test_a_proven_lift_is_taken_where_the_probe_refuses():
     a_ref[idx] = b
     sdfg(a=a, b=b, idx=idx)
     np.testing.assert_array_equal(a, a_ref)
+
+
+@dace.program
+def two_deep_nest(a: dace.float64[N, N], b: dace.float64[N, N]):
+    for i in range(N):
+        for j in range(N):
+            a[i, j] = b[i, j] + 1.0
+
+
+def lifted_states(sdfg: dace.SDFG) -> list[dace.SDFGState]:
+    captured: list[dace.SDFGState] = []
+    original = parallelize_loops.propagate_lifted
+
+    def capture(states, resolver, within=None):
+        if within is None:
+            captured.extend(states)
+        return original(states, resolver, within)
+
+    with mock.patch.object(parallelize_loops, "propagate_lifted", side_effect=capture):
+        assert ParallelizeLoops(propagate=False).apply_pass(sdfg, {}) == 2
+    return captured
+
+
+def memlet_texts(sdfg: dace.SDFG) -> list[str]:
+    return [str(e.data) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for e in st.edges()]
+
+
+def propagated_directly(states: list[dace.SDFGState]) -> list[dace.SDFGState]:
+    original = parallelize_loops.propagate_memlets_state
+    with mock.patch.object(parallelize_loops, "propagate_memlets_state", side_effect=original) as spy:
+        parallelize_loops.propagate_lifted(list(states), SymbolResolver())
+    return [c.args[1] for c in spy.call_args_list]
+
+
+def test_a_lifted_state_inside_another_lifted_state_is_propagated_once_through_it():
+    sdfg = two_deep_nest.to_sdfg(simplify=True)
+    outer, inner = sorted(lifted_states(sdfg), key=lambda st: st.sdfg is not sdfg)
+    assert inner.sdfg.parent is outer, "fixture broken: the inner lift is not nested in the outer one"
+    lifted = memlet_texts(sdfg)
+
+    reference = copy.deepcopy(sdfg)
+    propagate_memlets_sdfg(reference)
+    assert lifted == memlet_texts(reference)
+    assert propagated_directly([inner, outer]) == [outer]
+
+
+def test_a_lifted_state_whose_holder_is_not_pending_is_propagated_itself():
+    sdfg = two_deep_nest.to_sdfg(simplify=True)
+    outer, inner = sorted(lifted_states(sdfg), key=lambda st: st.sdfg is not sdfg)
+    assert inner.sdfg.parent is outer
+    assert propagated_directly([inner]) == [inner]
 
 
 def context_facts(sd: dace.SDFG) -> tuple[dict[str, list[dace.SDFGState]], list[Any], OrderedSet[str]]:
@@ -1529,6 +1583,8 @@ def test_a_bitonic_stage_lifts_under_its_while_condition():
 
 
 if __name__ == "__main__":
+    test_a_lifted_state_inside_another_lifted_state_is_propagated_once_through_it()
+    test_a_lifted_state_whose_holder_is_not_pending_is_propagated_itself()
     test_lift_never_changes_a_surviving_blocks_free_symbols()
     test_reused_analysis_costs_no_maps_against_the_matcher()
     test_lifts_outermost_first()

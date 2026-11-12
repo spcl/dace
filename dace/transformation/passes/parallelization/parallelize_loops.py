@@ -668,9 +668,20 @@ def propagate_lifted(states: list[SDFGState], resolver: SymbolResolver, within: 
 
     pending = [st for st in dict.fromkeys(states) if within is None or st.sdfg is within]
     states[:] = [st for st in states if st not in pending]
-    for state in sorted(pending, key=depth, reverse=True):
-        # A loop lifted since moved the state into its body: it is there, in the lifted SDFG
-        if state in state.parent_graph.nodes():
+    # A loop lifted since moved the state into its body: it is there, in the lifted SDFG
+    present = {st: None for st in pending if st in st.parent_graph.nodes()}
+
+    def covered(state: SDFGState) -> bool:
+        # Propagating a state propagates every SDFG nested in it again, whole
+        sd = state.sdfg
+        while sd.parent_sdfg is not None:
+            if sd.parent in present:
+                return True
+            sd = sd.parent_sdfg
+        return False
+
+    for state in sorted(present, key=depth, reverse=True):
+        if not covered(state):
             propagate_memlets_state(state.sdfg, state, resolver)
 
 
