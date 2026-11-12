@@ -238,6 +238,25 @@ def allocation_on_entry(region: AbstractControlFlowRegion, codegen: "DaCeCodeGen
     return stream.getvalue()
 
 
+def allocation_ahead(block: ControlFlowBlock, codegen: "DaCeCodeGenerator") -> str:
+    """Generates the VLAs declared ahead of ``block``, in the code block of its region (see ``allocated_ahead``)."""
+    stream = CodeIOStream()
+    for sdfg, state, node, declare, allocate, _ in codegen.allocated_ahead.get(block, ()):
+        codegen.dispatcher.dispatch_allocate(
+            sdfg,
+            state.parent_graph,
+            state,
+            state.block_id,
+            node,
+            node.desc(sdfg),
+            codegen.region_function_stream,
+            stream,
+            declare,
+            allocate,
+        )
+    return stream.getvalue()
+
+
 def deallocation_on_exit(region: AbstractControlFlowRegion, codegen: "DaCeCodeGenerator") -> str:
     """Generates the deallocation of the data that is deallocated when ``region`` is left."""
     stream = CodeIOStream()
@@ -286,6 +305,7 @@ def control_flow_region_to_code(
         visited.add(node)
 
         expr += "__state_{}_{}:;\n".format(region.cfg_id, re.sub(r"\s+", "_", node.label))
+        expr += allocation_ahead(node, codegen)
         if isinstance(node, AbstractControlFlowRegion):
             expr += allocation_on_entry(node, codegen)
         if isinstance(node, SDFGState):

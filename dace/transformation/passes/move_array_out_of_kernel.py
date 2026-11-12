@@ -98,7 +98,7 @@ def is_move_candidate(desc: dt.Data, register_limit: int) -> bool:
         return False
     if desc.storage is dtypes.StorageType.GPU_Global:
         return True
-    return desc.storage is dtypes.StorageType.Register and not fits_registers(desc, register_limit)
+    return desc.storage == dtypes.StorageType.Register and not fits_registers(desc, register_limit)
 
 
 def enclosing_entries(
