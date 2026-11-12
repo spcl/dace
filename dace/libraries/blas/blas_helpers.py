@@ -369,6 +369,16 @@ def stepped_strides(desc: "dace.data.Array", subset: "dace.subsets.Range") -> li
     return [stride * rng[2] for stride, rng in zip(desc.strides, subset.ranges)]
 
 
+def stepped_descriptor(desc: "dace.data.Array", subset: "dace.subsets.Range") -> "dace.data.Array":
+    """``desc`` in the strides ``subset`` walks it by, for an expansion that lays its connector out with them: the
+    descriptor itself under a unit step, else a copy."""
+    if all(step == 1 for _, _, step in subset.ranges):
+        return desc
+    stepped = dc(desc)
+    stepped.strides = tuple(stepped_strides(desc, subset))
+    return stepped
+
+
 def lapack_order(desc: "dace.data.Array") -> str:
     """The LAPACKE layout constant of the matrix ``desc``."""
     return "LAPACK_ROW_MAJOR" if desc.strides[-1] == 1 else "LAPACK_COL_MAJOR"

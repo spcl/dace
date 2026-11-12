@@ -5,6 +5,7 @@ import collections
 
 import dace
 from dace import library, nodes, properties, symbolic
+from dace.libraries.blas.blas_helpers import stepped_descriptor
 from dace.libraries.linalg import environments
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.ordered import OrderedSet
@@ -657,24 +658,25 @@ class TensorDot(nodes.LibraryNode):
         """
         Validates the tensor dot-product operation.
         :return: A tuple (left_tensor, right_tensor, out_tensor, left_shape, right_shape, out_shape) -- the
-                 data descriptors in the parent SDFG, and the extents the memlets actually move.
+                 data descriptors in the parent SDFG in the strides the memlets step them by, and the extents the
+                 memlets move.
         """
 
         left_tensor, right_tensor, out_tensor = None, None, None
         left_shape, right_shape, out_shape = None, None, None
         for e in state.out_edges(self):
             if e.src_conn == "_out_tensor":
-                out_tensor = sdfg.arrays[e.data.data]
+                out_tensor = stepped_descriptor(sdfg.arrays[e.data.data], e.data.subset)
                 # The extents come from the SUBSET, not the descriptor: a contraction may write into
                 # a slice of a larger container, and comparing the dot-product shape against the
                 # container rejects a write that is correct.
                 out_shape = e.data.subset.size()
         for e in state.in_edges(self):
             if e.dst_conn == "_left_tensor":
-                left_tensor = sdfg.arrays[e.data.data]
+                left_tensor = stepped_descriptor(sdfg.arrays[e.data.data], e.data.subset)
                 left_shape = e.data.subset.size()
             elif e.dst_conn == "_right_tensor":
-                right_tensor = sdfg.arrays[e.data.data]
+                right_tensor = stepped_descriptor(sdfg.arrays[e.data.data], e.data.subset)
                 right_shape = e.data.subset.size()
 
         if not left_tensor or not right_tensor:

@@ -37,10 +37,8 @@ The match is conservative -- it REFUSES on any deviation:
   not a positive integer constant.
 
 Strided / offset loops (``for i in range(lo, hi, inc)``, ``inc > 0``) are handled:
-the emitted memlets carry the exact ``lo:hi:inc`` sub-region, and when the access
-is not the full array the operands are routed through strided Views (whose strides
-encode the per-axis step) so the library node still sees a dense operand. Only when
-every axis covers its whole array are plain full-array memlets emitted.
+the emitted memlets carry the exact ``lo:hi:inc`` sub-region, which the library node
+reads in the array's strides scaled by the step.
 """
 
 from collections.abc import Sequence
@@ -228,15 +226,12 @@ class _Plan:
         axes: list[int],
         read_range: subsets.Range,
         write_range: subsets.Range,
-        in_full: bool,
-        out_full: bool,
     ) -> None:
         self.in_array = in_array
         self.out_array = out_array
         self.axes = axes
         self.read_range = read_range
         self.write_range = write_range
-        self.full = in_full and out_full
 
 
 @explicit_cf_compatible
@@ -354,30 +349,12 @@ class LoopToTranspose(ppl.Pass):
         in_ranges = _side_ranges(in_axis, in_coeff, in_off, d)
         out_ranges = _side_ranges(out_axis, out_coeff, out_off, d)
 
-        def _is_full(
-            rng_list: list[tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]],
-            desc: dace.data.Data,
-        ) -> bool:
-            for (lo, hi, st), sz in zip(rng_list, desc.shape):
-                # Bounds are rebuilt from the loop's reparsed ranges, the shape carries the declared
-                # assumptions: two instances of one name that never cancel.
-                end, sz_eq = symbolic.equalize_symbols_across(hi, sz)
-                if (
-                    symbolic.simplify(lo) != 0
-                    or symbolic.simplify(st - 1) != 0
-                    or symbolic.simplify(end - (sz_eq - 1)) != 0
-                ):
-                    return False
-            return True
-
         plan = _Plan(
             in_array,
             out_array,
             axes,
             subsets.Range(in_ranges),
             subsets.Range(out_ranges),
-            _is_full(in_ranges, in_desc),
-            _is_full(out_ranges, out_desc),
         )
         self._replace(cfg, outer, sdfg, plan, in_desc, out_desc, d)
         return True
@@ -393,8 +370,7 @@ class LoopToTranspose(ppl.Pass):
         d: int,
     ) -> None:
         """Splice ``outer`` out, replacing the nest with a state holding the
-        transpose library node wired to the operand arrays (directly for a
-        full-array access, via strided Views otherwise)."""
+        transpose library node wired to the operand arrays' sub-regions."""
         from dace.libraries.linalg.nodes.transpose import Transpose
         from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
 
@@ -411,65 +387,20 @@ class LoopToTranspose(ppl.Pass):
             in_conn, out_conn = "_inp_tensor", "_out_tensor"
         state.add_node(node)
 
-        if plan.full:
-            # Whole-array access on every axis: plain full-array memlets.
-            state.add_edge(
-                state.add_read(plan.in_array),
-                None,
-                node,
-                in_conn,
-                Memlet(data=plan.in_array, subset=subsets.Range(list(plan.read_range.ndrange()))),
-            )
-            state.add_edge(
-                node,
-                out_conn,
-                state.add_write(plan.out_array),
-                None,
-                Memlet(data=plan.out_array, subset=subsets.Range(list(plan.write_range.ndrange()))),
-            )
-        else:
-            # Offset / strided sub-grid: route each operand through a strided View whose
-            # per-axis stride is the array stride times the access step, so the library
-            # node (whose pure expansion assumes a dense operand) still reads/writes the
-            # correct elements. The connecting memlet carries the lo:hi:inc origin+extent.
-            in_steps = [r[2] for r in plan.read_range.ndrange()]
-            out_steps = [r[2] for r in plan.write_range.ndrange()]
-            iv_name, _ = sdfg.add_view(
-                plan.in_array + "_tview",
-                list(plan.read_range.size()),
-                in_desc.dtype,
-                storage=in_desc.storage,
-                strides=[in_desc.strides[a] * in_steps[a] for a in range(d)],
-                find_new_name=True,
-            )
-            ov_name, _ = sdfg.add_view(
-                plan.out_array + "_tview",
-                list(plan.write_range.size()),
-                out_desc.dtype,
-                storage=out_desc.storage,
-                strides=[out_desc.strides[b] * out_steps[b] for b in range(d)],
-                find_new_name=True,
-            )
-            iv = state.add_access(iv_name)
-            ov = state.add_access(ov_name)
-            in_dense = subsets.Range([(0, s - 1, 1) for s in plan.read_range.size()])
-            out_dense = subsets.Range([(0, s - 1, 1) for s in plan.write_range.size()])
-            state.add_edge(
-                state.add_read(plan.in_array),
-                None,
-                iv,
-                "views",
-                Memlet(data=plan.in_array, subset=subsets.Range(list(plan.read_range.ndrange()))),
-            )
-            state.add_edge(iv, None, node, in_conn, Memlet(data=iv_name, subset=in_dense))
-            state.add_edge(node, out_conn, ov, None, Memlet(data=ov_name, subset=out_dense))
-            state.add_edge(
-                ov,
-                "views",
-                state.add_write(plan.out_array),
-                None,
-                Memlet(data=plan.out_array, subset=subsets.Range(list(plan.write_range.ndrange()))),
-            )
+        state.add_edge(
+            state.add_read(plan.in_array),
+            None,
+            node,
+            in_conn,
+            Memlet(data=plan.in_array, subset=subsets.Range(list(plan.read_range.ndrange()))),
+        )
+        state.add_edge(
+            node,
+            out_conn,
+            state.add_write(plan.out_array),
+            None,
+            Memlet(data=plan.out_array, subset=subsets.Range(list(plan.write_range.ndrange()))),
+        )
 
         for e in in_edges:
             cfg.add_edge(e.src, state, e.data)
