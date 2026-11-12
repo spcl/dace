@@ -18,6 +18,8 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes import BreakAntiDependence
+from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import AssumeSymbolConstraints
+from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision
 from dace.transformation.passes.cpu_specialization import ChunkAntiDependence
 
 N = dace.symbol("N")
@@ -386,6 +388,10 @@ def test_the_full_pipeline_reaches_the_seam_rewrite(prog, offset):
     cpu_specialize(sdfg)
     assert [n for n in sdfg.arrays if n.endswith("_antidep_seam")], "ChunkAntiDependence did not fire"
     assert not _snapshot_copies(sdfg), "the whole-window snapshot copy survived the rewrite"
+    # The prologue and seam states need no guard re-anchored, and no index is left a python ``//``: the CPU stage
+    # needs no second run of either canonical hygiene pass
+    assert AssumeSymbolConstraints().apply_pass(sdfg, {}) is None
+    assert NormalizeFloorDivision().apply_pass(sdfg, {}) is None
 
     n = 4096
     rng = np.random.default_rng(17)

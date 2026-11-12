@@ -44,19 +44,11 @@ Order within the stage, and why:
    loop repeats runs as the row-wise loop nest in the iteration's thread, not as a BLAS call per iteration.
 8. :class:`~dace.transformation.passes.cpu_specialization.choose_omp_schedule.ChooseOmpSchedule` -- once the parallel
    maps are final: one whose iterations do data-dependent work (a loop over a CSR row) is scheduled ``guided``.
-
-The two terminal hygiene passes run again at the end because this stage builds states and indices
-of its own: ``ChunkAntiDependence`` emits prologue and seam blocks, which orphan the entry guard
-``AssumeSymbolConstraints`` prepended during canonicalization, and any pass may leave an index
-holding python's ``//`` on a sympy expression -- sympy ``floor()``, which prints WITHOUT the floor
-and truncates term by term. Both are re-runnable: the guard dedups and re-anchors itself.
 """
 
 from dace import SDFG, dtypes
 from dace.sdfg import infer_types
 from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
-from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import AssumeSymbolConstraints
-from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision
 from dace.transformation.passes.cpu_specialization.bound_masked_maps import BoundMaskedMaps
 from dace.transformation.passes.cpu_specialization.choose_omp_schedule import ChooseOmpSchedule
 from dace.transformation.passes.cpu_specialization.chunk_anti_dependence import ChunkAntiDependence
@@ -102,9 +94,6 @@ def cpu_specialize(sdfg: SDFG, validate: bool = False) -> SDFG:
     RangePrivatizeScatterReductions().apply_pass(sdfg, {})
     SpecializeSmallGemms(dtypes.DeviceType.CPU).apply_pass(sdfg, {})
     ChooseOmpSchedule().apply_pass(sdfg, {})
-
-    AssumeSymbolConstraints().apply_pass(sdfg, {})
-    NormalizeFloorDivision().apply_pass(sdfg, {})
 
     if validate:
         sdfg.validate()
