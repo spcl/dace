@@ -28,8 +28,10 @@ LAUNCHER_RUNTIME_PREFIXES = ("OMPI_", "PMIX_", "PRTE_", "ORTE_", "OPAL_", "HYDRA
 #: without the fix the rank call aborts, and with a bare ``MPI_Init`` the level comes back SINGLE.
 PROBE = (
     "import dace\n"
+    "import os\n"
     "from mpi4py import MPI\n"
-    'print("rank", MPI.COMM_WORLD.Get_rank(), "level", MPI.Query_thread(), MPI.THREAD_FUNNELED)'
+    # One write per record: an unbuffered ``print`` writes each argument apart, and the two ranks' records interleave
+    'os.write(1, f"rank {MPI.COMM_WORLD.Get_rank()} level {MPI.Query_thread()} {MPI.THREAD_FUNNELED}\\n".encode())'
 )
 
 
