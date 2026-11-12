@@ -175,6 +175,15 @@ def test_a_name_a_branch_condition_uses_is_kept():
     assert "x" in sdfg.arrays and "y" in sdfg.arrays
 
 
+def test_a_name_only_the_init_code_uses_is_kept():
+    """``init_code`` maps a location to a CodeBlock, whose text the dict's own ``str`` does not show."""
+    sdfg = one_map_sdfg("prune_init_code")
+    sdfg.arrays["orphan"].lifetime = dtypes.AllocationLifetime.Persistent
+    sdfg.set_init_code("__state->__0_orphan = 0.0;  // orphan")
+    assert prune(sdfg) == set()
+    assert "orphan" in sdfg.arrays
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
     test_a_name_a_branch_condition_uses_is_kept()

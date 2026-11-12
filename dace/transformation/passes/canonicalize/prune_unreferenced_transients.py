@@ -41,7 +41,8 @@ def referenced_names(sdfg: SDFG) -> set[str]:
     a name kept alive by accident costs a descriptor, a name dropped by accident is a miscompile.
     """
     used: set[str] = set()
-    text: list = [sdfg.init_code, sdfg.exit_code]
+    # ``init_code`` and ``exit_code`` map a location to a CodeBlock: the blocks, not the dict, hold the text.
+    text: list = [*sdfg.init_code.values(), *sdfg.exit_code.values()]
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nodes.AccessNode):
