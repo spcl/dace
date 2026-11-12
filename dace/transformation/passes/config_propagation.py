@@ -157,6 +157,11 @@ class ConfigPropagation(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> SDFG:
         """:return: The dispatcher SDFG; the variants are written to ``output_dir``."""
         root = SDFG(sdfg.name)
+        # the program the caller had: its argument order, its constants and the codegen it opted into
+        root.arg_names = list(sdfg.arg_names)
+        root.constants_prop = copy.deepcopy(sdfg.constants_prop)
+        root.openmp_sections = sdfg.openmp_sections
+        root.openmp_array_reductions = sdfg.openmp_array_reductions
         for name, desc in sdfg.arrays.items():
             if not desc.transient:
                 root.add_datadesc(name, copy.deepcopy(desc))

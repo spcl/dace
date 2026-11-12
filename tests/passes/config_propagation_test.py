@@ -195,3 +195,15 @@ def test_singleton_values_name_the_variant(tmp_path):
 
     names = sorted(os.listdir(tmp_path))
     assert f"{sdfg.name}_ldeep_0.sdfgz" in names and f"{sdfg.name}_ldeep_1.sdfgz" in names
+
+
+def test_the_dispatcher_keeps_the_argument_order_constants_and_codegen_flags_of_its_program(tmp_path):
+    sdfg = tendencies.to_sdfg(simplify=True)
+    sdfg.add_constant("DEPTH", 4)
+    sdfg.openmp_array_reductions = True  # what canonicalize sets on its output
+
+    root = ConfigPropagation({"ldeep": [1]}, str(tmp_path)).apply_pass(sdfg, {})
+
+    assert root.arg_names == sdfg.arg_names
+    assert root.constants == sdfg.constants
+    assert root.openmp_array_reductions and root.openmp_sections == sdfg.openmp_sections
