@@ -78,6 +78,13 @@ def cshift_kernel():
     return row_kernel("cshift_rows", node, arrays, {"_x": "A[i, 0:N]"}, {"_out": "B[i, 0:N]"})
 
 
+def cshift_cube_kernel():
+    """Each row a 3 x 5 tile: no axis alone comes near the block's width."""
+    arrays = {"A": ([R, 3, 5], dace.float64), "B": ([R, 3, 5], dace.float64)}
+    node = CShift("roll", dim=3, shift=2, direction=ShiftDirection.NUMPY)
+    return row_kernel("cshift_cube_rows", node, arrays, {"_x": "A[i, 0:3, 0:5]"}, {"_out": "B[i, 0:3, 0:5]"})
+
+
 def merge_kernel():
     arrays = {"A": ([R, N], dace.float64), "C": ([R, N], dace.float64), "M": ([R, N], dace.int32)}
     arrays["B"] = ([R, N], dace.float64)
@@ -142,6 +149,19 @@ def test_an_in_kernel_elementwise_node_strides_its_map_over_the_lanes(build):
     (elements,) = inner
     begin, end, step = elements.map.range[-1]
     assert str(begin) == "__lane" and step == 256
+
+
+def test_an_in_kernel_map_of_narrow_axes_strides_its_whole_iteration_space_over_the_lanes():
+    sdfg, state = cshift_cube_kernel()
+    sdfg.expand_library_nodes(recursive=False)
+    (elements,) = [
+        n
+        for n, parent in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.MapEntry) and n.map.schedule == dtypes.ScheduleType.Sequential
+    ]
+    ((begin, end, step),) = elements.map.range
+    assert len(elements.map.params) == 1 and str(begin) == "__lane" and end == 14 and step == 256
+    sdfg.validate()
 
 
 def test_an_in_kernel_contraction_strides_both_of_its_maps_over_the_lanes():
@@ -291,6 +311,13 @@ def test_row_cshift_in_a_kernel_matches_numpy():
 
 
 @pytest.mark.gpu
+def test_row_cshift_of_a_cube_in_a_kernel_matches_numpy():
+    a = np.random.default_rng(7).random((ROWS, 3, 5))
+    b = run_on_gpu(cshift_cube_kernel()[0], A=a, B=np.zeros((ROWS, 3, 5)))["B"]
+    assert np.array_equal(b, np.roll(a, 2, axis=2))
+
+
+@pytest.mark.gpu
 def test_row_merge_in_a_kernel_matches_numpy():
     rng = np.random.default_rng(5)
     a, c, m = rng.random((ROWS, COLS)), rng.random((ROWS, COLS)), mask_rows(rng)
@@ -313,6 +340,7 @@ if __name__ == "__main__":
         test_an_in_kernel_reduction_lowers_to_one_block_collective(build)
     for build in ELEMENTWISE:
         test_an_in_kernel_elementwise_node_strides_its_map_over_the_lanes(build)
+    test_an_in_kernel_map_of_narrow_axes_strides_its_whole_iteration_space_over_the_lanes()
     test_an_in_kernel_contraction_strides_both_of_its_maps_over_the_lanes()
     test_the_lowered_nodes_opt_into_kernels()
     test_a_reduction_along_one_axis_keeps_its_per_thread_lowering()
@@ -326,5 +354,6 @@ if __name__ == "__main__":
         test_row_mask_reduction_in_a_kernel_matches_numpy(node_class)
     test_row_broadcast_in_a_kernel_matches_numpy()
     test_row_cshift_in_a_kernel_matches_numpy()
+    test_row_cshift_of_a_cube_in_a_kernel_matches_numpy()
     test_row_merge_in_a_kernel_matches_numpy()
     test_row_tensordot_in_a_kernel_matches_numpy()
