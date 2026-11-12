@@ -25,7 +25,7 @@ Both write only the elements of the output (view), and support ``alpha`` but not
 import math
 
 import dace
-from dace import SDFG, Memlet, SDFGState, dtypes, nodes, symbolic
+from dace import SDFG, InterstateEdge, Memlet, SDFGState, dtypes, nodes, symbolic
 from dace.codegen.common import sym2cpp
 from dace.config import Config
 from dace.libraries.blas.blocked import operand_view
@@ -207,30 +207,41 @@ def _rows_bound(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> int | 
     return math.inf
 
 
-def _nested(node, operands: dict, product: _Product, code: str, threads: int, scratch: dict) -> SDFG:
-    """A nested SDFG of one thread-block map of ``threads`` threads, around a C++ tasklet with ``code`` that reads the
-    operands (``a``, ``b``, ``a_index``) and writes ``c`` and the transients in ``scratch``."""
+def _nested(node, operands: dict, phases: list, threads: int, scratch: dict) -> SDFG:
+    """A nested SDFG that runs ``phases`` one after the other, each a state with a thread-block map of ``threads``
+    threads around a C++ tasklet. A phase is ``(name, code, inputs, outputs)``, where ``inputs`` and ``outputs`` map
+    the tasklet's connectors to the containers they access: the operands (``_a``, ``_b``, ``_a_index``, ``_c``) and
+    the transients in ``scratch`` (name to shape, type and storage)."""
     sdfg = SDFG(f"{node.label}_sdfg")
     for connector, (size, strides, desc) in operands.items():
         if connector not in sdfg.arrays:
             sdfg.add_array(connector, size, desc.dtype, storage=desc.storage, strides=strides)
     for name, (shape, dtype, storage) in scratch.items():
         sdfg.add_transient(name, shape, dtype, storage=storage)
-    state = sdfg.add_state(node.label)
-    entry, exit_ = state.add_map(
-        f"{node.label}_threads", {"tid": f"0:{threads}"}, schedule=dtypes.ScheduleType.GPU_ThreadBlock
-    )
-    inputs = {"a": "_a", "b": "_b", **({"a_index": "_a_index"} if product.gather else {})}
-    outputs = {"c": "_c", **{name.lstrip("_"): name for name in scratch}}
-    tasklet = state.add_tasklet(f"{node.label}_product", set(inputs), set(outputs), code, language=dtypes.Language.CPP)
-    for connector, name in inputs.items():
-        memlet = Memlet.from_array(name, sdfg.arrays[name])
-        state.add_memlet_path(state.add_read(name), entry, tasklet, dst_conn=connector, memlet=memlet)
-    for connector, name in outputs.items():
-        memlet = Memlet.from_array(name, sdfg.arrays[name])
-        memlet.dynamic = True
-        state.add_memlet_path(tasklet, exit_, state.add_write(name), src_conn=connector, memlet=memlet)
+    previous = None
+    for phase, code, inputs, outputs in phases:
+        label = node.label if len(phases) == 1 else f"{node.label}_{phase}"
+        state = sdfg.add_state(label, is_start_block=previous is None)
+        if previous is not None:
+            sdfg.add_edge(previous, state, InterstateEdge())
+        previous = state
+        entry, exit_ = state.add_map(
+            f"{label}_threads", {"tid": f"0:{threads}"}, schedule=dtypes.ScheduleType.GPU_ThreadBlock
+        )
+        tasklet = state.add_tasklet(f"{label}_tasklet", set(inputs), set(outputs), code, language=dtypes.Language.CPP)
+        for connector, name in inputs.items():
+            memlet = Memlet.from_array(name, sdfg.arrays[name])
+            state.add_memlet_path(state.add_read(name), entry, tasklet, dst_conn=connector, memlet=memlet)
+        for connector, name in outputs.items():
+            memlet = Memlet.from_array(name, sdfg.arrays[name])
+            memlet.dynamic = True
+            state.add_memlet_path(tasklet, exit_, state.add_write(name), src_conn=connector, memlet=memlet)
     return sdfg
+
+
+def _inputs(product: "_Product") -> dict[str, str]:
+    """The input connectors of the tasklets that read the operands, and the operands they read."""
+    return {"a": "_a", "b": "_b", **({"a_index": "_a_index"} if product.gather else {})}
 
 
 def _elementwise(product: _Product, threads: int) -> str:
@@ -264,7 +275,186 @@ class ExpandGemmThreadBlock(ExpandTransformation):
         product = _Product(node, operands)
         threads = kernel_threads(sdfg, state, node)
         code = _elementwise(product, threads) + "__syncthreads();  // The product is complete for every thread\n"
-        return _nested(node, operands, product, code, threads, {})
+        return _nested(node, operands, [("product", code, _inputs(product), {"c": "_c"})], threads, {})
+
+
+class _MMACode:
+    """The C++ code of the tensor-core product of a chunk of rows starting at ``m0`` (a variable of the code): its
+    ``compute`` part, which copies slices of the operands into the workspace and multiplies them into the per-thread
+    accumulators, and its ``store`` part, which writes the accumulators to ``c``. Both expect the declarations of
+    ``header`` before them, and the accumulators as the array ``acc`` (a fragment of every warp, see ``ACC``)."""
+
+    def __init__(self, product: _Product, threads: int, rows: int, n: int, k: int):
+        self.product, self.threads = product, threads
+        warps = threads // WARP_SIZE
+        self.operand, self.ctype = product.types[0], product.types[2].ctype
+        self.header = f"""
+constexpr int MT = {rows}, N = {n}, K = {k}, KS = {MMA_K_STEP}, STAGES = {MMA_STAGES}, CHUNKS = {MMA_K_STEP // 8};
+constexpr int THREADS = {threads}, WN = N / {warps}, MF = MT / 16, NF = WN / 8;
+const long long M_TOTAL = {sym2cpp(product.m)};
+const int w = tid / {WARP_SIZE}, lane = tid % {WARP_SIZE};
+// Accumulator e of fragment (i, j) of the thread: row i * 16 + lane / 4 + (e / 2) * 8 and column
+// w * WN + j * 8 + 2 * (lane % 4) + e % 2 of the chunk
+#define DACE_TB_ACC(i, j, e) acc[((i) * NF + (j)) * 4 + (e)]
+"""
+        self.footer = "#undef DACE_TB_ACC\n"
+
+    @staticmethod
+    def accumulators(rows: int, n: int, threads: int) -> int:
+        """The number of accumulators of every thread (``MF * NF * 4`` in the constants of ``header``)."""
+        return (rows // 16) * (n // (threads // WARP_SIZE) // 8) * 4
+
+    def compute(self) -> str:
+        product, operand = self.product, self.operand
+        mma_type = "bf16" if operand == dace.bfloat16 else "f16"
+        chunks = MMA_K_STEP // 8
+        # Chunks of 16 bytes are swizzled (XOR with the row) so that the eight rows ``ldmatrix`` reads at once, and the
+        # rows ``cp.async`` writes, hit distinct banks
+        swizzle = "((r) >> 1) & 3" if chunks == 4 else "(r) & 7"
+        # Where the slices of a row of op(a) and of a column of op(b) start, and how far a slice at k0 is from them
+        a_row = "a_index[m0 + r]" if product.gather else "(m0 + r)"
+        a_start, b_start = product.a.outer_offset(f"(long long){a_row}", 1), product.b.outer_offset("r", 0)
+        a_slice, b_slice = product.a.slice_offset("k0"), product.b.slice_offset("k0")
+        fallback_row = "(long long)a_index[m0 + row]" if product.gather else "(m0 + row)"
+        return f"""{{
+const int nrows = (int) min((long long) MT, M_TOTAL - m0);
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
+const uint32_t smem = (uint32_t) __cvta_generic_to_shared(workspace);
+#define DACE_TB_SWZ(r, c) ((c) ^ ({swizzle}))
+#define DACE_TB_ADDR(s, r, c) (smem + ((((s) * (MT + N) + (r)) * CHUNKS + DACE_TB_SWZ(r, c)) << 4))
+constexpr int A_COPIES = (MT * CHUNKS + THREADS - 1) / THREADS, B_COPIES = (N * CHUNKS + THREADS - 1) / THREADS;
+// The chunks of every slice this thread copies: where they start in A (null for rows beyond the product) and B
+const {operand.ctype} *a_src[A_COPIES];
+const {operand.ctype} *b_src[B_COPIES];
+#pragma unroll
+for (int j = 0; j < A_COPIES; ++j) {{
+    const int i = tid + j * THREADS, r = i / CHUNKS, c = i % CHUNKS;
+    a_src[j] = (i < MT * CHUNKS && r < nrows) ? a + {a_start} + c * 8 : nullptr;
+}}
+#pragma unroll
+for (int j = 0; j < B_COPIES; ++j) {{
+    const int i = tid + j * THREADS, r = i / CHUNKS, c = i % CHUNKS;
+    b_src[j] = b + {b_start} + c * 8;
+}}
+// Copies the slices of A and B starting at k0 into stage s (rows of A beyond the product are zero-filled)
+auto load_stage = [&](int s, int k0) {{
+    #pragma unroll
+    for (int j = 0; j < A_COPIES; ++j) {{
+        const int i = tid + j * THREADS, r = i / CHUNKS, c = i % CHUNKS;
+        if (MT * CHUNKS % THREADS == 0 || i < MT * CHUNKS)
+            asm volatile("cp.async.cg.shared.global.L2::{MMA_L2_FETCH}B [%0], [%1], 16, %2;\\n"
+                         :: "r"(DACE_TB_ADDR(s, r, c)), "l"(a_src[j] ? a_src[j] + {a_slice} : a), "r"(a_src[j] ? 16 : 0));
+    }}
+    #pragma unroll
+    for (int j = 0; j < B_COPIES; ++j) {{
+        const int i = tid + j * THREADS, r = i / CHUNKS, c = i % CHUNKS;
+        if (N * CHUNKS % THREADS == 0 || i < N * CHUNKS)
+            asm volatile("cp.async.cg.shared.global.L2::{MMA_L2_FETCH}B [%0], [%1], 16;\\n"
+                         :: "r"(DACE_TB_ADDR(s, MT + r, c)), "l"(b_src[j] + {b_slice}));
+    }}
+}};
+
+#pragma unroll
+for (int i = 0; i < MF; ++i)
+    #pragma unroll
+    for (int j = 0; j < NF; ++j)
+        DACE_TB_ACC(i, j, 0) = DACE_TB_ACC(i, j, 1) = DACE_TB_ACC(i, j, 2) = DACE_TB_ACC(i, j, 3) = 0.f;
+
+constexpr int KT = K / KS;
+#pragma unroll
+for (int s = 0; s < STAGES - 1; ++s) {{
+    if (s < KT) load_stage(s, s * KS);
+    asm volatile("cp.async.commit_group;\\n" ::);
+}}
+for (int kt = 0; kt < KT; ++kt) {{
+    asm volatile("cp.async.wait_group %0;\\n" :: "n"(STAGES - 2));
+    __syncthreads();
+    const int next = kt + STAGES - 1;
+    if (next < KT) load_stage(next % STAGES, next * KS);
+    asm volatile("cp.async.commit_group;\\n" ::);
+    const int s = kt % STAGES;
+    #pragma unroll
+    for (int kk = 0; kk < KS / 16; ++kk) {{
+        uint32_t bf[NF][2];
+        #pragma unroll
+        for (int j = 0; j < NF / 2; ++j) {{
+            const int r = MT + w * WN + j * 16 + (lane >> 4) * 8 + (lane & 7);
+            const int c = kk * 2 + ((lane >> 3) & 1);
+            asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{%0, %1, %2, %3}}, [%4];\\n"
+                         : "=r"(bf[2 * j][0]), "=r"(bf[2 * j][1]), "=r"(bf[2 * j + 1][0]), "=r"(bf[2 * j + 1][1])
+                         : "r"(DACE_TB_ADDR(s, r, c)));
+        }}
+        #pragma unroll
+        for (int i = 0; i < MF; ++i) {{
+            if (i * 16 >= nrows) break;
+            uint32_t af[4];
+            const int r = i * 16 + (lane & 15);
+            const int c = kk * 2 + (lane >> 4);
+            asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{%0, %1, %2, %3}}, [%4];\\n"
+                         : "=r"(af[0]), "=r"(af[1]), "=r"(af[2]), "=r"(af[3])
+                         : "r"(DACE_TB_ADDR(s, r, c)));
+            #pragma unroll
+            for (int j = 0; j < NF; ++j)
+                asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.{mma_type}.{mma_type}.f32 "
+                             "{{%0, %1, %2, %3}}, {{%4, %5, %6, %7}}, {{%8, %9}}, {{%0, %1, %2, %3}};\\n"
+                             : "+f"(DACE_TB_ACC(i, j, 0)), "+f"(DACE_TB_ACC(i, j, 1)), "+f"(DACE_TB_ACC(i, j, 2)),
+                               "+f"(DACE_TB_ACC(i, j, 3))
+                             : "r"(af[0]), "r"(af[1]), "r"(af[2]), "r"(af[3]), "r"(bf[j][0]), "r"(bf[j][1]));
+        }}
+    }}
+}}
+asm volatile("cp.async.wait_group 0;\\n" ::);
+#undef DACE_TB_ADDR
+#undef DACE_TB_SWZ
+#else  // Without the tensor-core instructions: every accumulator of the thread element by element
+#pragma unroll
+for (int i = 0; i < MF; ++i)
+    #pragma unroll
+    for (int j = 0; j < NF; ++j)
+        #pragma unroll
+        for (int e = 0; e < 4; ++e) {{
+            const int row = i * 16 + (lane >> 2) + (e >> 1) * 8, col = w * WN + j * 8 + (lane & 3) * 2 + (e & 1);
+            float sum = 0.f;
+            if (row < nrows) {{
+                const long long ar = {fallback_row};
+                for (int kk = 0; kk < K; ++kk)
+                    sum += (float) a[{product.a.offset("ar", "kk")}] * (float) b[{product.b.offset("kk", "col")}];
+            }}
+            DACE_TB_ACC(i, j, e) = sum;
+        }}
+#endif
+}}
+"""
+
+    def store(self) -> str:
+        product = self.product
+        sc0, sc1 = (sym2cpp(s) for s in product.sc)
+        scale = "" if product.alpha == 1 else f"(float)({sym2cpp(product.alpha)}) * "
+        return f"""{{
+const int nrows = (int) min((long long) MT, M_TOTAL - m0);
+#pragma unroll
+for (int i = 0; i < MF; ++i)
+    #pragma unroll
+    for (int j = 0; j < NF; ++j)
+        #pragma unroll
+        for (int h = 0; h < 2; ++h) {{
+            const int row = i * 16 + (lane >> 2) + h * 8, col = w * WN + j * 8 + (lane & 3) * 2;
+            if (row < nrows) {{
+                {self.ctype} *out = c + (m0 + row) * ({sc0});
+                out[col * ({sc1})] = ({self.ctype})({scale}DACE_TB_ACC(i, j, 2 * h));
+                out[(col + 1) * ({sc1})] = ({self.ctype})({scale}DACE_TB_ACC(i, j, 2 * h + 1));
+            }}
+        }}
+}}
+"""
+
+
+def _runs_states_as_block(sdfg: SDFG, state: SDFGState, node: nodes.Node) -> bool:
+    """Whether the states of a nested SDFG at ``node`` run as states of the thread block's code, each starting with a
+    barrier if it accesses shared memory and ending with one if it runs a thread-block map: in a ``GPU_Device``
+    kernel (a ``GPU_Persistent`` one synchronizes its states differently)."""
+    found = kernel_scope(sdfg, state, node)
+    return found is not None and found[1].schedule == dtypes.ScheduleType.GPU_Device
 
 
 @dace.library.expansion
@@ -282,146 +472,42 @@ class ExpandGemmThreadBlockMMA(ExpandTransformation):
         operands = _operands(node, state, sdfg)
         product = _Product(node, operands)
         threads = kernel_threads(sdfg, state, node)
-        warps = threads // WARP_SIZE
         n, k = (int(symbolic.evaluate(v, sdfg.constants)) for v in (product.n, product.k))
         m = product.m
         rows = MMA_ROWS
         if not symbolic.issymbolic(m, sdfg.constants):
             rows = min(MMA_ROWS, -(-int(symbolic.evaluate(m, sdfg.constants)) // 16) * 16)
+        code = _MMACode(product, threads, rows, n, k)
+        accumulators = _MMACode.accumulators(rows, n, threads)
+        single_chunk = _rows_bound(node, state, sdfg) <= MMA_ROWS
         # With a single chunk of rows (at most those of the output's container), the workspace is no longer used once
         # the output is written: it may overlap the output (see ``StorageType.GPU_Shared.may_overlap_outputs``)
-        single_chunk = _rows_bound(node, state, sdfg) <= MMA_ROWS
-        done_with_workspace = "    __syncthreads();  // Every warp is done with the workspace, which may overlap c"
-        operand, ctype = product.types[0], product.types[2].ctype
-        mma_type = "bf16" if operand == dace.bfloat16 else "f16"
-        chunks = MMA_K_STEP // 8
-        # Chunks of 16 bytes are swizzled (XOR with the row) so that the eight rows ``ldmatrix`` reads at once, and the
-        # rows ``cp.async`` writes, hit distinct banks
-        swizzle = "((r) >> 1) & 3" if chunks == 4 else "(r) & 7"
-        # Where the slices of a row of op(a) and of a column of op(b) start, and how far a slice at k0 is from them
-        a_row = "a_index[m0 + r]" if product.gather else "(m0 + r)"
-        a_start, b_start = product.a.outer_offset(f"(long long){a_row}", 1), product.b.outer_offset("r", 0)
-        a_slice, b_slice = product.a.slice_offset("k0"), product.b.slice_offset("k0")
-        sc0, sc1 = (sym2cpp(s) for s in product.sc)
-        scale = "" if product.alpha == 1 else f"(float)({sym2cpp(product.alpha)}) * "
-        code = f"""
-constexpr int MT = {rows}, N = {n}, K = {k}, KS = {MMA_K_STEP}, STAGES = {MMA_STAGES}, CHUNKS = {chunks};
-constexpr int THREADS = {threads}, WN = N / {warps}, MF = MT / 16, NF = WN / 8;
-const long long M_TOTAL = {sym2cpp(m)};
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
-const int w = tid / {WARP_SIZE}, lane = tid % {WARP_SIZE};
-const uint32_t smem = (uint32_t) __cvta_generic_to_shared(workspace);
-#define DACE_TB_SWZ(r, c) ((c) ^ ({swizzle}))
-#define DACE_TB_ADDR(s, r, c) (smem + ((((s) * (MT + N) + (r)) * CHUNKS + DACE_TB_SWZ(r, c)) << 4))
-constexpr int A_COPIES = (MT * CHUNKS + THREADS - 1) / THREADS, B_COPIES = (N * CHUNKS + THREADS - 1) / THREADS;
+        storage = dtypes.StorageType.GPU_Shared(dynamic=True, may_overlap_outputs=single_chunk)
+        scratch = {"_workspace": ([MMA_STAGES, rows + n, MMA_K_STEP], product.types[0], storage)}
+        inputs = _inputs(product)
+        if single_chunk and _runs_states_as_block(sdfg, state, node):
+            # Two states: the copies and products, then the stores, with the accumulators of every thread in between.
+            # The states synchronize the block where the tasklets used to (before the workspace is used, between the
+            # last use of the workspace and the first write of c, and once c is complete).
+            scratch["_acc"] = ([accumulators], dace.float32, dtypes.StorageType.Register)
+            first = "const long long m0 = 0;\n"
+            phases = [
+                (
+                    "compute",
+                    code.header + first + code.compute() + code.footer,
+                    inputs,
+                    {"workspace": "_workspace", "acc": "_acc"},
+                ),
+                ("store", code.header + first + code.store() + code.footer, {"acc": "_acc"}, {"c": "_c"}),
+            ]
+        else:
+            # Chunks of rows in a loop of one tasklet, which synchronizes the block itself
+            done_with_workspace = "__syncthreads();  // Every warp is done with the workspace, which may overlap c\n"
+            body = f"""float acc[MF * NF * 4];
 for (long long m0 = 0; m0 < M_TOTAL; m0 += MT) {{
-    const int nrows = (int) min((long long) MT, M_TOTAL - m0);
-    // The chunks of every slice this thread copies: where they start in A (null for rows beyond the product) and B
-    const {operand.ctype} *a_src[A_COPIES];
-    const {operand.ctype} *b_src[B_COPIES];
-    #pragma unroll
-    for (int j = 0; j < A_COPIES; ++j) {{
-        const int i = tid + j * THREADS, r = i / CHUNKS, c = i % CHUNKS;
-        a_src[j] = (i < MT * CHUNKS && r < nrows) ? a + {a_start} + c * 8 : nullptr;
-    }}
-    #pragma unroll
-    for (int j = 0; j < B_COPIES; ++j) {{
-        const int i = tid + j * THREADS, r = i / CHUNKS, c = i % CHUNKS;
-        b_src[j] = b + {b_start} + c * 8;
-    }}
-    // Copies the slices of A and B starting at k0 into stage s (rows of A beyond the product are zero-filled)
-    auto load_stage = [&](int s, int k0) {{
-        #pragma unroll
-        for (int j = 0; j < A_COPIES; ++j) {{
-            const int i = tid + j * THREADS, r = i / CHUNKS, c = i % CHUNKS;
-            if (MT * CHUNKS % THREADS == 0 || i < MT * CHUNKS)
-                asm volatile("cp.async.cg.shared.global.L2::{MMA_L2_FETCH}B [%0], [%1], 16, %2;\\n"
-                             :: "r"(DACE_TB_ADDR(s, r, c)), "l"(a_src[j] ? a_src[j] + {a_slice} : a), "r"(a_src[j] ? 16 : 0));
-        }}
-        #pragma unroll
-        for (int j = 0; j < B_COPIES; ++j) {{
-            const int i = tid + j * THREADS, r = i / CHUNKS, c = i % CHUNKS;
-            if (N * CHUNKS % THREADS == 0 || i < N * CHUNKS)
-                asm volatile("cp.async.cg.shared.global.L2::{MMA_L2_FETCH}B [%0], [%1], 16;\\n"
-                             :: "r"(DACE_TB_ADDR(s, MT + r, c)), "l"(b_src[j] + {b_slice}));
-        }}
-    }};
-
-    float acc[MF][NF][4];
-    #pragma unroll
-    for (int i = 0; i < MF; ++i)
-        #pragma unroll
-        for (int j = 0; j < NF; ++j)
-            acc[i][j][0] = acc[i][j][1] = acc[i][j][2] = acc[i][j][3] = 0.f;
-
-    __syncthreads();  // The previous user of the workspace is done with it
-    constexpr int KT = K / KS;
-    #pragma unroll
-    for (int s = 0; s < STAGES - 1; ++s) {{
-        if (s < KT) load_stage(s, s * KS);
-        asm volatile("cp.async.commit_group;\\n" ::);
-    }}
-    for (int kt = 0; kt < KT; ++kt) {{
-        asm volatile("cp.async.wait_group %0;\\n" :: "n"(STAGES - 2));
-        __syncthreads();
-        const int next = kt + STAGES - 1;
-        if (next < KT) load_stage(next % STAGES, next * KS);
-        asm volatile("cp.async.commit_group;\\n" ::);
-        const int s = kt % STAGES;
-        #pragma unroll
-        for (int kk = 0; kk < KS / 16; ++kk) {{
-            uint32_t bf[NF][2];
-            #pragma unroll
-            for (int j = 0; j < NF / 2; ++j) {{
-                const int r = MT + w * WN + j * 16 + (lane >> 4) * 8 + (lane & 7);
-                const int c = kk * 2 + ((lane >> 3) & 1);
-                asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{%0, %1, %2, %3}}, [%4];\\n"
-                             : "=r"(bf[2 * j][0]), "=r"(bf[2 * j][1]), "=r"(bf[2 * j + 1][0]), "=r"(bf[2 * j + 1][1])
-                             : "r"(DACE_TB_ADDR(s, r, c)));
-            }}
-            #pragma unroll
-            for (int i = 0; i < MF; ++i) {{
-                if (i * 16 >= nrows) break;
-                uint32_t af[4];
-                const int r = i * 16 + (lane & 15);
-                const int c = kk * 2 + (lane >> 4);
-                asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{%0, %1, %2, %3}}, [%4];\\n"
-                             : "=r"(af[0]), "=r"(af[1]), "=r"(af[2]), "=r"(af[3])
-                             : "r"(DACE_TB_ADDR(s, r, c)));
-                #pragma unroll
-                for (int j = 0; j < NF; ++j)
-                    asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.{mma_type}.{mma_type}.f32 "
-                                 "{{%0, %1, %2, %3}}, {{%4, %5, %6, %7}}, {{%8, %9}}, {{%0, %1, %2, %3}};\\n"
-                                 : "+f"(acc[i][j][0]), "+f"(acc[i][j][1]), "+f"(acc[i][j][2]), "+f"(acc[i][j][3])
-                                 : "r"(af[0]), "r"(af[1]), "r"(af[2]), "r"(af[3]), "r"(bf[j][0]), "r"(bf[j][1]));
-            }}
-        }}
-    }}
-    asm volatile("cp.async.wait_group 0;\\n" ::);
-{done_with_workspace if single_chunk else ""}
-
-    // Accumulator fragment: rows lane / 4 and lane / 4 + 8, columns 2 * (lane % 4) and the next
-    #pragma unroll
-    for (int i = 0; i < MF; ++i)
-        #pragma unroll
-        for (int j = 0; j < NF; ++j)
-            #pragma unroll
-            for (int h = 0; h < 2; ++h) {{
-                const int row = i * 16 + (lane >> 2) + h * 8, col = w * WN + j * 8 + (lane & 3) * 2;
-                if (row < nrows) {{
-                    {ctype} *out = c + (m0 + row) * ({sc0});
-                    out[col * ({sc1})] = ({ctype})({scale}acc[i][j][2 * h]);
-                    out[(col + 1) * ({sc1})] = ({ctype})({scale}acc[i][j][2 * h + 1]);
-                }}
-            }}
-}}
-#undef DACE_TB_ADDR
-#undef DACE_TB_SWZ
-#else  // Without the tensor-core instructions
-{_elementwise(product, threads)}
-#endif
+__syncthreads();  // The previous user of the workspace is done with it
+{code.compute()}{done_with_workspace if single_chunk else ""}{code.store()}}}
 __syncthreads();  // The product is complete for every thread of the block
 """
-        storage = dtypes.StorageType.GPU_Shared(dynamic=True, may_overlap_outputs=single_chunk)
-        workspace = ([MMA_STAGES, rows + n, MMA_K_STEP], operand, storage)
-        return _nested(node, operands, product, code, threads, {"_workspace": workspace})
+            phases = [("product", code.header + body + code.footer, inputs, {"c": "_c", "workspace": "_workspace"})]
+        return _nested(node, operands, phases, threads, scratch)
