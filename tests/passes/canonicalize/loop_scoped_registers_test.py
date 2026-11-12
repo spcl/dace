@@ -126,7 +126,6 @@ def test_a_heap_intermediate_inside_a_map_inside_a_loop_goes_on_the_stack():
     assert np.allclose(out, 3 * w)
 
 
-
 def test_only_host_register_arrays_of_a_device_program_are_pinned():
     """A host map's register scratch goes on the stack as on the CPU; a kernel's stays for MoveArrayOutOfKernel."""
     from dace.transformation.passes.canonicalize.finalize import force_registers
