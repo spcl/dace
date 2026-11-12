@@ -633,7 +633,7 @@ def _handle_connectors(
                 cname,
                 orig_edge.dst,
                 orig_edge.dst_conn,
-                mm.Memlet(data=orig_edge.data.data, subset=subset),
+                mm.Memlet(data=orig_edge.data.data, subset=subset, wcr=orig_edge.data.wcr),
             )
     # Remove connectors and edges
     conns_to_remove = {v[0] for v in mapping.values()} - ignore
