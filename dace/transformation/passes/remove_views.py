@@ -279,7 +279,16 @@ class DimGroups:
                 out.append((begins[adims[0]], ends[adims[0]], 1))
             else:
                 return None
+        # Floor division or modulo by a size only known at run time costs a division per access: keep the View
+        if not _affine([x for rng in out for x in rng[:2]]):
+            return None
         return subsets.Range(out)
+
+    def elements_affine(self) -> bool:
+        """Whether the array indices of one view element need no division by a symbolic size (a tasklet
+        subscripting the whole view addresses single elements)."""
+        index = [symbolic.symbol(f"__dim_groups_{d}") for d in range(len(self.vshape))]
+        return _affine(self.indices(index, symbolic.int_floor, sympy.Mod, operator.mul, operator.add))
 
     def ast_indices(self, index: list[ast.expr]) -> list[ast.expr]:
         """``index``, Python AST of the view subscript, on the array."""
@@ -301,6 +310,17 @@ def dim_groups(view_desc: dt.Data, array_desc: dt.Data) -> DimGroups | None:
     :meth:`DimGroups.subset` (a memlet subset) or :meth:`DimGroups.ast_indices` (Python tasklet code).
     """
     return DimGroups.of(view_desc, array_desc)
+
+
+def _affine(exprs: list) -> bool:
+    """Whether no expression of ``exprs`` divides (floor or modulo) by a symbolic divisor."""
+    for expr in exprs:
+        if not isinstance(expr, sympy.Basic):
+            continue
+        for atom in expr.atoms(sympy.Mod, symbolic.int_floor):
+            if atom.args[1].free_symbols:
+                return False
+    return True
 
 
 def _product(values: list) -> Any:
@@ -1200,23 +1220,28 @@ class RemoveViews(ppl.Pass):
                         if _DEBUGPRINT:
                             print(f'[{_PASS}]     {strat_name}: non-Python tasklet "{leaf.label}" -- aborting')
                         return False
-                    # A tasklet subscripts a part of the view in that part's own shape: the part must keep it
+                    # A tasklet subscripting the whole view is rewritten element by element, which must stay affine;
+                    #  one subscripting a part does so in that part's own shape, which the part must keep
                     conn = te.dst_conn if is_viewed_src else te.src_conn
                     part = te.data.subset if te.data.data == vnode.data else te.data.other_subset
-                    if groups is not None and part is not None and part != subsets.Range.from_array(vdesc):
-                        new_part = groups.subset(part)
-                        before = [n for n in part.size() if n != 1]
-                        after = [n for n in new_part.size() if n != 1] if new_part is not None else None
-                        kept = after is not None and len(before) == len(after)
-                        kept = kept and all(symbolic.equal(x, y) is True for x, y in zip(before, after))
-                        ranks = [
-                            len(n.slice.elts) if isinstance(n.slice, ast.Tuple) else 1
-                            for stmt in leaf.code.code
-                            for n in ast.walk(stmt)
-                            if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == conn
-                        ]
-                        if ranks and (not kept or len(groups.vshape) in ranks):
-                            return False
+                    ranks = [
+                        len(n.slice.elts) if isinstance(n.slice, ast.Tuple) else 1
+                        for stmt in leaf.code.code
+                        for n in ast.walk(stmt)
+                        if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == conn
+                    ]
+                    if groups is not None and part is not None and ranks:
+                        if part == subsets.Range.from_array(vdesc):
+                            if not groups.elements_affine():
+                                return False
+                        else:
+                            new_part = groups.subset(part)
+                            before = [n for n in part.size() if n != 1]
+                            after = [n for n in new_part.size() if n != 1] if new_part is not None else None
+                            kept = after is not None and len(before) == len(after)
+                            kept = kept and all(symbolic.equal(x, y) is True for x, y in zip(before, after))
+                            if not kept or len(groups.vshape) in ranks:
+                                return False
                 m = te.data
                 if m.data == vnode.data and m.subset is not None:
                     if reshape(m.subset) is None:
@@ -1245,6 +1270,10 @@ class RemoveViews(ppl.Pass):
                 groups=groups,
             )
 
+        # An interstate subscript reads single elements, like a tasklet subscripting the whole view
+        if groups is not None and not groups.elements_affine():
+            if any(_references_view(e.data, vnode.data, c) for e, c in self.interstate_edges):
+                return False
         if not self._interstate_feasible(sdfg, vnode.data, _rw_lin):
             if _DEBUGPRINT:
                 print(f"[{_PASS}]     {strat_name}: interstate edge rewrite infeasible -- aborting")

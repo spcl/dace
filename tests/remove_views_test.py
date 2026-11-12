@@ -1155,24 +1155,38 @@ def _array_reads(sdfg: dace.SDFG, name: str) -> list[str]:
     ]
 
 
-def test_symbolic_split_view_keeps_untouched_index():
-    """``(N, B*B)`` view of ``(N, B, B)``: ``V[i, j]`` reads ``A[i, j // B, j % B]``, ``i`` kept as is, so a map over
-    ``i`` still sees one row per iteration."""
+def test_symbolic_split_view_copied_whole():
+    """A ``(N, B*B)`` view of ``(N, B, B)`` copied whole is the array copied whole: no index needs a division."""
     N, B = 5, 3
-    sdfg = _symbolic_reshape("N, B**2", "N, B, B", read=True)
-    A = np.random.default_rng(1).random((N, B, B))
+    sdfg = dace.SDFG("symbolic_split_copy")
+    sdfg.add_array("A", [dace.symbol("N"), dace.symbol("B"), dace.symbol("B")], dace.float64)
+    sdfg.add_array("other", [dace.symbol("N"), dace.symbolic.pystr_to_symbolic("B**2")], dace.float64)
+    sdfg.add_view("V", [dace.symbol("N"), dace.symbolic.pystr_to_symbolic("B**2")], dace.float64)
+    state = sdfg.add_state()
+    a, v, o = state.add_access("A"), state.add_access("V"), state.add_access("other")
+    state.add_edge(a, None, v, "views", Memlet("A[0:N, 0:B, 0:B]"))
+    state.add_nedge(v, o, Memlet("V[0:N, 0:B**2] -> [0:N, 0:B**2]"))
     assert RemoveViews().apply_pass(sdfg, {}) == {"V"}
     assert _count_views(sdfg) == 0
     sdfg.validate()
-    (read,) = _array_reads(sdfg, "A")
-    assert read.split(",")[0].strip() == "i", read
+    A = np.random.default_rng(1).random((N, B, B))
     out = np.zeros((N, B * B))
     sdfg(A=A.copy(), other=out, N=N, B=B)
     np.testing.assert_allclose(out, A.reshape(N, B * B))
 
 
+def test_symbolic_split_view_element_access_keeps_view():
+    """``V[i, j]`` of a ``(N, B*B)`` view of ``(N, B, B)`` would read ``A[i, j // B, j % B]``: a division by the
+    run-time ``B`` per element, slower than the View it replaces. Kept, through a memlet or a tasklet subscript."""
+    for tasklet_subscript in (False, True):
+        sdfg = _symbolic_reshape("N, B**2", "N, B, B", read=True, tasklet_subscript=tasklet_subscript)
+        assert RemoveViews().apply_pass(sdfg, {}) is None
+        assert _count_views(sdfg) == 1
+
+
 def test_symbolic_merge_view_reads_and_writes():
-    """``(3*N, B)`` view of ``(N, 3, B)``: ``V[i, j]`` is ``A[i // 3, i % 3, j]``, as a read and as a write."""
+    """``(3*N, B)`` view of ``(N, 3, B)``: ``V[i, j]`` is ``A[i // 3, i % 3, j]``, as a read and as a write (a constant
+    divisor is a multiply and a shift)."""
     N, B = 4, 5
     rng = np.random.default_rng(2)
     sdfg = _symbolic_reshape("3*N, B", "N, 3, B", read=True)
@@ -1215,18 +1229,6 @@ def test_symbolic_merged_row_is_one_range():
     np.testing.assert_allclose(out, A.reshape(N, B)[:, 0] + A.reshape(N, B)[:, B - 1])
 
 
-def test_symbolic_split_view_tasklet_subscript():
-    """A tasklet subscripting the whole view (``x[i, j]``) is rewritten to the array's grouped indices."""
-    N, B = 3, 4
-    sdfg = _symbolic_reshape("N, B**2", "N, B, B", read=True, tasklet_subscript=True)
-    assert RemoveViews().apply_pass(sdfg, {}) == {"V"}
-    sdfg.validate()
-    A = np.random.default_rng(3).random((N, B, B))
-    out = np.zeros((N, B * B))
-    sdfg(A=A.copy(), other=out, N=N, B=B)
-    np.testing.assert_allclose(out, A.reshape(N, B * B))
-
-
 def test_symbolic_reshape_across_groups_is_kept():
     """``(N*B, C)`` of ``(N, B*C)`` splits no dimension group cleanly (``N*B`` is neither ``N`` nor ``N*B*C``)."""
     sdfg = _symbolic_reshape("N*B, C", "N, B*C", read=True)
@@ -1235,10 +1237,10 @@ def test_symbolic_reshape_across_groups_is_kept():
 
 
 if __name__ == "__main__":
-    test_symbolic_split_view_keeps_untouched_index()
+    test_symbolic_split_view_copied_whole()
+    test_symbolic_split_view_element_access_keeps_view()
     test_symbolic_merge_view_reads_and_writes()
     test_symbolic_merged_row_is_one_range()
-    test_symbolic_split_view_tasklet_subscript()
     test_symbolic_reshape_across_groups_is_kept()
     test_view_array_array()
     test_view_slice_detect_simple()
