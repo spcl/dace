@@ -10,6 +10,7 @@ from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python import astutils
 from dace.sdfg import utils as sdutil
 from dace.symbolic import pystr_to_symbolic
+from dace.transformation import helpers as xfh
 from dace.transformation import transformation as xf
 
 
@@ -181,8 +182,15 @@ class LiftEinsum(xf.SingleStateTransformation):
         # element independent, no sum), so it tiles per-lane like any broadcast; lifting it to a
         # degenerate K=1 GEMM is no BLAS win and the tile widener mis-lowers it (unbound inner
         # dims -> illegal DGEMM leading dimension, the gemver rank-2 update). A per-slice outer
-        # product is the same K=1 GEMM once per enclosing iteration, so it is refused too.
-        if (self.contraction_only or sliced) and not (input_chars - output_chars):
+        # product is the same K=1 GEMM once per enclosing iteration, so it is refused too, as is one under an
+        # enclosing map: per element of that map it is elementwise work and stays this map.
+        if not (input_chars - output_chars) and (
+            self.contraction_only
+            or sliced
+            or any(
+                isinstance(s, nodes.MapEntry) for s in xfh.get_parent_map_and_loop_scopes(sdfg, self.map_entry, state)
+            )
+        ):
             return False
 
         # At most one runtime scalar coefficient is supported (wired as the
