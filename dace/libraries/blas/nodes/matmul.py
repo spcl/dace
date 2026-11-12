@@ -421,3 +421,6 @@ class MatMul(dace.sdfg.nodes.LibraryNode):
         self.transA = bool(transA)
         self.transB = bool(transB)
         super().__init__(name, location=location, inputs=OrderedSet(("_a", "_b")), outputs={"_c"})
+
+    def scalar_code(self, state) -> str | None:
+        return f"_c = ({self.alpha}) * _a * _b" if symbolic.equal_valued(0, self.beta) else None

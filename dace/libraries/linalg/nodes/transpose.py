@@ -490,6 +490,9 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
         super().__init__(name, location=location, inputs={"_inp"}, outputs={"_out"})
         self.dtype = dtype
 
+    def scalar_code(self, state) -> str | None:
+        return "_out = _inp"
+
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)
         if len(in_edges) != 1:

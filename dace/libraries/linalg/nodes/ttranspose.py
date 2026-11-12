@@ -575,6 +575,9 @@ class TensorTranspose(nodes.LibraryNode):
         self.alpha = alpha
         self.beta = beta
 
+    def scalar_code(self, state) -> str | None:
+        return f"_out_tensor = ({self.alpha}) * _inp_tensor" if self.beta == 0 else None
+
     def validate(self, sdfg, state):
         """
         Validates the tensor transposition operation.
