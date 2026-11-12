@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""GPU_Events on nodes and control flow regions inside GPU kernels: an event per thread block, on the GPU's global
+"""GPU_Events on nodes, states and control flow regions inside GPU kernels: an event per thread block, on the GPU's global
 timer."""
 
 import numpy as np
@@ -53,6 +53,19 @@ def test_inlining_turns_an_instrumented_call_into_a_region():
     assert region.label.endswith(call.label) and region.instrument == dace.InstrumentationType.GPU_Events
 
 
+def instrumented_state() -> tuple[dace.SDFG, dace.SDFGState]:
+    """``rows`` with the state of the thread-block map in the body of the map (kept as a nested SDFG) instrumented."""
+    sdfg = rows.to_sdfg(simplify=False)
+    body = next(
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG) and n.label.endswith("rows")
+    )
+    body.no_inline = True
+    sdfg.simplify()
+    (state,) = [s for s in body.sdfg.states() if any(isinstance(n, nodes.MapEntry) for n in s.nodes())]
+    state.instrument = dace.InstrumentationType.GPU_Events
+    return sdfg, state
+
+
 def check_event_per_thread_block(sdfg: dace.SDFG, name: str):
     import cupy
 
@@ -94,6 +107,12 @@ def test_event_per_thread_block_of_a_region():
 
 
 @pytest.mark.gpu
+def test_event_per_thread_block_of_a_state():
+    sdfg, state = instrumented_state()
+    check_event_per_thread_block(sdfg, state.label)
+
+
+@pytest.mark.gpu
 def test_per_thread_node_is_rejected():
     sdfg = rows.to_sdfg(simplify=True)
     tasklet = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet))
@@ -107,4 +126,5 @@ if __name__ == "__main__":
     test_inlining_turns_an_instrumented_call_into_a_region()
     test_event_per_thread_block()
     test_event_per_thread_block_of_a_region()
+    test_event_per_thread_block_of_a_state()
     test_per_thread_node_is_rejected()

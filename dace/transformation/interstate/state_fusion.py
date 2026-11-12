@@ -4,7 +4,7 @@
 import networkx as nx
 
 from dace import data as dt
-from dace import sdfg, subsets
+from dace import dtypes, sdfg, subsets
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -230,6 +230,10 @@ class StateFusion(transformation.MultiStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         first_state: SDFGState = self.first_state
         second_state: SDFGState = self.second_state
+
+        # A measured state is measured as it is: fusing another state into it would change what it measures
+        if any(s.instrument != dtypes.InstrumentationType.No_Instrumentation for s in (first_state, second_state)):
+            return False
 
         out_edges = graph.out_edges(first_state)
         in_edges = graph.in_edges(first_state)

@@ -299,7 +299,8 @@ def control_flow_region_to_code(
         if instrumented:  # A block of its own: no jump crosses the declarations of the instrumentation
             expr += "{\n" + _instrumentation(node, codegen, begin=True)
         if isinstance(node, SDFGState):
-            if node.number_of_nodes() > 0:
+            # (A block of its own if it has code: its nodes, or the instrumentation of an empty state)
+            if node.number_of_nodes() > 0 or node.instrument != dtypes.InstrumentationType.No_Instrumentation:
                 expr += "{\n"
                 expr += dispatch_state(node)
                 expr += "\n}\n"
