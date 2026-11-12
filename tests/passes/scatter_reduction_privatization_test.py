@@ -172,6 +172,18 @@ def _build_scatter_nsdfg(wcr: str, read_accumulator: bool = False, size: str = "
     return sdfg
 
 
+def test_cpu_specialization_surfaces_the_scatter_reduction():
+    """The privatization is a CPU specialization: ``cpu_specialize`` surfaces the scatter's WCR onto the map exit,
+    a non-reducible one keeps its plain boundary (and its atomic)."""
+    from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
+
+    for wcr, surfaced in (("lambda x, y: (x + y)", True), ("lambda x, y: (x - y)", False)):
+        sdfg = _build_scatter_nsdfg(wcr)
+        cpu_specialize(sdfg)
+        exits = [e for e in sdfg.node(0).edges() if isinstance(e.dst, nodes.MapExit)]
+        assert any(e.data.wcr is not None for e in exits) == surfaced, wcr
+
+
 def test_refuse_non_reducible_op():
     """A data-dependent scatter with a non-associative reducer (``-``) is left alone."""
     sdfg = _build_scatter_nsdfg("lambda x, y: (x - y)")
@@ -255,34 +267,6 @@ def test_count_histogram_bit_exact():
     assert np.array_equal(res, ref)
 
 
-def test_knob_off_leaves_scatter_unmangled():
-    """With the knob off the scatter must still not be mangled into the unsound per-iteration
-    whole-array ``_nnr_out`` buffer -- that is the rewrite this path used to silently miscompile
-    through, and the fail-safe refuse-guard in ``NormalizeWCR`` is what holds it off.
-
-    The array-section reduction is deliberately NOT asserted either way here. It used to be a
-    reliable marker for "the privatization pass ran", because the pipeline dropped the map-exit
-    WCR otherwise and codegen fell back to a per-element atomic on the shared histogram. Once the
-    scope summaries are rebuilt before each lift the WCR survives on its own, so CPU codegen
-    reaches the same ``reduction(+:hist[0:bins])`` from exact memlets with the pass switched off.
-    Both lowerings are correct; what the knob still decides is whether the pass ran, which
-    :func:`test_count_histogram_is_bit_exact` covers on the other side.
-    """
-    sdfg = count_histogram.to_sdfg(simplify=True)
-    _unique_build(sdfg, "knoboff")
-    canonicalize(sdfg, validate=True, target="cpu", privatize_scatter_reductions=False)
-    code = _codegen_text(sdfg)
-    assert "_nnr_out" not in code, "the scatter must not be mangled into a whole-array _nnr_out buffer"
-
-    rng = np.random.default_rng(4)
-    n, nb = 20000, 29
-    binidx = rng.integers(0, nb, n).astype(np.int64)
-    res = sdfg(binidx=binidx, N=n, bins=nb)
-    ref = np.zeros(nb, dtype=np.int64)
-    np.add.at(ref, binidx, 1)
-    assert np.array_equal(res, ref)
-
-
 # azimint_hist end-to-end
 
 
@@ -335,7 +319,7 @@ def azimint_hist(data: dace.float64[N], radius: dace.float64[N]):
 
 
 def test_azimint_hist_end_to_end():
-    """azimint_hist through ``canonicalize`` (knob on): both scatter histograms are
+    """azimint_hist through ``canonicalize``: both scatter histograms are
     privatized (array-section reductions, no per-iteration buffers) and the result is
     bit-close to numpy's ``np.histogram``."""
     nv, nptv = 30000, 80

@@ -255,12 +255,10 @@ class NormalizeWCR(ppl.Pass):
         # of a bounded ``oc`` per iteration, so materializing a per-iteration whole-array
         # buffer reads its other n-1 elements back uninitialised (garbage histogram). This
         # holds REGARDLESS of op (``+ - * / min max`` ...) and device: an un-privatised
-        # scatter -- GPU (where ``privatize_scatter_reductions`` is off), or a non-reducible
-        # op like ``-`` that ``PrivatizeScatterReduction`` refuses -- falls back to the
+        # scatter -- every device during canonicalization (``PrivatizeScatterReduction`` is a CPU
+        # specialization), or a non-reducible op like ``-`` that it refuses -- falls back to the
         # correct per-element ``reduce_atomic`` / atomicAdd instead of a broken whole-buffer
-        # reduction. On CPU with a reducible op, ``PrivatizeScatterReduction`` runs first and
-        # surfaces the WCR (making the outer edge non-plain), so this method already no-ops
-        # there; the guard is the backstop for every path that pass does not cover.
+        # reduction.
         if is_data_dependent_scatter_sink(nsdfg, oc):
             return False
 
