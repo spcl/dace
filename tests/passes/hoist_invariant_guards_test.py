@@ -41,13 +41,12 @@ def two_maps_under_one_guard(x: dace.float64[N], y: dace.float64[N], z: dace.flo
 
 
 def test_maps_under_equal_hoisted_guards_are_fused():
-    """Canonicalization keeps the map-invariant ``C > 0`` innermost, once per statement, and does not fuse a
-    conditional producer into its reader. Hoisted, the equal guards unswitch together into one ``if C > 0`` whose two
-    maps, unconditional now, fuse."""
+    """Canonicalization keeps the map-invariant ``C > 0`` innermost and fuses the conditional producer into its reader
+    under the equal guard: one map, one guard. Hoisted, the guard leaves the map, which stays one."""
     sdfg = two_maps_under_one_guard.to_sdfg(simplify=True)
     canonicalize(sdfg)
-    # The canonical form: both guards innermost, each in its own map.
-    assert len(maps(sdfg)) == 2 and len(conditionals(sdfg)) == 2
+    # The canonical form: the producer fused into its reader, the equal guards merged innermost.
+    assert len(maps(sdfg)) == 1 and len(conditionals(sdfg)) == 1
     hoist_invariant_guards(sdfg, require_full_hoist=False)
 
     guards = [b for b in sdfg.nodes() if isinstance(b, ConditionalBlock)]
