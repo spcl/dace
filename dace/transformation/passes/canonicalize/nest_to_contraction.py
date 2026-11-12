@@ -24,12 +24,13 @@ from dace.frontend.operations import detect_reduction_type
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.loop_iteration_value import perfect_nest, replace_loop_with_state
 from dace.transformation.passes.canonicalize.loop_to_einsum import _is_sum_tasklet
 from dace.transformation.passes.canonicalize.loop_to_transpose import _is_copy_tasklet
+from dace.transformation.passes.canonicalize.zero_prior import ZeroStore, zero_before_block
 from dace.transformation.transformation import explicit_cf_compatible
 
 
@@ -68,6 +69,8 @@ class Contraction:
     beta: Any
     operands: list[Operand]
     output: Operand
+    #: The zeros stored before the nest that the overwriting einsum makes dead.
+    dead_zeros: ZeroStore | None = None
 
 
 def same(a: Any, b: Any) -> bool:
@@ -346,29 +349,6 @@ def descend(state: SDFGState, entry: nodes.MapEntry | None) -> list[nodes.MapEnt
         chain.append(inner[0])
 
 
-def zero_initialized(
-    sdfg: SDFG, parent: ControlFlowRegion, loop: LoopRegion, output: str, region: subsets.Range
-) -> bool:
-    """Whether the block right before ``loop`` only zero-fills a superset of ``output[region]``."""
-    from dace.libraries.standard.nodes import FillLibraryNode  # Avoid import loop
-
-    ins = parent.in_edges(loop)
-    if len(ins) != 1 or ins[0].data.assignments or not ins[0].data.is_unconditional():
-        return False
-    prev = ins[0].src
-    if not isinstance(prev, SDFGState):
-        return False
-    writes = [e for n in prev.data_nodes() if n.data == output for e in prev.in_edges(n) if not e.data.is_empty()]
-    return bool(writes) and all(
-        isinstance(e.src, FillLibraryNode)
-        and symbolic.equal_valued(0, e.src.value)
-        and not any(i.dst_conn == FillLibraryNode.VALUE_CONNECTOR_NAME for i in prev.in_edges(e.src))
-        and e.data.subset is not None
-        and e.data.subset.covers_precise(region, sdfg.facts())
-        for e in writes
-    )
-
-
 def widened(sdfg: SDFG, operand: Operand, axes: dict[str, Axis]) -> subsets.Range:
     shape = sdfg.arrays[operand.array].shape
     return subsets.Range(
@@ -498,10 +478,13 @@ def match_nest(
             contracted = True
     if contracted and not symbolic.equal_valued(1, beta):
         return None
-    if loops and symbolic.equal_valued(1, beta):
-        if zero_initialized(sdfg, loops[0].parent_graph, loops[0], output.array, widened(sdfg, output, axes)):
-            beta = 0
-    return Contraction(f"{','.join(full_terms)}->{full_out}", alpha, beta, operands, output)
+    # Summing onto zeros stored just before the nest (``C[:] = 0``) is overwriting; covered, they are dead.
+    zeros = zero_before_block(loops[0], output.array) if loops and symbolic.equal_valued(1, beta) else None
+    region = None if zeros is None else widened(sdfg, output, axes)
+    if zeros is None or not zeros.subset.covers_precise(region, sdfg.facts()):
+        return Contraction(f"{','.join(full_terms)}->{full_out}", alpha, beta, operands, output)
+    dead = None if zeros.observed or not region.covers_precise(zeros.subset, sdfg.facts()) else zeros
+    return Contraction(f"{','.join(full_terms)}->{full_out}", alpha, 0, operands, output, dead)
 
 
 def add_einsum(sdfg: SDFG, state: SDFGState, label: str, contraction: Contraction, axes: dict[str, Axis], reuse: bool):
@@ -581,6 +564,8 @@ class NestToContraction(ppl.Pass):
                 gone[region] = None
             new_state = replace_loop_with_state(loop.parent_graph, loop, loop.label + "_contraction")
             add_einsum(sdfg, new_state, loop.label + "_contraction", contraction, axes, reuse=False)
+            if contraction.dead_zeros is not None:
+                contraction.dead_zeros.remove()
             counts = state_counts_of(sdfg)
             count += 1
         return count

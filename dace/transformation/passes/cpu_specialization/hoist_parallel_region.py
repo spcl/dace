@@ -242,15 +242,15 @@ def small_reduction(node: nodes.Node, state: SDFGState, resolver: SymbolResolver
     return subset is not None and small_count(subset.num_elements(), resolver.facts_at(state, node))
 
 
-def expand_in_place(node: nodes.LibraryNode, state: SDFGState) -> list[nodes.MapEntry]:
-    """Expand the elementwise ``node`` with its ``pure`` implementation and inline the result.
+def expand_in_place(node: nodes.LibraryNode, state: SDFGState, implementation: str = "pure") -> list[nodes.MapEntry]:
+    """Expand the elementwise ``node`` with its map ``implementation`` and inline the result.
 
     :returns: the map entries the expansion brought in.
     """
     from dace.transformation.interstate import InlineSDFG  # Avoid import loop
 
     before = set(state.nodes())
-    node.expand(state, "pure")
+    node.expand(state, implementation)
     nested = next(n for n in state.nodes() if n not in before and isinstance(n, nodes.NestedSDFG))
     inner_maps = [n for n, _ in nested.sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
     InlineSDFG.apply_to(state.sdfg, nested_sdfg=nested, verify=False, save=False)
