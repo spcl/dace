@@ -436,9 +436,15 @@ class StateFusionExtended(StateFusion):
             # disjoint slices build ONE value (lulesh ``b[:, k, c] = ...``): with
             # ``aggressive_merges`` that is no reuse and fuses.
             first_scope = first_state.scope_dict()
+
+            # A node only empty ordering edges enter writes nothing: it is a later read of the one value, no producer
+            def _has_data_write(n):
+                ies = first_state.in_edges(n)
+                return any(e.data is not None and not e.data.is_empty() for e in ies)
+
             first_producers: dict[str, int] = {}
             for n in first_state.data_nodes():
-                if first_scope[n] is None and first_state.in_degree(n) > 0:
+                if first_scope[n] is None and _has_data_write(n):
                     first_producers[n.data] = first_producers.get(n.data, 0) + 1
             # A container the first state writes only inside a scope reaches the second state through memory
             # alone: no top-level node of the first state carries the write, so the second state's access
@@ -488,7 +494,7 @@ class StateFusionExtended(StateFusion):
                 producers = [
                     n
                     for n in first_state.data_nodes()
-                    if n.data == dname and first_scope[n] is None and first_state.in_degree(n) > 0
+                    if n.data == dname and first_scope[n] is None and _has_data_write(n)
                 ]
                 sinks = [n for n in producers if first_state.out_degree(n) == 0]
                 if not sinks or not all(any(nx.has_path(first_state._nx, n, t) for t in sinks) for n in producers):
@@ -631,10 +637,6 @@ class StateFusionExtended(StateFusion):
             # the peeled-pattern test (peeled chain's empty edge to remainder's
             # ``B`` source previously fooled the check into accepting the
             # racy merged+remainder fusion).
-            def _has_data_write(n):
-                ies = first_state.in_edges(n)
-                return any(e.data is not None and not e.data.is_empty() for e in ies)
-
             first_out_data = {n.data for n in first_output if _has_data_write(n)}
             # Top-level first-state readers of each array (node + read subset). Used to
             # order first-state reads BEFORE a second-state overwrite (WAR anti-dep).

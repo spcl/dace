@@ -2263,6 +2263,73 @@ def test_a_node_only_an_ordering_edge_enters_is_no_writer():
     )
 
 
+def _ordered_reread(second_producer_writes: bool) -> SDFG:
+    """``first``: ``x = inp + 1`` into one ``x`` node, ordered before a second ``x`` node that ``y = x[1]`` reads;
+    ``second``: ``x[1] = x[0]; z = x[0]``. The second ``x`` node is entered by an empty ordering edge (as a prior
+    fusion leaves it, cloudsc's species solve), or with ``second_producer_writes`` by an overlapping write."""
+    sdfg = SDFG("sfx_ordered_reread" + ("_rewritten" if second_producer_writes else ""))
+    sdfg.add_array("inp", [2, 8], dtypes.float64)
+    sdfg.add_array("y", [8], dtypes.float64)
+    sdfg.add_array("z", [8], dtypes.float64)
+    sdfg.add_transient("x", [2, 8], dtypes.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    written, reread = first.add_access("x"), first.add_access("x")
+    first.add_mapped_tasklet(
+        "init",
+        {"i": "0:2", "j": "0:8"},
+        {"a": Memlet("inp[i, j]")},
+        "b = a + 1",
+        {"b": Memlet("x[i, j]")},
+        external_edges=True,
+        output_nodes={"x": written},
+    )
+    if second_producer_writes:
+        first.add_mapped_tasklet(
+            "rewrite",
+            {"j": "0:8"},
+            {"a": Memlet("x[0, j]")},
+            "b = 2 * a",
+            {"b": Memlet("x[1, j]")},
+            external_edges=True,
+            input_nodes={"x": written},
+            output_nodes={"x": reread},
+        )
+    else:
+        first.add_nedge(written, reread, Memlet())
+    first.add_mapped_tasklet(
+        "use",
+        {"j": "0:8"},
+        {"a": Memlet("x[1, j]")},
+        "b = a",
+        {"b": Memlet("y[j]")},
+        external_edges=True,
+        input_nodes={"x": reread},
+    )
+    second = sdfg.add_state_after(first, "second")
+    second.add_mapped_tasklet(
+        "overwrite",
+        {"j": "0:8"},
+        {"a": Memlet("x[0, j]")},
+        "b = a\nc = a",
+        {"b": Memlet("x[1, j]"), "c": Memlet("z[j]")},
+        external_edges=True,
+    )
+    return sdfg
+
+
+def test_a_node_entered_by_an_ordering_edge_is_no_second_producer():
+    """The empty-edge ``x`` node writes nothing, so ``x`` has one producer and the states fuse."""
+    inp = np.arange(16, dtype=np.float64).reshape(2, 8)
+    _aggressive_fusion_matches(_ordered_reread(False), inp=inp, y=np.zeros(8), z=np.zeros(8))
+
+
+def test_two_overlapping_producers_of_a_reused_transient_still_refuse():
+    """A real second producer overlapping the first keeps the reused-transient refusal."""
+    sdfg = _ordered_reread(True)
+    sdfg.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
+    assert sdfg.number_of_nodes() == 2
+
+
 if __name__ == "__main__":
     test_aggressive_fusion_orders_only_the_first_writer_the_overwrite_overlaps()
     test_a_node_only_an_ordering_edge_enters_is_no_writer()
@@ -2314,3 +2381,5 @@ if __name__ == "__main__":
     test_a_read_a_disjoint_merge_would_order_stays_before_the_overwrite()
     test_extended_fusion_orders_a_read_held_apart_after_the_leaf_instance()
     test_reader_of_a_rewritten_container_stays_ordered_after_its_writer()
+    test_a_node_entered_by_an_ordering_edge_is_no_second_producer()
+    test_two_overlapping_producers_of_a_reused_transient_still_refuse()
