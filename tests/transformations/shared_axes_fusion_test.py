@@ -161,9 +161,40 @@ def test_a_refused_split_leaves_the_boundary_memlets_as_they_were():
     assert np.allclose(out, 2 * a[::-1, 0])
 
 
+def test_lower_dim_producer_fuses_past_an_output_that_only_orders_the_consumer():
+    """``t[i] = 2 a[i]; out[i, 0] = a[i]``, its ``out`` node only ordering ``for i, k in 1:3: out[i, k] = t[i] b[i, k]``
+    (bout_elm_pb's ``ddt_Psi`` z=0 plane before the interior planes): the ordering is FuseMaps' pure output, so the
+    producer fuses."""
+    sdfg = dace.SDFG("orders_the_consumer")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [N, 3], dace.float64)
+    sdfg.add_array("out", [N, 3], dace.float64)
+    sdfg.add_transient("t", [N], dace.float64)
+    st = sdfg.add_state()
+    t_node, plane = st.add_access("t"), st.add_access("out")
+    st.add_mapped_tasklet(
+        "prod", {"i": f"0:{N}"}, {"__a": dace.Memlet("a[i]")}, "__t = 2 * __a\n__p = __a",
+        {"__t": dace.Memlet("t[i]"), "__p": dace.Memlet("out[i, 0]")}, external_edges=True,
+        output_nodes={"t": t_node, "out": plane},
+    )  # fmt: skip
+    _, cons_entry, _ = st.add_mapped_tasklet(
+        "cons", {"i": f"0:{N}", "k": "1:3"}, {"__t": dace.Memlet("t[i]"), "__b": dace.Memlet("b[i, k]")},
+        "__o = __t * __b", {"__o": dace.Memlet("out[i, k]")}, external_edges=True, input_nodes={"t": t_node},
+    )  # fmt: skip
+    st.add_nedge(plane, cons_entry, dace.Memlet())
+    assert FuseMapsAtSharedAxes().apply_pass(sdfg, {}) == 1
+    assert len(top_level_maps(sdfg)) == 1
+    sdfg.validate()
+    a, b = np.random.rand(N), np.random.rand(N, 3)
+    out = np.zeros((N, 3))
+    sdfg(a=a, b=b, out=out)
+    assert np.allclose(out[:, 0], a) and np.allclose(out[:, 1:], 2 * a[:, None] * b[:, 1:])
+
+
 if __name__ == "__main__":
     test_vertical_fusion_rename_is_not_captured_by_inner_map()
     test_lower_dim_producer_fuses_into_consumer_outer_axes()
     test_lower_dim_producer_keeps_consumer_loop_order()
     test_partial_reduce_fusion_with_other_producer_outputs()
     test_a_refused_split_leaves_the_boundary_memlets_as_they_were()
+    test_lower_dim_producer_fuses_past_an_output_that_only_orders_the_consumer()

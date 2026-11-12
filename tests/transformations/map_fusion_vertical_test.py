@@ -4380,6 +4380,51 @@ def test_maps_accumulating_into_one_output_stay_apart():
     assert sdfg.apply_transformations_repeated(MapFusionVertical(), validate=True) == 0
 
 
+@pytest.mark.parametrize("second_reads", [False, True])
+def test_map_writing_a_container_through_two_nodes_fuses_unless_the_second_map_reads_it(second_reads: bool):
+    """``B[i, 0] = A[i]`` and ``B[i, 2] = -A[i]`` through two nodes of ``B``, then ``B[j, 1] = T[j] + 1``: only writes
+    of ``B`` meet, disjointly, and the maps fuse; the second map reading ``B[N - 1 - j, 0]``, another iteration's
+    write, keeps them apart."""
+    sdfg = SDFG(unique_name("two_nodes_of_one_output"))
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", ["N"], dace.float64)
+    sdfg.add_array("B", ["N", 3], dace.float64)
+    sdfg.add_array("C", ["N"], dace.float64)
+    sdfg.add_transient("T", ["N"], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    a, t, b0, b2 = state.add_read("A"), state.add_access("T"), state.add_access("B"), state.add_access("B")
+    entry, exit_ = state.add_map("first", {"i": "0:N"})
+    tasklet = state.add_tasklet("first", {"x"}, {"t", "b", "c"}, "t = 2 * x\nb = x\nc = -x")
+    state.add_memlet_path(a, entry, tasklet, dst_conn="x", memlet=dace.Memlet("A[i]"))
+    writes = (("t", t, "T[i]", "T[0:N]"), ("b", b0, "B[i, 0]", "B[0:N, 0]"), ("c", b2, "B[i, 2]", "B[0:N, 2]"))
+    for conn, node, inner, outer in writes:
+        exit_.add_in_connector("IN_" + conn)
+        exit_.add_out_connector("OUT_" + conn)
+        state.add_edge(tasklet, conn, exit_, "IN_" + conn, dace.Memlet(inner))
+        state.add_edge(exit_, "OUT_" + conn, node, None, dace.Memlet(outer))
+    inputs, code = ({"y": dace.Memlet("T[j]")}, "b = y + 1\nc = 0.0")
+    if second_reads:
+        inputs, code = {**inputs, "w": dace.Memlet("B[N - 1 - j, 0]")}, "b = y + 1\nc = w"
+    state.add_mapped_tasklet(
+        "second",
+        {"j": "0:N"},
+        inputs,
+        code,
+        {"b": dace.Memlet("B[j, 1]"), "c": dace.Memlet("C[j]")},
+        input_nodes={"T": t, "B": b0},
+        external_edges=True,
+    )
+    sdfg.validate()
+    sdfg.apply_transformations_repeated(MapFusionVertical(), validate=True)
+    assert count_nodes(state, nodes.MapEntry) == (2 if second_reads else 1)
+    n = 7
+    a = np.random.default_rng(0).random(n)
+    b, c = np.zeros((n, 3)), np.ones(n)
+    sdfg(A=a, B=b, C=c, N=n)
+    assert np.allclose(b[:, 0], a) and np.allclose(b[:, 1], 2 * a + 1) and np.allclose(b[:, 2], -a)
+    assert np.allclose(c, a[::-1] if second_reads else 0.0)
+
+
 def test_map_fusion_conditional_write_of_a_shared_element_not_fused():
     """A one-element claim is no proof of a write: ``if (c[k]) t[k] = 1`` leaves the old value in the shared array, and
     a privatized buffer would hand the consumer (and the write back) an undefined element instead."""
@@ -4611,6 +4656,8 @@ if __name__ == "__main__":
     test_maps_writing_one_output_fuse_only_where_their_writes_are_disjoint(1, True)
     test_maps_writing_one_output_fuse_only_where_their_writes_are_disjoint(0, False)
     test_maps_accumulating_into_one_output_stay_apart()
+    test_map_writing_a_container_through_two_nodes_fuses_unless_the_second_map_reads_it(False)
+    test_map_writing_a_container_through_two_nodes_fuses_unless_the_second_map_reads_it(True)
     test_map_fusion_conditional_write_of_a_shared_element_not_fused()
     test_input_read_through_two_nodes_fuses(False)
     test_input_read_through_two_nodes_fuses(True)

@@ -92,7 +92,7 @@ class FuseMapsAtSharedAxes(ppl.Pass):
         if ap.FindSingleUseData.__name__ not in pipeline_results:
             pipeline_results = dict(pipeline_results)
             pipeline_results[ap.FindSingleUseData.__name__] = ap.FindSingleUseData().apply_pass(sdfg, {})
-        fusion = MapFusionVertical(allow_intermediates_with_symbolic_size=True)
+        fusion = MapFusionVertical(allow_intermediates_with_symbolic_size=True, relaxed_dataflow=True)
         fused = 0
         for sd in sdfg.all_sdfgs_recursive():
             for state in sd.states():

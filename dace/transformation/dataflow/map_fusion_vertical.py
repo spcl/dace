@@ -1990,8 +1990,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         read_map_1, write_map_1, read_map_2, write_map_2 = access_sets
         # One container through two access nodes, or two Views, of one scope node is a dependency this function
         #  does not analyse. Every test below is about data a Map writes: read twice and written by neither Map,
-        #  the container is an input like any other.
-        if repeated[1] or repeated[3] or (repeated[0] | repeated[2]) & (resolved_sets[1] | resolved_sets[3]):
+        #  the container is an input like any other; written twice and read by neither, only its writes are compared,
+        #  edge by edge (bout_elm_pb's ``ddt_Psi`` planes).
+        written_twice = repeated[1] | repeated[3]
+        reads = resolved_sets[0] | resolved_sets[2]
+        if written_twice & reads or (repeated[0] | repeated[2]) & (resolved_sets[1] | resolved_sets[3]):
             return True
         real_read_map_1, real_write_map_1, real_read_map_2, real_write_map_2 = resolved_sets
 
@@ -2013,6 +2016,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 continue
             if (
                 not self.relaxed_dataflow
+                or name in written_twice
                 or any(self.is_view(s[name], sdfg) for s in access_sets if name in s)
                 or any(
                     e.data.data == name and e.data.wcr
