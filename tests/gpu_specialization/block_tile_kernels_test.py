@@ -452,12 +452,23 @@ def per_task_table_and_row() -> tuple[dace.SDFG, dace.SDFGState, dace.nodes.MapE
         store = st.add_tasklet(f"store{k}", {}, {"o"}, f"o = {value}")
         st.add_edge(store, "o", tab, None, dace.Memlet(f"tab[{k}]"))
     st.add_mapped_tasklet(
-        "fill", {"j": "0:N"}, {"a": dace.Memlet("A[t, j]")}, "r = 2 * a", {"r": dace.Memlet("row[j]")},
-        input_nodes={"A": st.add_read("A")}, output_nodes={"row": row}, external_edges=True,
+        "fill",
+        {"j": "0:N"},
+        {"a": dace.Memlet("A[t, j]")},
+        "r = 2 * a",
+        {"r": dace.Memlet("row[j]")},
+        input_nodes={"A": st.add_read("A")},
+        output_nodes={"row": row},
+        external_edges=True,
     )
     st.add_mapped_tasklet(
-        "gather", {"k": "0:4"}, {"tb": dace.Memlet("tab[k]"), "rw": dace.Memlet("row[0:N]")}, "o = rw[tb]",
-        {"o": dace.Memlet("out[t, k]")}, input_nodes={"tab": tab, "row": row}, external_edges=True,
+        "gather",
+        {"k": "0:4"},
+        {"tb": dace.Memlet("tab[k]"), "rw": dace.Memlet("row[0:N]")},
+        "o = rw[tb]",
+        {"o": dace.Memlet("out[t, k]")},
+        input_nodes={"tab": tab, "row": row},
+        external_edges=True,
     )
     sdfg = dace.SDFG("per_task_table_and_row")
     sdfg.add_array("A", [T, N], dace.float64, storage=dtypes.StorageType.GPU_Global)
@@ -466,14 +477,20 @@ def per_task_table_and_row() -> tuple[dace.SDFG, dace.SDFGState, dace.nodes.MapE
     kernel, kernel_exit = state.add_map("tasks", {"t": "0:T"}, schedule=dtypes.ScheduleType.GPU_Device)
     nest = state.add_nested_sdfg(body, {"A": None}, {"out": None}, {"t": "t", "N": "N", "T": "T"})
     state.add_memlet_path(state.add_read("A"), kernel, nest, dst_conn="A", memlet=dace.Memlet("A[0:T, 0:N]"))
-    state.add_memlet_path(nest, kernel_exit, state.add_write("out"), src_conn="out", memlet=dace.Memlet("out[0:T, 0:4]"))
+    state.add_memlet_path(
+        nest, kernel_exit, state.add_write("out"), src_conn="out", memlet=dace.Memlet("out[0:T, 0:4]")
+    )
     sdfg.validate()
     return sdfg, state, kernel
 
 
 def barriers_in(sdfg: dace.SDFG) -> int:
-    tasklets = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet) and n.label == "lane_barrier"]
-    syncs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapExit) and n.map.gpu_force_syncthreads]
+    tasklets = [
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet) and n.label == "lane_barrier"
+    ]
+    syncs = [
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapExit) and n.map.gpu_force_syncthreads
+    ]
     return len(tasklets) + len(syncs)
 
 
@@ -483,7 +500,9 @@ def test_per_cta_lane_zero_stores_share_one_barrier_and_independent_steps_none()
     sdfg, state, kernel = per_task_table_and_row()
     assert tile_per_cta(state, kernel)
     sdfg.validate()
-    guards = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG) and n.label == "lane_zero"]
+    guards = [
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG) and n.label == "lane_zero"
+    ]
     assert len(guards) == len(TABLE)
     assert barriers_in(sdfg) == 2
 
@@ -501,8 +520,13 @@ def test_a_step_reading_what_another_wrote_through_a_view_waits_at_a_barrier():
         "write", {"i": "0:64"}, {}, "v = i", {"v": dace.Memlet("V[i]")}, output_nodes={"V": view}, external_edges=True
     )
     state.add_mapped_tasklet(
-        "read", {"i": "0:64"}, {"g": dace.Memlet("G[63 - i]")}, "h = g", {"h": dace.Memlet("H[i]")},
-        input_nodes={"G": container}, external_edges=True,
+        "read",
+        {"i": "0:64"},
+        {"g": dace.Memlet("G[63 - i]")},
+        "h = g",
+        {"h": dace.Memlet("H[i]")},
+        input_nodes={"G": container},
+        external_edges=True,
     )
     place_barriers(state, OrderedSet())
     sdfg.validate()

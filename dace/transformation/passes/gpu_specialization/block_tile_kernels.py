@@ -637,7 +637,12 @@ def tile_per_cta(state: SDFGState, kernel: nodes.MapEntry) -> bool:
     if any(
         owner is not nest.sdfg
         or not {str(s) for s in sympy.sympify(owner.arrays[name].total_size).free_symbols} <= launch
-        or any(scope is not None for st in owner.states() for n, scope in st.scope_dict().items() if getattr(n, "data", None) == name)
+        or any(
+            scope is not None
+            for st in owner.states()
+            for n, scope in st.scope_dict().items()
+            if getattr(n, "data", None) == name
+        )
         for owner, name in arrays
     ):
         return False
