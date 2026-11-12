@@ -10,6 +10,7 @@ test in the same interpreter -- which is how the MPI CI job died with an empty r
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -171,11 +172,11 @@ def test_poisoned_rank_can_still_talk_to_its_communicator():
 
     # ... and at a thread level that admits the other threads the process has. Below FUNNELED an
     # MPI is entitled to run unlocked, which is what turned a pgemm into nondeterministic garbage.
-    for line in result.stdout.split("\n"):
-        if not line.startswith("rank "):
-            continue
-        _, _, _, level, funneled = line.split()
-        assert int(level) >= int(funneled), f"MPI came up below MPI_THREAD_FUNNELED: {line}"
+    # The two ranks write concurrently: their records may share a line
+    records = re.findall(r"rank (\d+) level (\d+) (\d+)", result.stdout)
+    assert len(records) == 2, result.stdout
+    for rank, level, funneled in records:
+        assert int(level) >= int(funneled), f"rank {rank}: MPI came up below MPI_THREAD_FUNNELED: {result.stdout}"
 
 
 if __name__ == "__main__":
