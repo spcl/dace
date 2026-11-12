@@ -193,7 +193,7 @@ def test_loop_body_assigning_another_symbol_keeps_the_range():
 
 def test_nested_sdfg_symbol_reassigned_inside_is_not_its_mapped_value():
     """A mapped symbol equals the outer value on entry only: once an interstate edge of the nested SDFG assigns it,
-    what held for the outer value says nothing about it."""
+    what held for the outer value says nothing about it; what the assignment says does."""
     outer = dace.SDFG("facts_at_reassigned_mapping")
     outer.add_symbol("M", dace.int64, predicates=frozenset({symbolic.Predicate.NEGATIVE}))
     inner = dace.SDFG("facts_at_reassigned_mapping_inner")
@@ -204,7 +204,8 @@ def test_nested_sdfg_symbol_reassigned_inside_is_not_its_mapped_value():
     outer.add_state(is_start_block=True).add_nested_sdfg(inner, {}, {}, symbol_mapping={"N": "M"})
 
     facts = SymbolResolver().facts_at(second)
-    assert symbolic.ask(le("N + 1", "0"), facts) is symbolic.Truth.UNKNOWN
+    assert symbolic.ask(le("N + 1", "0"), facts) is symbolic.Truth.FALSE
+    assert symbolic.ask(le("10", "N"), facts) is symbolic.Truth.TRUE
 
 
 def test_renamed_extent_moves_its_fact():
@@ -244,7 +245,47 @@ def loop_over(condition: str, init: str | None, update: str, **symbols) -> tuple
 def test_a_range_needs_a_bound_the_body_cannot_write():
     sdfg, loop = loop_over("i < s", "i = 0", "i = i + 1")
     sdfg.add_scalar("s", dace.int64, transient=True)
+    body = loop.start_block
+    body.add_edge(body.add_tasklet("t", {}, {"o"}, "o = 0"), "o", body.add_write("s"), None, dace.Memlet("s[0]"))
     assert symbolic.ask(le("i", "s - 1"), SymbolResolver().facts_at(loop)) is symbolic.Truth.UNKNOWN
+
+
+def csr_loops(write_ptr: bool) -> LoopRegion:
+    """``for r < N: for k in range(ptr[r], ptr[r + 1])``, the inner body writing ``ptr`` when asked."""
+    sdfg = dace.SDFG(f"facts_csr_{write_ptr}")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("ptr", ["N + 1"], dace.int64)
+    rows = LoopRegion("rows", "r < N", "r", "r = 0", "r = r + 1")
+    sdfg.add_node(rows, is_start_block=True)
+    inner = LoopRegion("inner", "k < ptr[r + 1]", "k", "k = ptr[r]", "k = k + 1")
+    rows.add_node(inner, is_start_block=True)
+    body = inner.add_state("body", is_start_block=True)
+    if write_ptr:
+        body.add_edge(
+            body.add_tasklet("t", {}, {"o"}, "o = 0"), "o", body.add_write("ptr"), None, dace.Memlet("ptr[r]")
+        )
+    return inner
+
+
+def test_a_range_may_read_a_container_the_loop_does_not_write():
+    """A CSR row loop ``range(ptr[r], ptr[r + 1])`` bounds its iterator by the row pointers."""
+    facts = SymbolResolver().facts_at(csr_loops(write_ptr=False))
+    assert symbolic.ask(le("ptr[r]", "k"), facts) is symbolic.Truth.TRUE
+    assert symbolic.ask(le("k + 1", "ptr[r + 1]"), facts) is symbolic.Truth.TRUE
+
+
+def test_a_range_reading_a_container_the_loop_writes_knows_nothing():
+    facts = SymbolResolver().facts_at(csr_loops(write_ptr=True))
+    assert symbolic.ask(le("ptr[r]", "k"), facts) is symbolic.Truth.UNKNOWN
+
+
+@pytest.mark.parametrize("predicates, known", [(frozenset({symbolic.Predicate.POSITIVE}), True), (frozenset(), False)])
+def test_a_symbolic_loop_step_gives_a_range_when_the_facts_orient_it(predicates, known):
+    """``i += S`` under ``i < N`` stays in ``[0, N - 1]`` when ``S`` is positive; of an unknown ``S`` nothing."""
+    sdfg, loop = loop_over("i < N", "i = 0", "i = i + S", N=dace.int64)
+    sdfg.add_symbol("S", dace.int64, predicates=predicates)
+    truth = symbolic.ask(le("i", "N - 1"), SymbolResolver().facts_at(loop))
+    assert truth is (symbolic.Truth.TRUE if known else symbolic.Truth.UNKNOWN)
 
 
 def test_a_range_needs_an_init_that_does_not_read_the_iterator():
@@ -330,6 +371,70 @@ def test_an_inner_loop_reassigning_the_condition_symbol_does_not_know_it():
     assert symbolic.ask(le("1", "s"), facts) is symbolic.Truth.UNKNOWN
 
 
+def assigned_before_loop(assignments: dict[str, str], body_assignments: dict[str, str] | None = None):
+    """``first --assignments--> loop(i < N) { body [--body_assignments--> after] }``, ``N`` positive; returns the
+    SDFG, the loop and its body's start state."""
+    sdfg = dace.SDFG(f"facts_assigned_{abs(hash((tuple(assignments.items()), str(body_assignments))))}")
+    sdfg.add_symbol("N", dace.int64, predicates=frozenset({symbolic.Predicate.POSITIVE}))
+    for name in assignments:
+        sdfg.add_symbol(name, dace.int64)
+    sdfg.add_array("la", [4], dace.int64)
+    first = sdfg.add_state("first", is_start_block=True)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(first, loop, dace.InterstateEdge(assignments=assignments))
+    body = loop.add_state("body", is_start_block=True)
+    if body_assignments is not None:
+        loop.add_edge(body, loop.add_state("after"), dace.InterstateEdge(assignments=body_assignments))
+    return sdfg, loop, body
+
+
+def test_a_symbol_an_edge_assigns_equals_its_value_after_the_edge():
+    """``span = N + 2`` on the edge into a loop: in the body ``span >= 3``, the bound the frontend's ``ceil`` spans and
+    ``la_max + lb_max + 1`` extents need."""
+    _, loop, body = assigned_before_loop({"span": "N + 2"})
+    for block in (loop, body):
+        assert symbolic.ask(le("3", "span"), SymbolResolver().facts_at(block)) is symbolic.Truth.TRUE
+
+
+def test_an_assigned_value_may_read_a_container_nothing_writes_since():
+    _, _, body = assigned_before_loop({"m": "la[0] + 1"})
+    assert symbolic.ask(le("la[0] + 1", "m"), SymbolResolver().facts_at(body)) is symbolic.Truth.TRUE
+
+
+def test_an_assigned_value_reading_a_container_written_since_says_nothing():
+    _, loop, body = assigned_before_loop({"m": "la[0] + 1"})
+    body.add_edge(body.add_tasklet("t", {}, {"o"}, "o = 7"), "o", body.add_write("la"), None, dace.Memlet("la[0]"))
+    for block in (loop, body):
+        assert symbolic.ask(le("la[0] + 1", "m"), SymbolResolver().facts_at(block)) is symbolic.Truth.UNKNOWN
+
+
+def test_a_loop_body_reassigning_the_symbol_does_not_know_its_value():
+    """Every iteration but the first starts after ``span = span + 1``."""
+    _, _, body = assigned_before_loop({"span": "N + 2"}, {"span": "span + 1"})
+    assert symbolic.ask(le("3", "span"), SymbolResolver().facts_at(body)) is symbolic.Truth.UNKNOWN
+
+
+def test_an_increment_is_not_an_equation():
+    """``k = k + 1`` reads the old ``k``: as ``k == k + 1`` it would contradict and prove anything."""
+    _, _, body = assigned_before_loop({"k": "k + 1"})
+    assert symbolic.ask(le("k", "0"), SymbolResolver().facts_at(body)) is symbolic.Truth.UNKNOWN
+
+
+def test_a_merge_knows_no_assignment_of_either_branch():
+    sdfg = dace.SDFG("facts_assigned_merge")
+    sdfg.add_symbol("N", dace.int64, predicates=frozenset({symbolic.Predicate.POSITIVE}))
+    sdfg.add_symbol("s", dace.int64)
+    first = sdfg.add_state("first", is_start_block=True)
+    left, right, merge = sdfg.add_state("left"), sdfg.add_state("right"), sdfg.add_state("merge")
+    sdfg.add_edge(first, left, dace.InterstateEdge("N > 3", assignments={"s": "N + 2"}))
+    sdfg.add_edge(first, right, dace.InterstateEdge("N <= 3", assignments={"s": "0"}))
+    sdfg.add_edge(left, merge, dace.InterstateEdge())
+    sdfg.add_edge(right, merge, dace.InterstateEdge())
+    assert symbolic.ask(le("3", "s"), SymbolResolver().facts_at(left)) is symbolic.Truth.TRUE
+    assert symbolic.ask(le("3", "s"), SymbolResolver().facts_at(merge)) is symbolic.Truth.UNKNOWN
+
+
 if __name__ == "__main__":
     test_loop_body_knows_the_iterator_range()
     test_loop_header_does_not_know_the_iterator_range()
@@ -354,6 +459,10 @@ if __name__ == "__main__":
     test_a_dimension_scaling_one_symbol_makes_it_nonnegative("N + 1", False)
     test_a_dimension_scaling_one_symbol_makes_it_nonnegative("M * N", False)
     test_a_range_needs_a_bound_the_body_cannot_write()
+    test_a_range_may_read_a_container_the_loop_does_not_write()
+    test_a_range_reading_a_container_the_loop_writes_knows_nothing()
+    test_a_symbolic_loop_step_gives_a_range_when_the_facts_orient_it(frozenset({symbolic.Predicate.POSITIVE}), True)
+    test_a_symbolic_loop_step_gives_a_range_when_the_facts_orient_it(frozenset(), False)
     test_a_range_needs_an_init_that_does_not_read_the_iterator()
     test_a_range_needs_a_condition_along_the_step()
     test_a_float_limit_gives_no_integer_range()
@@ -363,3 +472,9 @@ if __name__ == "__main__":
     test_while_body_start_knows_the_condition()
     test_a_block_after_the_condition_symbol_is_reassigned_does_not_know_it()
     test_an_inner_loop_reassigning_the_condition_symbol_does_not_know_it()
+    test_a_symbol_an_edge_assigns_equals_its_value_after_the_edge()
+    test_an_assigned_value_may_read_a_container_nothing_writes_since()
+    test_an_assigned_value_reading_a_container_written_since_says_nothing()
+    test_a_loop_body_reassigning_the_symbol_does_not_know_its_value()
+    test_an_increment_is_not_an_equation()
+    test_a_merge_knows_no_assignment_of_either_branch()
