@@ -18,10 +18,8 @@ canonical and performs no further interchange):
 2. Each parameter receives a score equal to the smallest array stride it
    linearly indexes with a unit coefficient (``+inf`` if it never does). The
    parameter whose smallest indexed stride is smallest belongs innermost.
-3. Ties are broken first by the accumulated absolute constant offset of the
-   accesses the parameter participates in (ascending), then by the
-   parameter's original textual position in the nest (ascending), so the
-   target order is total and stable.
+3. Parameters with equal (or not comparable) scores keep their current
+   relative order (a stable sort), so the target order is stable.
 
 The desired permutation is realized exclusively through a sequence of legal
 adjacent :class:`~dace.transformation.dataflow.map_interchange.MapInterchange`
@@ -196,10 +194,11 @@ class MinimizeStridePermutation(ppl.Pass):
         """
         result: dict[int, int] = {}
         self._expanded = False
-        for state in sdfg.states():
+        # Nested SDFGs too: a nest inside one (a loop body nested in a map) is as free to reorder as a top-level one
+        for state in (state for nested in sdfg.all_sdfgs_recursive() for state in nested.states()):
             applied = self._process_state(state, state.sdfg)
             if applied:
-                result[state.block_id] = applied
+                result[state.block_id] = result.get(state.block_id, 0) + applied
         if self._expanded:
             propagate_memlets_sdfg(sdfg)
         return result or None
@@ -267,20 +266,17 @@ class MinimizeStridePermutation(ppl.Pass):
         # Build a totally-ordered numeric key per parameter. Smaller indexed
         # stride => deeper (more inner), so the outer..inner target order
         # sorts by *descending* stride. A parameter without a unit-coefficient
-        # "home" gets ``+inf`` and is forced outermost. Ties break on ascending
-        # accumulated absolute offset. Parameters with equal (or incomparable,
+        # "home" gets ``+inf`` and is forced outermost. Parameters with equal (or incomparable,
         # e.g. symbolic) scores keep their current relative order via the
         # stable sort below -- no positional tiebreak, otherwise reordering
         # would change the key and the pass would not be idempotent. When all
         # strides are symbolic the scores tie and the order is left unchanged,
         # which is the intended behavior (magnitudes are undecidable).
         def compare(i: int, j: int) -> int:
-            # Descending stride (the smallest-strided parameter belongs innermost), then ascending
-            # accumulated offset. Decided symbolically: see :func:`stride_difference_sign`.
-            stride_sign = stride_difference_sign(scores[i][0], scores[j][0])
-            if stride_sign != 0:
-                return -stride_sign
-            return stride_difference_sign(scores[i][1], scores[j][1])
+            # Descending stride: the smallest-strided parameter belongs innermost. Decided symbolically, see
+            # :func:`stride_difference_sign`. No tie-break on the accesses' constant offsets: they say nothing about
+            # locality, and on an all-pairs nest (lavamd) they pull the accumulated axis out of the innermost place.
+            return -stride_difference_sign(scores[i], scores[j])
 
         try:
             order = sorted(range(len(params)), key=functools.cmp_to_key(compare))
@@ -358,15 +354,14 @@ class MinimizeStridePermutation(ppl.Pass):
 
     def _score_parameters(
         self, state: SDFGState, sdfg: SDFG, nest: list[nodes.MapEntry], params: list[str]
-    ) -> list[tuple[object, object]]:
-        """Compute the ``(stride_score, offset_tiebreak)`` key for each param.
+    ) -> list[object]:
+        """Compute the stride score of each param.
 
         :param state: The containing state.
         :param sdfg: The SDFG owning ``state``.
         :param nest: Map entries from outermost to innermost.
         :param params: The parameters of the nest, outermost first.
-        :returns: A list of ``(min_indexed_stride, accumulated_abs_offset)``
-                 tuples parallel to ``params``.
+        :returns: The minimal unit-coefficient stride of each param, parallel to ``params``.
         """
         # Include the innermost entry and exit so that the per-iteration
         # indexed memlets (which live on the edges between the inner map
@@ -374,4 +369,4 @@ class MinimizeStridePermutation(ppl.Pass):
         innermost_entry = nest[-1]
         body = state.scope_subgraph(innermost_entry, include_entry=True, include_exit=True)
         scores = score_indexed_strides(body.edges(), sdfg, params)
-        return [(scores[p][0], scores[p][2]) for p in params]
+        return [scores[p][0] for p in params]

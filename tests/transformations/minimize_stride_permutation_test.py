@@ -359,6 +359,43 @@ def test_three_level_cycle_reordered():
     assert np.allclose(out, ref) and np.allclose(out, a + 1.0)
 
 
+@dace.program
+def offset_tie_2d(x: dace.float64[9], y: dace.float64[7], B: dace.float64[5, 7]):
+    for i, j in dace.map[0:5, 0:7]:
+        B[i, j] = x[i + 3] * y[j]
+
+
+def test_nest_inside_a_nested_sdfg_is_reordered():
+    """A nest in a nested SDFG is reordered like a top-level one."""
+    rng = np.random.default_rng(42)
+    inner = _expanded(transposed_2d_int)
+    outer = dace.SDFG("outer_of_transposed_2d")
+    outer.add_array("A", [7, 11], dace.float64)
+    outer.add_array("B", [7, 11], dace.float64)
+    state = outer.add_state()
+    node = state.add_nested_sdfg(inner, {"A"}, {"B"})
+    state.add_edge(state.add_read("A"), None, node, "A", dace.Memlet("A[0:7, 0:11]"))
+    state.add_edge(node, "B", state.add_write("B"), None, dace.Memlet("B[0:7, 0:11]"))
+    assert _nest_param_order(inner) == ["i", "j"]
+
+    assert MinimizeStridePermutation().apply_pass(outer, {}) is not None
+    assert _nest_param_order(inner) == ["j", "i"]
+
+    a = rng.random((7, 11))
+    out = np.zeros((7, 11))
+    outer(A=a.copy(), B=out)
+    assert np.allclose(out, a * 2.0)
+
+
+def test_equal_strides_keep_the_order_whatever_the_offsets():
+    """``i`` and ``j`` both index a unit stride (``x[i + 3]``, ``B[i, j]``'s last axis), so the nest stays as it is:
+    the constant offset ``3`` is no reason to move ``i`` inward and make ``B``'s writes strided."""
+    sdfg = _expanded(offset_tie_2d)
+    assert _nest_param_order(sdfg) == ["i", "j"]
+    assert MinimizeStridePermutation().apply_pass(sdfg, {}) is None
+    assert _nest_param_order(sdfg) == ["i", "j"]
+
+
 if __name__ == "__main__":
     test_integer_dims_two_level_reordered()
     test_integer_dims_already_canonical_is_noop()
@@ -372,3 +409,5 @@ if __name__ == "__main__":
     test_multi_parameter_map_is_split_and_reordered()
     test_level_map_moves_between_the_plane_axes()
     test_three_level_cycle_reordered()
+    test_nest_inside_a_nested_sdfg_is_reordered()
+    test_equal_strides_keep_the_order_whatever_the_offsets()
