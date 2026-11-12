@@ -25,9 +25,8 @@ data, which is small by derivation. In order:
 An enclosing loop alone is no reason: a region entered ``E`` times costs ``E * (fork + work/P)`` against
 ``E * work``, so ``E`` cancels (npbench ``cavity_flow``'s 1,044,484-element pressure map).
 
-Bulk transfers are decided in
-:mod:`~dace.transformation.passes.cpu_specialization.specialize_cpu_transfers`; a copy / memset node here follows
-:func:`~dace.libraries.standard.helper.is_reentered_cpu_transfer`.
+A copy / memset node here follows :func:`~dace.libraries.standard.helper.is_reentered_cpu_transfer`, as its
+implementation selection does (:func:`~dace.libraries.standard.helper.transfer_runs_on_one_core`).
 """
 
 import copy

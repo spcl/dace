@@ -4,7 +4,7 @@
 from typing import TYPE_CHECKING
 
 import dace
-from dace.libraries.standard.helper import host_storages, is_in_parallel_scope, is_parallel_cpu_transfer_size
+from dace.libraries.standard.helper import host_storages, is_parallel_cpu_transfer_size, transfer_runs_on_one_core
 from dace.libraries.standard.nodes.fill.common import byte_pattern
 from dace.sdfg.scope import is_devicelevel_gpu
 
@@ -64,7 +64,7 @@ def select_fill_implementation(node: "FillLibraryNode", parent_state: dace.SDFGS
         allowed = host_storages(node, parent_state)
         if out.storage in allowed and not (
             is_parallel_cpu_transfer_size(out_subset.num_elements(), parent_state.sdfg.facts())
-            and not is_in_parallel_scope(node, parent_state)
+            and not transfer_runs_on_one_core(node, parent_state)
         ):
             return "CPU"
         return "pure"
@@ -82,7 +82,7 @@ def select_fill_implementation(node: "FillLibraryNode", parent_state: dace.SDFGS
     if (
         out.storage in allowed
         and is_parallel_cpu_transfer_size(out_subset.num_elements(), parent_state.sdfg.facts())
-        and not is_in_parallel_scope(node, parent_state)
+        and not transfer_runs_on_one_core(node, parent_state)
     ):
         return "pure"
     return "CPU"

@@ -199,6 +199,17 @@ def is_in_parallel_scope(node: nodes.LibraryNode, parent_state: dace.SDFGState) 
     )
 
 
+def transfer_runs_on_one_core(node: nodes.LibraryNode, parent_state: dace.SDFGState) -> bool:
+    """True when a host transfer runs on one core: its schedule says so, or an enclosing parallel map or a long loop
+    that varies its size re-enters it (:func:`is_reentered_cpu_transfer`), so a parallel element map would open one
+    OpenMP region per entry. Such a transfer is one libc call when contiguous, else a sequential element map.
+
+    :param node: the transfer library node.
+    :param parent_state: state containing ``node``.
+    """
+    return node.schedule == dtypes.ScheduleType.Sequential or is_reentered_cpu_transfer(node, parent_state)
+
+
 def auto_dispatch(
     node: nodes.LibraryNode,
     parent_state: dace.SDFGState,
@@ -287,11 +298,9 @@ def is_short_loop(loop, cache: dict[int, bool] | None = None) -> bool:
     :param cache: an optional ``id(loop) -> verdict`` map a caller reuses across many nodes sharing
                  the same enclosing loops (a CPU-specialization pass visits one transfer at a time,
                  but the loop nest above it repeats). Valid only for as long as the pass that owns
-                 it runs without mutating any ``LoopRegion``'s bounds -- neither
-                 :class:`~dace.transformation.passes.cpu_specialization.specialize_cpu_transfers.SpecializeCpuTransfers`
-                 nor
+                 it runs without mutating any ``LoopRegion``'s bounds --
                  :class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes`
-                 does; both only set ``schedule``/``implementation`` on library and map nodes.
+                 does not; it only sets ``schedule`` on library and map nodes.
     :returns: ``True`` only when the trip count is provably short; an unanalyzable, descending or
               symbolic-length loop answers ``False``.
     """

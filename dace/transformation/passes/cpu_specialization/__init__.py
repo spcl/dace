@@ -13,5 +13,4 @@ from dace.transformation.passes.cpu_specialization.recompute_oversized_intermedi
     RecomputeIntermediates,
 )
 from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import SequentializeSmallAxes
-from dace.transformation.passes.cpu_specialization.specialize_cpu_transfers import SpecializeCpuTransfers
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize

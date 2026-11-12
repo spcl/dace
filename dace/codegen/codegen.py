@@ -295,16 +295,9 @@ def lower_implicit_copies(sdfg: SDFG) -> None:
     pass's other callers unexpanded.
     """
     from dace.libraries.standard.nodes.copy import CopyLibraryNode
-    from dace.transformation.passes.cpu_specialization import SpecializeCpuTransfers
     from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 
     InsertExplicitCopies().apply_pass(sdfg, {})
-    # These copies are BORN here, after every optimization band has run, so the CPU specialization
-    # verdict on them has to be taken here too: a copy an enclosing map or loop re-enters must not open
-    # a parallel region per entry (npbench stockham_fft enters one 349,525 times), and a sequential
-    # contiguous one is a single memcpy. Host-resident transfers only, so a GPU graph passing through
-    # is untouched.
-    SpecializeCpuTransfers().apply_pass(sdfg, {})
     # A masked tile copy is a copy too, but a CUDA Tile C++ kernel writes its own (``compiler.cuda.tile_backend``)
     from dace.codegen.python.dialects.cuda_tile_cpp import expand_outside_tile_kernels
 
