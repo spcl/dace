@@ -15,12 +15,17 @@ from dace import dtypes
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.sdfg import infer_types, nodes
 from dace.symbolic import Scale
-from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import DecideCpuParallelAxes
+from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import (
+    ITERATIONS_PER_THREAD,
+    DecideCpuParallelAxes,
+)
+from dace.transformation.passes.cpu_specialization.machine import topology
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
 
 PAR = dtypes.ScheduleType.CPU_Multicore
 SEQ = dtypes.ScheduleType.Sequential
 NBLKS, NPROMA = 3, 50
+BLOCK = 64
 
 
 def blocked_sdfg(name: str, small: bool = True) -> dace.SDFG:
@@ -231,6 +236,90 @@ def test_a_library_expansion_never_shares_out_a_block_axis():
     assert expanded_fill_maps(small=False) == [(["__i0", "__i1"], PAR, 1)]
 
 
+def block_strip_sdfg(name: str, ranges: dict[str, str], inner: dict[str, str] | None = None, wcr: bool = False):
+    """``B[b, p, c] = 2 * A[b, p, c] + 1`` over ``(nblocks, 64, ncol)``: one map over ``ranges``, or a map over
+    ``ranges`` around a sequential map over ``inner``."""
+    sdfg = dace.SDFG(name)
+    for size in ("nblocks", "ncol"):
+        sdfg.add_symbol(size, dace.int64)
+    sdfg.add_array("A", ["nblocks", BLOCK, "ncol"], dace.float64)
+    sdfg.add_array("B", ["nblocks", BLOCK, "ncol"], dace.float64)
+    state = sdfg.add_state("compute")
+    if inner is None:
+        state.add_mapped_tasklet(
+            "scale",
+            ranges,
+            {"x": dace.Memlet("A[b, p, c]")},
+            "y = 2.0 * x + 1.0",
+            {"y": dace.Memlet("B[b, p, c]", wcr="lambda a, b: a + b" if wcr else None)},
+            schedule=PAR,
+            external_edges=True,
+        )
+    else:
+        outer_entry, outer_exit = state.add_map("blocks", ranges, schedule=PAR)
+        inner_entry, inner_exit = state.add_map("cols", inner, schedule=SEQ)
+        tasklet = state.add_tasklet("scale", {"x"}, {"y"}, "y = 2.0 * x + 1.0")
+        state.add_memlet_path(
+            state.add_read("A"), outer_entry, inner_entry, tasklet, dst_conn="x", memlet=dace.Memlet("A[b, p, c]")
+        )
+        state.add_memlet_path(
+            tasklet, inner_exit, outer_exit, state.add_write("B"), src_conn="y", memlet=dace.Memlet("B[b, p, c]")
+        )
+    sdfg.validate()
+    return sdfg
+
+
+def check_block_strip(sdfg: dace.SDFG, nblocks: int = 2, ncol: int = 5) -> None:
+    A = np.random.default_rng(12).random((nblocks, BLOCK, ncol))
+    B = np.zeros_like(A)
+    sdfg(A=A, B=B, nblocks=nblocks, ncol=ncol)
+    np.testing.assert_allclose(B, 2.0 * A + 1.0)
+
+
+def test_a_symbolic_block_count_is_collapsed_with_the_points_and_the_columns_stay_vectorizable():
+    """``nblocks`` alone may leave threads idle; blocks and points are shared out together, the columns run in an inner
+    sequential map that takes ``simd``."""
+    sdfg = block_strip_sdfg("cpu_collapse_block_strip", {"b": "0:nblocks", "p": f"0:{BLOCK}", "c": "0:ncol"})
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert map_nest(sdfg) == [(["b", "p"], PAR), (["c"], SEQ)]
+    assert collapse_of(sdfg) == 2
+    code = "".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "collapse(2)" in code and "omp simd" in code
+    check_block_strip(sdfg)
+
+
+def test_a_leaf_map_never_collapses_its_innermost_axis():
+    sdfg = one_map("cpu_collapse_keeps_innermost", small=False)
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) is None
+    assert map_nest(sdfg) == [(["b", "i"], PAR)] and collapse_of(sdfg) == 1
+
+
+def test_a_first_axis_that_fills_the_team_is_shared_out_alone():
+    extent = ITERATIONS_PER_THREAD * topology().physical_cores
+    sdfg = block_strip_sdfg("cpu_collapse_wide_first", {"b": f"0:{extent}", "p": f"0:{BLOCK}", "c": "0:ncol"})
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) is None
+    assert map_nest(sdfg) == [(["b", "p", "c"], PAR)] and collapse_of(sdfg) == 1
+
+
+def test_a_map_around_a_loop_collapses_every_axis():
+    """Its body is no leaf: the inner map is the loop that vectorizes, so both outer axes are shared out."""
+    sdfg = block_strip_sdfg("cpu_collapse_around_loop", {"b": "0:nblocks", "p": f"0:{BLOCK}"}, {"c": "0:ncol"})
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert map_nest(sdfg) == [(["b", "p"], PAR), (["c"], SEQ)]
+    assert collapse_of(sdfg) == 2
+    check_block_strip(sdfg)
+
+
+def test_a_reducing_or_triangular_map_is_not_collapsed():
+    reducing = block_strip_sdfg("cpu_collapse_wcr", {"b": "0:nblocks", "p": f"0:{BLOCK}", "c": "0:ncol"}, wcr=True)
+    triangular = block_strip_sdfg("cpu_collapse_triangle", {"b": "0:nblocks", "p": "0:b + 1", "c": "0:ncol"})
+    for sdfg in (reducing, triangular):
+        assert DecideCpuParallelAxes().apply_pass(sdfg, {}) is None
+        assert map_nest(sdfg) == [(["b", "p", "c"], PAR)] and collapse_of(sdfg) == 1
+
+
 if __name__ == "__main__":
     test_a_leading_block_axis_is_collapsed_with_the_next()
     test_a_block_map_around_a_row_map_shares_out_the_rows()
@@ -241,3 +330,8 @@ if __name__ == "__main__":
     test_a_leading_literal_small_axis_is_collapsed_with_the_next()
     test_cpu_specialize_never_shares_out_a_block_axis()
     test_a_library_expansion_never_shares_out_a_block_axis()
+    test_a_symbolic_block_count_is_collapsed_with_the_points_and_the_columns_stay_vectorizable()
+    test_a_leaf_map_never_collapses_its_innermost_axis()
+    test_a_first_axis_that_fills_the_team_is_shared_out_alone()
+    test_a_map_around_a_loop_collapses_every_axis()
+    test_a_reducing_or_triangular_map_is_not_collapsed()

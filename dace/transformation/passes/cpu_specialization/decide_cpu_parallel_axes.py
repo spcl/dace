@@ -32,7 +32,9 @@ times costs ``E * (fork + work/P)`` against ``E * work``, so ``E`` cancels (npbe
 1,044,484-element pressure map). A ``CPU_Multicore`` map inside a parallel one (a schedule set before this pass)
 runs sequentially: one region opens one OpenMP team level. Last, a parallel map's leading ``SMALL`` axes are shared
 out with the first larger one (``collapse(2)`` for ``(b, k, i)`` with ``b`` small), keeping the axis order
-(:func:`~dace.transformation.helpers.share_out_past_leading_small_axes`).
+(:func:`~dace.transformation.helpers.share_out_past_leading_small_axes`), and a map without a reduced output
+collapses its leading axes until they provably fill the team, the innermost axis of a leaf body excepted
+(:func:`collapse_leading_axes`).
 
 A copy / memset node here follows :func:`~dace.libraries.standard.helper.is_reentered_cpu_transfer`, as its
 implementation selection does (:func:`~dace.libraries.standard.helper.transfer_runs_on_one_core`).
@@ -44,10 +46,10 @@ from typing import Any
 
 import sympy
 
-from dace import SDFG, data, dtypes, properties, symbolic
+from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
-from dace.symbolic_facts import SMALL_CONSTANT_EXTENT
+from dace.symbolic_facts import SMALL_CONSTANT_EXTENT, prove
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import share_out_past_leading_small_axes
 from dace.transformation.passes.analysis import loop_analysis
@@ -62,6 +64,9 @@ CPU_PARALLEL_SCHEDULES = (dtypes.ScheduleType.Default, dtypes.ScheduleType.CPU_M
 #: Schedules of a map nested in a CPU map that make it run sequentially: ``Sequential``, and ``Default``, which
 #: schedule inference resolves to ``Sequential`` under any CPU map (``dtypes.SCOPEDEFAULT_SCHEDULE``).
 SEQUENTIAL_UNDER_A_MAP = (dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential)
+
+#: Iterations per core the leading axes of a parallel map must provably reach before they stop collapsing more axes.
+ITERATIONS_PER_THREAD = 4
 
 
 #: The line a map made sequential here adds under its ``parallel`` class line, so the rendered loop -- which loses
@@ -336,6 +341,51 @@ def release_few_trips(
     return True
 
 
+def fills_team(trips: Any, team: int, facts: symbolic.Facts) -> bool:
+    """Whether ``trips`` is provably at least ``team``, from the relations alone (no scale assumption)."""
+    if not symbolic.issymbolic(trips):
+        return trips >= team
+    return prove(symbolic.Relation(symbolic.RelationKind.LE, sympy.Integer(team), sympy.sympify(trips)), facts) is (
+        symbolic.Truth.TRUE
+    )
+
+
+def collapse_leading_axes(state: SDFGState, entry: nodes.MapEntry, resolver: SymbolResolver) -> bool:
+    """Share out the leading axes of a parallel map that writes no write-conflict-resolved output together (an OpenMP
+    ``collapse``) until their iterations provably fill ``ITERATIONS_PER_THREAD`` per core: an elementwise map over
+    ``(nblocks, 1024, k)`` shares out ``nblocks`` alone otherwise. The innermost axis of a leaf body stays out of the
+    collapse, in an inner ``Sequential`` map ``MarkSIMDMaps`` vectorizes; an axis whose range reads an earlier one
+    ends the collapse.
+
+    :returns: whether ``entry`` was collapsed.
+    """
+    from dace.transformation.dataflow import MapExpansion  # Avoid an import cycle
+    from dace.transformation.passes.mark_simd_maps import map_body_is_leaf, map_has_wcr
+
+    params, ranges = entry.map.params, entry.map.range
+    if entry.map.collapse > 1 or len(params) < 2 or map_has_wcr(state, entry):
+        return False
+    limit = len(params) - 1 if map_body_is_leaf(state, entry) else len(params)
+    team, facts = ITERATIONS_PER_THREAD * topology().physical_cores, resolver.facts_at(state, entry)
+    sizes, depth = ranges.size(), 1
+    trips = sizes[0]
+    while depth < limit and not fills_team(trips, team, facts):
+        if set(subsets.Range([ranges[depth]]).free_symbols) & set(params[:depth]):
+            break
+        trips, depth = trips * sizes[depth], depth + 1
+    if depth == 1:
+        return False
+    if depth < len(params):
+        MapExpansion.apply_to(
+            state.sdfg,
+            map_entry=entry,
+            options={"inner_schedule": dtypes.ScheduleType.Sequential, "split_at": depth},
+            save=False,
+        )
+    entry.map.collapse = depth
+    return True
+
+
 def unscheduled_map(node: nodes.Node) -> bool:
     """Whether ``node`` is a map entry whose schedule is not decided yet (``Default``)."""
     return isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.Default
@@ -449,6 +499,12 @@ class DecideCpuParallelAxes(ppl.Pass):
         split = sum(
             share_out_past_leading_small_axes(state, entry, resolver) is not None for entry, state in candidates
         )
+        parallel = [
+            (node, state)
+            for node, state in sdfg.all_nodes_recursive()
+            if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.CPU_Multicore
+        ]
+        split += sum(collapse_leading_axes(state, entry, resolver) for entry, state in parallel)
         return (self.pinned + split) or None
 
     def visit_region(self, region: ControlFlowRegion, in_parallel: bool, enclosing: dtypes.ScheduleType | None) -> None:
