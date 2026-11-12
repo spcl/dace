@@ -100,11 +100,11 @@ def ordered_reduce(name: str, init_reads_s: bool) -> tuple[dace.SDFG, nodes.Nest
     for graph in (sdfg, inner):
         for data, shape in (("s", [N]), ("r", [1]), ("c", [1])):
             graph.add_array(data if graph is inner else data.upper(), shape, dace.float64)
-    inner.add_array("t", [N], dace.float64)
     nstate = inner.add_state()
     r, s, red = nstate.add_write("r"), nstate.add_read("s"), nstate.add_reduce("lambda a, b: a + b", None, 0)
     init = nstate.add_tasklet("init", {"x"} if init_reads_s else {}, {"y"}, "y = 0 * x" if init_reads_s else "y = 0")
     if init_reads_s:
+        inner.add_array("t", [N], dace.float64)
         nstate.add_edge(nstate.add_read("t"), None, init, "x", dace.Memlet("t[0]"))
     nstate.add_edge(init, "y", r, None, dace.Memlet("r[0]"))
     nstate.add_nedge(r, s, dace.Memlet())
