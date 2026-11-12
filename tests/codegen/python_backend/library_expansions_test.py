@@ -508,6 +508,74 @@ def test_an_affine_scan_of_gpu_arrays_runs_in_cupy():
     assert np.allclose(y.get(), affine_reference(c, d, 2.0))
 
 
+def strided_affine_scan_sdfg() -> dace.SDFG:
+    """``y[k] = c[k] * y[k-K] + d[k]``, each residue class modulo ``K`` from its own seed ``s[k % K]``."""
+    node = Scan("scan", op=ScanOp.AFFINE)
+    node.stride = dace.symbol("K")
+    node.add_in_connector("_scan_init")
+    arrays = {"c": ([37], dace.float64), "d": ([37], dace.float64), "y": ([37], dace.float64), "s": ([3], dace.float64)}
+    reads = {"_scan_in": "d[0:37]", "_scan_coef": "c[0:37]", "_scan_init": "s[0:3]"}
+    sdfg = wired_sdfg(node, arrays, reads, {"_scan_out": "y[0:37]"})
+    sdfg.add_symbol("K", dace.int64)
+    return sdfg
+
+
+def test_a_strided_affine_scan_carries_each_residue_class_from_its_own_seed():
+    """The recurrence at a runtime distance ``K`` (versioned_distance_update) is ``K`` independent scans."""
+    rng = np.random.default_rng(6)
+    c, d, y, seeds = rng.random(37) + 0.5, rng.random(37), np.zeros(37), np.array([1.0, -2.0, 3.0])
+    expected = np.empty(37)
+    for r in range(3):
+        expected[r::3] = affine_reference(c[r::3], d[r::3], seeds[r])
+
+    with python_backend():
+        strided_affine_scan_sdfg()(c=c, d=d, y=y, s=seeds, K=3)
+
+    assert np.allclose(y, expected)
+
+
+def test_a_strided_sum_scan_folds_each_class_from_its_first_element():
+    node = Scan("scan", op=ScanOp.SUM)
+    node.stride = 4
+    sdfg = wired_sdfg(
+        node, {"x": ([13], dace.float64), "y": ([13], dace.float64)}, {"_scan_in": "x[0:13]"}, {"_scan_out": "y[0:13]"}
+    )
+    x, y = np.arange(13.0), np.zeros(13)
+
+    with python_backend():
+        sdfg(x=x, y=y)
+
+    assert y.tolist() == [sum(x[k % 4 : k + 1 : 4]) for k in range(13)]
+
+
+def test_two_chains_scan_independently():
+    node = Scan("scan", op=ScanOp.MAX, chains=2)
+    arrays = {name: ([9], dace.float64) for name in ("x", "w", "y", "z")}
+    sdfg = wired_sdfg(
+        node, arrays, {"_scan_in": "x[0:9]", "_scan_in_1": "w[0:9]"}, {"_scan_out": "y[0:9]", "_scan_out_1": "z[0:9]"}
+    )
+    rng = np.random.default_rng(7)
+    x, w, y, z = rng.random(9), rng.random(9), np.zeros(9), np.zeros(9)
+
+    with python_backend():
+        sdfg(x=x, w=w, y=y, z=z)
+
+    assert np.array_equal(y, np.maximum.accumulate(x)) and np.array_equal(z, np.maximum.accumulate(w))
+
+
+@pytest.mark.parametrize("chains, exclusive", [(2, False), (1, True)])
+def test_a_strided_scan_of_two_chains_or_exclusive_is_refused(chains: int, exclusive: bool):
+    node = Scan("scan", op=ScanOp.SUM, exclusive=exclusive, chains=chains)
+    node.stride = 2
+    arrays = {name: ([8], dace.float64) for name in ("x", "w", "y", "z")}
+    reads = {"_scan_in": "x[0:8]"} | ({"_scan_in_1": "w[0:8]"} if chains == 2 else {})
+    writes = {"_scan_out": "y[0:8]"} | ({"_scan_out_1": "z[0:8]"} if chains == 2 else {})
+    sdfg = wired_sdfg(node, arrays, reads, writes)
+
+    with python_backend(), pytest.raises(NotImplementedError, match="CuPy scan"):
+        sdfg.compile()
+
+
 def argmax_sdfg(storage: dace.StorageType, transform: str = "") -> dace.SDFG:
     arrays = {"a": ([9], dace.float64), "v": ([1], dace.float64), "i": ([1], dace.int64)}
     return wired_sdfg(
@@ -734,3 +802,62 @@ def test_a_scan_of_one_element_is_that_element():
         sdfg(x=np.array([4.0]), y=y)
 
     assert y[0] == 4.0
+
+
+if __name__ == "__main__":
+    test_a_matrix_product_is_one_numpy_matmul()
+    test_a_matrix_vector_product_matches_numpy()
+    test_a_dot_product_matches_numpy()
+    test_reductions_along_an_axis_and_over_everything_match_numpy()
+    test_an_einsum_is_one_numpy_einsum()
+    test_a_cholesky_factor_and_a_solve_match_numpy()
+    test_a_gemm_on_gpu_arrays_runs_in_cupy()
+    test_host_arrays_cross_to_the_gpu_and_back_around_a_cupy_call()
+    test_a_batched_matrix_product_matches_numpy()
+    test_an_axpy_matches_numpy()
+    test_a_rank_one_update_matches_numpy()
+    test_a_copy_node_reshapes_into_its_destination()
+    test_a_fill_node_writes_its_constant_everywhere()
+    test_a_gpu_return_value_comes_back_as_a_cupy_array()
+    test_a_dot_product_of_gpu_vectors_lands_in_a_one_element_gpu_array()
+    test_a_tensor_transpose_permutes_and_scales_like_numpy()
+    for indices, expected in [([3, 1, 4, 0, 5, 2], 0), ([3, 1, 4, 1, 5, 2], 1)]:
+        test_a_conflict_check_flags_exactly_the_index_arrays_that_repeat_a_value(indices, expected)
+    test_a_conflict_check_of_gpu_indices_leaves_its_flag_on_the_host()
+    test_a_reduction_without_identity_into_one_element_folds_in_what_it_holds()
+    for name in SCAN_CASES:
+        test_an_inclusive_scan_matches_the_sequential_loop(name)
+    test_an_exclusive_sum_scan_starts_from_zero()
+    for identity, dtype, values, expected in [
+        (str(np.iinfo(np.int64).max), np.int64, [2**62, 5, 7], [np.iinfo(np.int64).max, 2**62, 5]),
+        (sympy.oo, np.float64, [3.0, 1.0, 2.0], [np.inf, 3.0, 1.0]),
+    ]:
+        test_an_exclusive_min_scan_starts_from_its_identity_exactly(identity, dtype, values, expected)
+    test_an_affine_scan_carries_its_seed_through_every_coefficient()
+    test_an_affine_scan_of_gpu_arrays_runs_in_cupy()
+    test_a_strided_affine_scan_carries_each_residue_class_from_its_own_seed()
+    test_a_strided_sum_scan_folds_each_class_from_its_first_element()
+    test_two_chains_scan_independently()
+    for chains, exclusive in [(2, False), (1, True)]:
+        test_a_strided_scan_of_two_chains_or_exclusive_is_refused(chains, exclusive)
+    test_an_argmax_returns_the_first_of_tied_extremes_and_its_value()
+    for tie in ["first", "last"]:
+        test_an_argmax_follows_the_loop_on_nan_data_and_ties(tie)
+    test_an_argmax_of_a_gpu_array_leaves_its_answers_on_the_host()
+    for values, expected in [([1.0, 1, 0, 3, 0, 1, 1, 0, 0], 5), ([1.0, 1, 0, 0, 0, 0, 0, 0, 3], 9)]:
+        test_a_search_returns_the_first_index_in_range_where_the_predicate_holds(values, expected)
+    for predicate, expected in [("0.5 < _a[__i] < 2.0", 2), ("(_a[__i] > 1.0) if __i > 2 else False", 3)]:
+        test_a_search_predicate_holds_lane_by_lane(predicate, expected)
+    test_a_search_over_a_gpu_array_leaves_its_answer_on_the_host()
+    test_a_reduction_without_identity_reads_what_its_output_holds_through_a_connector()
+    for predicate, values, expected in [("_a[__i]", [0, 1, 5], 1), ("not _a[__i]", [-1, 0, 4], 1)]:
+        test_a_search_takes_the_truth_of_a_non_boolean_predicate(predicate, values, expected)
+    test_a_guard_in_a_search_predicate_still_protects_the_read_it_guards()
+    test_a_refused_expansion_leaves_the_node_wired_as_it_was()
+    test_a_transpose_of_an_operand_with_an_extent_one_dim_permutes_every_named_axis()
+    for op, identity, expected in [
+        (ScanOp.MIN, float("inf"), [np.inf, 3.0, 1.0, 1.0]),
+        (ScanOp.AFFINE, 5.0, [3.0, 7.0, 15.0, 31.0]),
+    ]:
+        test_a_scan_starts_from_the_value_the_cpp_expansions_start_from(op, identity, expected)
+    test_a_scan_of_one_element_is_that_element()

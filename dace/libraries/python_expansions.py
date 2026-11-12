@@ -288,17 +288,19 @@ SCAN_FOLDS = {
     scan_node.ScanOp.MAX: "{xp}.maximum",
 }
 SCAN_IDENTITIES = {scan_node.ScanOp.SUM: "0", scan_node.ScanOp.PRODUCT: "1"}
+AFFINE = scan_node.ScanOp.AFFINE
 
 
-def doubling(update: str) -> str:
-    """A prefix fold in log2(n) whole-array steps (Hillis-Steele), ``update`` run at each shift ``__ss``."""
-    return f"__ss = 1\nwhile __ss < __sy.shape[0]:\n    {update}\n    __ss *= 2\n"
+def doubling(update: str, stride: str = "1") -> str:
+    """A prefix fold in log2(n) whole-array steps (Hillis-Steele), ``update`` run at each shift ``__ss``. From the
+    shift ``stride``, each residue class of the index modulo ``stride`` folds on its own."""
+    return f"__ss = {stride}\nwhile __ss < __sy.shape[0]:\n    {update}\n    __ss *= 2\n"
 
 
-def scan_seed(node: scan_node.Scan, dtype: dtypes.typeclass) -> str | None:
+def scan_seed(node: scan_node.Scan, dtype: dtypes.typeclass, chain: int = 0) -> str | None:
     """The value the scan starts from, in the order :func:`~dace.libraries.standard.nodes.scan.chain_seed` picks it."""
-    if scan_node.INIT_CONNECTOR_NAME in node.in_connectors and not node.exclusive:
-        return scan_node.INIT_CONNECTOR_NAME
+    if scan_node.init_connector(chain) in node.in_connectors and not node.exclusive:
+        return scan_node.init_connector(chain)
     if node.op is scan_node.ScanOp.AFFINE:
         return "0"
     if node.identity is not None:
@@ -306,9 +308,12 @@ def scan_seed(node: scan_node.Scan, dtype: dtypes.typeclass) -> str | None:
     return SCAN_IDENTITIES.get(node.op)
 
 
-def value_scan(node: scan_node.Scan, xp: str, seed: str | None) -> str:
+def value_scan(node: scan_node.Scan, xp: str, seed: str | None, stride: str) -> str:
     """The code scanning ``__sy`` in place with one of the scalar ops, from ``seed``."""
     fold = SCAN_FOLDS[node.op].format(xp=xp)
+    if stride != "1":
+        # Each residue class starts from its first element, as the pure expansion's class loop does
+        return doubling(f"__sy[__ss:] = {fold}(__sy[__ss:], __sy[:-__ss])", stride)
     if node.op in CUMULATIVE:
         code = f"__sy = {xp}.{CUMULATIVE[node.op]}(__sy)\n"
     else:
@@ -323,24 +328,38 @@ def value_scan(node: scan_node.Scan, xp: str, seed: str | None) -> str:
 
 
 def scan(o: Operands) -> str:
+    node = o.node
+    strided = not symbolic.equal_valued(1, node.stride)
+    if (node.chains != 1 and strided) or not symbolic.equal_valued(1, node.segments):
+        raise NotImplementedError(f"{node.label}: the CuPy scan takes unit-stride chains or one strided chain")
+    return "\n".join(chain_scan(o, chain) for chain in range(node.chains))
+
+
+def chain_scan(o: Operands, chain: int) -> str:
+    """The code of the independent scan chain ``chain`` of ``o.node``."""
     node, xp = o.node, o.xp
-    if node.chains != 1 or not symbolic.equal_valued(1, node.stride) or not symbolic.equal_valued(1, node.segments):
-        raise NotImplementedError(f"{node.label}: the CuPy scan takes one unit-stride chain over one segment")
-    out = scan_node.OUTPUT_CONNECTOR_NAME
-    seed = scan_seed(node, o.sdfg.arrays[o.outputs[out].data.data].dtype)
+    out = scan_node.out_connector(chain)
+    seed = scan_seed(node, o.sdfg.arrays[o.outputs[out].data.data].dtype, chain)
+    stride = symbolic.symstr(node.stride, cpp_mode=False)
+    if stride != "1" and (node.exclusive or (seed == scan_node.init_connector(chain) and node.op is not AFFINE)):
+        raise NotImplementedError(f"{node.label}: a strided CuPy scan is inclusive and takes no seed but an affine one")
     # One element binds as its value; the scan walks a one-dim array
-    code = f"__sy = {xp}.array({o[scan_node.INPUT_CONNECTOR_NAME]}, ndmin=1)\n"
-    if node.op is scan_node.ScanOp.AFFINE:
+    code = f"__sy = {xp}.array({o[scan_node.in_connector(chain)]}, ndmin=1)\n"
+    if node.op is AFFINE:
         if node.exclusive:
             raise NotImplementedError(f"{node.label}: an exclusive affine scan has no CuPy form")
         # The doubling composes the affine maps ``x -> a*x + b``; the seed enters through the composed slope
-        code += f"__sa = {xp}.array({o[scan_node.COEF_CONNECTOR_NAME]}, ndmin=1)\n"
+        code += f"__sa = {xp}.array({o[scan_node.coef_connector(chain)]}, ndmin=1)\n"
         code += doubling(
-            "__sy[__ss:] = __sa[__ss:] * __sy[:-__ss] + __sy[__ss:]\n    __sa[__ss:] = __sa[__ss:] * __sa[:-__ss]"
+            "__sy[__ss:] = __sa[__ss:] * __sy[:-__ss] + __sy[__ss:]\n    __sa[__ss:] = __sa[__ss:] * __sa[:-__ss]",
+            stride,
         )
+        if stride != "1" and seed == scan_node.init_connector(chain):
+            # One seed per residue class, the carrier's element before the class starts
+            seed = f"{xp}.asarray({o[seed]})[{xp}.arange(__sy.shape[0]) % ({stride})]"
         code += f"__sy = __sy + __sa * ({seed})\n"
     else:
-        code += value_scan(node, xp, seed)
+        code += value_scan(node, xp, seed, stride)
     return code + o.store(out, "__sy[0]" if o.single(out) else "__sy")
 
 
