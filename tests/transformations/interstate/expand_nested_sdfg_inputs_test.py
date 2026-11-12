@@ -415,7 +415,67 @@ def test_widening_an_array_read_and_written_in_place():
     np.testing.assert_array_equal(a, expected)
 
 
+def sliced_through_a_view() -> dace.SDFG:
+    """``out = 2 * rows[k, :] + 1``: the row reaches a two-state nested SDFG through a slice View."""
+    inner = dace.SDFG("doubled_plus_one")
+    inner.add_array("x", [3], dace.float64)
+    inner.add_array("y", [3], dace.float64)
+    double = inner.add_state("double", is_start_block=True)
+    double.add_mapped_tasklet(
+        "double",
+        {"i": "0:3"},
+        {"a": dace.Memlet("x[i]")},
+        "b = 2 * a",
+        {"b": dace.Memlet("y[i]")},
+        external_edges=True,
+    )
+    plus_one = inner.add_state_after(double, "plus_one")
+    plus_one.add_mapped_tasklet(
+        "plus_one",
+        {"i": "0:3"},
+        {"a": dace.Memlet("y[i]")},
+        "b = a + 1",
+        {"b": dace.Memlet("y[i]")},
+        external_edges=True,
+    )
+
+    sdfg = dace.SDFG("sliced_through_a_view")
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_array("rows", [4, 3], dace.float64)
+    sdfg.add_array("out", [3], dace.float64)
+    sdfg.add_view("row", [3], dace.float64)
+    state = sdfg.add_state()
+    row = state.add_access("row")
+    nested = state.add_nested_sdfg(inner, {"x"}, {"y"})
+    state.add_edge(state.add_read("rows"), None, row, "views", dace.Memlet("rows[k, 0:3]"))
+    state.add_edge(row, None, nested, "x", dace.Memlet("row[0:3]"))
+    state.add_edge(nested, "y", state.add_write("out"), None, dace.Memlet("out[0:3]"))
+    return sdfg
+
+
+def test_a_slice_view_feeding_a_nested_sdfg_is_bypassed_so_the_nested_sdfg_inlines():
+    """``InlineMultistateSDFG`` refuses a View at the boundary; a slice View is a window of the array it views, so the
+    nested SDFG reads that window directly and inlines (qe_vexx_k kept such a nested SDFG at the top of a state)."""
+    from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
+
+    sdfg = sliced_through_a_view()
+    sdfg.validate()
+    rows = np.arange(12, dtype=np.float64).reshape(4, 3)
+
+    widened = sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, options={"top_level_only": True})
+    inlined = sdfg.apply_transformations_repeated(InlineMultistateSDFG)
+
+    assert widened > 0 and inlined == 1
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert "row" not in {n.data for state in sdfg.states() for n in state.data_nodes()}
+    sdfg.validate()
+    out = np.zeros(3)
+    sdfg(rows=rows, out=out, k=2)
+    assert np.array_equal(out, 2 * rows[2] + 1)
+
+
 if __name__ == "__main__":
     test_expand_nested_sdfg_inputs_column_scalar_uncollapse_e2e()
     test_expand_terminates_on_wcr_reduction_out_edge()
     test_expand_nested_sdfg_inputs()
+    test_a_slice_view_feeding_a_nested_sdfg_is_bypassed_so_the_nested_sdfg_inlines()

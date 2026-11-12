@@ -123,6 +123,55 @@ def _container_window(
     return outer_subset, [(e + 1 - b) // s == 1 for (b, e, s) in as_range(outer_subset).ranges]
 
 
+def viewed_window(state: SDFGState, edge: MultiConnectorEdge) -> tuple[nodes.AccessNode, Range] | None:
+    """The array node a slice View on ``edge``'s source views, and the window of that array ``edge`` reads.
+
+    A slice View is a unit-step window of an array with the array's own strides, its one-element dimensions
+    dropped (``rows[k, 0:M]`` as ``[M]``): reading it is reading the window. ``None`` for anything else: no View,
+    a View of a View, a reshape, a strided window.
+    """
+    view_node = edge.src
+    if not isinstance(view_node, nodes.AccessNode):
+        return None
+    view = view_node.desc(state.sdfg)
+    feeds = state.in_edges(view_node)
+    if not isinstance(view, data.ArrayView) or len(feeds) != 1 or feeds[0].dst_conn != "views":
+        return None
+    base_node, memlet = feeds[0].src, feeds[0].data
+    if not isinstance(base_node, nodes.AccessNode) or edge.data.other_subset is not None:
+        return None
+    base = base_node.desc(state.sdfg)
+    window = memlet.subset if memlet.data == base_node.data else memlet.other_subset
+    if isinstance(base, data.View) or not isinstance(window, Range) or len(window) != len(base.shape):
+        return None
+    kept = [dim for dim, (b, e, s) in enumerate(window.ranges) if (e + 1 - b) // s != 1]
+    if (
+        any(s != 1 for _, _, s in window.ranges)
+        or len(kept) != len(view.shape)
+        or any(symbolic.simplify(window.size()[dim] - size) != 0 for dim, size in zip(kept, view.shape))
+        or any(symbolic.simplify(base.strides[dim] - stride) != 0 for dim, stride in zip(kept, view.strides))
+    ):
+        return None
+    read = iter(as_range(edge.data.subset).ranges)
+    inside = Range([next(read) if dim in kept else (0, 0, 1) for dim in range(len(window))])
+    return base_node, window.compose(inside)
+
+
+def bypass_slice_views(state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> None:
+    """Every input of ``nsdfg_node`` that reads a slice View reads the window of the viewed array instead
+    (:func:`viewed_window`); a View nothing else reads goes. ``InlineMultistateSDFG`` refuses a View at the
+    boundary, and the widening below gives the connector the viewed array."""
+    for edge in state.in_edges(nsdfg_node):
+        viewed = viewed_window(state, edge)
+        if viewed is None:
+            continue
+        base_node, window = viewed
+        state.remove_edge(edge)
+        state.add_edge(base_node, None, nsdfg_node, edge.dst_conn, Memlet(data=base_node.data, subset=window))
+        if state.out_degree(edge.src) == 0:
+            state.remove_node(edge.src)
+
+
 def _collect_read_subsets(state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> dict[str, tuple[str, Range]]:
     """Collect the original read subsets on every NSDFG input edge, keyed
     by the inner connector name. Used for the Map-scope case to capture
@@ -713,6 +762,8 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
             outer_arr = sdfg.arrays.get(edge.data.data)
             if outer_arr is None:
                 continue
+            if edge.dst is nsdfg_node and viewed_window(state, edge) is not None:
+                return True
             if edge.data.subset != _full_subset(sdfg, edge.data.data):
                 return True
             # A whole-array edge can still bind a connector of lower rank (``mass[0:N, 0]`` of an
@@ -725,6 +776,7 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
     def apply(self, state: SDFGState, sdfg: SDFG) -> None:
         nsdfg_node = self.nested_sdfg
         inner = nsdfg_node.sdfg
+        bypass_slice_views(state, nsdfg_node)
 
         # Offset symbols to propagate outer→NSDFG (into ``symbol_mapping`` + inner ``symbols``
         # so inner memlet refs validate).
