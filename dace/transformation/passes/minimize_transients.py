@@ -192,6 +192,10 @@ class Coalescing:
             return None
         # Library nodes address the buffer through its strides; element memlets do not.
         laid_out = all(symbolic.equal(desc.strides[t], target.strides[d]) is True for t, d in zip(kept, dims))
+        # The transient's contiguous dimension stays contiguous: on a strided one every access of it would be strided.
+        contiguous = kept and symbolic.equal(desc.strides[kept[-1]], 1) is True
+        if contiguous and symbolic.equal(target.strides[dims[-1]], 1) is not True:
+            return None
         # A nested SDFG keeps its own descriptor of the buffer: right only if the container is laid out like it.
         twin = (
             laid_out
