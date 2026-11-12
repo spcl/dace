@@ -2330,6 +2330,69 @@ def test_two_overlapping_producers_of_a_reused_transient_still_refuse():
     assert sdfg.number_of_nodes() == 2
 
 
+def _writer_reaches_every_reader(state, name: str) -> bool:
+    """Whether the node writing ``name`` reaches every scope reading it in ``state``."""
+    writers = [n for n in state.data_nodes() if n.data == name and state.in_degree(n) > 0]
+    readers = [e.dst for n in state.data_nodes() if n.data == name for e in state.out_edges(n)]
+    return all(any(nx.has_path(state._nx, w, r) for w in writers) for r in readers)
+
+
+def test_a_container_both_states_write_is_ordered_by_its_write_write_edge():
+    """``first``: ``A = inp + 1; B = 3 * inp`` in one scope; ``second``: ``A = 2 * B``. The first ``A`` write reaches
+    no match, so only a write-write edge orders it before the second's: the states fuse and ``A`` ends as ``6 * inp``.
+    """
+    sdfg = SDFG("sfx_unmatched_rewrite")
+    for name in ("inp", "A", "B"):
+        sdfg.add_array(name, [8], dtypes.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    first.add_mapped_tasklet(
+        "both",
+        {"j": "0:8"},
+        {"a": Memlet("inp[j]")},
+        "x = a + 1\ny = 3 * a",
+        {"x": Memlet("A[j]"), "y": Memlet("B[j]")},
+        external_edges=True,
+    )
+    second = sdfg.add_state_after(first, "second")
+    second.add_mapped_tasklet(
+        "rewrite", {"j": "0:8"}, {"b": Memlet("B[j]")}, "x = 2 * b", {"x": Memlet("A[j]")}, external_edges=True
+    )
+    inp = np.arange(8, dtype=np.float64)
+    _aggressive_fusion_matches(sdfg, inp=inp, A=np.zeros(8), B=np.zeros(8))
+    fused = copy.deepcopy(sdfg)
+    fused.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
+    state = fused.start_state
+    first_a, second_a = (
+        next(n for n in state.data_nodes() if n.data == "A" and state.in_edges(n)[0].src.label == label)
+        for label in ("both", "rewrite")
+    )
+    assert nx.has_path(state._nx, first_a, second_a)
+
+
+def test_two_reads_of_one_container_bind_to_its_one_writer():
+    """``first`` writes ``A``; ``second`` reads it through two access nodes. Both bind to the first state's ``A``."""
+    sdfg = SDFG("sfx_duplicate_sources")
+    for name in ("inp", "A", "y", "z"):
+        sdfg.add_array(name, [8], dtypes.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    first.add_mapped_tasklet(
+        "write", {"j": "0:8"}, {"a": Memlet("inp[j]")}, "b = a + 1", {"b": Memlet("A[j]")}, external_edges=True
+    )
+    second = sdfg.add_state_after(first, "second")
+    second.add_mapped_tasklet(
+        "twice", {"j": "0:8"}, {"a": Memlet("A[j]")}, "b = 2 * a", {"b": Memlet("y[j]")}, external_edges=True
+    )
+    second.add_mapped_tasklet(
+        "plus", {"j": "0:8"}, {"a": Memlet("A[j]")}, "b = a + 3", {"b": Memlet("z[j]")}, external_edges=True
+    )
+    assert len([n for n in second.source_nodes() if n.data == "A"]) == 2
+    inp = np.arange(8, dtype=np.float64)
+    _aggressive_fusion_matches(sdfg, inp=inp, A=np.zeros(8), y=np.zeros(8), z=np.zeros(8))
+    fused = copy.deepcopy(sdfg)
+    fused.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
+    assert _writer_reaches_every_reader(fused.start_state, "A")
+
+
 if __name__ == "__main__":
     test_aggressive_fusion_orders_only_the_first_writer_the_overwrite_overlaps()
     test_a_node_only_an_ordering_edge_enters_is_no_writer()
@@ -2383,3 +2446,5 @@ if __name__ == "__main__":
     test_reader_of_a_rewritten_container_stays_ordered_after_its_writer()
     test_a_node_entered_by_an_ordering_edge_is_no_second_producer()
     test_two_overlapping_producers_of_a_reused_transient_still_refuse()
+    test_a_container_both_states_write_is_ordered_by_its_write_write_edge()
+    test_two_reads_of_one_container_bind_to_its_one_writer()
