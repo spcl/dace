@@ -126,9 +126,32 @@ def test_a_heap_intermediate_inside_a_map_inside_a_loop_goes_on_the_stack():
     assert np.allclose(out, 3 * w)
 
 
+
+def test_only_host_register_arrays_of_a_device_program_are_pinned():
+    """A host map's register scratch goes on the stack as on the CPU; a kernel's stays for MoveArrayOutOfKernel."""
+    from dace.transformation.passes.canonicalize.finalize import force_registers
+
+    sdfg = dace.SDFG("pin_host_registers")
+    sdfg.add_array("a", ["N"], dace.float64)
+    for name in ("host", "dev"):
+        sdfg.add_transient(name, ["N"], dace.float64, storage=dtypes.StorageType.Register)
+    state = sdfg.add_state()
+    for name, schedule in (("host", dtypes.ScheduleType.CPU_Multicore), ("dev", dtypes.ScheduleType.GPU_Device)):
+        entry, exit_ = state.add_map(f"m_{name}", {"i": "0:N"}, schedule=schedule)
+        put = state.add_tasklet(f"put_{name}", {"v"}, {"o"}, "o = v")
+        state.add_memlet_path(state.add_read("a"), entry, put, dst_conn="v", memlet=dace.Memlet("a[i]"))
+        state.add_memlet_path(put, exit_, state.add_write(name), src_conn="o", memlet=dace.Memlet(f"{name}[i]"))
+        inner = state.add_access(name)
+        state.add_nedge(entry, inner, dace.Memlet())
+        state.add_nedge(inner, exit_, dace.Memlet())
+    assert force_registers(sdfg, host_only=True) == 1
+    assert sdfg.arrays["host"].storage.force and not sdfg.arrays["dev"].storage.force
+
+
 if __name__ == "__main__":
     for small in [True, False]:
         test_a_scratch_sized_by_the_iteration_goes_on_the_stack(small)
     test_a_scratch_the_loop_does_not_resize_is_allocated_once_per_call()
     test_a_scratch_an_inner_loop_reads_goes_on_the_stack()
     test_a_heap_intermediate_inside_a_map_inside_a_loop_goes_on_the_stack()
+    test_only_host_register_arrays_of_a_device_program_are_pinned()
