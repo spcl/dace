@@ -494,8 +494,14 @@ def accumulate_in_registers(state: SDFGState, entry: nodes.MapEntry) -> None:
         out = {"__out": Memlet(f"{acc.data}[{index}]")}
         if ranges:
             _, first, _ = state.add_mapped_tasklet(
-                "accumulator_init", ranges, {}, f"__out = {identity}", out, external_edges=True,
-                output_nodes={acc.data: seeded}, schedule=dtypes.ScheduleType.Sequential
+                "accumulator_init",
+                ranges,
+                {},
+                f"__out = {identity}",
+                out,
+                external_edges=True,
+                output_nodes={acc.data: seeded},
+                schedule=dtypes.ScheduleType.Sequential,
             )
         else:
             first = state.add_tasklet("accumulator_init", {}, {"__out"}, f"__out = {identity}")
