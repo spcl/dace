@@ -179,15 +179,19 @@ class MakeTransientsPersistent(ppl.Pass):
                     and nsdfg.arrays[dnode.root_data].lifetime != dtypes.AllocationLifetime.Persistent
                 ):
                     continue
-                # A single element gains nothing from the state struct, and a persistent scalar has no
-                # state-struct form in the code generator.
+                # A single host element gains nothing from the state struct, and a persistent scalar has no
+                # state-struct form in the code generator. A single device element is a device allocation per
+                # execution otherwise; one zeroed on allocation keeps it, the zeroing being per execution.
                 if (
                     dnode.data in nsdfg.constants_prop
                     or not desc.transient
                     or type(desc) is not dt.Array
                     or desc.storage not in PERSISTENT_STORAGES
                     or desc.lifetime in STRONGER_THAN_PERSISTENT
-                    or all(is_unit(extent, unit_extents) for extent in desc.shape)
+                    or (
+                        all(is_unit(extent, unit_extents) for extent in desc.shape)
+                        and (desc.storage != dtypes.StorageType.GPU_Global or dnode.setzero)
+                    )
                 ):
                     refused.add(dnode.data)
                     continue

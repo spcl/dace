@@ -178,6 +178,33 @@ def test_a_buffer_under_a_parallel_map_is_not_promoted():
     assert MakeTransientsPersistent().apply_pass(sdfg, {}) is None
 
 
+
+def unit_buffer(name: str, storage: dace.StorageType, setzero: bool = False) -> dace.SDFG:
+    """``buf[0] = a[0] * 2; out[0] = buf[0]`` through the one-element transient ``buf`` in ``storage``."""
+    sdfg = loop_with_transient(name, [1])
+    sdfg.arrays["buf"].storage = storage
+    next(n for s in sdfg.states() for n in s.data_nodes() if n.data == "buf").setzero = setzero
+    return sdfg
+
+
+def test_a_single_device_element_is_promoted():
+    """One device element is otherwise a device allocation and free per execution of its scope."""
+    sdfg = unit_buffer("persist_unit_device", dace.StorageType.GPU_Global)
+    assert MakeTransientsPersistent().apply_pass(sdfg, {})[sdfg.cfg_id] == {"buf"}
+    assert sdfg.arrays["buf"].lifetime == dace.AllocationLifetime.Persistent
+
+
+def test_a_single_host_or_zeroed_device_element_is_not_promoted():
+    """A host element is a stack scalar already; a zeroed device element is zeroed per execution of its scope."""
+    for name, storage, setzero in (
+        ("persist_unit_host", dace.StorageType.CPU_Heap, False),
+        ("persist_unit_device_zeroed", dace.StorageType.GPU_Global, True),
+    ):
+        sdfg = unit_buffer(name, storage, setzero)
+        assert MakeTransientsPersistent().apply_pass(sdfg, {}) is None
+        assert sdfg.arrays["buf"].lifetime == dace.AllocationLifetime.Scope
+
+
 if __name__ == "__main__":
     test_free_symbol_sized_transient_is_promoted()
     test_the_auto_optimize_helper_delegates()
@@ -188,3 +215,5 @@ if __name__ == "__main__":
     test_stronger_lifetimes_are_not_demoted()
     test_a_buffer_under_sequential_maps_only_is_promoted()
     test_a_buffer_under_a_parallel_map_is_not_promoted()
+    test_a_single_device_element_is_promoted()
+    test_a_single_host_or_zeroed_device_element_is_not_promoted()
