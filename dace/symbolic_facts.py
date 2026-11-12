@@ -70,6 +70,8 @@ class DataFactKind(enum.Enum):
     #: The entries are pairwise distinct within each segment ``[segments[r], segments[r + 1])`` (unique column
     #: indices in every row of a CSR matrix whose row pointers are ``segments``).
     SEGMENT_INJECTIVE = enum.auto()
+    #: Every entry lies in ``[lo, hi]``; a side that is None is open.
+    BOUNDED = enum.auto()
 
 
 class DataFact(NamedTuple):
@@ -103,6 +105,8 @@ class DataFact(NamedTuple):
             return f"{array} nondecreasing on [{self.lo}, {self.hi}]"
         if self.kind is DataFactKind.SEGMENT_INJECTIVE:
             return f"{array} injective within each segment of {self.segments}"
+        if self.kind is DataFactKind.BOUNDED:
+            return f"{array} in [{'-oo' if self.lo is None else self.lo}, {'oo' if self.hi is None else self.hi}]"
         return f"{array} nonnegative"
 
 
