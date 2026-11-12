@@ -279,9 +279,10 @@ class InlineSDFG(transformation.SingleStateTransformation):
             # Inner indices address the outer container itself, whichever part of it each edge covers
             if not desc.is_equivalent(sdfg.arrays[imem.data]):
                 continue
-            # Inner access nodes must not be in a scope or copy from/to data other than views of the connector
+            # One inner access node must be outside every scope, where the outer paths reattach; none may copy from/to
+            # data other than views of the connector
             accesses = [n for n in nstate.data_nodes() if n.data == conn]
-            if not accesses or any(nstate.entry_node(n) is not None for n in accesses):
+            if all(nstate.entry_node(n) is not None for n in accesses):
                 continue
             if any(
                 not _is_view_of(nstate, neighbor, n)
@@ -986,8 +987,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
         }
         removed_out_edges = self._remove_edge_path(state, outputs, unsunk_outputs - set(scope_outputs), reverse=False)
 
-        # Re-add in/out edges to first/last nodes in subgraph
-        order = [x for x in nx.topological_sort(nstate._nx) if isinstance(x, nodes.AccessNode)]
+        # Re-add in/out edges to first/last nodes in subgraph, outside every scope of it
+        top = nstate.scope_dict()
+        order = [x for x in nx.topological_sort(nstate._nx) if isinstance(x, nodes.AccessNode) and top[x] is None]
         for edge in removed_in_edges:
             # Find first access node that refers to this edge
             try:
