@@ -425,15 +425,22 @@ def small_indexing_axes(state: SDFGState, entry: nodes.MapEntry, indexing: set[s
     return all(small[p] for p in indexing) and any(not small[p] for p in small if p not in indexing)
 
 
-def share_out_indexing_axes(state: SDFGState, entry: nodes.MapEntry, indexing: set[str]) -> None:
+def share_out_indexing_axes(state: SDFGState, entry: nodes.MapEntry, indexing: set[str]) -> nodes.MapEntry:
     """Move the ``indexing`` axes of ``entry`` to the front and split the reduced ones off into an inner
-    ``Sequential`` map: ``entry`` keeps the indexing axes, collapsed. Inverted when those axes are SMALL
+    ``Sequential`` map: ``entry`` keeps the indexing axes, collapsed, unless one of them is contiguous
+    (:func:`stripe_inside_reduced_axes`). Inverted when those axes are SMALL
     (:func:`small_indexing_axes`): ``entry`` becomes a ``Sequential`` loop over them around a ``CPU_Multicore`` map
-    over the reduced axes (module docstring, rule 2)."""
+    over the reduced axes (module docstring, rule 2).
+
+    :returns: the map entry sharing out the indexing axes.
+    """
     from dace.transformation.dataflow import MapDimShuffle, MapExpansion  # Avoid an import cycle
 
     order = [p for p in entry.map.params if p in indexing] + [p for p in entry.map.params if p not in indexing]
     inverted = small_indexing_axes(state, entry, indexing)
+    axis = None if inverted else contiguous_indexing_axis(state, entry, indexing)
+    if axis is not None:
+        return stripe_inside_reduced_axes(state, entry, indexing, axis)
     if order != entry.map.params:
         MapDimShuffle.apply_to(state.sdfg, map_entry=entry, options={"parameters": order}, save=False)
     if inverted:
@@ -448,7 +455,7 @@ def share_out_indexing_axes(state: SDFGState, entry: nodes.MapEntry, indexing: s
             inner.map.schedule = dtypes.ScheduleType.Sequential
             inner = next(e.dst for e in state.out_edges(inner) if isinstance(e.dst, nodes.MapEntry))
         inner.map.schedule = dtypes.ScheduleType.CPU_Multicore
-        return
+        return entry
     MapExpansion.apply_to(
         state.sdfg,
         map_entry=entry,
@@ -457,6 +464,7 @@ def share_out_indexing_axes(state: SDFGState, entry: nodes.MapEntry, indexing: s
     )
     entry.map.collapse = len(indexing)
     accumulate_in_registers(state, entry)
+    return entry
 
 
 def accumulate_in_registers(state: SDFGState, entry: nodes.MapEntry) -> None:
@@ -508,6 +516,83 @@ def accumulate_in_registers(state: SDFGState, entry: nodes.MapEntry) -> None:
             state.add_edge(first, "__out", seeded, None, out["__out"])
         state.add_nedge(entry, first, Memlet())
         state.add_nedge(seeded, inner, Memlet())
+
+
+def contiguous_indexing_axis(state: SDFGState, entry: nodes.MapEntry, indexing: set[str]) -> str | None:
+    """The indexing axis of ``entry`` the body reads at a smaller stride than every reduced axis (by the scores of
+    :func:`~dace.transformation.passes.minimize_stride_permutation.min_stride_order`: at most, and not the same
+    stride, since an extent may be one), when the top-level SDFG's
+    thread count sizes its stripes; else ``None``. Sharing it out whole walks the reduced axes across the
+    contiguous one: a column argmax reading ``h[i0, i1]`` down each column ``i1``."""
+    from dace.transformation.passes.minimize_stride_permutation import (  # Avoid an import cycle
+        UndecidableStride,
+        score_indexed_strides,
+        stride_difference_sign,
+    )
+
+    if symbolic.NUM_THREADS_SYMBOL not in state.sdfg.symbols:
+        return None
+    params = entry.map.params
+    body = state.scope_subgraph(entry, include_entry=True, include_exit=True)
+    scores = score_indexed_strides(body.edges(), state.sdfg, params)
+    try:
+        axes = [
+            p
+            for p in params
+            if p in indexing
+            and all(
+                scores[p][0] != scores[r][0] and stride_difference_sign(scores[p][0], scores[r][0]) <= 0
+                for r in params
+                if r not in indexing
+            )
+        ]
+    except UndecidableStride:
+        return None
+    return axes[-1] if axes else None
+
+
+def stripe_inside_reduced_axes(
+    state: SDFGState, entry: nodes.MapEntry, indexing: set[str], axis: str
+) -> nodes.MapEntry:
+    """Share ``entry``'s indexing axes out with ``axis`` cut into stripes (the strip-mined tile of
+    :func:`~dace.transformation.passes.cpu_specialization.strip_mine_interchange.tile_size`), and walk the reduced
+    axes, then the stripe of ``axis``, in an inner ``Sequential`` map: every write stays in the one iteration owning
+    its stripe, and the innermost loop runs along the contiguous axis.
+
+    :returns: the map entry sharing out the stripes and the other indexing axes.
+    """
+    from dace.transformation.dataflow import MapCollapse, MapDimShuffle, MapExpansion, StripMining
+    from dace.transformation.passes.cpu_specialization.strip_mine_interchange import Cut, tile_size
+
+    sdfg, params, schedule = state.sdfg, entry.map.params, entry.map.schedule
+    body = state.scope_subgraph(entry)
+    per_position = sum(
+        sdfg.arrays[e.data.data].dtype.bytes
+        for e in body.edges()
+        if not e.data.is_empty() and axis in {str(s) for s in e.data.subset.free_symbols}
+    )
+    tile = tile_size(Cut([], entry.map.range.size()[params.index(axis)], True, per_position))
+    StripMining.apply_to(
+        sdfg, map_entry=entry, options={"dim_idx": params.index(axis), "tile_size": tile}, save=False
+    )
+    stripes = state.entry_node(entry)
+    others = [p for p in entry.map.params if p in indexing and p != axis]
+    order = others + [p for p in entry.map.params if p not in indexing] + [axis]
+    MapDimShuffle.apply_to(sdfg, map_entry=entry, options={"parameters": order}, save=False)
+    inner = entry
+    if others:
+        MapExpansion.apply_to(
+            sdfg,
+            map_entry=entry,
+            options={"inner_schedule": dtypes.ScheduleType.Sequential, "split_at": len(others)},
+            save=False,
+        )
+        inner = next(e.dst for e in state.out_edges(entry) if isinstance(e.dst, nodes.MapEntry))
+        stripes, _ = MapCollapse.apply_to(sdfg, outer_map_entry=stripes, inner_map_entry=entry, save=False)
+    stripes.map.schedule = schedule
+    stripes.map.collapse = len(indexing)
+    inner.map.schedule = dtypes.ScheduleType.Sequential
+    return stripes
 
 
 @properties.make_properties
@@ -666,7 +751,7 @@ class DecideCpuParallelAxes(ppl.Pass):
             return False, False
         reshaped = False
         if node.map.collapse <= 1 and (indexing := reduction_output_params(state, node)) is not None:
-            share_out_indexing_axes(state, node, indexing)
+            node = share_out_indexing_axes(state, node, indexing)
             self.pinned += 1
             reshaped = True
             children = state.scope_children()

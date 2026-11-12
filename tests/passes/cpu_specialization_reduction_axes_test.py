@@ -9,7 +9,7 @@ to ``a[i]`` over ``j``. Shared out by ``j``, every thread wrote every ``a[i]`` t
 import numpy as np
 
 import dace
-from dace import dtypes
+from dace import dtypes, symbolic
 from dace.sdfg import nodes
 from dace.symbolic import Scale
 from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import DecideCpuParallelAxes
@@ -194,6 +194,37 @@ def test_an_output_the_reduced_walk_reads_keeps_accumulating_in_memory():
     assert DecideCpuParallelAxes().apply_pass(sdfg, {}) == 1
     assert not [n for n, d in sdfg.arrays.items() if d.transient and d.storage == dtypes.StorageType.Register]
 
+def test_a_contiguous_indexing_axis_is_shared_out_in_stripes_walked_inside_the_reduced_axis():
+    """rayleigh_ritz_rotation's column argmax: ``m[j] = max_i |h[i, j]|`` shares out ``j``, the contiguous axis.
+    Whole, each thread walks one column down ``i`` at stride ``N``; in stripes of ``j`` it walks ``i`` outside and
+    the stripe inside, along the rows, and still owns every element it writes."""
+    sdfg = dace.SDFG("cpu_reduction_axes_column_peak")
+    sdfg.add_symbol(symbolic.NUM_THREADS_SYMBOL, dace.int64)
+    sdfg.add_array("h", [N, 3 * N], dace.float64)
+    sdfg.add_array("m", [3 * N], dace.float64)
+    sdfg.add_state().add_mapped_tasklet(
+        "peak",
+        {"i": f"0:{N}", "j": f"0:{3 * N}"},
+        {"v": dace.Memlet("h[i, j]")},
+        "out = abs(v)",
+        {"out": dace.Memlet("m[j]", wcr="lambda x, y: max(x, y)")},
+        schedule=dtypes.ScheduleType.CPU_Multicore,
+        external_edges=True,
+    )
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) == 1
+    entries = [node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, nodes.MapEntry)]
+    schedules = sorted((len(e.map.params), e.map.schedule) for e in entries)
+    assert schedules == [(1, dtypes.ScheduleType.CPU_Multicore), (2, dtypes.ScheduleType.Sequential)], schedules
+    inner = next(e for e in entries if e.map.schedule == dtypes.ScheduleType.Sequential)
+    assert inner.map.params == ["i", "j"], inner.map.params
+    code = "".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "atomic" not in code, "each stripe is one iteration's own"
+
+    h = np.random.default_rng(11).standard_normal((N, 3 * N))
+    m = np.zeros(3 * N)
+    sdfg(h=h, m=m)
+    np.testing.assert_allclose(m, np.abs(h).max(axis=0))
+
 
 if __name__ == "__main__":
     test_the_reduced_axis_becomes_an_inner_sequential_loop_and_the_write_needs_no_atomic()
@@ -202,3 +233,4 @@ if __name__ == "__main__":
     test_a_reduction_indexed_by_a_small_axis_loops_over_it_outside_one_parallel_map()
     test_the_reduced_walk_accumulates_in_a_register_and_resolves_into_the_output_once()
     test_an_output_the_reduced_walk_reads_keeps_accumulating_in_memory()
+    test_a_contiguous_indexing_axis_is_shared_out_in_stripes_walked_inside_the_reduced_axis()
