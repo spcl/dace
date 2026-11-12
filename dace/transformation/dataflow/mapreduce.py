@@ -2,7 +2,12 @@
 """Contains classes and functions that implement the map-reduce-fusion
 transformation."""
 
+from typing import Any
+
+import sympy
+
 from dace import data as dt
+from dace import subsets
 from dace.memlet import Memlet
 from dace.properties import Property, make_properties
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -194,6 +199,15 @@ class MapReduceFusion(pm.SingleStateTransformation):
         )
         tmap_entry = graph.entry_node(tmap_exit)
         scope = graph.entry_node(tmap_entry)
+        # A top-level outer map whose every iteration reduces into a tile of its own writes the identity over all the
+        # tiles once, ahead of it: its body is then the fused map alone, which collapses into it (gem's point blocks).
+        tiles = tile_union(array_edge.data.subset, scope.map) if scope and not graph.entry_node(scope) else None
+        if tiles is not None and not any(
+            name is None or name == array_edge.data.data
+            for name, _ in mfhelper.scope_accesses(graph, scope, graph.exit_node(scope))[0]
+        ):
+            init_args = (init_args[0], [(f"o{i}", f"{b}:{e + 1}") for i, (b, e) in enumerate(tiles)], *init_args[2:])
+            scope = None
         if scope is None:
             graph.parent_graph.add_state_before(graph).add_mapped_tasklet(*init_args, external_edges=True)
             return
@@ -205,6 +219,32 @@ class MapReduceFusion(pm.SingleStateTransformation):
         )
         graph.add_nedge(scope, init_entry, Memlet())
         graph.add_nedge(init_out, tmap_entry, Memlet())
+
+
+def tile_union(subset, outer: nodes.Map) -> list[tuple[Any, Any]] | None:
+    """The ``(begin, end)`` ranges ``subset`` covers over all iterations of ``outer``, when they partition it: every
+    dimension is either the same in every iteration or a tile ``c*p + a : c*p + a + c`` of one parameter ``p``, both
+    unit-step, and every parameter tiles one dimension. ``None`` otherwise (iterations overlap, or leave gaps)."""
+    if not isinstance(subset, subsets.Range):
+        return None
+    ranges = dict(zip(outer.params, outer.range))
+    tiles, used = [], set()
+    for begin, end, step in subset:
+        begin, end = sympy.sympify(begin), sympy.sympify(end)
+        tiled = [s for s in begin.free_symbols | end.free_symbols if str(s) in ranges]
+        if not tiled:
+            tiles.append((begin, end))
+            continue
+        p = tiled[0]
+        lo, hi, outer_step = ranges[str(p)]
+        extent, coef = sympy.simplify(end - begin + 1), sympy.diff(begin, p)
+        if len(tiled) > 1 or str(p) in used or step != 1 or outer_step != 1 or sympy.simplify(coef - extent) != 0:
+            return None
+        if any(str(s) in ranges for s in extent.free_symbols | coef.free_symbols):
+            return None
+        used.add(str(p))
+        tiles.append((begin.subs(p, lo), end.subs(p, hi)))
+    return tiles if len(used) == len(ranges) else None
 
 
 class MapWCRFusion(pm.SingleStateTransformation):

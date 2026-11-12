@@ -56,6 +56,41 @@ def test_the_reduced_axis_becomes_an_inner_sequential_loop_and_the_write_needs_n
     np.testing.assert_allclose(a, expected, rtol=1e-12)
 
 
+def test_every_indexing_axis_is_shared_out_in_one_collapsed_map():
+    """gem's blocks of points, reduced over atoms: ``sums[128*b + i]`` is indexed by ``b`` and ``i``. Sharing out
+    ``b`` alone leaves threads idle when blocks are few; both go into one parallel map, collapsed, ``j`` inside."""
+    sdfg = dace.SDFG("cpu_reduction_axes_blocks")
+    sdfg.add_symbol("B", dace.int64)
+    sdfg.add_array("x", ["128 * B", N], dace.float64)
+    sdfg.add_array("sums", ["128 * B"], dace.float64)
+    sdfg.add_state().add_mapped_tasklet(
+        "block_sums",
+        {"b": "0:B", "i": "0:128", "j": f"0:{N}"},
+        {"v": dace.Memlet("x[128*b + i, j]")},
+        "out = v",
+        {"out": dace.Memlet("sums[128*b + i]", wcr="lambda x, y: x + y")},
+        schedule=dtypes.ScheduleType.CPU_Multicore,
+        external_edges=True,
+    )
+    assert SequentializeReductionAxes().apply_pass(sdfg, {}) == 1
+    maps = sorted(
+        (node.map.params, node.map.schedule, node.map.collapse)
+        for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, nodes.MapEntry)
+    )
+    assert maps == [
+        (["b", "i"], dtypes.ScheduleType.CPU_Multicore, 2),
+        (["j"], dtypes.ScheduleType.Sequential, 1),
+    ], maps
+    code = "".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "collapse(2)" in code and "atomic" not in code
+
+    x = np.random.default_rng(20261112).random((256, N))
+    sums = np.ones(256)
+    sdfg(x=x, sums=sums, B=2)
+    np.testing.assert_allclose(sums, 1.0 + x.sum(axis=1), rtol=1e-12)
+
+
 def test_a_reduction_to_one_element_is_left_to_the_openmp_reduction_clause():
     sdfg = dace.SDFG("cpu_reduction_axes_scalar")
     sdfg.add_array("a", [N, N], dace.float64)
@@ -108,5 +143,6 @@ def test_a_reduction_indexed_by_a_small_axis_loops_over_it_outside_one_parallel_
 
 if __name__ == "__main__":
     test_the_reduced_axis_becomes_an_inner_sequential_loop_and_the_write_needs_no_atomic()
+    test_every_indexing_axis_is_shared_out_in_one_collapsed_map()
     test_a_reduction_to_one_element_is_left_to_the_openmp_reduction_clause()
     test_a_reduction_indexed_by_a_small_axis_loops_over_it_outside_one_parallel_map()

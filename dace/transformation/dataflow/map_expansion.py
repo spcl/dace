@@ -43,6 +43,14 @@ class MapExpansion(pm.SingleStateTransformation):
         allow_none=True,
         default=None,
     )
+    split_at = Property(
+        category="Parameters",
+        desc="If set, split into exactly two maps instead: the first ``split_at`` dimensions outside (keeping the "
+        "schedule), the rest inside (``inner_schedule``).",
+        dtype=int,
+        allow_none=True,
+        default=None,
+    )
 
     @classmethod
     def expressions(cls):
@@ -59,6 +67,17 @@ class MapExpansion(pm.SingleStateTransformation):
         return self.map_entry.map.get_param_num() > 1
 
     def generate_new_maps(self, current_map: nodes.Map):
+        if self.split_at is not None and 0 < self.split_at < current_map.get_param_num():
+            k, ranges, tiles = self.split_at, current_map.range.ranges, current_map.range.tile_sizes
+            outer = nodes.Map(current_map.label, current_map.params[:k], subsets.Range(ranges[:k]))
+            inner = nodes.Map(
+                current_map.label + "_inner",
+                current_map.params[k:],
+                subsets.Range(ranges[k:]),
+                schedule=self.inner_schedule or current_map.schedule,
+            )
+            outer.range.tile_sizes, inner.range.tile_sizes = tiles[:k], tiles[k:]
+            return [outer, inner]
         if self.expansion_limit is None:
             full_expand = True
         elif isinstance(self.expansion_limit, int):
