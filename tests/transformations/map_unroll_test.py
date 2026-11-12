@@ -2,6 +2,7 @@
 import numpy as np
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.dataflow import MapUnroll
 
 
@@ -70,6 +71,42 @@ def test_gpu_map_declined_unless_permissive():
     assert MapUnroll.can_be_applied_to(sdfg, map_entry=entry)
 
 
+def test_unrolled_copies_of_a_multistate_body_are_inlined():
+    """Each unrolled copy of a body with two states ends at the top level of the state, where it is inlined."""
+    inner = dace.SDFG("two_state_body")
+    inner.add_array("a", [1], dace.float64)
+    inner.add_array("b", [1], dace.float64)
+    inner.add_scalar("t", dace.float64, transient=True)
+    first = inner.add_state("first")
+    task = first.add_tasklet("double", {"inp"}, {"res"}, "res = 2 * inp")
+    first.add_edge(first.add_read("a"), None, task, "inp", dace.Memlet("a[0]"))
+    first.add_edge(task, "res", first.add_write("t"), None, dace.Memlet("t[0]"))
+    second = inner.add_state_after(first, "second")
+    task = second.add_tasklet("inc", {"inp"}, {"res"}, "res = inp + 1")
+    second.add_edge(second.add_read("t"), None, task, "inp", dace.Memlet("t[0]"))
+    second.add_edge(task, "res", second.add_write("b"), None, dace.Memlet("b[0]"))
+
+    sdfg = dace.SDFG("unroll_multistate_body")
+    sdfg.add_array("A", [3], dace.float64)
+    sdfg.add_array("B", [3], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("m", {"i": "0:3"})
+    body = state.add_nested_sdfg(inner, {"a"}, {"b"})
+    state.add_memlet_path(state.add_read("A"), entry, body, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(body, exit_, state.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i]"))
+    convert_legacy_nested_sdfgs(sdfg)
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(MapUnroll) == 1
+    sdfg.validate()
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
+    a = np.arange(3, dtype=np.float64)
+    b = np.zeros(3)
+    sdfg(A=a, B=b)
+    assert np.array_equal(b, 2 * a + 1)
+
+
 if __name__ == "__main__":
     test_map_unroll()
     test_gpu_map_declined_unless_permissive()
+    test_unrolled_copies_of_a_multistate_body_are_inlined()

@@ -3,10 +3,10 @@
 
 import dace
 from dace.memlet import Memlet
-from dace.properties import make_properties
+from dace.properties import Property, make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import transformation
+from dace.transformation import helpers, transformation
 
 
 @make_properties
@@ -25,6 +25,10 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
     """
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
+
+    inline_freed = Property(
+        dtype=bool, default=True, desc="Inline the nested SDFGs a removed top-level map leaves outside every scope."
+    )
 
     @classmethod
     def expressions(cls):
@@ -79,6 +83,9 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
     def remove_empty_map(self, graph, sdfg):
         map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
+        freed = []
+        if self.inline_freed and graph.entry_node(map_entry) is None:
+            freed = [n for n in graph.scope_children()[map_entry] if isinstance(n, nodes.NestedSDFG)]
         ordering = self.ordering_pairs(graph, map_entry, map_exit)
         conflicts = scope_conflicts(graph, map_entry, map_exit)
 
@@ -118,6 +125,7 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
         for src, dst in conflicts:
             if not graph.edges_between(src, dst):
                 graph.add_edge(src, None, dst, None, Memlet())
+        helpers.inline_freed_nested_sdfgs(sdfg, freed)
 
     @staticmethod
     def ordering_pairs(graph, map_entry, map_exit):
