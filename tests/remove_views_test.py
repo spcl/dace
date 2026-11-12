@@ -1116,7 +1116,132 @@ def test_reduce_output_squeeze_view_is_kept():
     assert _count_views(sdfg) == 1
 
 
+def _symbolic_reshape(view_shape: str, array_shape: str, read: bool, tasklet_subscript: bool = False) -> dace.SDFG:
+    """``out[i, j] = V[i, j]`` (read) or ``V[i, j] = inp[i, j]`` (write) over the 2-D view ``V`` of ``A``, sizes
+    symbolic in ``N`` and ``B``; ``tasklet_subscript`` reads ``V`` through a whole-view connector instead."""
+    sdfg = dace.SDFG(f"symbolic_reshape_{'read' if read else 'write'}{'_sub' if tasklet_subscript else ''}")
+    vshape = [dace.symbolic.pystr_to_symbolic(s) for s in view_shape.split(",")]
+    sdfg.add_array("A", [dace.symbolic.pystr_to_symbolic(s) for s in array_shape.split(",")], dace.float64)
+    sdfg.add_array("other", vshape, dace.float64)
+    sdfg.add_view("V", vshape, dace.float64)
+    state = sdfg.add_state()
+    a, v = state.add_access("A"), state.add_access("V")
+    full = ", ".join(f"0:{s}" for s in array_shape.split(","))
+    rng = {"i": f"0:{view_shape.split(',')[0]}", "j": f"0:{view_shape.split(',')[1]}"}
+    if not read:
+        outputs = {"y": Memlet("V[i, j]")}
+        state.add_mapped_tasklet(
+            "w", rng, {"x": Memlet("other[i, j]")}, "y = x", outputs, output_nodes={"V": v}, external_edges=True
+        )
+        state.add_edge(v, "views", a, None, Memlet(f"A[{full}]"))
+        return sdfg
+    state.add_edge(a, None, v, "views", Memlet(f"A[{full}]"))
+    if tasklet_subscript:
+        inputs, code = {"x": Memlet.from_array("V", sdfg.arrays["V"])}, "y = x[i, j]"
+    else:
+        inputs, code = {"x": Memlet("V[i, j]")}, "y = x"
+    outputs = {"y": Memlet("other[i, j]")}
+    state.add_mapped_tasklet("r", rng, inputs, code, outputs, input_nodes={"V": v}, external_edges=True)
+    return sdfg
+
+
+def _array_reads(sdfg: dace.SDFG, name: str) -> list[str]:
+    """The subsets of ``name`` on the edges into tasklets."""
+    return [
+        str(e.data.subset)
+        for st in sdfg.states()
+        for e in st.edges()
+        if e.data.data == name and isinstance(e.dst, nodes.Tasklet)
+    ]
+
+
+def test_symbolic_split_view_copied_whole():
+    """A ``(N, B*B)`` view of ``(N, B, B)`` copied whole is the array copied whole: no index needs a division."""
+    N, B = 5, 3
+    sdfg = dace.SDFG("symbolic_split_copy")
+    sdfg.add_array("A", [dace.symbol("N"), dace.symbol("B"), dace.symbol("B")], dace.float64)
+    sdfg.add_array("other", [dace.symbol("N"), dace.symbolic.pystr_to_symbolic("B**2")], dace.float64)
+    sdfg.add_view("V", [dace.symbol("N"), dace.symbolic.pystr_to_symbolic("B**2")], dace.float64)
+    state = sdfg.add_state()
+    a, v, o = state.add_access("A"), state.add_access("V"), state.add_access("other")
+    state.add_edge(a, None, v, "views", Memlet("A[0:N, 0:B, 0:B]"))
+    state.add_nedge(v, o, Memlet("V[0:N, 0:B**2] -> [0:N, 0:B**2]"))
+    assert RemoveViews().apply_pass(sdfg, {}) == {"V"}
+    assert _count_views(sdfg) == 0
+    sdfg.validate()
+    A = np.random.default_rng(1).random((N, B, B))
+    out = np.zeros((N, B * B))
+    sdfg(A=A.copy(), other=out, N=N, B=B)
+    np.testing.assert_allclose(out, A.reshape(N, B * B))
+
+
+def test_symbolic_split_view_element_access_keeps_view():
+    """``V[i, j]`` of a ``(N, B*B)`` view of ``(N, B, B)`` would read ``A[i, j // B, j % B]``: a division by the
+    run-time ``B`` per element, slower than the View it replaces. Kept, through a memlet or a tasklet subscript."""
+    for tasklet_subscript in (False, True):
+        sdfg = _symbolic_reshape("N, B**2", "N, B, B", read=True, tasklet_subscript=tasklet_subscript)
+        assert RemoveViews().apply_pass(sdfg, {}) is None
+        assert _count_views(sdfg) == 1
+
+
+def test_symbolic_merge_view_reads_and_writes():
+    """``(3*N, B)`` view of ``(N, 3, B)``: ``V[i, j]`` is ``A[i // 3, i % 3, j]``, as a read and as a write (a constant
+    divisor is a multiply and a shift)."""
+    N, B = 4, 5
+    rng = np.random.default_rng(2)
+    sdfg = _symbolic_reshape("3*N, B", "N, 3, B", read=True)
+    assert RemoveViews().apply_pass(sdfg, {}) == {"V"}
+    sdfg.validate()
+    A = rng.random((N, 3, B))
+    out = np.zeros((3 * N, B))
+    sdfg(A=A.copy(), other=out, N=N, B=B)
+    np.testing.assert_allclose(out, A.reshape(3 * N, B))
+
+    sdfg = _symbolic_reshape("3*N, B", "N, 3, B", read=False)
+    assert RemoveViews().apply_pass(sdfg, {}) == {"V"}
+    sdfg.validate()
+    inp = rng.random((3 * N, B))
+    A = np.zeros((N, 3, B))
+    sdfg(A=A, other=inp.copy(), N=N, B=B)
+    np.testing.assert_allclose(A, inp.reshape(N, 3, B))
+
+
+def test_symbolic_merged_row_is_one_range():
+    """A row ``V[i, 0:B]`` of a ``(N, B)`` view of the flat ``(N*B,)`` is the one range ``A[B*i : B*i + B]``."""
+    N, B = 4, 3
+    sdfg = dace.SDFG("symbolic_merged_row")
+    sdfg.add_array("A", [dace.symbolic.pystr_to_symbolic("N*B")], dace.float64)
+    sdfg.add_array("out", [dace.symbol("N")], dace.float64)
+    sdfg.add_view("V", [dace.symbol("N"), dace.symbol("B")], dace.float64)
+    state = sdfg.add_state()
+    a, v = state.add_access("A"), state.add_access("V")
+    state.add_edge(a, None, v, "views", Memlet("A[0:N*B]"))
+    me, mx = state.add_map("rows", {"i": "0:N"})
+    t = state.add_tasklet("sum", {"row"}, {"y"}, "y = row[0] + row[B - 1]")
+    o = state.add_write("out")
+    state.add_memlet_path(v, me, t, dst_conn="row", memlet=Memlet("V[i, 0:B]"))
+    state.add_memlet_path(t, mx, o, src_conn="y", memlet=Memlet("out[i]"))
+    assert RemoveViews().apply_pass(sdfg, {}) == {"V"}
+    sdfg.validate()
+    A = np.random.default_rng(4).random(N * B)
+    out = np.zeros(N)
+    sdfg(A=A.copy(), out=out, N=N, B=B)
+    np.testing.assert_allclose(out, A.reshape(N, B)[:, 0] + A.reshape(N, B)[:, B - 1])
+
+
+def test_symbolic_reshape_across_groups_is_kept():
+    """``(N*B, C)`` of ``(N, B*C)`` splits no dimension group cleanly (``N*B`` is neither ``N`` nor ``N*B*C``)."""
+    sdfg = _symbolic_reshape("N*B, C", "N, B*C", read=True)
+    assert RemoveViews().apply_pass(sdfg, {}) is None
+    assert _count_views(sdfg) == 1
+
+
 if __name__ == "__main__":
+    test_symbolic_split_view_copied_whole()
+    test_symbolic_split_view_element_access_keeps_view()
+    test_symbolic_merge_view_reads_and_writes()
+    test_symbolic_merged_row_is_one_range()
+    test_symbolic_reshape_across_groups_is_kept()
     test_view_array_array()
     test_view_slice_detect_simple()
     test_read_slice()
