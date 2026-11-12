@@ -684,8 +684,8 @@ def test_a_conflict_only_under_a_branch_is_not_witnessed():
 
 
 def test_a_triangular_solve_is_proven_through_its_row_copy():
-    """trisolv: each row reads ``x[0:i]``, which the earlier iterations wrote. The read is an array copy, so every
-    element of the range is read, and the witness names the copied range."""
+    """trisolv: each row reads ``x[0:i]``, which the earlier iterations wrote. The read is the inner product's operand
+    subset, every element of which the product reads, and the witness names that range."""
 
     @dace.program
     def trisolv(L: dace.float64[N, N], x: dace.float64[N], b: dace.float64[N]):

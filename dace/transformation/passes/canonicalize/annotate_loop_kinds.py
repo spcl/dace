@@ -463,19 +463,19 @@ def copy_sites(
     """Both ends of an array copy as sites, each range dimension a fresh iterator over that range.
 
     A copy moves every element of both subsets, so unlike a tasklet's or a library node's range, which the code
-    behind it may touch only in part, it names elements that are certainly accessed.
+    behind it may touch only in part, it names elements that are certainly accessed. An inner or matrix product
+    (``Dot``, ``MatMul``) reads every element of an operand subset alike, so that subset is a read site the same way.
     """
-    if not (isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)):
+    product = type(edge.dst).__name__ in ("Dot", "MatMul") and isinstance(edge.dst, nodes.LibraryNode)
+    if not (isinstance(edge.src, nodes.AccessNode) and (product or isinstance(edge.dst, nodes.AccessNode))):
         return []
     if edge.data.is_empty() or edge.data.wcr is not None:
         return []
     sites = []
-    for side, (name, subset, write) in enumerate(
-        (
-            (edge.src.data, edge.data.get_src_subset(edge, state), False),
-            (edge.dst.data, edge.data.get_dst_subset(edge, state), True),
-        )
-    ):
+    sides = [(edge.src.data, edge.data.get_src_subset(edge, state), False)]
+    if not product:
+        sides.append((edge.dst.data, edge.data.get_dst_subset(edge, state), True))
+    for side, (name, subset, write) in enumerate(sides):
         if name not in arrays or subset is None:
             continue
         outer, offset = arrays[name]
