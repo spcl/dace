@@ -4,7 +4,7 @@ ICON's shape: an ``nblks`` map over one nested SDFG of ``nproma``/``nlev`` maps.
 
 from collections.abc import Callable
 
-from dace import symbolic
+from dace import dtypes, symbolic
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.narrowing import as_basic
@@ -63,11 +63,14 @@ def is_device_wide_libnode(node: nodes.Node, state: SDFGState | None = None) -> 
 def few_iterations_of_large_work(node: nodes.LibraryNode, state: SDFGState) -> bool:
     """Whether the maps around ``node`` run too few iterations to share out (``SMALL``, or a literal below
     ``SMALL_CONSTANT_EXTENT``) while one of its operands is not that small: one block per iteration would leave the
-    device idle, so the host issues the device-wide call per iteration instead."""
+    device idle, so the host issues the device-wide call per iteration instead. A map already on the device decides."""
     entry, extent = state.entry_node(node), 1
     if entry is None:
         return False
     while entry is not None:
+        # A map the caller already put on the device is the kernel: the node runs on its block
+        if entry.map.schedule in dtypes.GPU_SCHEDULES:
+            return False
         extent *= entry.map.range.num_elements()
         entry = state.entry_node(entry)
     facts = SymbolResolver().facts_at(state, node)
