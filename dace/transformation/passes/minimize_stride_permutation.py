@@ -313,15 +313,18 @@ class MinimizeStridePermutation(ppl.Pass):
             if [me.map.params for me in nest] != [[param] for param in params]:
                 return applied
 
-        # Bubble-sort the permutation using only adjacent transpositions, each
-        # realized by a single MapInterchange (outer = depth k, inner = k+1).
-        permutation = list(order)
-        n = len(permutation)
+        # Bubble-sort the target depth of the map at each depth, using only adjacent transpositions, each realized by a
+        # single MapInterchange (outer = depth k, inner = k+1). The target depths are the INVERSE of ``order``: sorting
+        # ``order`` itself realizes its inverse, which differs for a cycle (k, i, j -> i, j, k would end as j, k, i).
+        target = [0] * len(order)
+        for depth, index in enumerate(order):
+            target[index] = depth
+        n = len(target)
         for end in range(n - 1, 0, -1):
             for k in range(end):
-                if permutation[k] > permutation[k + 1]:
+                if target[k] > target[k + 1]:
                     if self._swap_adjacent(sdfg, nest, k):
-                        permutation[k], permutation[k + 1] = permutation[k + 1], permutation[k]
+                        target[k], target[k + 1] = target[k + 1], target[k]
                         applied += 1
         return applied
 

@@ -333,6 +333,32 @@ def test_level_map_moves_between_the_plane_axes():
     assert np.allclose(out, ref) and np.allclose(out, a + 1.0)
 
 
+@dace.program
+def rotated_3d_int(A: dace.float64[5, 7, 11], B: dace.float64[5, 7, 11]):
+    for k, i, j in dace.map[0:11, 0:5, 0:7]:
+        B[i, j, k] = A[i, j, k] + 1.0
+
+
+def test_three_level_cycle_reordered():
+    """``k, i, j`` over ``B[i, j, k]`` (strides ``(77, 11, 1)``) targets ``i, j, k``: a cycle, not a transposition.
+    Bubble-sorting the target order itself realizes its inverse ``j, k, i`` (``i`` innermost, the largest stride), and
+    a second run then returns to ``k, i, j``."""
+    rng = np.random.default_rng(42)
+    sdfg = _expanded(rotated_3d_int)
+    assert _nest_param_order(sdfg) == ["k", "i", "j"]
+    a = rng.random((5, 7, 11))
+    ref = np.zeros((5, 7, 11))
+    copy.deepcopy(sdfg)(A=a.copy(), B=ref)
+
+    assert MinimizeStridePermutation().apply_pass(sdfg, {}) is not None
+    assert _nest_param_order(sdfg) == ["i", "j", "k"]
+    assert MinimizeStridePermutation().apply_pass(sdfg, {}) is None
+
+    out = np.zeros((5, 7, 11))
+    sdfg(A=a.copy(), B=out)
+    assert np.allclose(out, ref) and np.allclose(out, a + 1.0)
+
+
 if __name__ == "__main__":
     test_integer_dims_two_level_reordered()
     test_integer_dims_already_canonical_is_noop()
@@ -345,3 +371,4 @@ if __name__ == "__main__":
     test_all_concrete_mixed_magnitudes_still_reorders()
     test_multi_parameter_map_is_split_and_reordered()
     test_level_map_moves_between_the_plane_axes()
+    test_three_level_cycle_reordered()
