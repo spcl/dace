@@ -61,6 +61,16 @@ namespace State
 def outEdgesOn (s : State) (n : DNode) (c : Conn) : List DEdge :=
   (s.outEdges n.id).filter fun e => e.srcConn.getD "" = c && (e.data matches .memlet _)
 
+theorem mem_inEdges {s : State} {id : NodeId} {e : DEdge} (h : e ∈ s.inEdges id) : e ∈ s.edges :=
+  (List.mem_filter.1 h).1
+
+theorem mem_outEdges {s : State} {id : NodeId} {e : DEdge} (h : e ∈ s.outEdges id) : e ∈ s.edges :=
+  (List.mem_filter.1 h).1
+
+theorem mem_outEdgesOn {s : State} {n : DNode} {c : Conn} {e : DEdge} (h : e ∈ s.outEdgesOn n c) :
+    e ∈ s.outEdges n.id :=
+  (List.mem_filter.1 h).1
+
 /-- The memlet in-edge of `n` on connector `c`. -/
 def inEdgeOn (s : State) (n : DNode) (c : Conn) : Option DEdge :=
   (s.inEdges n.id).find? fun e => e.dstConn.getD "" = c && (e.data matches .memlet _)

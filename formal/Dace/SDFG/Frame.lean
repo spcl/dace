@@ -216,19 +216,6 @@ section Leaf
 variable {ctx : Ctx} (ρ : Valuation) {s : State} (h : SeqPure ctx s)
 include h
 
-omit h in
-theorem mem_edges_of_in {id : NodeId} {e : DEdge} (he : e ∈ s.inEdges id) : e ∈ s.edges :=
-  (List.mem_filter.1 he).1
-
-omit h in
-theorem mem_edges_of_out {id : NodeId} {e : DEdge} (he : e ∈ s.outEdges id) : e ∈ s.edges :=
-  (List.mem_filter.1 he).1
-
-omit h in
-theorem mem_outEdges_of_on {n : DNode} {c : Conn} {e : DEdge} (he : e ∈ s.outEdgesOn n c) :
-    e ∈ s.outEdges n.id :=
-  (List.mem_filter.1 he).1
-
 theorem readScalarData_foot (d : Name) (sub : Option Subset) (oob : Bool) (hp : ctx.pointsPure d sub = true) :
     FootA ctx.I.wcr (fun st => readScalarData ctx ρ d sub oob st) := by
   unfold readScalarData
@@ -292,7 +279,7 @@ theorem bindInputs_foot (n : DNode) : FootA ctx.I.wcr (fun st => bindInputs ctx 
   cases hd : e.data with
   | dep => exact FootA.pure _
   | memlet m =>
-    refine FootA.bind (bindIn_foot ρ h (mem_edges_of_in he)) (fun ci => ?_)
+    refine FootA.bind (bindIn_foot ρ h (State.mem_inEdges he)) (fun ci => ?_)
     cases ci with
     | none => exact FootA.pure _
     | some c => exact FootA.pure _
@@ -311,14 +298,14 @@ theorem applyScalar_foot {n : DNode} (hn : n ∈ s.nodes) (hc : n.isCode = true)
     Foot ctx.I.wcr (fun st => applyScalar ctx ρ s n st c v) := by
   unfold applyScalar
   refine Foot.foldlM _ (fun e he => ?_)
-  have he' := mem_outEdges_of_on he
+  have he' := State.mem_outEdgesOn he
   cases hd : e.data with
   | dep => exact Foot.pure
   | memlet m =>
     have hdata := h.codeOut n hn hc e he' m hd
     cases hde : s.dstEndpoint e with
     | code key => rw [hde] at hdata; cases hdata
-    | data d sub => exact storeScalar_foot ρ h d sub _ _ v (h.dstEndpoint_pure (mem_edges_of_out he') hde)
+    | data d sub => exact storeScalar_foot ρ h d sub _ _ v (h.dstEndpoint_pure (State.mem_outEdges he') hde)
     | invalid => exact Foot.err _
 
 theorem storeArrayWrite_foot (d : Name) (sub : Option Subset) (wcr : Option WcrOp) (oob : Bool) (rel : Idx)
@@ -340,7 +327,7 @@ theorem applyArrayWrite_foot (n : DNode) (c : Conn) (rel : Idx) (v : Val) :
     Foot ctx.I.wcr (fun st => applyArrayWrite ctx ρ s n st c rel v) := by
   unfold applyArrayWrite
   refine Foot.foldlM _ (fun e he => ?_)
-  have he' := mem_edges_of_out (mem_outEdges_of_on he)
+  have he' := State.mem_outEdges (State.mem_outEdgesOn he)
   cases hd : e.data with
   | dep => exact Foot.pure
   | memlet m =>
@@ -428,8 +415,8 @@ theorem execReduce_foot {n : DNode} (hn : n ∈ s.nodes) {l : LibNode} (hk : n.k
   dsimp only
   split
   · next ie oe hins houts =>
-    have hie : ie ∈ s.edges := mem_edges_of_in (List.mem_of_mem_filter (hins ▸ List.mem_cons_self))
-    have hoe : oe ∈ s.edges := mem_edges_of_out (List.mem_of_mem_filter (houts ▸ List.mem_cons_self))
+    have hie : ie ∈ s.edges := State.mem_inEdges (List.mem_of_mem_filter (hins ▸ List.mem_cons_self))
+    have hoe : oe ∈ s.edges := State.mem_outEdges (List.mem_of_mem_filter (houts ▸ List.mem_cons_self))
     split
     · next sd ssub dd dsub om hse hde _ =>
       exact reduceData_foot ρ h props hid sd ssub dd dsub _ _ _ (h.srcEndpoint_pure hie hse)
@@ -457,7 +444,7 @@ theorem execCopiesInto_foot (n : DNode) : Foot ctx.I.wcr (fun st => execCopiesIn
     split
     · exact Foot.pure
     · split
-      · exact execCopy_foot ρ h (mem_edges_of_in he)
+      · exact execCopy_foot ρ h (State.mem_inEdges he)
       · exact Foot.pure
 
 theorem execSimple_foot {n : DNode} (hn : n ∈ s.nodes) : Foot ctx.I.wcr (fun st => execSimple ctx ρ s n st) := by
@@ -485,7 +472,7 @@ theorem bindDynamicInputs_foot (n : DNode) (ρ₀ : Valuation) :
   dsimp only
   split
   · split
-    · refine FootA.bind (readEdgeScalar_foot ρ₁ h (mem_edges_of_in he)) (fun v? => ?_)
+    · refine FootA.bind (readEdgeScalar_foot ρ₁ h (State.mem_inEdges he)) (fun v? => ?_)
       cases v? with
       | none => exact FootA.pure _
       | some v => exact FootA.pure _

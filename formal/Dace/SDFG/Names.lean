@@ -163,10 +163,6 @@ variable {s : State}
 theorem node?_mem {id : NodeId} {n : DNode} (h : s.node? id = some n) : n ∈ s.nodes :=
   List.mem_of_find?_eq_some h
 
-theorem mem_inEdges {id : NodeId} {e : DEdge} (h : e ∈ s.inEdges id) : e ∈ s.edges := (List.mem_filter.1 h).1
-
-theorem mem_outEdges {id : NodeId} {e : DEdge} (h : e ∈ s.outEdges id) : e ∈ s.edges := (List.mem_filter.1 h).1
-
 theorem accessData_names {id : NodeId} {n : DNode} {d : Name} (h : s.node? id = some n)
     (hk : n.kind = .access d) : d ∈ s.dataNames := by
   have hn := node?_mem h

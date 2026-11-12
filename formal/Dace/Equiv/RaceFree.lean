@@ -861,16 +861,6 @@ theorem mapM_keys {α β γ : Type} {f : α → Res (β × γ)} {key : α → β
     subst h
     simp only [List.map_cons, hf a b hb, mapM_keys hf hbs]
 
-theorem setAll_not_mem {ρ : Valuation} {vs : List (Sym × Val)} {y : Sym} (h : y ∉ vs.map Prod.fst) :
-    Valuation.setAll ρ vs y = ρ y := by
-  simp only [Valuation.setAll]
-  have : vs.find? (fun x => decide (x.1 = y)) = none := by
-    rw [List.find?_eq_none]
-    intro x hx
-    simp only [decide_eq_true_eq]
-    exact fun hxy => h (hxy ▸ List.mem_map_of_mem hx)
-  rw [this]
-
 /-- Assignments of symbols outside the facts keep `CInv`. -/
 theorem applyAssigns_inv {cst cst' : CSt} {as : List (Sym × Expr)} (h : applyAssigns ctx cst as = .ok cst')
     (hfresh : ∀ a ∈ as, a.1 ∉ C.syms) (hi : CInv ctx.I.expr C cst) : CInv ctx.I.expr C cst' := by
@@ -882,7 +872,7 @@ theorem applyAssigns_inv {cst cst' : CSt} {as : List (Sym × Expr)} (h : applyAs
     obtain ⟨v, -, hv⟩ := Res.bind_eq_ok.1 hab
     rw [Res.pure_eq_ok] at hv
     subst hv; rfl) hvs
-  refine ⟨Constraints.satisfies_congr hi.1 fun y hy => setAll_not_mem ?_, hi.2⟩
+  refine ⟨Constraints.satisfies_congr hi.1 fun y hy => Valuation.setAll_of_not_mem ?_, hi.2⟩
   rw [hk]
   intro hm
   obtain ⟨a, ha, rfl⟩ := List.mem_map.1 hm

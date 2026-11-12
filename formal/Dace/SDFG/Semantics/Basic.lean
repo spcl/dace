@@ -198,6 +198,16 @@ def setAll (ρ : Valuation) (xs : List (Sym × Val)) : Valuation :=
 def bindIdx (ρ : Valuation) (params : List Sym) (i : Idx) : Valuation :=
   ρ.setAll ((params.zip i).map fun (p, k) => (p, Val.int k))
 
+theorem setAll_of_not_mem {ρ : Valuation} {vs : List (Sym × Val)} {y : Sym} (h : y ∉ vs.map Prod.fst) :
+    Valuation.setAll ρ vs y = ρ y := by
+  simp only [Valuation.setAll]
+  have : vs.find? (fun x => decide (x.1 = y)) = none := by
+    rw [List.find?_eq_none]
+    intro x hx
+    simp only [decide_eq_true_eq]
+    exact fun hxy => h (hxy ▸ List.mem_map_of_mem hx)
+  rw [this]
+
 end Valuation
 
 /-- Extend a valuation by the scalar constants of an SDFG (`SDFG.constants`). -/

@@ -134,10 +134,6 @@ theorem NodeLocal.inEdgeOn (c : Conn) : s'.inEdgeOn n c = s.inEdgeOn n c := by
 theorem NodeLocal.outEdgesOn (c : Conn) : s'.outEdgesOn n c = s.outEdgesOn n c := by
   simp only [State.outEdgesOn, h.outE]
 
-omit h in
-theorem State.mem_outEdgesOn {c : Conn} {e : DEdge} (he : e ∈ s.outEdgesOn n c) : e ∈ s.outEdges n.id :=
-  (List.mem_filter.1 he).1
-
 theorem NodeLocal.execCopiesInto (st : St) : execCopiesInto ctx ρ s' n st = execCopiesInto ctx ρ s n st := by
   unfold Dace.execCopiesInto
   rw [h.inE]
