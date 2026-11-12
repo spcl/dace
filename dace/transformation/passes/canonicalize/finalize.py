@@ -546,6 +546,8 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
                 and is_devicelevel_gpu(sd.parent_sdfg, sd.parent, sd.parent_nsdfg_node)
             ],
         )
+        # Host loops of a device program allocate per iteration as on the CPU: their register arrays go on the stack.
+        force_registers(sdfg, host_only=True)
         pool_gpu_transients(sdfg)
 
 
@@ -613,18 +615,27 @@ def force_map_scoped_registers(sdfg: SDFG, in_map: bool = False) -> int:
     return pinned
 
 
-def force_registers(sdfg: SDFG) -> int:
+def force_registers(sdfg: SDFG, host_only: bool = False) -> int:
     """Pin every remaining ``Register`` container to ``Register(force=True)``: a register array stays on the stack
     whatever its size, never a heap allocation per scope entry.
 
+    :param host_only: pin only containers no device code accesses (a device thread has no stack array of symbolic
+                      size; MoveArrayOutOfKernel lifts those).
     :returns: the number of containers pinned, nested SDFGs included.
     """
     pinned = 0
     for sd in sdfg.all_sdfgs_recursive():
-        for desc in sd.arrays.values():
-            if desc.storage == dtypes.StorageType.Register and not desc.storage.force:
-                desc.storage = dtypes.StorageType.Register(force=True)
-                pinned += 1
+        loose = [
+            name
+            for name, desc in sd.arrays.items()
+            if desc.storage == dtypes.StorageType.Register and not desc.storage.force
+        ]
+        if loose and host_only:
+            device = {n.data for state in sd.states() for n in state.data_nodes() if is_devicelevel_gpu(sd, state, n)}
+            loose = [name for name in loose if name not in device]
+        for name in loose:
+            sd.arrays[name].storage = dtypes.StorageType.Register(force=True)
+            pinned += 1
     return pinned
 
 
