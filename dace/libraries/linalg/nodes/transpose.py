@@ -470,6 +470,7 @@ class ExpandTransposeCUDA(ExpandTransformation):
 
 @dace.library.node
 class Transpose(dace.sdfg.nodes.LibraryNode):
+    operand_subsets = "squeeze"
     # Global properties
     implementations = {
         "pure": ExpandTransposePure,

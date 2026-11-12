@@ -153,7 +153,7 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
     tasklet = MatMul("_MatMult_")
     state.add_node(tasklet)
     for op, conn in ((op1, "_a"), (op2, "_b")):
-        acc, memlet = operand_read(visitor, sdfg, state, op)
+        acc, memlet = operand_read(visitor, sdfg, state, op, tasklet, conn)
         state.add_edge(acc, None, tasklet, conn, memlet)
     state.add_edge(tasklet, "_c", acc3, None, Memlet.from_array(op3, arr3))
 
@@ -272,9 +272,9 @@ def _inv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_op: str):
 
     from dace.libraries.linalg import Inv
 
-    inp, inp_memlet = operand_read(pv, sdfg, state, inp_op)
-    out = state.add_write(out_arr[0])
     inv_node = Inv("inv", overwrite_a=False, use_getri=True)
+    inp, inp_memlet = operand_read(pv, sdfg, state, inp_op, inv_node, "_ain")
+    out = state.add_write(out_arr[0])
 
     state.add_memlet_path(inp, inv_node, dst_conn="_ain", memlet=inp_memlet)
     state.add_memlet_path(inv_node, out, src_conn="_aout", memlet=Memlet.from_array(*out_arr))
@@ -299,7 +299,7 @@ def _solve(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: st
     solve_node = Solve("solve")
 
     for op, conn in ((op_a, "_ain"), (op_b, "_bin")):
-        acc, memlet = operand_read(pv, sdfg, state, op)
+        acc, memlet = operand_read(pv, sdfg, state, op, solve_node, conn)
         state.add_memlet_path(acc, solve_node, dst_conn=conn, memlet=memlet)
     state.add_memlet_path(solve_node, out, src_conn="_bout", memlet=Memlet.from_array(*out_arr))
 
@@ -435,7 +435,7 @@ def _tensordot(
     c = state.add_write(op_c)
     tasklet = TensorDot("_TensorDot_", left_axes, right_axes, out_axes)
     for op, conn in ((op_a, "_left_tensor"), (op_b, "_right_tensor")):
-        acc, memlet = operand_read(pv, sdfg, state, op, squeeze=False)
+        acc, memlet = operand_read(pv, sdfg, state, op, tasklet, conn)
         state.add_edge(acc, None, tasklet, conn, memlet)
     state.add_edge(tasklet, "_out_tensor", c, None, Memlet.from_array(op_c, arr_c))
 

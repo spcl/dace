@@ -1814,6 +1814,31 @@ class LibraryNode(CodeNode):
     #: Whether a parallel schedule of this node is serialized when an enclosing loop re-enters it (see
     #: ``DecideCpuParallelAxes``). A node whose work per entry is the chunk the loop hands it opts out.
     serial_on_loop_reentry: bool = True
+    #: How the node reads an operand memlet over a slice of a larger array: ``None`` -- not at all, a View gives the
+    #: operand its own descriptor; ``"exact"`` -- as every dimension of the subset; ``"squeeze"`` -- as the subset's
+    #: dimensions of extent other than 1. Its expansions find offset, leading dimension and step in the memlet.
+    operand_subsets: str | None = None
+
+    def operand_dims(self, connector: str, subset: sbs.Subset, array, operand) -> list[int] | None:
+        """The dimensions of ``subset`` of ``array`` that are the operand on ``connector`` of descriptor ``operand`` (a
+        View of that slice), read under :attr:`operand_subsets`; ``None`` where the node cannot read the subset in its
+        place. The frontend and ``RemoveViews`` both decide by it."""
+        if self.operand_subsets is None or not isinstance(subset, sbs.Range):
+            return None
+        size = subset.size()
+        dims = [i for i, n in enumerate(size) if self.operand_subsets == "exact" or n != 1]
+        if not dims or len(dims) != len(operand.shape):
+            return None
+        if any(dace.symbolic.equal(size[i], n) is not True for i, n in zip(dims, operand.shape)):
+            return None
+        stepped = [array.strides[i] * subset.ranges[i][2] for i in dims]
+        if any(dace.symbolic.equal(s, t) is not True for s, t in zip(stepped, operand.strides)):
+            return None
+        return dims
+
+    def rebind_operand(self, connector: str, dims: list[int]) -> None:
+        """Called once ``connector`` reads a subset whose dimensions ``dims`` (:meth:`operand_dims`) were the operand's
+        own: a property numbering the operand's dimensions moves with them."""
 
     def folds_onto_output(self) -> bool:
         """Whether the node folds its result onto the output's PRIOR value in place (``C = alpha*A@B + beta*C`` with a

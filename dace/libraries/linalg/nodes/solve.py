@@ -344,6 +344,7 @@ class ExpandSolveBlock(ExpandLapackBlock):
 
 @dace.library.node
 class Solve(dace.sdfg.nodes.LibraryNode):
+    operand_subsets = "squeeze"
     # Global properties
     implementations = {
         "pure": ExpandSolvePure,
