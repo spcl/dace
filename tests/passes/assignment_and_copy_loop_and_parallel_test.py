@@ -152,6 +152,29 @@ def testzero_row_loop_lifts_to_one_memset_over_all_rows():
     assert np.all(z == 0.0)
 
 
+@dace.program
+def zero_row_prefix_loop(z: dace.float64[3, N + 1]):
+    for r in range(3):
+        z[r, 0:N] = 0.0
+
+
+@temporarily_disable_autoopt_and_serialization
+def test_zero_row_prefix_loop_keeps_the_loop_around_its_row_fill():
+    """``z[0:3, 0:N]`` of a ``(3, N + 1)`` array is not contiguous, so the row fill stays one per trip."""
+    sdfg = zero_row_prefix_loop.to_sdfg(simplify=True)
+
+    assert AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {}) == 1
+    (fill,) = [(n, s) for n, s in sdfg.all_nodes_recursive() if isinstance(n, FillLibraryNode)]
+    assert str(fill[1].out_edges(fill[0])[0].data.subset) == "r, 0:N"
+    assert _has_loop(sdfg)
+
+    sdfg.expand_library_nodes(recursive=True)
+    sdfg.validate()
+    z = np.ones((3, 21), dtype=np.float64)
+    sdfg(z=z, N=20)
+    assert np.all(z[:, :20] == 0.0) and np.all(z[:, 20] == 1.0)
+
+
 @temporarily_disable_autoopt_and_serialization
 def test_self_referential_copy_loop_is_not_lifted():
     """``for i: a[i] = a[i - 1]`` is a carried dependence (same array), not a pure copy -- left alone."""
