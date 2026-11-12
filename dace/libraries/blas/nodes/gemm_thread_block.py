@@ -210,9 +210,10 @@ def _rows_bound(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> int | 
 
 def _nested(node, operands: dict, phases: list, threads: int, scratch: dict, chunks: tuple | None = None) -> SDFG:
     """A nested SDFG that runs ``phases`` one after the other, each a state with a thread-block map of ``threads``
-    threads around a C++ tasklet. A phase is ``(name, code, inputs, outputs)``, where ``inputs`` and ``outputs`` map
-    the tasklet's connectors to the containers they access: the operands (``_a``, ``_b``, ``_a_index``, ``_c``) and
-    the transients in ``scratch`` (name to shape, type and storage). With ``chunks``, a pair of the number of rows and
+    threads. A phase is ``(name, code, inputs, outputs)``, a C++ tasklet in the map, where ``inputs`` and ``outputs``
+    map the tasklet's connectors to the containers they access: the operands (``_a``, ``_b``, ``_a_index``, ``_c``)
+    and the transients in ``scratch`` (name to shape, type and storage). A phase may also be ``(name, build)``, where
+    ``build(state, entry, exit_)`` fills the map. With ``chunks``, a pair of the number of rows and
     the rows of a chunk, the phases are the body of a loop over the first row of every chunk, ``m0``."""
     sdfg = SDFG(f"{node.label}_sdfg")
     for connector, (size, strides, desc) in operands.items():
@@ -227,8 +228,8 @@ def _nested(node, operands: dict, phases: list, threads: int, scratch: dict, chu
         region = LoopRegion(f"{node.label}_chunks", f"m0 < {rows}", "m0", "m0 = 0", f"m0 = m0 + {chunk}", sdfg=sdfg)
         sdfg.add_node(region, is_start_block=True)
     previous = None
-    for phase, code, inputs, outputs in phases:
-        label = node.label if len(phases) == 1 else f"{node.label}_{phase}"
+    for phase in phases:
+        label = node.label if len(phases) == 1 else f"{node.label}_{phase[0]}"
         state = region.add_state(label, is_start_block=previous is None)
         if previous is not None:
             region.add_edge(previous, state, InterstateEdge())
@@ -236,6 +237,10 @@ def _nested(node, operands: dict, phases: list, threads: int, scratch: dict, chu
         entry, exit_ = state.add_map(
             f"{label}_threads", {"tid": f"0:{threads}"}, schedule=dtypes.ScheduleType.GPU_ThreadBlock
         )
+        if len(phase) == 2:
+            phase[1](state, entry, exit_)
+            continue
+        _, code, inputs, outputs = phase
         tasklet = state.add_tasklet(f"{label}_tasklet", set(inputs), set(outputs), code, language=dtypes.Language.CPP)
         for connector, name in inputs.items():
             memlet = Memlet.from_array(name, sdfg.arrays[name])
@@ -457,6 +462,29 @@ for (int i = 0; i < MF; ++i)
 """
 
 
+def _store_accumulators(product: _Product, threads: int, rows: int, n: int, m0: str):
+    """A phase (see ``_nested``) that writes the accumulators of every thread (see ``_MMACode``) to ``c``: the
+    elements of the chunk of rows starting at ``m0`` that are rows of the product."""
+    warps = threads // WARP_SIZE
+    wn = n // warps
+    row = f"{m0} + i * 16 + (tid % {WARP_SIZE}) // 4 + (e // 2) * 8"
+    column = f"(tid // {WARP_SIZE}) * {wn} + j * 8 + (tid % 4) * 2 + e % 2"
+    scale = "" if product.alpha == 1 else f"{symbolic.symstr(product.alpha)} * "
+    code = f"if {row} < {symbolic.symstr(product.m)}:\n    out = {scale}value"
+
+    def build(state: SDFGState, entry: nodes.MapEntry, exit_: nodes.MapExit):
+        fragment_entry, fragment_exit = state.add_map(
+            "fragment", {"i": f"0:{rows // 16}", "j": f"0:{wn // 8}", "e": "0:4"}, unroll=True
+        )
+        tasklet = state.add_tasklet("store", {"value"}, {"out"}, code)
+        value = Memlet(f"_acc[(i * {wn // 8} + j) * 4 + e]")
+        state.add_memlet_path(state.add_read("_acc"), entry, fragment_entry, tasklet, dst_conn="value", memlet=value)
+        out = Memlet(f"_c[{row}, {column}]", dynamic=True)
+        state.add_memlet_path(tasklet, fragment_exit, exit_, state.add_write("_c"), src_conn="out", memlet=out)
+
+    return ("store", build)
+
+
 def _runs_states_as_block(sdfg: SDFG, state: SDFGState, node: nodes.Node) -> bool:
     """Whether the states of a nested SDFG at ``node`` run as states of the thread block's code, each starting with a
     barrier if it accesses shared memory and ending with one if it runs a thread-block map: in a ``GPU_Device``
@@ -499,7 +527,7 @@ class ExpandGemmThreadBlockMMA(ExpandTransformation):
             # tasklets would have to (before the workspace is used, between the last use of the workspace and the first
             # write of c, and once c is complete).
             scratch["_acc"] = ([accumulators], dace.float32, dtypes.StorageType.Register)
-            first = "const long long m0 = 0;\n" if single_chunk else ""
+            first = "const long long m0 = 0;\n" if single_chunk else ""  # The first row of the chunk
             chunks = None if single_chunk else (f"({product.m})", rows)
             phases = [
                 (
@@ -508,7 +536,7 @@ class ExpandGemmThreadBlockMMA(ExpandTransformation):
                     inputs,
                     {"workspace": "_workspace", "acc": "_acc"},
                 ),
-                ("store", code.header + first + code.store() + code.footer, {"acc": "_acc"}, {"c": "_c"}),
+                _store_accumulators(product, threads, rows, n, "0" if single_chunk else "m0"),
             ]
             return _nested(node, operands, phases, threads, scratch, chunks)
         else:
