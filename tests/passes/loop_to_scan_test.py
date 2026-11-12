@@ -1987,14 +1987,18 @@ def test_symbolic_stride_scan_specializes_if_scan_else_seq():
     (cond, par_region), (else_cond, seq_region) = cbs[0].branches
     assert cond is not None and else_cond is None, "branches must be (K >= 1 -> scan, else -> sequential)"
     assert "K_SS" in cond.as_string and ">= 1" in cond.as_string, f"guard must be K >= 1: {cond.as_string!r}"
-    # True branch: the residue-class Scan pipeline. Else branch: the pinned loop.
+    # True branch: the residue-class Scan pipeline. Else branch: the original loop, which knows ``K < 1``.
     assert _num_scan_nodes(par_region) == 1, "the K >= 1 branch must hold exactly one residue-class Scan libnode"
     assert _num_scan_nodes(seq_region) == 0, "the else branch must keep the sequential loop (no Scan)"
     seq_loops = [
         r for r in seq_region.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable
     ]
-    assert seq_loops and all(l.pinned_sequential for l in seq_loops), (
-        "the else-branch fallback loop must be pinned sequential"
+    # Not pinned: the failed guard, a fact in the else branch, is what keeps LoopToScan from specializing it again,
+    # and the K <= 0 read-ahead stays open to BreakAntiDependence
+    assert seq_loops and not any(l.pinned_sequential for l in seq_loops)
+    LoopToScan().apply_pass(sdfg, {})
+    assert len([n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]) == 1, (
+        "the fallback must not be specialized again"
     )
 
 

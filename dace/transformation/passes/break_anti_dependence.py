@@ -1411,10 +1411,6 @@ class BreakAntiDependence(ppl.Pass):
             needed = type(sym_guards)(g for g in sym_guards if not symbolic.provably_le(least, g, facts))
             self._snapshot_and_redirect(loop, name, sdfg, guards=needed, array_guards=array_guards)
         self.forwardize_reverse_iterator(loop, sdfg)
-        # As a version's clone (``specialize_loop_under_condition``): an earlier specialization's fallback pin does
-        # not hold where the facts prove what the rename needs (LoopToScan's ``K < 0`` fallback knows ``0 <= K``)
-        if renames:
-            loop.pinned_sequential = False
         return len(renames)
 
     def version_on_offset_sign(self, loop: LoopRegion, sdfg: SDFG, offsets: list) -> int:
