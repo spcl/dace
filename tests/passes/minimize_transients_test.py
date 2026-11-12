@@ -75,6 +75,29 @@ def test_copied_in_transient_reads_its_source_region():
         np.testing.assert_array_equal(got, want)
 
 
+def test_contiguous_transient_copied_to_a_column_stays():
+    """Renamed onto ``b[:, 1]`` the transient's stride-1 writes would all become strided by 8: the copy stays."""
+    sdfg = dace.SDFG("minimize_transients_column")
+    sdfg.add_array("a", [3], dace.float64)
+    sdfg.add_array("b", [3, 8], dace.float64)
+    sdfg.add_array("t", [3], dace.float64, transient=True)
+    state = sdfg.add_state()
+    t = state.add_access("t")
+    state.add_mapped_tasklet(
+        "scale",
+        {"i": "0:3"},
+        {"x": dace.Memlet("a[i]")},
+        "y = 2 * x",
+        {"y": dace.Memlet("t[i]")},
+        external_edges=True,
+        input_nodes={"a": state.add_read("a")},
+        output_nodes={"t": t},
+    )
+    state.add_nedge(t, state.add_write("b"), dace.Memlet("t[0:3] -> [0:3, 1]"))
+    assert MinimizeTransients().apply_pass(sdfg, {}) is None
+    assert "t" in sdfg.arrays
+
+
 def test_snapshot_of_a_region_written_concurrently_stays():
     sdfg = scaled_rows_sdfg("minimize_transients_clobber", copy_out=False, clobber=True)
     assert MinimizeTransients().apply_pass(sdfg, {}) is None
@@ -283,6 +306,7 @@ def test_register_arrays_of_a_nest_in_a_kernel_share_one_buffer():
 if __name__ == "__main__":
     test_copied_out_transient_is_its_target_region()
     test_copied_in_transient_reads_its_source_region()
+    test_contiguous_transient_copied_to_a_column_stays()
     test_snapshot_of_a_region_written_concurrently_stays()
     test_transient_copied_to_two_regions_of_one_node_stays()
     test_copy_out_next_to_another_write_of_the_target_stays()
