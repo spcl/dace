@@ -24,7 +24,7 @@ from dace import SDFG, dtypes, properties, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.dataflow import MapCollapse, MapDimShuffle, MapExpansion
+from dace.transformation.dataflow import MapDimShuffle, MapExpansion
 
 
 def reduction_output_params(state: SDFGState, entry: nodes.MapEntry) -> set[str] | None:
@@ -107,18 +107,13 @@ class SequentializeReductionAxes(ppl.Pass):
                     inner = next(e.dst for e in state.out_edges(inner) if isinstance(e.dst, nodes.MapEntry))
                 inner.map.schedule = dtypes.ScheduleType.CPU_Multicore
                 continue
+            # Every indexing axis is shared out, not only the first: one map over them, collapsed (gem's blocks, points)
             MapExpansion.apply_to(
                 state.sdfg,
                 map_entry=entry,
-                options={"inner_schedule": dtypes.ScheduleType.Sequential, "expansion_limit": len(indexing)},
+                options={"inner_schedule": dtypes.ScheduleType.Sequential, "split_at": len(indexing)},
                 save=False,
             )
-            # Every indexing axis is shared out, not only the first: one map over them, collapsed (gem's blocks, points)
-            for _ in range(len(indexing) - 1):
-                inner = next(e.dst for e in state.out_edges(entry) if isinstance(e.dst, nodes.MapEntry))
-                entry, _ = MapCollapse.apply_to(
-                    state.sdfg, outer_map_entry=entry, inner_map_entry=inner, permissive=True, save=False
-                )
             entry.map.collapse = len(indexing)
         return len(candidates) or None
 
