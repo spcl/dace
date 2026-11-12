@@ -531,6 +531,24 @@ def test_a_call_keeps_a_symbol_only_its_array_shapes_use():
     assert "N" in call.abi_order
 
 
+@dace.program
+def parallel_total(a: dace.float64[N], out: dace.float64[1]):
+    for i in dace.map[0:N]:
+        out[0] += a[i]
+
+
+def test_a_kernel_cut_from_a_program_with_array_reductions_reduces_its_accumulator_argument():
+    sdfg = parallel_total.to_sdfg(simplify=True)
+    sdfg.openmp_array_reductions = True  # what canonicalize sets on its output
+    (call,) = passes.outline_to_external_calls(sdfg)
+
+    code = cpf.render(call.standalone_sdfg, check_compiles=False).code
+
+    assert call.standalone_sdfg.openmp_array_reductions
+    assert "reduction(+:_out_out[0:1])" in code
+    assert "omp atomic" not in code
+
+
 def test_a_container_named_like_a_connector_prefix_keeps_its_name():
     assert external_call.data_name(external_call.in_conn(external_call.out_conn("gemv"))) == external_call.out_conn(
         "gemv"

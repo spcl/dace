@@ -28,6 +28,8 @@ def reference_sdfg(nsdfg: nodes.NestedSDFG) -> SDFG:
     """A detached copy of the nest with each boundary container renamed to its connector; a container both read
     and written keeps its body on ``_out_`` and gets an ``_in_`` twin descriptor."""
     ref = copy.deepcopy(nsdfg.sdfg)
+    # detached, the copy is a root: it keeps the reduction codegen its program opted into
+    ref.openmp_array_reductions = nsdfg.sdfg.openmp_array_reductions or nsdfg.sdfg.root_sdfg.openmp_array_reductions
     ref.parent = None
     ref.parent_sdfg = None
     ref.parent_nsdfg_node = None
