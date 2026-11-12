@@ -1306,6 +1306,53 @@ def test_inner_map_dependency_resolved():
     apply_fusion(sdfg, removed_maps=1, final_maps=1)
 
 
+def _make_inner_shared_rows(second_row: str, second_col: int) -> dace.SDFG:
+    """``T[i] = A[i] + 1; C[i] = T[i] + 3``, each body staging its input in the transient ``W``: the first at
+    ``W[i, 0]``, the second at ``W[second_row, second_col]``."""
+    sdfg = dace.SDFG(unique_name("inner_shared_rows"))
+    state = sdfg.add_state(is_start_block=True)
+    for name in ("A", "C"):
+        sdfg.add_array(name, shape=(10,), dtype=dace.float64)
+    sdfg.add_array("T", shape=(10,), dtype=dace.float64, transient=True)
+    sdfg.add_array("W", shape=(11, 2), dtype=dace.float64, transient=True)
+    T = state.add_access("T")
+    for label, src, dst, row, col, code, prev in (
+        ("map_1", "A", T, "__i0", 0, "__out = __in1 + 1.0", None),
+        ("map_2", "T", "C", second_row, second_col, "__out = __in1 + 3.0", T),
+    ):
+        me, mx = state.add_map(label, ndrange={"__i0": "0:10"})
+        w = state.add_access("W")
+        tasklet = state.add_tasklet(label + "_t", {"__in1"}, {"__out"}, code)
+        state.add_memlet_path(
+            prev if prev is not None else state.add_read(src),
+            me,
+            w,
+            memlet=dace.Memlet(f"{src}[__i0] -> [{row}, {col}]"),
+        )
+        state.add_edge(w, None, tasklet, "__in1", dace.Memlet(f"W[{row}, {col}]"))
+        out = dst if isinstance(dst, nodes.AccessNode) else state.add_write(dst)
+        state.add_memlet_path(tasklet, mx, out, src_conn="__out", memlet=dace.Memlet(f"{out.data}[__i0]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_inner_data_both_bodies_touch_apart_in_every_iteration_fuses():
+    """Both bodies stage through ``W``, each in its own row and column per iteration: no iteration of one sees what
+    the other touches, so the maps fuse (lulesh's in-place shape-function rows ``b[e, :, 0]`` / ``b[e, :, 2]``)."""
+    sdfg = _make_inner_shared_rows("__i0", 1)
+    apply_fusion(sdfg, removed_maps=1, final_maps=1)
+    A = np.random.rand(10)
+    C = np.zeros(10)
+    sdfg(A=A, C=C)
+    assert np.allclose(C, A + 4.0)
+
+
+def test_inner_data_both_bodies_touch_across_iterations_stays():
+    """The second body stages at ``W[i + 1, 0]``, the row the first body's next iteration writes: not fused."""
+    sdfg = _make_inner_shared_rows("__i0 + 1", 0)
+    apply_fusion(sdfg, removed_maps=0, final_maps=2)
+
+
 def _impl_fusion_intermediate_different_access(modified_shape: bool, traditional_memlet_direction: bool):
 
     def reference(A, B):
@@ -4625,6 +4672,8 @@ if __name__ == "__main__":
     test_different_offsets()
     test_inner_map_dependency()
     test_inner_map_dependency_resolved()
+    test_inner_data_both_bodies_touch_apart_in_every_iteration_fuses()
+    test_inner_data_both_bodies_touch_across_iterations_stays()
     test_possible_cycle_if_fuesed_sdfg()
     test_multi_producer_sdfg()
     test_reuse_connector()

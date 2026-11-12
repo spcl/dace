@@ -456,6 +456,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             second_map_entry=second_map_entry,
             state=graph,
             sdfg=sdfg,
+            param_repl=param_repl,
+            symbols=probe.symbols,
         ):
             return False
 
@@ -1850,6 +1852,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         second_map_entry: nodes.MapEntry,
         state: dace.SDFGState,
         sdfg: SDFG,
+        param_repl: dict[str, str] | None = None,
+        symbols: SymbolResolver | None = None,
     ) -> bool:
         """This function tests if there are dependency inside the Maps.
 
@@ -1874,6 +1878,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         :param second_map_entry: The entry node of the second Map.
         :param state: The state on which we operate.
         :param sdfg: The SDFG on which we operate.
+        :param param_repl: The renaming of the second Map's parameters; given, data both bodies access is no
+            inconsistency where the accesses are apart in every iteration (:meth:`apart_in_every_iteration`).
+        :param symbols: What resolves the facts inside the first Map.
         """
         first_map_body = mfhelper.scope_contents(state, first_map_entry)
         second_map_body = mfhelper.scope_contents(state, second_map_entry)
@@ -1887,8 +1894,23 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         # If there is data that is referenced in both, then we consider this as an error
         #  this is the second rule above.
-        if not first_map_body_data.isdisjoint(second_map_body_data):
-            return True
+        # Unless both bodies touch their own slice of it each iteration: lulesh's per-element rows ``b[e, :, 0]`` and
+        #  ``b[e, :, 2]``, updated in place by two element maps.
+        common = first_map_body_data & second_map_body_data
+        if common:
+            if param_repl is None:
+                return True
+            facts = (SymbolResolver() if symbols is None else symbols).facts_at(state, state.exit_node(first_map_entry))
+            for name in common:
+                accesses = [
+                    access
+                    for body, repl in ((first_map_body, None), (second_map_body, param_repl))
+                    for access in self.body_accesses(name, body, state, repl)
+                ]
+                if any(a is None for a in accesses) or not self.apart_in_every_iteration(
+                    first_map_entry.map, accesses, facts
+                ):
+                    return True
 
         # We consider it as a problem if any Map refers to non-transient data.
         #  This is an implementation detail and could be dropped if we do further
@@ -1897,6 +1919,24 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             return True
 
         return False
+
+    @staticmethod
+    def body_accesses(
+        name: str, body: Iterable[nodes.Node], state: SDFGState, param_repl: dict[str, str] | None
+    ) -> tuple[list[subsets.Subset] | None, list[subsets.Subset] | None]:
+        """The subsets of ``name`` the access nodes in ``body`` are read at, then written at, parameters renamed by
+        ``param_repl``; ``None`` for a side with an access no subset describes."""
+        found: tuple[list[subsets.Subset], list[subsets.Subset]] = ([], [])
+        for node in body:
+            if not isinstance(node, nodes.AccessNode) or node.data != name:
+                continue
+            found[0].extend(e.data.get_src_subset(e, state) for e in state.out_edges(node) if not e.data.is_empty())
+            found[1].extend(e.data.get_dst_subset(e, state) for e in state.in_edges(node) if not e.data.is_empty())
+        if param_repl:
+            found = copy.deepcopy(found)
+            for subset in (s for side in found for s in side if s is not None):
+                symbolic.safe_replace(param_repl, subset.replace)
+        return tuple(None if any(s is None for s in side) else side for side in found)
 
     @staticmethod
     def written_disjointly(
