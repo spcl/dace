@@ -65,8 +65,10 @@ from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, SDFGState, memlet_utils, nodes
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.scope import is_devicelevel_gpu
+from dace.transformation.passes.analysis.analysis import has_wcr_in_edge
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
 from dace.transformation.passes.canonicalize.finalize import blas_addresses
+from dace.transformation.passes.scalar_fission import AccessIndex, MustDefinition, SubsetAccesses, edge_subset
 from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
 
 #: The storage types CPF can render, as an ALLOWLIST. Ordinary host memory, plain locals and Arm SVE
@@ -945,7 +947,7 @@ def lift_persistent_transients(sdfg: SDFG) -> int:
             if {str(s) for s in outer_desc.free_symbols} & per_iteration:
                 continue
             accesses = [(st, n) for st in inner.states() for n in st.data_nodes() if n.data == name]
-            read = any(st.out_degree(n) > 0 for st, n in accesses)
+            read = MustDefinition(DefiniteWrites(name, inner.facts()), AccessIndex(inner)).exposed(inner)
             written = any(st.in_degree(n) > 0 for st, n in accesses)
             outer_name = outer.add_datadesc(name, outer_desc, find_new_name=True)
             desc.transient = False
@@ -963,6 +965,31 @@ def lift_persistent_transients(sdfg: SDFG) -> int:
                 )
             lifted += 1
     return lifted
+
+
+class DefiniteWrites(SubsetAccesses):
+    """Subset accesses where a write counts only if it surely happens in full: no conflict resolution (which reads
+    its destination), no dynamic memlet, and no nested SDFG or library node behind it, whose memlet only bounds it."""
+
+    def writes(self, state: SDFGState, node: nodes.AccessNode) -> list:
+        return [
+            edge_subset(state, e, node)
+            for e in state.in_edges(node)
+            if not e.data.is_empty()
+            and all(
+                leaf.data.wcr is None
+                and not leaf.data.dynamic
+                and isinstance(leaf.src, (nodes.Tasklet, nodes.AccessNode))
+                for leaf in state.memlet_tree(e).leaves()
+            )
+        ]
+
+    def reads(self, state: SDFGState, node: nodes.AccessNode) -> list:
+        if not has_wcr_in_edge(state, node):
+            return super().reads(state, node)
+        return super().reads(state, node) + [
+            edge_subset(state, e, node) for e in state.in_edges(node) if not e.data.is_empty()
+        ]
 
 
 #: Source languages a GPU target emits its own translation unit in. CUDA emits ``cu``; HIP emits

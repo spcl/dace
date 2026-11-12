@@ -11,13 +11,14 @@ workspace holds it (:func:`dace.codegen.cpf.plan_workspace`).
 
 import re
 import subprocess
+import warnings
 
 import numpy as np
 import pytest
 
 import dace
 from dace import dtypes
-from dace.codegen.cpf import EntrySignature, render
+from dace.codegen.cpf import EntrySignature, lift_persistent_transients, render
 from tests.codegen.cpf.conftest import build_standalone, call_standalone
 
 N = dace.symbol("N")
@@ -95,11 +96,57 @@ def test_with_a_workspace_the_buffer_lives_in_it(language):
     np.testing.assert_allclose(args["y"], x * 2.0 + 1.0, rtol=1e-12, atol=0.0)
 
 
+def lifted_nest(write: str, read: str, write_first: bool) -> tuple[dace.SDFG, dace.nodes.NestedSDFG]:
+    """``t[write] = 2 * A`` and ``B[read] = t[read] + 1`` in one nested state, the write first or the read first."""
+    inner = dace.SDFG("lift_inner")
+    inner.add_array("A", [N], dace.float64)
+    inner.add_array("B", [N], dace.float64)
+    inner.add_array("t", [N], dace.float64, transient=True, lifetime=dtypes.AllocationLifetime.Persistent)
+    first, second = inner.add_state("first"), inner.add_state("second")
+    inner.add_edge(first, second, dace.InterstateEdge())
+    write_state, read_state = (first, second) if write_first else (second, first)
+    write_state.add_mapped_tasklet(
+        "w", {"i": write}, {"a": dace.Memlet("A[i]")}, "o = 2 * a", {"o": dace.Memlet("t[i]")}, external_edges=True
+    )
+    read_state.add_mapped_tasklet(
+        "r", {"i": read}, {"x": dace.Memlet("t[i]")}, "o = x + 1", {"o": dace.Memlet("B[i]")}, external_edges=True
+    )
+    sdfg = dace.SDFG("lift_outer")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    state = sdfg.add_state("call")
+    node = state.add_nested_sdfg(inner, {"A": None}, {"B": None}, {"N": "N"})
+    state.add_edge(state.add_read("A"), None, node, "A", dace.Memlet("A[0:N]"))
+    state.add_edge(node, "B", state.add_write("B"), None, dace.Memlet("B[0:N]"))
+    return sdfg, node
+
+
+def test_a_buffer_written_before_every_read_is_no_input_of_the_nest():
+    sdfg, node = lifted_nest("0:N", "0:N", write_first=True)
+    assert lift_persistent_transients(sdfg) == 1
+    assert "t" not in node.in_connectors and "t" in node.out_connectors
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        sdfg.validate()
+    assert not [w for w in caught if "uninitialized" in str(w.message)], [str(w.message) for w in caught]
+
+
+@pytest.mark.parametrize("write, write_first", [("0:N", False), ("1:N", True)])
+def test_a_buffer_the_nest_may_read_before_writing_stays_an_input(write, write_first):
+    """Read first, or written only in part before a whole read: the caller's value of ``t`` is observed."""
+    sdfg, node = lifted_nest(write, "0:N", write_first)
+    assert lift_persistent_transients(sdfg) == 1
+    assert "t" in node.in_connectors and "t" in node.out_connectors
+
+
 if __name__ == "__main__":
     test_without_a_workspace_the_buffer_is_one_static_allocation("c++")
     test_without_a_workspace_the_buffer_is_one_static_allocation("c")
     test_with_a_workspace_the_buffer_lives_in_it("c++")
     test_with_a_workspace_the_buffer_lives_in_it("c")
+    test_a_buffer_written_before_every_read_is_no_input_of_the_nest()
+    test_a_buffer_the_nest_may_read_before_writing_stays_an_input("0:N", False)
+    test_a_buffer_the_nest_may_read_before_writing_stays_an_input("1:N", True)
 
 
 def test_two_units_of_one_library_each_release_their_own_buffer(tmp_path):
