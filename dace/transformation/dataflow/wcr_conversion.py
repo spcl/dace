@@ -100,13 +100,100 @@ def outer_maps_vary_index(sdfg: SDFG, write_subset, data_name: str, outer_params
     names = {str(s) for s in write_subset.free_symbols}
     index_syms = _index_syms_across_nesting(sdfg, names) | boundary_write_index_syms(sdfg, data_name)
     if any(str(it) not in index_syms for it in outer_params):
-        return False
+        return index_loaded_injectively(sdfg, write_subset, outer_params)
     params = {str(it) for it in outer_params}
     varying = [name for name in names if params & _index_syms_across_nesting(sdfg, {name})]
     # Avoid import loop: the vectorization package imports this module.
     from dace.transformation.passes.vectorization.utils.injectivity import write_subset_is_injective
 
     return not varying or write_subset_is_injective(write_subset, varying)
+
+
+def index_loaded_injectively(sdfg: SDFG, write_subset, outer_params: set) -> bool:
+    """Whether a dimension of ``write_subset`` is a symbol ``sdfg`` loads once per call, on an unconditional edge of its
+    top level, from ``X[e]``: ``X`` holds pairwise distinct entries by an ``INJECTIVE`` fact without sentinel and is not
+    written in ``sdfg``, and ``e`` is one to one in every map parameter of ``outer_params``. Distinct outer iterations
+    then write distinct elements (``out[perm[i]] += v`` over a declared permutation)."""
+    # Avoid an import loop: the vectorization package imports this module.
+    from dace.transformation.passes.vectorization.utils.injectivity import write_subset_is_injective
+
+    params = {str(it) for it in outer_params}
+    bindings = [(e, k, v) for e in sdfg.all_interstate_edges() for k, v in e.data.assignments.items()]
+    for begin, end, _ in write_subset.ndrange():
+        name = str(begin)
+        found = [(e, v) for e, k, v in bindings if k == name]
+        if (
+            begin != end
+            or len(found) != 1
+            or found[0][0] not in sdfg.edges()
+            or not found[0][0].data.is_unconditional()
+        ):
+            continue
+        edge, value = found[0]
+        load = symbolic.pystr_to_symbolic(value)
+        if not isinstance(load, symbolic.Subscript) or len(load.args) != 2:
+            continue
+        array, index = str(load.args[0]), load.args[1]
+        if array not in sdfg.arrays or not read_only_outward(sdfg, array):
+            continue
+        varying = [n for n in (str(s) for s in index.free_symbols) if params & _index_syms_across_nesting(sdfg, {n})]
+        if not params <= _index_syms_across_nesting(sdfg, set(varying)):
+            continue
+        if not write_subset_is_injective(subsets.Range([(index, index, 1)]), varying):
+            continue
+        if injective_entries(sdfg, edge.src, array) or loaded_from_injective_point(sdfg, array, params):
+            return True
+    return False
+
+
+def injective_entries(sdfg: SDFG, block, name: str) -> bool:
+    """Whether the array facts on entry to ``block`` hold ``name``'s entries pairwise distinct, with no sentinel."""
+    # Avoid an import loop: the facts reach the canonicalization.
+    from dace.transformation.passes.analysis import array_facts
+
+    return any(
+        f.kind is array_facts.FactKind.INJECTIVE and f.sentinel is None
+        for f in array_facts.facts_at(sdfg, block, [name])
+    )
+
+
+def loaded_from_injective_point(sdfg: SDFG, name: str, params: set) -> bool:
+    """Whether connector ``name`` of ``sdfg`` binds one element ``X[g]`` of its caller's container, with ``g`` one to
+    one in the map parameters ``params`` around the nest and ``X`` injective without sentinel there: whatever the nest
+    loads from ``name`` is then distinct across those iterations."""
+    from dace.transformation.passes.vectorization.utils.injectivity import write_subset_is_injective
+
+    node, state = sdfg.parent_nsdfg_node, sdfg.parent
+    if node is None or state is None:
+        return False
+    edges = [e for e in state.in_edges(node) if e.dst_conn == name and e.data.data is not None]
+    if len(edges) != 1 or edges[0].data.subset is None or edges[0].data.subset.num_elements() != 1:
+        return False
+    source = state.memlet_path(edges[0])[0].src
+    if not isinstance(source, nodes.AccessNode) or source.data != edges[0].data.data:
+        return False
+    if not write_subset_is_injective(edges[0].data.subset, sorted(params)):
+        return False
+    return read_only_outward(sdfg.parent_sdfg, source.data) and injective_entries(sdfg.parent_sdfg, state, source.data)
+
+
+def read_only_outward(sdfg: SDFG, name: str) -> bool:
+    """Whether nothing writes container ``name`` of ``sdfg``, nor, through the input connectors it enters by, the
+    container it names in each enclosing SDFG: a fact on its contents then holds in every call of ``sdfg``."""
+    cur = sdfg
+    while True:
+        if any(dn.data == name and st.in_degree(dn) > 0 for st in cur.states() for dn in st.data_nodes()):
+            return False
+        node, state = cur.parent_nsdfg_node, cur.parent
+        if node is None or state is None:
+            return True
+        if name in node.out_connectors:
+            return False
+        edges = [e for e in state.in_edges_by_connector(node, name) if e.data.data is not None]
+        source = state.memlet_path(edges[0])[0].src if len(edges) == 1 else None
+        if not isinstance(source, nodes.AccessNode):
+            return False
+        name, cur = source.data, cur.parent_sdfg
 
 
 def boundary_write_index_syms(sdfg: SDFG, data_name: str) -> set:

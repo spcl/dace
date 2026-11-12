@@ -230,6 +230,77 @@ def test_a_declared_permutation_maps_a_store_through_a_caller_array():
 
 
 @dace.program
+def update_through_caller_permutation(perm: dace.int64[M], out: dace.float64[M]):
+    for r in range(M):
+        row = perm[r]
+        out[row] = out[row] * 2.0 + 1.0
+
+
+@dace.program
+def update_reading_another_slot(perm: dace.int64[M], out: dace.float64[M]):
+    for r in range(M):
+        row = perm[r]
+        out[row] = out[r] * 2.0 + 1.0
+
+
+@dace.program
+def guarded_update_through_caller_index(perm: dace.int64[M], out: dace.float64[M]):
+    for r in range(M):
+        row = perm[r]
+        if row >= 0:
+            out[row] = out[row] * 2.0 + 1.0
+
+
+def test_a_guarded_update_of_the_stored_element_maps_under_a_sentinel_fact():
+    """``perm`` holds distinct entries apart from the sentinel -1, and the update runs only where ``perm[r] >= 0``: its
+    read sees the element its own iteration stores, so the loop maps without the sort-and-count scatter guard."""
+    sdfg = guarded_update_through_caller_index.to_sdfg(simplify=True)
+    sdfg.add_data_assumption("perm", dace.symbolic.permutation(0, M - 1)._replace(sentinel=-1))
+    ParallelizeLoops().apply_pass(sdfg, {})
+    assert "r" not in loop_variables(sdfg)
+    rng = np.random.default_rng(5)
+    perm = rng.permutation(30).astype(np.int64)
+    perm[::4] = -1
+    out = rng.random(30)
+    ref = out.copy()
+    ref[perm[perm >= 0]] = ref[perm[perm >= 0]] * 2.0 + 1.0
+    sdfg(perm=perm, out=out, M=30)
+    assert np.allclose(out, ref)
+
+
+def declared_permutation(program) -> dace.SDFG:
+    sdfg = program.to_sdfg(simplify=True)
+    sdfg.add_data_assumption("perm", dace.symbolic.permutation(0, M - 1))
+    ParallelizeLoops().apply_pass(sdfg, {})
+    return sdfg
+
+
+def test_a_declared_permutation_maps_an_update_of_the_stored_element():
+    """``out[perm[r]] = f(out[perm[r]])`` reads only the element its own iteration stores, which no other iteration
+    touches under the permutation: the loop maps without a runtime check."""
+    sdfg = declared_permutation(update_through_caller_permutation)
+    assert "r" not in loop_variables(sdfg)
+    assert fact_notes(sdfg)
+    rng = np.random.default_rng(3)
+    perm = rng.permutation(30).astype(np.int64)
+    out = rng.random(30)
+    ref = out * 2.0 + 1.0
+    sdfg(perm=perm, out=out, M=30)
+    assert np.allclose(out, ref)
+
+
+def test_an_update_reading_another_element_stays_sequential_under_a_permutation():
+    """``out[r]`` may be the element another iteration stores through ``perm``: the permutation says nothing of it."""
+    assert "r" in loop_variables(declared_permutation(update_reading_another_slot))
+
+
+def test_an_update_of_the_stored_element_without_a_fact_stays_sequential():
+    sdfg = update_through_caller_permutation.to_sdfg(simplify=True)
+    ParallelizeLoops().apply_pass(sdfg, {})
+    assert "r" in loop_variables(sdfg)
+
+
+@dace.program
 def scatter_rows(
     indptr: dace.int64[M + 1], indices: dace.int64[NNZ], vals: dace.float64[NNZ], dense: dace.float64[M, N]
 ):

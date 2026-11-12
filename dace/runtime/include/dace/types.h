@@ -3,6 +3,7 @@
 #define __DACE_TYPES_H
 
 #include <cstdint>
+#include <cstdlib>  // std::abort (DACE_ABORT)
 #include <complex>
 #include <limits>  // std::numeric_limits (specialized for the low-precision structs at the bottom)
 #include <type_traits>
@@ -133,6 +134,15 @@ struct is_fundamental<__hip_fp8_e5m2> : std::integral_constant<bool, true> {};
     #define DACE_HDFI inline
     #define DACE_HFI inline
     #define DACE_DFI inline
+#endif
+
+// Terminates the program. Device code has no ``std::abort``, so a kernel traps instead.
+#if defined(__HIP_DEVICE_COMPILE__)
+    #define DACE_ABORT() __builtin_trap()
+#elif defined(__CUDA_ARCH__)
+    #define DACE_ABORT() __trap()
+#else
+    #define DACE_ABORT() std::abort()
 #endif
 
 #if defined(__CUDA_ARCH__) || defined(__HIP_ARCH__)

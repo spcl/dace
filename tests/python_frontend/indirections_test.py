@@ -454,6 +454,24 @@ def test_materialized_slice_is_written_from_zero():
         assert np.allclose(B[i], np.sum(A[i0:i1]))
 
 
+def test_explicit_tasklet_wcr_through_indirection():
+    """``h >> hist(1, op)[s]`` with ``s`` loaded from an array accumulates: the indirected write keeps its WCR."""
+    NF, NV = dc.symbol("NF"), dc.symbol("NV")
+
+    @dc.program
+    def histogram(front: dc.int64[NF], hist: dc.int64[NV]):
+        for k in range(NF):
+            s = front[k]
+            with dace.tasklet:
+                h >> hist(1, lambda a, b: a + b)[s]
+                h = 1
+
+    front = np.array([1, 1, 2, 1], dtype=np.int64)
+    hist = np.zeros(4, dtype=np.int64)
+    histogram(front=front, hist=hist)
+    assert hist.tolist() == [0, 3, 1, 0]
+
+
 if __name__ == "__main__":
     test_indirection_scalar()
     test_indirection_scalar_assign()
@@ -481,3 +499,4 @@ if __name__ == "__main__":
     test_spmv()
     test_indirection_size_1()
     test_materialized_slice_is_written_from_zero()
+    test_explicit_tasklet_wcr_through_indirection()

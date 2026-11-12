@@ -293,30 +293,34 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
         # cub, the identity literal and ``_wcr_fixed::reduce_atomic`` all want a scalar ctype.
         if isinstance(acc_desc.dtype, dtypes.vector):
             continue
-        # One contiguous run of the accumulator: a 1-D span, or a row of a multi-dimensional one
-        span = contiguous_span(subset, acc_desc.strides)
-        if span is None:
-            continue
         redtype = operations.detect_reduction_type(iedge.data.wcr)
         identity = dtypes.reduction_identity(acc_desc.dtype, redtype)
         if redtype == dtypes.ReductionType.Custom or identity is None:
             continue  # only built-in ops with a known identity element
-        base, length = span
         # Block-invariant target: indexed by nothing this scope defines (its parameters, a value read inside it)
         # but the parameters every thread of one block shares
         if outer_symbols is None:
             outer_symbols = set(map(str, frame.symbols_defined_at(state, scope_entry))) - map_params
             outer_symbols |= block_invariant_params(scope_entry, (block_x, block_y, block_z))
-        shared = iedge.data.dynamic or any(str(s) not in outer_symbols for s in subset.free_symbols)
+        shared = (
+            iedge.data.dynamic
+            or any(str(s) not in outer_symbols for s in subset.free_symbols)
+            or indirect_write(iedge.data)
+        )
         if shared:
-            # A scatter into a small array: privatized per block in shared memory instead (``shared_scatter_target``)
-            if len(subset) != 1 or not shared_scatter_target(sdfg, state, scope_entry, iedge.data.data, acc_desc):
+            # A scatter: privatized per block, in shared memory or in the block's slice of a global buffer
+            copies = block_private_capacities(sdfg, state, scope_entry, iedge.data.data, acc_desc)
+            if not copies:
                 continue
             base = 0
-            size = acc_desc.total_size
-            m = SHARED_SCATTER_ELEMENTS if symbolic.issymbolic(size, sdfg.constants) else int(size)
-            extent = sym2cpp(size)
+            m = max(capacity for _buffer, capacity in copies)
+            extent = sym2cpp(acc_desc.total_size)
         else:
+            # One contiguous run of the accumulator: a 1-D span, or a row of a multi-dimensional one
+            span = contiguous_span(subset, acc_desc.strides)
+            if span is None:
+                continue
+            base, length = span
             try:
                 m = int(length)
             except (TypeError, ValueError):
@@ -337,6 +341,7 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
             identity_literal = f"{ctype}({complex(identity).real!r}, {complex(identity).imag!r})"
         else:
             identity_literal = f"{ctype}({float(identity)!r})"
+        copies = block_private_copies(partial, ctype, extent, copies, sdfg, frame) if shared else []
         out.append(
             {
                 "acc_ptr": cpp.ptr(iedge.data.data, acc_desc, sdfg, frame),
@@ -355,41 +360,140 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
                 "base": base,
                 "data": iedge.data.data,
                 "shared": shared,
-                # A symbolic target size is checked against the shared capacity ``m`` at run time
                 "extent": extent,
-                "guarded": shared and extent != str(m),
+                # The block-private copies of a scatter target, each used while its run-time condition holds
+                "copies": copies,
                 "sdfg": sdfg,
             }
         )
     return out
 
 
-#: Elements a block may privatize in shared memory for one scatter target (16 KiB of doubles); a target of symbolic
-#: size gets this capacity and uses it when it fits at run time.
-SHARED_SCATTER_ELEMENTS = 2048
+def indirect_write(memlet: mmlt.Memlet) -> bool:
+    """Whether ``memlet`` writes fewer elements than its subset spans, each chosen at run time (``out[ix] = v`` into
+    ``h(1)[0:n]``): a scatter, even when no symbol of its subset varies."""
+    try:
+        return int(memlet.volume) < int(memlet.subset.num_elements())
+    except (TypeError, ValueError):
+        return False
+
+
+#: The flat index of this block within the grid, and the number of blocks in it.
+_FLAT_BID = "(blockIdx.x + gridDim.x * (blockIdx.y + gridDim.y * blockIdx.z))"
+_GRID_BLOCKS = "(gridDim.x * gridDim.y * gridDim.z)"
+
+
+def block_private_copies(partial: str, ctype: str, extent: str, capacities: list, sdfg: SDFG, frame) -> list[dict]:
+    """One dict per block-private copy of :func:`block_private_capacities`: the C name ``copy`` of its first element,
+    its declaration ``decl``, and the uniform flag ``on`` (``None``: always) under which the block uses it, true at
+    most for one copy. A symbolic ``extent`` must fit the capacity; a global slice also needs its block to have one."""
+    copies = []
+    for buffer, m in capacities:
+        conditions = [f"!{c['on']}" for c in copies]
+        if extent != str(m):
+            conditions.append(f"({extent} <= {m})")
+        if buffer is None:
+            copy, decl = partial, f"__shared__ {ctype} {partial}[{m}];"
+        else:
+            desc = sdfg.arrays[buffer]
+            conditions.append(f"({_GRID_BLOCKS} <= {sym2cpp(desc.shape[0])})")
+            copy = f"{partial}_g"
+            decl = f"{ctype} * const {copy} = {cpp.ptr(buffer, desc, sdfg, frame)} + (size_t)({_FLAT_BID}) * {m};"
+        on = f"{copy}_on" if conditions else None
+        if on is not None:
+            decl += f"\nconst bool {on} = {' && '.join(conditions)};"
+        copies.append({"copy": copy, "decl": decl, "on": on})
+        if on is None:
+            break
+    return copies
+
+
+def block_private_select(copies: list[dict], pick, fallback) -> str:
+    """The C expression ``pick(copy)`` of the copy the block uses, ``fallback()`` when it uses none."""
+    *conditional, last = copies
+    expr = pick(last) if last["on"] is None else f"(({last['on']}) ? ({pick(last)}) : ({fallback()}))"
+    for c in reversed(conditional):
+        expr = f"(({c['on']}) ? ({pick(c)}) : ({expr}))"
+    return expr
+
+
+def block_private_capacities(
+    sdfg: SDFG, state: SDFGState, scope_entry: nodes.MapEntry, name: str, desc
+) -> list[tuple[str | None, int]]:
+    """The block-private copies the scatter WCR target ``name`` of ``scope_entry`` folds into, in the order a block
+    tries them at run time: ``(None, m)`` for an ``m``-element copy in shared memory, ``(buffer, m)`` for the block's
+    ``m``-element slice of the global ``[blocks, m]`` ``buffer`` that
+    :class:`~dace.transformation.passes.gpu_specialization.privatize_scatter_per_block.PrivatizeScatterPerBlock` named
+    for it on the map. A symbolic size gets every capacity and uses the first it fits at run time. Empty when the
+    target cannot be privatized (:func:`block_private_target`)."""
+    if not block_private_target(sdfg, state, scope_entry, name, desc):
+        return []
+    size = desc.total_size
+    fixed = not symbolic.issymbolic(size, sdfg.constants)
+    copies = []
+    shared = Config.get("compiler", "cuda", "block_private_shared_elements")
+    if shared > 0 and not (fixed and int(size) > shared):
+        copies.append((None, int(size) if fixed else shared))
+        if fixed:
+            return copies
+    buffer = scope_entry.map.gpu_block_private.get(name)
+    if buffer is not None and buffer in sdfg.arrays:
+        copies.append((buffer, int(sdfg.arrays[buffer].shape[1])))
+    return copies
 
 
 def shared_scatter_target(sdfg: SDFG, state: SDFGState, scope_entry: nodes.MapEntry, name: str, desc) -> bool:
-    """Whether the scatter WCR target ``name`` of ``scope_entry`` can be privatized per block in shared memory: a
-    1-D array of at most :data:`SHARED_SCATTER_ELEMENTS` elements (or of a symbolic size the scope knows, checked at run
-    time), which the scope does not read, and which a nested SDFG in the scope writes only as a whole (it is handed
-    the copy). Not in standalone CPF."""
-    if cpf_lowering.standalone() or not isinstance(desc, data.Array) or len(desc.shape) != 1:
+    """Whether the scatter WCR target ``name`` of ``scope_entry`` is privatized per block in shared memory: a
+    :func:`block_private_target` of at most ``compiler.cuda.block_private_shared_elements`` elements, or of a symbolic
+    size checked against that capacity at run time."""
+    return any(buffer is None for buffer, _m in block_private_capacities(sdfg, state, scope_entry, name, desc))
+
+
+def block_private_target(sdfg: SDFG, state: SDFGState, scope_entry: nodes.MapEntry, name: str, desc) -> bool:
+    """Whether the scatter WCR target ``name`` of ``scope_entry`` can be privatized per block: an array with no start
+    offset (a copy of ``total_size`` elements addressed by its strides), of a size the scope knows and no enclosing
+    map's range grows with (:func:`~dace.transformation.passes.privatize_scatter_reduction.accumulator_scales_with_map`),
+    which the scope only reduces into with one operator and does not read, and which a nested SDFG in the scope only
+    reduces into with that operator as a whole (it is handed the copy). Not in standalone CPF."""
+    if cpf_lowering.standalone() or type(desc) is not data.Array or desc.start_offset != 0:
+        return False
+    from dace.transformation.passes.privatize_scatter_reduction import accumulator_scales_with_map
+
+    # A copy sized by the iteration space costs every block as much as the whole kernel does
+    scope = scope_entry
+    while scope is not None:
+        if accumulator_scales_with_map(desc, scope):
+            return False
+        scope = state.entry_node(scope)
+    writes = [e for e in state.in_edges(state.exit_node(scope_entry)) if e.data.data == name]
+    if not writes or writes[0].data.wcr is None:
+        return False
+    redtype = operations.detect_reduction_type(writes[0].data.wcr)
+    if any(e.data.wcr is None or operations.detect_reduction_type(e.data.wcr) != redtype for e in writes):
+        return False
+    if any(e.data.data == name for e in state.in_edges(scope_entry) if not e.data.is_empty()):
         return False
     scope = state.scope_subgraph(scope_entry)
     if symbolic.issymbolic(desc.total_size, sdfg.constants):
         # The symbols a kernel receives: a shape symbol nothing in the scope uses is not among them
         if not {str(sym) for sym in desc.total_size.free_symbols} <= set(scope.arglist()):
             return False
-    elif int(desc.total_size) > SHARED_SCATTER_ELEMENTS:
-        return False
-    # A nested SDFG writing the target is handed the block's copy whole, so it must address the whole array
+    # A nested SDFG writing the target is handed the block's copy whole, so it must address the whole array and
+    # only reduce into it, with the same operator
     for node in scope.nodes():
         if isinstance(node, nodes.NestedSDFG):
             for edge in state.out_edges(node):
-                if edge.data.data == name and edge.data.subset != subsets.Range.from_array(desc):
+                if edge.data.data != name:
+                    continue
+                if edge.data.subset != subsets.Range.from_array(desc):
                     return False
-    return not any(e.data.data == name for e in state.in_edges(scope_entry) if not e.data.is_empty())
+                analysis = rpsr.ScatterAnalysis(state, scope_entry, name, redtype)
+                try:
+                    for _site in analysis.paths([], state, node, edge.src_conn, desc):
+                        pass
+                except rpsr.Refuse:
+                    return False
+    return True
 
 
 def register_gpu_block_reduction(red: dict, covered: dict) -> str:
@@ -405,23 +509,31 @@ def register_gpu_block_reduction(red: dict, covered: dict) -> str:
         "base": red["base"],
         "m": red["m"],
         "shared": red["shared"],
-        "guarded": red["guarded"],
+        "copies": red["copies"],
         "sdfg": red["sdfg"],
     }
     if red["shared"]:
-        # One copy per block, initialized by the block's threads together; ``{partial}_on`` is uniform per kernel
-        on = f"({red['extent']} <= {red['m']})" if red["guarded"] else "true"
-        return (
-            f"__shared__ {red['ctype']} {red['partial']}[{red['m']}];\n"
-            f"const bool {red['partial']}_on = {on};\n"
-            f"if ({red['partial']}_on) for (int __bi = {_FLAT_TID}; __bi < {red['extent']}; __bi += "
-            f"{_block_threads(red)}) {red['partial']}[__bi] = {red['identity']};\n"
-            "__syncthreads();"
+        # One copy per block, initialized by the block's threads together; the flags choosing it are uniform
+        return "\n".join(
+            [c["decl"] for c in red["copies"]]
+            + [
+                _for_block_copy(
+                    c, f"for (int __bi = {_FLAT_TID}; __bi < {red['extent']}; __bi += {_block_threads(red)})"
+                )
+                + f" {c['copy']}[__bi] = {red['identity']};"
+                for c in red["copies"]
+            ]
+            + ["__syncthreads();"]
         )
     return (
         f"{red['ctype']} {red['partial']}[{red['m']}];\n"
         f"for (int __bi = 0; __bi < {red['m']}; ++__bi) {red['partial']}[__bi] = {red['identity']};"
     )
+
+
+def _for_block_copy(copy: dict, loop: str) -> str:
+    """``loop`` over the elements of the block-private ``copy``, run only when the block uses that copy."""
+    return loop if copy["on"] is None else f"if ({copy['on']}) {loop}"
 
 
 #: The flat thread index within a block.
@@ -503,15 +615,14 @@ def drain_gpu_block_reduction(red: dict, idstr: str, covered: dict) -> str:
     covered.pop(red["data"], None)
     base_cpp = sym2cpp(red["base"])
     if red["shared"]:
-        # After the block's last shared-memory update: each element of the copy commits with one global atomic
-        return (
-            "{{\n"
-            "__syncthreads();\n"
-            "if ({partial}_on) for (int __bk_{id} = {tid}; __bk_{id} < {extent}; __bk_{id} += {threads}) {{\n"
-            "    dace::wcr_fixed<{credtype}, {ctype}>::reduce_atomic({acc_ptr} + __bk_{id}, {partial}[__bk_{id}]);\n"
-            "}}\n"
-            "}}"
-        ).format(id=idstr, tid=_FLAT_TID, threads=_block_threads(red), **red)
+        # After the block's last update of its copy: each element commits with one global atomic
+        loop = f"for (int __bk_{idstr} = {_FLAT_TID}; __bk_{idstr} < {red['extent']}; __bk_{idstr} += {_block_threads(red)})"
+        commits = [
+            _for_block_copy(c, loop) + f" dace::wcr_fixed<{red['credtype']}, {red['ctype']}>::reduce_atomic("
+            f"{red['acc_ptr']} + __bk_{idstr}, {c['copy']}[__bk_{idstr}]);"
+            for c in red["copies"]
+        ]
+        return "{\n__syncthreads();\n" + "\n".join(commits) + "\n}"
     if cpf_lowering.standalone():
         # Same fold, none of the runtime: the reduction functor becomes a lambda, and the one atomic
         # per block becomes the preamble's CAS loop, which covers every operator rather than the few
@@ -1999,17 +2110,24 @@ class CPUCodeGen(TargetCodeGenerator):
                     )
                     return f"{lhs} = {value}"
                 if cover["shared"]:
-                    # The block's shared copy: other threads of the block update it too
-                    into = f"dace::wcr_fixed<{cover['credtype']}, {cover['ctype']}>::reduce_atomic(&{lhs}, {inname})"
-                    if not cover["guarded"]:
-                        return into
-                    # Too large for the copy at run time: the global atomic, as without one
-                    del self._gpu_block_reduction_covered[memlet.data]
-                    try:
-                        direct = self.write_and_resolve_expr(sdfg, memlet, nc, outname, inname, indices, dtype)
-                    finally:
-                        self._gpu_block_reduction_covered[memlet.data] = cover
-                    return f"(({cover['partial']}_on) ? ({into}) : ({direct}))"
+                    # The block's copy: other threads of the block update it too
+                    element = lhs[len(cover["partial"]) :]
+
+                    def into(copy: dict) -> str:
+                        return (
+                            f"dace::wcr_fixed<{cover['credtype']}, {cover['ctype']}>::reduce_atomic("
+                            f"&{copy['copy']}{element}, {inname})"
+                        )
+
+                    def direct() -> str:
+                        # No copy fits at run time: the global atomic, as without one
+                        del self._gpu_block_reduction_covered[memlet.data]
+                        try:
+                            return self.write_and_resolve_expr(sdfg, memlet, nc, outname, inname, indices, dtype)
+                        finally:
+                            self._gpu_block_reduction_covered[memlet.data] = cover
+
+                    return block_private_select(cover["copies"], into, direct)
                 return f"{lhs} = dace::_wcr_fixed<{cover['credtype']}, {cover['ctype']}>()({lhs}, {inname})"
         # Skip the atomic call entirely when an enclosing OMP map has put this
         # target in a ``reduction(...)`` clause -- the OMP runtime privatizes
@@ -3222,9 +3340,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 # WCR is atomic already), which the kernel exit commits
                 cover = self._gpu_block_reduction_covered.get(out_memlet.data)
                 if cover is not None and cover["shared"] and cover["sdfg"] is sdfg:
-                    copy = f"&{cover['partial']}[0]"
-                    if cover["guarded"]:
-                        copy = f"({cover['partial']}_on ? {copy} : {reference[2]})"
+                    copy = block_private_select(cover["copies"], lambda c: f"&{c['copy']}[0]", lambda: reference[2])
                     reference = (reference[0], reference[1], copy)
                 memlet_references.append(reference)
 

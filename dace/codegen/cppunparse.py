@@ -1706,8 +1706,12 @@ class CPPUnparser:
                 self.emit_call(self._renamed_funcs[t.func.id], t.args)
                 return
             if t.func.id == "abort" and not t.args:
-                # C has no ``std::`` namespace; both spellings are declared by the standard headers.
-                self.write("abort()" if cpf_lowering.standalone_c() else "std::abort()")
+                # C has no ``std::`` namespace; a standalone unit has the standard headers only. With the DaCe runtime
+                # headers, ``DACE_ABORT`` also traps inside a kernel, where ``std::abort`` is a host function.
+                if cpf_lowering.standalone():
+                    self.write("abort()" if cpf_lowering.standalone_c() else "std::abort()")
+                else:
+                    self.write("DACE_ABORT()")
                 return
             if t.func.id in self.callcmps:
                 op = self.callcmps[t.func.id]()

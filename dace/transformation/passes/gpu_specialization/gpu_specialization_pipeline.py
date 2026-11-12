@@ -98,6 +98,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             SynchronizeStreamUnawareGPUCallbacks,
         )
         from dace.transformation.passes.gpu_specialization.grid_stride_kernels import GridStrideKernels
+        from dace.transformation.passes.gpu_specialization.privatize_scatter_per_block import PrivatizeScatterPerBlock
         from dace.transformation.passes.gpu_specialization.promote_warp_tiles import PromoteWarpTiles
         from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
         from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
@@ -120,6 +121,8 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         #     pair that pass creates and keeps its block width.
         #   * DemoteKernelInternalArraysToScalars before ReinferConnectorTypes -- it resets the
         #     connectors that re-inference then re-derives as scalar references.
+        #   * PrivatizeScatterPerBlock after GridStrideKernels and DemoteKernelInternalArraysToScalars -- it
+        #     grid-strides the kernels it privatizes itself, and its buffers are only ever addressed by codegen.
         #   * SynchronizeStreamUnawareGPUCallbacks after wiring -- its fence takes no stream connector.
         #   * ReinferConnectorTypes last -- earlier passes mutate NestedSDFG connector descriptors.
         strategy = AutoGPUStreamScheduler(synchronize_on_exit=Config.get("compiler", "cuda", "synchronize_on_exit"))
@@ -145,6 +148,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
                 AddThreadBlockMaps(),
                 GridStrideKernels(),
                 DemoteKernelInternalArraysToScalars(),
+                PrivatizeScatterPerBlock(),
                 ReinferConnectorTypes(),
             ]
         )

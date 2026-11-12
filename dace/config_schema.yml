@@ -725,6 +725,24 @@ required:
                         title: CUDA/HIP path override
                         description: Path to CUDA toolkit or ROCm/HIP root directory
 
+                    block_private_shared_elements:
+                        type: int
+                        default: 2048
+                        title: Shared-memory block-private scatter capacity
+                        description: >
+                            Elements a thread block may privatize in shared memory for one scatter-reduced
+                            array (16 KiB of doubles); a target of symbolic size gets this capacity and uses
+                            it when it fits at run time.
+
+                    block_private_global_elements:
+                        type: int
+                        default: 8192
+                        title: Global-memory block-private scatter capacity
+                        description: >
+                            Elements of a scatter-reduced array too large for shared memory that each thread
+                            block of a grid-strided kernel may privatize in its own slice of global memory
+                            (``PrivatizeScatterPerBlock``). 0 disables the global slices.
+
                     args:
                         type: str
                         title: nvcc Arguments

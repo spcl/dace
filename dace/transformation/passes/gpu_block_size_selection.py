@@ -14,7 +14,7 @@ line of a fixed thread count that the domain can fill. ``threadIdx.x`` maps to t
 (contiguous) map dimension -- codegen reverses the map range into grid order -- so
 ``gpu_block_size`` is stored in CUDA ``(x, y, z)`` order, i.e. reversed map-parameter order.
 
-    * 1-D domain              -> a line of 512          (``[512, 1, 1]``)
+    * 1-D domain              -> a line of 256          (``[256, 1, 1]``)
     * 2-D domain              -> a rectangle of 256     (``N x N`` -> ``[64, 4, 1]``)
     * 3-D domain              -> a box of 512           (``N x N x N`` -> ``[64, 4, 2]``)
 
@@ -54,8 +54,8 @@ from dace.transformation import transformation
 #: one of these must not also carry a preset ``gpu_block_size``.
 THREADBLOCK_SCHEDULES = (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
 
-#: Threads per block by domain rank: a line of 512, a square of 256, a cube of 512.
-BLOCK_THREADS_BY_RANK = {1: 512, 2: 256, 3: 512}
+#: Threads per block by domain rank: a line of 256, a square of 256, a cube of 512.
+BLOCK_THREADS_BY_RANK = {1: 256, 2: 256, 3: 512}
 
 
 def warp_width() -> int:

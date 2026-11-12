@@ -160,9 +160,28 @@ def two_strided_stores(a: dace.float64[N], b: dace.float64[N], d: dace.float64[N
         a[i * S + 1] = d[i]
 
 
+@dace.program
+def strided_store_at_loaded_offset(a: dace.float64[N], off: dace.int64[N], b: dace.float64[N]):
+    for i in range(N):
+        a[i * S + off[i]] = b[i]
+
+
+@dace.program
+def strided_store_over_inner_loop(a: dace.float64[N], b: dace.float64[N, N]):
+    for i in range(N):
+        for j in range(N):
+            a[i * S + j] = b[i, j]
+
+
 def test_constraint_answers_only_for_its_strided_write():
-    """``S != 0`` makes ``a[S*i]`` injective; it says nothing of ``last[0]``, nor of ``a[S*i + 1]`` at ``S == 1``."""
-    for program in (strided_store_and_other_write, two_strided_stores):
+    """``S != 0`` makes ``a[S*i]`` injective; it says nothing of ``last[0]``, nor of ``a[S*i + 1]`` at ``S == 1``,
+    nor of ``a[S*i + off[i]]`` or ``a[S*i + j]``, whose offset moves within the loop."""
+    for program in (
+        strided_store_and_other_write,
+        two_strided_stores,
+        strided_store_at_loaded_offset,
+        strided_store_over_inner_loop,
+    ):
         sdfg = program.to_sdfg(simplify=True)
         ParallelizeUnderConstraint().apply_pass(sdfg, {})
         assert not _has_map(sdfg), f"{program.name}: the constraint does not cover this conflict"
