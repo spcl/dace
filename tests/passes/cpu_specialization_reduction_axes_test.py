@@ -159,7 +159,11 @@ def per_atom_forces(name: str, read_back: bool) -> dace.SDFG:
     if read_back:
         state.add_memlet_path(state.add_read("f"), pairs, comps, tasklet, dst_conn="g", memlet=dace.Memlet("f[i, c]"))
     state.add_memlet_path(
-        tasklet, comps_exit, pairs_exit, state.add_write("f"), src_conn="out",
+        tasklet,
+        comps_exit,
+        pairs_exit,
+        state.add_write("f"),
+        src_conn="out",
         memlet=dace.Memlet("f[i, c]", wcr="lambda a, b: a + b"),
     )
     sdfg.validate()
