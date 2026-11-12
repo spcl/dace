@@ -37,10 +37,10 @@ def test_a_configured_device_overrides_the_query(monkeypatch):
             assert rb.resident_blocks(256) == 104 * 4
 
 
-def test_without_a_visible_device_the_fallback_count_is_used(monkeypatch):
+def test_without_a_visible_device_or_a_configured_one_compiling_fails(monkeypatch):
     monkeypatch.setattr(rb, "query_device", lambda: None)
-    with pytest.warns(UserWarning, match="No GPU visible"):
-        assert device_limits().multiprocessors == rb.FALLBACK_MULTIPROCESSORS
+    with pytest.raises(RuntimeError, match="device_multiprocessors"):
+        device_limits()
 
 
 @pytest.mark.gpu

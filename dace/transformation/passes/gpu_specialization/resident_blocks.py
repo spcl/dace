@@ -3,18 +3,14 @@
 
 A grid of that many blocks fills the device once: a grid-strided kernel launches no more, and a buffer with one
 slot per block is sized by it. The device is the one visible when the SDFG is compiled, asked through the GPU
-runtime's attribute query (microseconds, so a pass asks once per run and hands the limits down); without one, the
-``compiler.cuda.device_*`` configuration describes it.
+runtime's attribute query (microseconds, so a pass asks once per run and hands the limits down); compiling without
+one needs the ``compiler.cuda.device_*`` configuration to describe it.
 """
 
 import ctypes
-import warnings
 from dataclasses import dataclass
 
 from dace.config import Config
-
-#: The multiprocessor count assumed when no GPU is visible and ``compiler.cuda.device_multiprocessors`` is unset.
-FALLBACK_MULTIPROCESSORS = 128
 
 #: ``(multiprocessors, threads per multiprocessor, blocks per multiprocessor)`` attribute ids of each runtime: the
 #: ``cudaDeviceAttr`` values, and the ``hipDeviceAttribute_t`` ones (fixed since ROCm 5).
@@ -62,8 +58,11 @@ def query_device() -> DeviceLimits | None:
 
 
 def device_limits() -> DeviceLimits:
-    """The target GPU's limits: the visible GPU's, unless ``compiler.cuda.device_multiprocessors`` is set or no GPU is
-    visible; then the ``compiler.cuda.device_*`` keys, with ``FALLBACK_MULTIPROCESSORS`` for an unset count."""
+    """The target GPU's limits: the ``compiler.cuda.device_*`` keys when ``device_multiprocessors`` is set, else the
+    visible GPU's.
+
+    :raises RuntimeError: No GPU is visible and ``compiler.cuda.device_multiprocessors`` is unset.
+    """
     multiprocessors = Config.get("compiler", "cuda", "device_multiprocessors")
     threads = Config.get("compiler", "cuda", "device_threads_per_multiprocessor")
     blocks = Config.get("compiler", "cuda", "device_blocks_per_multiprocessor")
@@ -72,11 +71,12 @@ def device_limits() -> DeviceLimits:
     visible = query_device()
     if visible is not None:
         return visible
-    warnings.warn(
-        f"No GPU visible and compiler.cuda.device_multiprocessors unset: assuming {FALLBACK_MULTIPROCESSORS} "
-        "multiprocessors for grid and per-block buffer sizes"
+    raise RuntimeError(
+        "No GPU is visible to size grids and per-block buffers by: when compiling without one, set "
+        "compiler.cuda.device_multiprocessors to the target's SM / CU count (and "
+        "compiler.cuda.device_threads_per_multiprocessor and device_blocks_per_multiprocessor if they differ from "
+        "2048 and 32)."
     )
-    return DeviceLimits(FALLBACK_MULTIPROCESSORS, threads, blocks)
 
 
 def resident_blocks(block_threads: int) -> int:
