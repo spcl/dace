@@ -18,6 +18,7 @@ from typing import (
     Any,
     AnyStr,
     Literal,
+    NamedTuple,
     Optional,
     Union,
     overload,
@@ -3189,6 +3190,14 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         return node.expand(self, implementation, **expansion_kwargs)
 
 
+class AssignmentFact(NamedTuple):
+    """A relation an interstate edge establishes, the names and containers it reads, and its integer names."""
+
+    relation: symbolic.Relation
+    reads: frozenset[str]
+    integers: frozenset[str]
+
+
 class SymbolResolver:
     """Resolves the symbols visible at a node, reusing the part that only depends on the state.
 
@@ -3224,6 +3233,10 @@ class SymbolResolver:
         self._sdfg_facts: dict[
             SDFG, tuple[symbolic.Facts, tuple[list[symbolic.Relation], set[str], set[str], frozenset[str]]]
         ] = {}
+        #: Per block, the relations interstate assignments establish on entry to it (``assignment_facts``).
+        self._assignment_facts: dict[ControlFlowBlock, tuple[AssignmentFact, ...]] = {}
+        #: Per block, the names it assigns and the containers it writes (``changes``).
+        self._changes: dict[ControlFlowBlock, frozenset[str]] = {}
 
     def defined_at(self, state: "SDFGState", node: nd.Node) -> dict[str, dtypes.typeclass]:
         last = self._per_state.get(state.sdfg)
@@ -3312,7 +3325,9 @@ class SymbolResolver:
                         loop_analysis.get_loop_end(region),
                         loop_analysis.get_loop_stride(region),
                     )
-                    if None not in bounds and not loop_analysis.range_holds(region, bounds, sdfg):
+                    if None not in bounds and not loop_analysis.range_holds(
+                        region, bounds, sdfg, self.step_facts(region, bounds[2], relations, integers)
+                    ):
                         bounds = (None, None, None)
                     self._loop_scopes[region] = (
                         region,
@@ -3371,6 +3386,18 @@ class SymbolResolver:
                 declared = scope_facts(sdfg.symbol_repo.scopes[owner])
                 relations.extend(declared.relations)
                 integers |= declared.integers
+        # What the interstate assignments before ``block`` established, unless ``block`` or a map around the node
+        # changes what it reads
+        assigned = self.assignment_facts(block)
+        rebound = (
+            self.changes(block).union(*(bound.keys() for owner, bound, _ in scopes if isinstance(owner, nd.Node)))
+            if assigned
+            else frozenset()
+        )
+        for fact in assigned:
+            if not fact.reads & rebound:
+                relations.append(fact.relation)
+                integers |= fact.integers
         # Solved by the first proof that needs them: most scopes are never asked. A range the facts prove empty has a
         # body that never runs, so it is sound to know less there: without its bounds.
         return symbolic.Facts(
@@ -3382,6 +3409,121 @@ class SymbolResolver:
             check=False,
             fallback=tuple(relation for relation in relations if relation not in from_ranges),
         )
+
+    def changes(self, block: "ControlFlowBlock") -> frozenset[str]:
+        """The names ``block`` assigns (on its interstate edges and loop headers) and the containers it writes."""
+        found = self._changes.get(block)
+        if found is None:
+            from dace.sdfg.sdfg import interstate_bound_names  # Avoid import loop
+
+            regional = isinstance(block, AbstractControlFlowRegion)
+            states = list(block.states()) if regional else [block] if isinstance(block, SDFGState) else []
+            found = frozenset(dn.data for st in states for dn in st.data_nodes() if st.in_degree(dn) > 0)
+            if regional:
+                found |= interstate_bound_names(block)
+            self._changes[block] = found
+        return found
+
+    def assignment_facts(self, block: "ControlFlowBlock") -> tuple["AssignmentFact", ...]:
+        """The relations the interstate assignments that run before ``block`` on every path to it establish on entry to
+        it: ``name == value`` for each ``name = value``, and what the edge declares of the names it binds, while
+        nothing since changes a name or container they read. A merge, or the entry of the SDFG, knows none."""
+        if isinstance(block, dace.SDFG):
+            return ()
+        path: list[tuple[ControlFlowBlock, ControlFlowBlock | None, dace.sdfg.InterstateEdge | None]] = []
+        current: ControlFlowBlock | None = block
+        seen: set[ControlFlowBlock] = set()
+        # A cycle of single-entry blocks (unstructured control flow) has no first assignment to start from
+        while current is not None and current not in self._assignment_facts:
+            if current in seen:
+                current = None
+                break
+            seen.add(current)
+            region = current.parent_graph
+            previous: ControlFlowBlock | None = None
+            edge = None
+            if isinstance(region, ConditionalBlock):
+                # A branch runs right after its conditional block, whose conditions assign nothing
+                previous = region
+            elif region is not None and not isinstance(current, dace.SDFG):
+                edges = region.in_edges(current)
+                # A start block with an incoming edge is also entered without it, where its region starts
+                if len(edges) == 1 and not self.starts(region, current):
+                    previous, edge = edges[0].src, edges[0].data
+                elif not edges and region.source_nodes() == [current] and not isinstance(region, dace.SDFG):
+                    # A body starts where its loop does, any other region's start block where the region does
+                    previous = region
+            path.append((current, previous, edge))
+            current = previous
+        found = self._assignment_facts.get(current, ()) if current is not None else ()
+        for target, previous, edge in reversed(path):
+            # Past ``previous`` itself, and into a loop's body, which every iteration but the first enters after the
+            # body's own assignments and stores
+            if found and (edge is not None or isinstance(previous, LoopRegion)):
+                changed = self.changes(previous)
+                found = tuple(fact for fact in found if not fact.reads & changed)
+            if edge is not None:
+                found = self.edge_facts(target.sdfg, edge, found)
+            self._assignment_facts[target] = found
+        return found
+
+    @staticmethod
+    def starts(region: "ControlFlowRegion", block: "ControlFlowBlock") -> bool:
+        """Whether ``block`` is where ``region`` starts, or ``region``'s start is ambiguous."""
+        try:
+            return region.start_block is block
+        except ValueError:
+            return True
+
+    @staticmethod
+    def edge_facts(
+        sdfg: "SDFG", edge: "dace.sdfg.InterstateEdge", before: tuple["AssignmentFact", ...]
+    ) -> tuple["AssignmentFact", ...]:
+        """``before`` past ``edge``: without what reads a name it assigns, with what its assignments establish."""
+        from dace.sdfg.symbol_repo import scope_facts  # Avoid cyclic imports
+
+        assigned = edge.assignments.keys()
+        found = [fact for fact in before if not fact.reads & assigned]
+        declared = sdfg.symbol_repo.scopes.get(edge)
+        types = declared.types if declared is not None else {}
+        for name, text in edge.assignments.items():
+            try:
+                value = symbolic.pystr_to_symbolic(text)
+            except (TypeError, ValueError, SyntaxError, sympy.SympifyError):
+                continue
+            if not isinstance(value, sympy.Expr) or isinstance(value, sympy.logic.boolalg.Boolean):
+                continue
+            # The value reads the names before the edge assigns them
+            reads = frozenset(symbolic.free_symbols_and_functions(value)) | symbolic.arrays(value)
+            if reads & assigned:
+                continue
+            dtype = types.get(name) or sdfg.symbols.get(name)
+            integer = frozenset({name}) if dtype in dtypes.INTEGER_TYPES else frozenset()
+            relation = symbolic.Relation(symbolic.RelationKind.EQ, symbolic.symbol(name), value)
+            found.append(AssignmentFact(relation, reads | {name}, integer))
+        # What the edge's scope declares of the names it binds
+        if declared is not None:
+            own = scope_facts(declared)
+            found += [AssignmentFact(r, symbolic.relation_names(r), own.integers) for r in own.relations]
+        return tuple(found)
+
+    @staticmethod
+    def step_facts(
+        loop: "LoopRegion", step: Any, relations: list[symbolic.Relation], integers: set[str]
+    ) -> symbolic.Facts | None:
+        """The SDFG's facts, which decide the direction of ``loop``'s symbolic ``step``, unless an enclosing loop
+        rebinds a name the step reads; None for a numeric step."""
+        if sympy.sympify(step).is_number:
+            return None
+        rebound = set()
+        region = loop.parent_graph
+        while isinstance(region, ControlFlowRegion) and not isinstance(region, dace.SDFG):
+            if isinstance(region, LoopRegion) and region.loop_variable:
+                rebound.add(region.loop_variable)
+            region = region.parent_graph
+        if rebound.intersection(symbolic.free_symbol_names([step])):
+            return None
+        return symbolic.Facts(relations, frozenset(integers), check=False)
 
     @staticmethod
     def loop_condition_relations(loop: "LoopRegion") -> list[symbolic.Relation]:

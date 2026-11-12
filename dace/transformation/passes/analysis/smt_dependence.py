@@ -613,12 +613,14 @@ def _overlap_pair(
     if not bounds:
         return None
 
+    # Bounds exist only for a numeric step; a negative one runs the larger iterator first
+    w, r = (i_w, i_r) if int(symbolic.evaluate(step, {})) > 0 else (-i_w, -i_r)
     if order == "raw":
-        order_cons = i_w < i_r
+        order_cons = w < r
     elif order == "raw_le":
-        order_cons = i_w <= i_r
+        order_cons = w <= r
     else:
-        order_cons = i_w > i_r
+        order_cons = w > r
     terms = [wz, rz, *bounds] + ([] if gz is True else [gz])
     antecedent = required(z3).And(order_cons, *bounds, gz)
     return prove_assuming(antecedent, wz != rz, domain_assumptions, facts, terms)

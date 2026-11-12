@@ -334,10 +334,11 @@ def get_loop_end(loop: LoopRegion) -> symbolic.SymbolicType | None:
     return end
 
 
-def range_holds(loop: LoopRegion, bounds: tuple, sdfg: "dace.SDFG") -> bool:
+def range_holds(loop: LoopRegion, bounds: tuple, sdfg: "dace.SDFG", facts: symbolic.Facts | None = None) -> bool:
     """
     Whether the ``(start, end, step)`` of ``loop`` describe its iterator in every iteration: nothing in the loop changes
-    them, and ``end`` is an integer limit reached in the direction of ``step``.
+    them, and ``end`` is an integer limit reached in the direction of ``step``. A bound may read integer containers the
+    loop does not write (``range(ptr[r], ptr[r + 1])``); a symbolic step's direction is what ``facts`` prove of it.
     """
     from dace.sdfg.sdfg import interstate_bound_names  # Avoid import loop
 
@@ -345,15 +346,29 @@ def range_holds(loop: LoopRegion, bounds: tuple, sdfg: "dace.SDFG") -> bool:
     start, end, step = (sympy.sympify(bound) for bound in bounds)
     reads = {name for bound in (start, end, step) for name in symbolic.free_symbols_and_functions(bound)}
     reads |= {name for bound in (start, end, step) for name in symbolic.arrays(bound)}
-    if iterator in symbolic.free_symbols_and_functions(start) or any(name in sdfg.arrays for name in reads):
+    if iterator in symbolic.free_symbols_and_functions(start):
+        return False
+    containers = {name for name in reads if name in sdfg.arrays}
+    if any(sdfg.arrays[name].dtype not in dtypes.INTEGER_TYPES for name in containers):
+        return False
+    if containers and any(
+        dn.data in containers and st.in_degree(dn) > 0 for st in loop.states() for dn in st.data_nodes()
+    ):
         return False
     if interstate_bound_names(loop, loop) & (reads | {iterator}):
         return False
     if loop.new_symbols(sdfg.symbols).get(iterator) not in dtypes.INTEGER_TYPES or end.atoms(sympy.Float):
         return False
-    if any(sdfg.symbols.get(name, dtypes.int64) not in dtypes.INTEGER_TYPES for name in reads):
+    if any(sdfg.symbols.get(name, dtypes.int64) not in dtypes.INTEGER_TYPES for name in reads - containers):
         return False
-    return step.is_positive == ("<" in symbolic.pystr_to_symbolic(loop.loop_condition.as_string).rel_op)
+    forward = step.is_positive
+    if forward is None and facts is not None:
+        truths = (
+            symbolic.ask(symbolic.predicate_relation(predicate, step), facts)
+            for predicate in (symbolic.Predicate.POSITIVE, symbolic.Predicate.NEGATIVE)
+        )
+        forward = {(True, False): True, (False, True): False}.get(tuple(t is symbolic.Truth.TRUE for t in truths))
+    return forward == ("<" in symbolic.pystr_to_symbolic(loop.loop_condition.as_string).rel_op)
 
 
 def get_assignments(statement) -> dict[str, str]:

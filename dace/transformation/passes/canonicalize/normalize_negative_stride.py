@@ -18,7 +18,7 @@ anti-dependences continue to behave exactly as before.
 
 Scope:
 
-* Loops with a literal/numeric *negative* stride. Symbolic-stride loops whose
+* Loops whose stride is a negative literal or a symbol the facts prove negative. Symbolic-stride loops whose
   sign is unknown are left untouched (a runtime ``abs`` would force the
   rewrite to insert a guard, which is out of scope here).
 * The loop variable, ``init``, ``end``, and stride must all be resolvable via
@@ -36,8 +36,8 @@ from typing import Any
 
 import dace
 from dace import SDFG, properties, symbolic
-from dace.sdfg.narrowing import as_basic
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.narrowing import as_expr
+from dace.sdfg.state import LoopRegion, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -48,12 +48,9 @@ POS_ITER_PREFIX = "_loop_pos_"
 
 
 def is_negative_number(value: symbolic.SymbolicType, facts: symbolic.Facts) -> bool:
-    """``True`` iff ``value`` simplifies to a concrete negative number."""
-    try:
-        s = symbolic.simplify(value, facts)
-    except Exception:
-        return False
-    return as_basic(s).is_number and as_basic(s).is_negative
+    """``True`` iff ``facts`` prove ``value`` negative."""
+    relation = symbolic.predicate_relation(symbolic.Predicate.NEGATIVE, as_expr(value))
+    return symbolic.ask(relation, facts) is symbolic.Truth.TRUE
 
 
 @properties.make_properties
@@ -84,7 +81,7 @@ class NormalizeNegativeStride(ppl.Pass):
         return rewritten or None
 
     def _try_normalize(self, loop: LoopRegion, sdfg: SDFG) -> bool:
-        """Rewrite one loop if its stride is a numeric negative; return whether it ran."""
+        """Rewrite one loop if its stride is provably negative; return whether it ran."""
         stride = loop_analysis.get_loop_stride(loop)
         if stride is None:
             return False
@@ -92,7 +89,7 @@ class NormalizeNegativeStride(ppl.Pass):
         if stride.is_number:
             if not stride < 0:
                 return False
-        elif not is_negative_number(stride, sdfg.facts()):
+        elif not is_negative_number(stride, SymbolResolver().facts_at(loop)):
             return False
         start = loop_analysis.get_init_assignment(loop)
         end = loop_analysis.get_loop_end(loop)
