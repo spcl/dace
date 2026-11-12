@@ -57,7 +57,7 @@ class ExpandPure(ExpandTransformation):
             input_nodes = {local: state.add_access(local)}
             state.add_nedge(state.add_read(val_name), input_nodes[local], dace.memlet.Memlet(f"{val_name}[0]"))
             inputs = {inner_val: dace.memlet.Memlet(f"{local}[0]")}
-        state.add_mapped_tasklet(
+        entry = state.add_mapped_tasklet(
             f"{node.label}_tasklet",
             map_rng,
             inputs,
@@ -66,6 +66,11 @@ class ExpandPure(ExpandTransformation):
             schedule=schedule,
             input_nodes=input_nodes,
             external_edges=True,
-        )
+        )[1]
+        # Expanded after the offload chose its kernels' blocks, so the kernel would keep the codegen default
+        if schedule == dace.dtypes.ScheduleType.GPU_Device:
+            from dace.transformation.passes.gpu_block_size_selection import BLOCK_THREADS_BY_RANK  # Avoid import loop
+
+            entry.map.gpu_block_size = [BLOCK_THREADS_BY_RANK[1], 1, 1]
 
         return sdfg

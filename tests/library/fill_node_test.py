@@ -164,6 +164,29 @@ def test_fill_cuda_1d_gpu():
     assert cp.all(B[50:100] == 0)
 
 
+@pytest.mark.parametrize("backend", ["cuda", "hip"])
+def test_fill_pure_gpu_kernel_gets_a_domain_matched_block(backend):
+    """The pure expansion runs after the offload chose block sizes, so it sets its kernel's block: a line of 256."""
+    launches = []
+    with dace.config.set_temporary("compiler", "cuda", "backend", value=backend):
+        for shape, subset in (((1000,), "0:1000"), ((64, 1000), "0:64, 0:1000")):
+            sdfg = make_fill_sdfg(
+                "pure", shape, subset, gpu=True, name=f"fill_block_{backend}_{len(shape)}d", value=2.0
+            )
+            sdfg.expand_library_nodes()
+            code = "\n".join(obj.clean_code for obj in sdfg.generate_code() if obj.language in ("cu", "cpp"))
+            launches.append(re.findall(r"dim3\(([^)]*)\), \w+_args", code))
+    assert launches == [["256, 1, 1"], ["256, 1, 1"]]
+
+
+def test_fill_pure_host_map_gets_no_block():
+    """A host fill's map is no kernel, so the expansion leaves its block unset."""
+    sdfg = make_fill_sdfg("pure", (1000,), "0:1000", gpu=False, name="fill_block_host", value=2.0)
+    sdfg.expand_library_nodes()
+    maps = [n.map for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+    assert len(maps) == 1 and maps[0].gpu_block_size is None
+
+
 def test_fill_cuda_frame_includes_no_cuda_runtime():
     """The host frame reaches the GPU runtime through ``dace.h``, which picks CUDA or HIP; a HIP
     build cannot include ``cuda_runtime.h``."""
@@ -690,6 +713,9 @@ def test_fill_dynamic_value_gpu_runs_and_writes_value():
 if __name__ == "__main__":
     test_fill_pure_1d_cpu()
     test_fill_pure_3d_cpu()
+    test_fill_pure_gpu_kernel_gets_a_domain_matched_block("cuda")
+    test_fill_pure_gpu_kernel_gets_a_domain_matched_block("hip")
+    test_fill_pure_host_map_gets_no_block()
     test_fill_cuda_frame_includes_no_cuda_runtime()
     test_fill_auto_routes_non_contiguous_to_pure_cpu()
     test_fill_cpu_rejects_non_contiguous_subset()
