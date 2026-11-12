@@ -12,6 +12,7 @@ import math
 from typing import Any
 
 from dace import SDFG, properties, symbolic
+from dace.config import Config
 from dace.sdfg import nodes
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
@@ -37,7 +38,7 @@ class CoarsenScatterKernels(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
-        from dace.codegen.targets.cpu import SHARED_SCATTER_ELEMENTS, shared_scatter_target
+        from dace.codegen.targets.cpu import shared_scatter_target
 
         kernels = [(s, n) for n, s in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry) and is_kernel(s, n)]
         coarsened = 0
@@ -61,7 +62,7 @@ class CoarsenScatterKernels(ppl.Pass):
                 continue
             # A symbolic size is privatized up to the shared capacity, so the block is sized for that
             size = max(
-                SHARED_SCATTER_ELEMENTS
+                Config.get("compiler", "cuda", "block_private_shared_elements")
                 if symbolic.issymbolic(t.total_size, state.sdfg.constants)
                 else int(t.total_size)
                 for t in targets

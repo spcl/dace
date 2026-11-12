@@ -1424,6 +1424,15 @@ class Map:
         serialize_if=lambda m: m.proven_parallel,
     )
 
+    gpu_block_private = DictProperty(
+        key_type=str,
+        value_type=str,
+        category="Scheduling",
+        desc="Scatter-reduced array -> the global ``[blocks, elements]`` buffer each thread block of this map folds its "
+        "writes into before one combine (set by PrivatizeScatterPerBlock)",
+        serialize_if=lambda m: bool(m.gpu_block_private),
+    )
+
     gpu_block_size = ListProperty(
         element_type=int,
         default=None,
