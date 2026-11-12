@@ -30,11 +30,9 @@ a nested region (a `NamedRegionScope` for a named region; inlined for plain
 and function-call regions, `regCheck` then returns the rest of the list).
 
 Fragment (`UNKNOWN` with a reason outside it): no branching or conditional
-interstate edges (GBlocks, unstructured regions); every state is
-`SeqPlain` (no streams, views, references, consume scopes or code→code
-values; private transients allowed when both sides compute the same private
-sets) with at most one component, its nodes simple nodes and map scopes;
-no constants; a code
+interstate edges (GBlocks, unstructured regions); every state has at most
+one component (private transients are allowed when both sides compute the
+same private sets); no constants; a code
 node's input memlets in the order of its in-edges (`sdfg_to_tree` lists
 them in `state.in_edges` order, so the tree must be built from the SDFG as
 stored).

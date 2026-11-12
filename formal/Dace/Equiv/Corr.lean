@@ -6,14 +6,12 @@ import Dace.Equiv.Equiv
 /-!
 # SDFG and schedule tree: states (M5a)
 
-* **States** (`StateCorr`, `StateCorr.matched`): a state of the fragment
-  `SeqPlain` (`SeqPure` with private transients allowed, any node kind inside
-  map scopes) with at most one
+* **States** (`StateCorr`, `StateCorr.matched`): a state with at most one
   weakly connected component whose tree segment
   is the image of the component's top-level nodes in a topological order of
   the component (`SegCorr`).  The SDFG runs the component from the state's
   memory with an empty log and merges its log; the tree runs the segment on
-  the current state.  Coherence (`OrderedExec.coh`: the memory after a
+  the current state.  Coherence (`OrderedExec.coherent'`: the memory after a
   run is the initial memory with its log applied) makes the two agree.
 
 Control flow and whole programs: `Dace.Equiv.CorrCtl`.
