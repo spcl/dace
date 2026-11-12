@@ -75,8 +75,45 @@ def test_a_thread_block_map_writing_shared_memory_is_followed_by_a_block_sync():
     assert s in state.successors(syncs[0])
 
 
+def lanes_publishing_global_memory(force: bool) -> dace.SDFG:
+    """One block whose lanes fill a global buffer that the next statement reads whole, as a block lowering does."""
+    sdfg = dace.SDFG(f"lanes_publish_{force}")
+    sdfg.add_array("buf", [32], dace.float64, dace.StorageType.GPU_Global, transient=True)
+    sdfg.add_array("g", [32], dace.float64, dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    kentry, kexit = state.add_map("kernel", {"b": "0:1"}, schedule=dace.ScheduleType.GPU_Device)
+    tentry, texit = state.add_map("lanes", {"t": "0:32"}, schedule=dace.ScheduleType.GPU_ThreadBlock)
+    tentry.map.gpu_force_syncthreads = force
+    w = state.add_tasklet("w", {}, {"_o"}, "_o = t")
+    buf, c = state.add_access("buf"), state.add_tasklet("c", {"_i"}, {"_o"}, "_o = _i")
+    state.add_nedge(kentry, tentry, dace.Memlet())
+    state.add_nedge(tentry, w, dace.Memlet())
+    state.add_memlet_path(w, texit, buf, src_conn="_o", memlet=dace.Memlet("buf[t]"))
+    state.add_edge(buf, None, c, "_i", dace.Memlet("buf[31]"))
+    state.add_memlet_path(c, kexit, state.add_write("g"), src_conn="_o", memlet=dace.Memlet("g[0]"))
+    return sdfg
+
+
+def test_a_thread_block_map_that_forces_a_barrier_is_followed_by_a_block_sync():
+    """The lane that reads ``buf[31]`` must wait for the lane that wrote it, though ``buf`` is global memory."""
+    sdfg = lanes_publishing_global_memory(force=True)
+    DefaultSharedMemorySync().apply_pass(sdfg, {})
+    state = sdfg.start_state
+    syncs = [n for n in state.nodes() if isinstance(n, Sync)]
+    assert len(syncs) == 1 and syncs[0].scope == SyncScope.BLOCK
+    assert [e.src.map.label for e in state.in_edges(syncs[0])] == ["lanes"]
+
+
+def test_a_thread_block_map_writing_global_memory_gets_no_barrier_unasked():
+    sdfg = lanes_publishing_global_memory(force=False)
+    DefaultSharedMemorySync().apply_pass(sdfg, {})
+    assert not any(isinstance(n, Sync) for n in sdfg.start_state.nodes())
+
+
 if __name__ == "__main__":
     test_writes_to_smem_inside_loopregion_detects_write()
     test_writes_to_smem_inside_loopregion_absent()
     test_is_shared_memory_write_predicate()
     test_a_thread_block_map_writing_shared_memory_is_followed_by_a_block_sync()
+    test_a_thread_block_map_that_forces_a_barrier_is_followed_by_a_block_sync()
+    test_a_thread_block_map_writing_global_memory_gets_no_barrier_unasked()
