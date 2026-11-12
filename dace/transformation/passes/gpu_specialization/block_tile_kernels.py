@@ -35,6 +35,7 @@ from dace import graphlib as nx
 from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS
 from dace.optionals import required
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SymbolResolver
 from dace.transformation import helpers as xfh
@@ -410,8 +411,8 @@ def barrier(state: SDFGState) -> nodes.Tasklet:
     return state.add_tasklet("lane_barrier", {}, {}, "__syncthreads();", dtypes.Language.CPP)
 
 
-def run_on_lane_zero(tasklet: nodes.Tasklet, state: SDFGState) -> None:
-    """Nest ``tasklet`` under ``if (__tid == 0)``, fenced by barriers every lane reaches."""
+def run_on_lane_zero(tasklet: nodes.Tasklet, state: SDFGState, fenced: bool = True) -> nodes.NestedSDFG:
+    """Nest ``tasklet`` under ``if (__tid == 0)``, fenced by barriers every lane reaches unless not ``fenced``."""
     wrapper = xfh.nest_state_subgraph(state.sdfg, state, SubgraphView(state, [tasklet]), name="lane_zero")
     inner = wrapper.sdfg
     body = inner.start_state
@@ -424,6 +425,8 @@ def run_on_lane_zero(tasklet: nodes.Tasklet, state: SDFGState) -> None:
     inner.add_symbol("__tid", dtypes.int32)
     wrapper.symbol_mapping["__tid"] = "__tid"
     inner.reset_cfg_list()
+    if not fenced:
+        return wrapper
     before, after = barrier(state), barrier(state)
     for pred in state.predecessors(wrapper):
         state.add_edge(pred, None, before, None, Memlet())
@@ -431,6 +434,7 @@ def run_on_lane_zero(tasklet: nodes.Tasklet, state: SDFGState) -> None:
         state.add_edge(after, None, succ, None, Memlet())
     state.add_edge(before, None, wrapper, None, Memlet())
     state.add_edge(wrapper, None, after, None, Memlet())
+    return wrapper
 
 
 def fence_after(exit_node: nodes.MapExit, state: SDFGState, shared: set[str]) -> None:
@@ -452,6 +456,75 @@ def run_after_barrier(node: nodes.Tasklet, state: SDFGState) -> None:
     for pred in state.predecessors(node):
         state.add_edge(pred, None, fence, None, Memlet())
     state.add_edge(fence, None, node, None, Memlet())
+
+
+def lane_level_states(body: SDFG, skip: set[SDFGState]) -> OrderedSet[SDFGState]:
+    """The states every lane of a block runs whole: those of ``body`` and of the SDFGs nested in them outside every
+    map, less ``skip`` (lane 0's alone)."""
+    found: OrderedSet[SDFGState] = OrderedSet()
+    sdfgs = [body]
+    for sdfg in sdfgs:
+        for state in sdfg.states():
+            if state in skip:
+                continue
+            found.add(state)
+            scope = state.scope_dict()
+            sdfgs += [n.sdfg for n in state.nodes() if isinstance(n, nodes.NestedSDFG) and scope[n] is None]
+    return found
+
+
+def place_barriers(state: SDFGState, lane_zero: OrderedSet[nodes.Node]) -> None:
+    """Run the steps of ``state``, whose code every lane of a block runs (code nodes and maps outside every map), one
+    after another in a topological order, with a barrier before a step only where it reads what another lane wrote
+    since the last barrier, or overwrites what another lane accessed since then; steps of ``lane_zero`` alone on both
+    sides need none. A state that touched shared data since its last barrier ends with one, so every state, and every
+    trip of a loop, starts fenced."""
+    scope = state.scope_dict()
+    steps = [
+        node
+        for node in sdutil.dfs_topological_sort(state)
+        if scope[node] is None and isinstance(node, (nodes.CodeNode, nodes.MapEntry))
+    ]
+
+    def shared(edges, outward: bool) -> OrderedSet[str]:
+        # A view is named by the container it views: ``Z`` written and its viewed ``__tmp23`` read are one array.
+        found = OrderedSet()
+        for edge in edges:
+            node = edge.dst if outward else edge.src
+            if edge.data.is_empty():
+                continue
+            if isinstance(node, nodes.AccessNode) and isinstance(node.desc(state.sdfg), data.View):
+                node = sdutil.get_last_view_node(state, node) or node
+            name = node.data if isinstance(node, nodes.AccessNode) else edge.data.data
+            desc = state.sdfg.arrays[name]
+            # A view left unresolved counts as shared
+            if isinstance(desc, data.View) or not (desc.transient and desc.storage in LANE_PRIVATE_STORAGE):
+                found.add(name)
+        return found
+
+    def by_others(seen: dict[str, set[bool]], names: OrderedSet[str], zero: bool) -> bool:
+        return any(seen.get(name, set()) - ({True} if zero else set()) for name in names)
+
+    # Who touched each shared container since the last barrier: True for lane 0 alone, False for every lane.
+    read: dict[str, set[bool]] = {}
+    written: dict[str, set[bool]] = {}
+    last = None
+    for step in steps:
+        end = state.exit_node(step) if isinstance(step, nodes.MapEntry) else step
+        zero = step in lane_zero
+        reads, writes = shared(state.in_edges(step), False), shared(state.out_edges(end), True)
+        if last is not None:
+            if by_others(written, reads | writes, zero) or by_others(read, writes, zero):
+                fence = barrier(state)
+                state.add_edge(last, None, fence, None, Memlet())
+                last, read, written = fence, {}, {}
+            state.add_edge(last, None, step, None, Memlet())
+        for seen, names in ((read, reads), (written, writes)):
+            for name in names:
+                seen.setdefault(name, set()).add(zero)
+        last = end
+    if read or written:
+        state.add_edge(last, None, barrier(state), None, Memlet())
 
 
 @properties.make_properties
@@ -511,21 +584,35 @@ class BlockTileKernels(ppl.Pass):
             )
             # WarpTiling nests the body, so each tasklet is found again by identity.
             owners = {node: owner for node, owner in sdfg.all_nodes_recursive() if node in single or node in waiting}
-            for node in single:
-                run_on_lane_zero(node, owners[node])
+            # A step of a state every lane runs whole is fenced by :func:`place_barriers`; anything deeper as before.
+            lane_map = next(n for n in state.scope_children()[kernel] if isinstance(n, nodes.MapEntry))
+            body = next(n for n in state.scope_children()[lane_map] if isinstance(n, nodes.NestedSDFG))
+            placed = lane_level_states(body.sdfg, {st for block in blocks for st in block_states(block)})
+
+            def top_level(node: nodes.Node, owner: SDFGState) -> bool:
+                return owner in placed and owner.entry_node(node) is None
+
+            lane_zero = OrderedSet(
+                run_on_lane_zero(node, owners[node], fenced=not top_level(node, owners[node])) for node in single
+            )
             for node in waiting:
-                run_after_barrier(node, owners[node])
+                if not top_level(node, owners[node]):
+                    run_after_barrier(node, owners[node])
             for block in blocks:
                 run_block_on_lane_zero(block)
             for fill in fills:
-                fence_with_barriers(fill)
+                if fill not in placed:
+                    fence_with_barriers(fill)
             exits = [
                 (node, owner)
                 for node, owner in sdfg.all_nodes_recursive()
                 if isinstance(node, nodes.MapExit) and owner.entry_node(node) in shared
             ]
             for node, owner in exits:
-                fence_after(node, owner, shared[owner.entry_node(node)])
+                if not top_level(owner.entry_node(node), owner):
+                    fence_after(node, owner, shared[owner.entry_node(node)])
+            for placed_state in placed:
+                place_barriers(placed_state, lane_zero)
             for lane_map in state.scope_children()[kernel]:
                 if (
                     isinstance(lane_map, nodes.MapEntry)

@@ -14,7 +14,11 @@ import dace
 from dace import dtypes
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.gpu_specialization.block_tile_kernels import BlockTileKernels, updates_shared
+from dace.transformation.passes.gpu_specialization.block_tile_kernels import (
+    BlockTileKernels,
+    place_barriers,
+    updates_shared,
+)
 
 M, N, K, NB, NNZ = (dace.symbol(s) for s in ("M", "N", "K", "NB", "NNZ"))
 SIZES = [(1, 1, 1, 1), (37, 300, 5, 3), (257, 513, 129, 2)]
@@ -236,12 +240,76 @@ def test_an_in_place_update_outside_the_inner_map_runs_on_lane_zero_between_barr
         if isinstance(b, dace.sdfg.state.ConditionalBlock)
     ]
     assert [c.as_string for g in guards for c, body in g.branches] == ["(__tid == 0)"]
-    barriers = [
-        n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet) and n.label == "lane_barrier"
-    ]
-    assert len(barriers) == 2
+    # One barrier, after the update: before it, the other lanes only read ``A`` and their own copy of ``s``.
+    assert barriers(sdfg) == 1
     code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
     assert code.count("__syncthreads();") >= 2
+
+
+def barriers(sdfg: dace.SDFG) -> int:
+    return len(
+        [n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet) and n.label == "lane_barrier"]
+    )
+
+
+@dace.program
+def subtract_rowsum_twice(A: dace.float64[M, N], b: dace.float64[M], c: dace.float64[M]):
+    for i in dace.map[0:M]:
+        s = 0.0
+        for j in dace.map[0:N]:
+            s += A[i, j]
+        b[i] -= s
+        c[i] -= 2 * s
+
+
+def test_back_to_back_lane_zero_updates_share_one_barrier_after_them():
+    sdfg = canonical_gpu(subtract_rowsum_twice)
+    guards = [
+        b
+        for nested in sdfg.all_sdfgs_recursive()
+        for b in nested.all_control_flow_blocks()
+        if isinstance(b, dace.sdfg.state.ConditionalBlock)
+    ]
+    assert len(guards) == 2
+    assert barriers(sdfg) == 1
+
+
+@pytest.mark.gpu
+def test_back_to_back_lane_zero_updates_match_numpy():
+    cupy = pytest.importorskip("cupy")
+    rng = np.random.default_rng(13)
+    A, b, c = rng.random((37, 300)), rng.random(37), rng.random(37)
+    sdfg = canonical_gpu(subtract_rowsum_twice)
+    db, dc = cupy.asarray(b), cupy.asarray(c)
+    sdfg(A=cupy.asarray(A), b=db, c=dc, M=37, N=300)
+    np.testing.assert_allclose(cupy.asnumpy(db), b - A.sum(axis=1))
+    np.testing.assert_allclose(cupy.asnumpy(dc), c - 2 * A.sum(axis=1))
+
+
+def test_a_step_reading_what_another_wrote_through_a_view_waits_at_a_barrier():
+    """``V`` views ``G``: the second map reads what the first wrote, under another name."""
+    sdfg = dace.SDFG("write_view_read_container")
+    sdfg.add_array("G", [64], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("H", [64], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_view("V", [64], dace.float64)
+    state = sdfg.add_state()
+    view, container = state.add_access("V"), state.add_access("G")
+    state.add_edge(view, "views", container, None, dace.Memlet("G[0:64]"))
+    state.add_mapped_tasklet(
+        "write", {"i": "0:64"}, {}, "v = i", {"v": dace.Memlet("V[i]")}, output_nodes={"V": view}, external_edges=True
+    )
+    state.add_mapped_tasklet(
+        "read",
+        {"i": "0:64"},
+        {"g": dace.Memlet("G[63 - i]")},
+        "h = g",
+        {"h": dace.Memlet("H[i]")},
+        input_nodes={"G": container},
+        external_edges=True,
+    )
+    place_barriers(state, OrderedSet())
+    sdfg.validate()
+    assert barriers(sdfg) == 2
 
 
 def test_a_tasklet_writing_a_plane_a_kernel_before_it_wrote_reads_nothing_it_updates():
@@ -438,6 +506,9 @@ if __name__ == "__main__":
     test_a_tasklet_writing_a_plane_a_kernel_before_it_wrote_reads_nothing_it_updates()
     test_a_dot_over_a_gathered_row_fuses_into_one_block_reduction()
     test_an_in_place_update_outside_the_inner_map_runs_on_lane_zero_between_barriers()
+    test_back_to_back_lane_zero_updates_share_one_barrier_after_them()
+    test_back_to_back_lane_zero_updates_match_numpy()
+    test_a_step_reading_what_another_wrote_through_a_view_waits_at_a_barrier()
     test_a_body_that_accumulates_outside_the_inner_map_keeps_one_thread_per_iteration()
     test_a_per_thread_scratch_read_after_the_inner_map_keeps_one_thread_per_iteration()
     test_a_per_thread_buffer_filled_outside_the_inner_map_keeps_one_thread_per_iteration()
