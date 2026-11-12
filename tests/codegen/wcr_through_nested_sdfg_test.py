@@ -426,23 +426,28 @@ def test_nested_row_reduction_that_also_shares_an_element_stays_atomic():
 
 def _seed_then_accumulate(n: int, m: int, row: str) -> dace.SDFG:
     """The inlined form of a seed-then-accumulate body: in a parallel map over ``i``, ``out[row] = 0``, then a
-    sequential map adds ``src[i, j]`` into ``out[row]`` through a WCR; both writes leave through the map's exit."""
+    sequential map adds ``src[i, j]`` into ``out[row]`` through a WCR; both writes leave through the map's exit, each
+    to an access node of its own."""
     sdfg = dace.SDFG(f"seed_then_accumulate_{row}")
     sdfg.add_array("src", [n, m], dace.float64)
     sdfg.add_array("out", [n], dace.float64)
     state = sdfg.add_state()
     rows_entry, rows_exit = state.add_map("rows", {"i": f"0:{n}"}, schedule=dace.ScheduleType.CPU_Multicore)
-    out = state.add_write("out")
     seed = state.add_tasklet("seed", {}, {"o"}, "o = 0")
     state.add_nedge(rows_entry, seed, dace.Memlet())
-    state.add_memlet_path(seed, rows_exit, out, src_conn="o", memlet=dace.Memlet(f"out[{row}]"))
+    state.add_memlet_path(seed, rows_exit, state.add_write("out"), src_conn="o", memlet=dace.Memlet(f"out[{row}]"))
     reduce_entry, reduce_exit = state.add_map("reduce_row", {"j": f"0:{m}"}, schedule=dace.ScheduleType.Sequential)
     add = state.add_tasklet("add", {"v"}, {"o"}, "o = v")
     state.add_memlet_path(
         state.add_read("src"), rows_entry, reduce_entry, add, dst_conn="v", memlet=dace.Memlet("src[i, j]")
     )
     state.add_memlet_path(
-        add, reduce_exit, rows_exit, out, src_conn="o", memlet=dace.Memlet(f"out[{row}]", wcr="lambda a, b: a + b")
+        add,
+        reduce_exit,
+        rows_exit,
+        state.add_write("out"),
+        src_conn="o",
+        memlet=dace.Memlet(f"out[{row}]", wcr="lambda a, b: a + b"),
     )
     state.add_nedge(seed, reduce_entry, dace.Memlet())
     sdfg.validate()

@@ -1088,8 +1088,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if parent is None and node in subgraph.nodes():
                 inlined[node] = nstate.exit_node(node) if isinstance(node, nodes.EntryNode) else node
                 inlined[inlined[node]] = inlined[node]
-        self._order_library_neighbors(state, deferred_orders)
         keep_nest_order(state, inlined, successors, predecessors)
+        # After the nest order: an ordering edge into an outer access node would make keep_nest_order see it written
+        self._order_library_neighbors(state, deferred_orders)
 
         #######################################################
         # Remove nested SDFG node
