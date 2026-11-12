@@ -90,6 +90,15 @@ every use, whether the source bumped before or after the writes. ``total``
 comes from a ``Reduce``, not from a spare scan slot, so a zero-trip loop reads
 nothing out of bounds and publishes the untouched ``c_in``.
 
+Blocks after the guard in the innermost body (the tail) run on every iteration;
+phase 1 drops them with the guard and phase 3 keeps them. Side effects next to the
+append, behind the guard or in the tail, run only in phase 3, and whether its
+iterations may run concurrently is the probe's verdict like any other access: a
+scatter-add is a reduction (an in-place update ``h[s] = h[s] + 1`` becomes WCR in
+phase 3 when that is what the probe needs), and a plain write through
+``s = idx[i]`` is disjoint only if a fact (``INJECTIVE``) proves it. The appended
+order is the sequential one, so no consumer sees a change.
+
 Algorithm (pseudocode)::
 
     for loop in every LoopRegion, outermost first:     # a claimed nest detaches its inner levels,
@@ -124,9 +133,12 @@ Refusals -- each names the miscompile it prevents:
 * The cursor reaches the loop bounds, the preamble or the guard -- phase 1
   would need the cursor it is being computed to replace.
 * ``break`` / ``continue`` / ``return``, a nested SDFG, a side-effecting
-  tasklet, a WCR write, or a stream inside the loop -- phase 1 re-executes the
-  preamble and phase 3 re-executes the body, so any effect would run twice or
-  out of order.
+  tasklet, a stream inside the loop, or a WCR write in a preamble -- phase 1
+  re-executes the preamble and phase 3 re-executes the body, so any effect would
+  run twice or out of order.
+* A non-empty tail after an inner loop, or a tail that names the cursor -- phase
+  1 keeps an outer level's tail, and on a non-taken iteration the rebound cursor
+  names the slot the next taken iteration appends to.
 * The guard reads a data container directly instead of an interstate-bound
   symbol -- the mask tasklet emits the guard as symbol-only code; a bare array
   name would be a dangling read.
@@ -198,6 +210,7 @@ class NestLevel(NamedTuple):
     :param trip: Number of iterations at this level, ``end - start + 1``.
     :param preamble: The blocks of its body that run before ``child``.
     :param child: The next level's loop, or the guard at the innermost level.
+    :param tail: The blocks after the guard at the innermost level; only phase 3 runs them.
     """
 
     loop: LoopRegion
@@ -205,6 +218,7 @@ class NestLevel(NamedTuple):
     trip: symbolic.SymbolicType
     preamble: list[ControlFlowBlock]
     child: ControlFlowBlock
+    tail: tuple[ControlFlowBlock, ...] = ()
 
 
 class CompactionMatch(NamedTuple):
@@ -218,6 +232,7 @@ class CompactionMatch(NamedTuple):
     :param cond_str: The guard condition, as a symbol-only Python expression.
     :param cursor: Name of the loop-carried output cursor symbol.
     :param step: The per-taken-iteration cursor increment ``K`` (nest-invariant).
+    :param accumulators: The containers whose in-place updates phase 3 turns into WCR writes.
     """
 
     root: LoopRegion
@@ -228,6 +243,7 @@ class CompactionMatch(NamedTuple):
     cond_str: str
     cursor: str
     step: symbolic.SymbolicType
+    accumulators: frozenset[str] = frozenset()
 
 
 @properties.make_properties
@@ -276,7 +292,7 @@ class LoopToStreamCompaction(ppl.Pass):
         cond_str = cond_block.branches[0][0].as_string.strip()
         branch = cond_block.branches[0][1]
 
-        if not self.body_is_pure(loop, sdfg):
+        if not self.body_is_pure(loop, sdfg, levels):
             return None  # break/continue/return, nested SDFG, side effect, WCR or stream
 
         cursor = self.cursor_increment(loop, branch, levels)
@@ -306,7 +322,8 @@ class LoopToStreamCompaction(ppl.Pass):
 
         # Expensive last: model the cursor by an injective affine index and let LoopToMap rule on
         # every dependence this pass does NOT prove itself.
-        if not self.affine_cursor_probe(loop, cursor_name, step, levels):
+        accumulators = self.affine_cursor_probe(loop, cursor_name, step, levels)
+        if accumulators is None:
             return None
 
         return CompactionMatch(
@@ -318,6 +335,7 @@ class LoopToStreamCompaction(ppl.Pass):
             cond_str=cond_str,
             cursor=cursor_name,
             step=step,
+            accumulators=accumulators,
         )
 
     def is_attached(self, region: AbstractControlFlowRegion, sdfg: SDFG) -> bool:
@@ -355,10 +373,12 @@ class LoopToStreamCompaction(ppl.Pass):
             else:
                 return None  # zero or several guards, or a level that both loops and guards
             pos = chain.index(child)
-            for blk in chain[pos + 1 :]:
-                if not (isinstance(blk, SDFGState) and blk.number_of_nodes() == 0):
-                    return None  # a non-empty tail would run before phase 3's guard on the copy
-            levels.append(NestLevel(loop=cur, start=start, trip=trip, preamble=chain[:pos], child=child))
+            tail = tuple(chain[pos + 1 :])
+            if isinstance(child, LoopRegion) and not all(
+                isinstance(blk, SDFGState) and blk.number_of_nodes() == 0 for blk in tail
+            ):
+                return None  # phase 1 keeps an outer level's tail and would run its effects twice
+            levels.append(NestLevel(loop=cur, start=start, trip=trip, preamble=chain[:pos], child=child, tail=tail))
             # A bound assigned in this level's preamble varies per iteration just as its iterator does
             outer_vars += [cur.loop_variable, *(k for e in cur.edges() for k in e.data.assignments)]
             if isinstance(child, ConditionalBlock):
@@ -428,11 +448,17 @@ class LoopToStreamCompaction(ppl.Pass):
             return None  # unreachable blocks -> the chain does not describe the whole body
         return chain
 
-    def body_is_pure(self, loop: LoopRegion, sdfg: SDFG) -> bool:
-        """Reject anything phase 1's re-execution or phase 3's reordering could break."""
+    def body_is_pure(self, loop: LoopRegion, sdfg: SDFG, levels: tuple[NestLevel, ...]) -> bool:
+        """Reject anything phase 1's re-execution or phase 3's reordering could break.
+
+        A WCR write is an accumulation; behind the guard or in the tail only phase 3 runs it, and whether its
+        iterations may run concurrently is the probe's question, as for any other write. In a preamble phase 1
+        would run it a second time.
+        """
         for blk in loop.all_control_flow_blocks(recursive=False):
             if isinstance(blk, (BreakBlock, ContinueBlock, ReturnBlock)):
                 return False
+        rerun = {id(state) for state in self.preamble_states(levels)}
         for state in loop.states():
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG):
@@ -442,8 +468,8 @@ class LoopToStreamCompaction(ppl.Pass):
             for edge in state.edges():
                 if edge.data.is_empty():
                     continue
-                if edge.data.wcr is not None:
-                    return False  # a conflict resolution is an accumulation, not an append
+                if edge.data.wcr is not None and id(state) in rerun:
+                    return False  # phase 1 re-runs the preamble: the accumulation would happen twice
                 desc = sdfg.arrays.get(edge.data.data)
                 if isinstance(desc, data.Stream):
                     return False  # stream push order is observable
@@ -505,6 +531,14 @@ class LoopToStreamCompaction(ppl.Pass):
                     for rhs in edge.data.assignments.values():
                         if cursor in self.expression_names(rhs):
                             return False
+            # A tail runs on every iteration, after the guard: on a non-taken one the cursor names the slot of
+            # the next taken iteration, so a tail access through it would collide with that iteration's append.
+            for blk in level.tail:
+                if cursor in blk.free_symbols:
+                    return False
+                for edge in level.loop.in_edges(blk):
+                    if cursor in edge.data.used_symbols(all_symbols=True, union_lhs_symbols=True):
+                        return False
         return True
 
     def cursor_arrays_are_isolated(self, loop: LoopRegion, cursor: str, sdfg: SDFG) -> bool:
@@ -646,7 +680,7 @@ class LoopToStreamCompaction(ppl.Pass):
 
     def affine_cursor_probe(
         self, loop: LoopRegion, cursor: str, step: symbolic.SymbolicType, levels: tuple[NestLevel, ...]
-    ) -> bool:
+    ) -> frozenset[str] | None:
         """Ask ``LoopToMap`` about the residual body with the cursor modelled as an injective affine index.
 
         The model is the OUTERMOST level's index, ``K * (i - start)``: the probe's job is to judge
@@ -656,12 +690,45 @@ class LoopToStreamCompaction(ppl.Pass):
         can alias it and ``LoopToMap``'s verdict on the model index is not load-bearing. Keeping the
         model affine in one iterator with an integer coefficient is what keeps it CLASSIFIABLE; a
         linearized inner index would carry a symbolic coefficient and refuse every symbolic extent.
+
+        A refusal on a container whose every access is an in-place update (``hist[s] = hist[s] + 1``)
+        is retried with those updates as WCR writes (:attr:`LoopLift.assume_wcr`), as
+        ``CarriedAccumulationToWCR`` does for a plain loop; phase 3 then makes them WCR. An update the
+        preamble makes stays refused: phase 1 would run it as well.
+
+        :returns: the containers whose updates phase 3 turns into WCR (empty if none), or ``None`` on a refusal.
         """
+        from dace.transformation.interstate.loop_to_map import LoopLift, Refusal
+        from dace.transformation.passes.canonicalize.carried_accumulation import all_convertible
+        from dace.transformation.passes.loop_to_reduce import only_read_modify_written
         from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
         outer = levels[0]
-        model = step * (symbolic.pystr_to_symbolic(outer.loop.loop_variable) - outer.start)
-        return ParallelizeLoops().accepts(loop, closed_forms={cursor: model})
+        closed = {cursor: step * (symbolic.pystr_to_symbolic(outer.loop.loop_variable) - outer.start)}
+        probe = LoopLift()
+        while not ParallelizeLoops().accepts(loop, probe, closed_forms=closed):
+            refusal = probe.last_refusal
+            name = None if refusal is None else refusal.container
+            if (
+                name is None
+                or name in probe.assume_wcr
+                or refusal.kind is not Refusal.NON_UNIQUE_WRITE
+                or any(node.data == name for state in self.preamble_states(levels) for node in state.data_nodes())
+                or not only_read_modify_written(loop, name)
+                or not all_convertible(loop, {name})
+            ):
+                return None
+            probe.assume_wcr = probe.assume_wcr | {name}
+        return probe.assume_wcr
+
+    def preamble_states(self, levels: tuple[NestLevel, ...]) -> list[SDFGState]:
+        """The states of every level's preamble: what phase 1 runs as well as phase 3."""
+        return [
+            state
+            for level in levels
+            for blk in level.preamble
+            for state in ([blk] if isinstance(blk, SDFGState) else blk.states())
+        ]
 
     # match helpers
 
@@ -696,6 +763,8 @@ class LoopToStreamCompaction(ppl.Pass):
     # rewrite
 
     def rewrite(self, m: CompactionMatch, resolver: scopes.ScopedSymbolResolver) -> None:
+        from dace.transformation.passes.canonicalize.carried_accumulation import convert_updates
+
         sdfg, parent, root = m.sdfg, m.parent, m.root
         # Read before anything is added: the phase copies rename each level's iterator, and a
         # rename must carry the dtype the ORIGINAL level declares, level by level.
@@ -743,6 +812,9 @@ class LoopToStreamCompaction(ppl.Pass):
         parent.remove_node(root)
 
         self.parallelize(mask_nest, sdfg, permissive=False)
+        # The updates the probe took as WCR; only phase 3 runs them (phase 1 dropped them with the guard and tail).
+        for name in sorted(m.accumulators):
+            convert_updates(scatter_nest, name)
         self.parallelize(scatter_nest, sdfg, permissive=True)
         # Symbols, descriptors, regions and interstate edges all changed; every table built from
         # this SDFG's base is stale.

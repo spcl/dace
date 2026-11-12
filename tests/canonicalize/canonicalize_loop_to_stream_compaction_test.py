@@ -21,6 +21,7 @@ import dace
 from dace import subsets, symbolic
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import LoopRegion
+from dace.symbolic import permutation
 from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.loop_to_stream_compaction import (
@@ -993,3 +994,271 @@ def test_a_per_row_bound_is_no_rectangular_mask():
     a = np.zeros(6)
     sdfg(b=b, ns=ns, a=a, N_=2, M_=3)
     assert a.tolist() == [0.9, 0.7, 0.9, 0.9, 0.0, 0.0]
+
+
+# Side effects next to the append: a reduction, a scatter-add and a tail write are accepted when the
+# probe proves their iterations independent; a write it cannot prove disjoint keeps the loop sequential.
+
+NF = dace.symbol("NF", dtype=dace.int64)
+NV = dace.symbol("NV", dtype=dace.int64)
+NE = dace.symbol("NE", dtype=dace.int64)
+
+
+def oracle_filter_side_effects(front, keep, base, hist, flag, out):
+    """The worklist filter of nfa_frontier's step 1: append, count, scatter-add, and clear a flag."""
+    n, total = 0, 0
+    for k in range(front.shape[0]):
+        s = front[k]
+        if keep[s] != 0:
+            out[base + n] = s
+            n += 1
+            hist[s] += 1
+            total += 2
+        flag[k] = 0
+    return n, total
+
+
+@dace.program
+def filter_with_base(front: dace.int64[NF], keep: dace.int64[NV], out: dace.int64[NF + 4], cnt: dace.int64[1]):
+    base = 4
+    n = 0
+    for k in range(NF):
+        s = front[k]
+        if keep[s] != 0:
+            out[base + n] = s
+            n = n + 1
+    cnt[0] = n
+
+
+def test_filter_into_an_offset_worklist():
+    """``out[base + n]`` with a data-dependent guard ``keep[front[k]]``: the plain compaction, numerics against numpy."""
+    sdfg = build(filter_with_base)
+    assert lifted(sdfg)
+    assert num_loops(sdfg) == 0
+
+    rng = np.random.default_rng(11)
+    for nf in (1, 7, 64):
+        front = rng.integers(0, 16, nf)
+        keep = rng.integers(0, 2, 16)
+        want = np.zeros(nf + 4, dtype=np.int64)
+        n = oracle_filter_side_effects(front, keep, 4, np.zeros(16, np.int64), np.zeros(nf, np.int64), want)[0]
+        got, cnt = np.zeros(nf + 4, dtype=np.int64), np.zeros(1, dtype=np.int64)
+        sdfg(front=front, keep=keep, out=got, cnt=cnt, NF=nf, NV=16)
+        assert int(cnt[0]) == n
+        assert np.array_equal(got, want)
+
+
+@dace.program
+def filter_with_reduction(front: dace.int64[NF], keep: dace.int64[NV], out: dace.int64[NF], tot: dace.int64[1]):
+    n = 0
+    for k in range(NF):
+        s = front[k]
+        if keep[s] != 0:
+            out[n] = s
+            n = n + 1
+            with dace.tasklet:
+                t >> tot(1, lambda a, b: a + b)[0]
+                t = 2
+
+
+def test_append_with_a_reduction_side_effect():
+    """A WCR accumulation behind the guard runs only in the scatter phase, as a reduction of its map."""
+    sdfg = build(filter_with_reduction)
+    assert lifted(sdfg)
+    assert num_loops(sdfg) == 0
+
+    rng = np.random.default_rng(12)
+    for nf in (1, 9, 100):
+        front = rng.integers(0, 16, nf)
+        keep = rng.integers(0, 2, 16)
+        want = np.zeros(nf, dtype=np.int64)
+        n, total = oracle_filter_side_effects(front, keep, 0, np.zeros(16, np.int64), np.zeros(nf, np.int64), want)
+        got, tot = np.zeros(nf, dtype=np.int64), np.zeros(1, dtype=np.int64)
+        sdfg(front=front, keep=keep, out=got, tot=tot, NF=nf, NV=16)
+        assert int(tot[0]) == total
+        assert np.array_equal(got[:n], want[:n])
+
+
+@dace.program
+def filter_with_scatter_add_and_tail(
+    front: dace.int64[NF], keep: dace.int64[NV], out: dace.int64[NF], hist: dace.int64[NV], flag: dace.int64[NF]
+):
+    n = 0
+    for k in range(NF):
+        s = front[k]
+        if keep[s] != 0:
+            out[n] = s
+            n = n + 1
+            hist[s] += 1
+        flag[k] = 0
+
+
+def test_append_with_a_wcr_scatter_and_a_tail_write():
+    """``hist[front[k]] += 1`` collides across iterations, as WCR it does not; ``flag[k] = 0`` after the guard is
+    disjoint. The tail runs on every iteration, so only the scatter phase keeps it; the mask phase drops it with the
+    guard."""
+    sdfg = build(filter_with_scatter_add_and_tail)
+    assert lifted(sdfg)
+    assert num_loops(sdfg) == 0
+
+    rng = np.random.default_rng(13)
+    for nf in (1, 9, 100):
+        front = rng.integers(0, 16, nf)  # repeated states: the scatter-add collides
+        keep = rng.integers(0, 2, 16)
+        want, want_hist, want_flag = np.zeros(nf, np.int64), np.full(16, 3, np.int64), np.zeros(nf, np.int64)
+        n = oracle_filter_side_effects(front, keep, 0, want_hist, want_flag, want)[0]
+        got, hist, flag = np.zeros(nf, np.int64), np.full(16, 3, np.int64), np.ones(nf, np.int64)
+        sdfg(front=front, keep=keep, out=got, hist=hist, flag=flag, NF=nf, NV=16)
+        assert np.array_equal(got[:n], want[:n])
+        assert np.array_equal(hist, want_hist)
+        assert np.array_equal(flag, want_flag)
+
+
+@dace.program
+def filter_clearing_through_the_state(
+    front: dace.int64[NF], keep: dace.int64[NV], out: dace.int64[NF], enabled: dace.int64[NV]
+):
+    n = 0
+    for k in range(NF):
+        s = front[k]
+        if keep[s] != 0:
+            out[n] = s
+            n = n + 1
+        enabled[s] = 0
+
+
+@dace.program(facts={"front": permutation(0, NV - 1)})
+def filter_clearing_through_a_permutation(
+    front: dace.int64[NF], keep: dace.int64[NV], out: dace.int64[NF], enabled: dace.int64[NV]
+):
+    n = 0
+    for k in range(NF):
+        s = front[k]
+        if keep[s] != 0:
+            out[n] = s
+            n = n + 1
+        enabled[s] = 0
+
+
+def run_clearing(sdfg: dace.SDFG, front: np.ndarray) -> None:
+    keep = np.arange(16) % 2
+    want, want_enabled = np.zeros(front.size, np.int64), np.ones(16, np.int64)
+    n = 0
+    for s in front:
+        if keep[s] != 0:
+            want[n] = s
+            n += 1
+        want_enabled[s] = 0
+    got, enabled = np.zeros(front.size, np.int64), np.ones(16, np.int64)
+    sdfg(front=front, keep=keep, out=got, enabled=enabled, NF=front.size, NV=16)
+    assert np.array_equal(got[:n], want[:n])
+    assert np.array_equal(enabled, want_enabled)
+
+
+def test_refuse_a_tail_write_through_an_unproven_index():
+    """``enabled[front[k]] = 0``: two iterations may clear one element, and nothing says ``front`` is distinct.
+
+    The step 1 shape of nfa_frontier without a fact on its worklist; the loop stays sequential and correct.
+    """
+    sdfg = build(filter_clearing_through_the_state)
+    assert not lifted(sdfg)
+    run_clearing(sdfg, np.array([3, 3, 5, 0, 5, 9], dtype=np.int64))
+
+
+def test_a_tail_write_through_a_permutation_lifts():
+    """The same loop with ``front`` declared a permutation: the probe proves the clears disjoint."""
+    sdfg = build(filter_clearing_through_a_permutation)
+    assert lifted(sdfg)
+    run_clearing(sdfg, np.random.default_rng(14).permutation(16).astype(np.int64))
+
+
+@dace.program
+def filter_with_cursor_in_tail(b: dace.float64[N], out: dace.float64[N], last: dace.float64[N]):
+    n = 0
+    for i in range(N):
+        if b[i] > 0.0:
+            out[n] = b[i]
+            n = n + 1
+        last[i] = n
+
+
+def test_refuse_cursor_read_in_the_tail():
+    """On a non-taken iteration the rebound cursor names the next taken iteration's slot; a tail must not use it."""
+    sdfg = build(filter_with_cursor_in_tail)
+    assert not lifted(sdfg)
+    b = np.random.default_rng(15).standard_normal(32)
+    want_out, want_last, n = np.zeros(32), np.zeros(32), 0
+    for i in range(32):
+        if b[i] > 0.0:
+            want_out[n] = b[i]
+            n += 1
+        want_last[i] = n
+    out, last = np.zeros(32), np.zeros(32)
+    sdfg(b=b, out=out, last=last, N=32)
+    assert np.array_equal(out, want_out) and np.array_equal(last, want_last)
+
+
+@dace.program(facts={"csr": ("row_ptr", "col_idx")})
+def csr_children_append(
+    rows: dace.int64[NF],
+    row_ptr: dace.int64[NV + 1],
+    col_idx: dace.int64[NE],
+    keep: dace.int64[NV],
+    out: dace.int64[N],
+    cnt: dace.int64[1],
+):
+    n = 0
+    for k in range(NF):
+        r = rows[k]
+        for e in range(row_ptr[r], row_ptr[r + 1]):
+            child = col_idx[e]
+            if keep[child] != 0:
+                out[n] = child
+                n = n + 1
+    cnt[0] = n
+
+
+def test_csr_children_append_lifts_the_row_level():
+    """Step 2 of nfa_frontier without the dedup: the inner range moves with ``rows[k]``, so the nest has no
+    rectangular mask. The row loop is the widest level that is one, so it lifts on its own and its phases stay
+    inside the sequential loop over ``k``, which carries the cursor from row to row."""
+    sdfg = build(csr_children_append)
+    assert lifted(sdfg)
+    assert not nest_claimed(sdfg, 2)
+    assert phases_under_a_loop(sdfg)
+    row_ptr = np.array([0, 2, 2, 5, 6], dtype=np.int64)
+    col_idx = np.array([1, 3, 0, 2, 3, 1], dtype=np.int64)
+    keep = np.array([1, 0, 1, 1], dtype=np.int64)
+    rows = np.array([2, 0, 3, 1, 0], dtype=np.int64)
+    want = [c for r in rows for c in col_idx[row_ptr[r] : row_ptr[r + 1]] if keep[c]]
+    out, cnt = np.zeros(6 * 5, np.int64), np.zeros(1, np.int64)
+    sdfg(rows=rows, row_ptr=row_ptr, col_idx=col_idx, keep=keep, out=out, cnt=cnt, NF=5, NV=4, NE=6, N=30)
+    assert int(cnt[0]) == len(want)
+    assert out[: len(want)].tolist() == want
+
+
+@dace.program
+def dedup_append(front: dace.int64[NF], enabled: dace.int64[NV], out: dace.int64[NF], cnt: dace.int64[1]):
+    n = 0
+    for k in range(NF):
+        s = front[k]
+        if enabled[s] == 0:
+            enabled[s] = 1
+            out[n] = s
+            n = n + 1
+    cnt[0] = n
+
+
+def test_refuse_test_and_set_dedup_append():
+    """``if enabled[s] == 0: enabled[s] = 1; append s``: the guard reads what an earlier iteration's body wrote
+    whenever ``front`` repeats a state, so hoisting every guard ahead of every body would append duplicates."""
+    sdfg = build(dedup_append)
+    assert not lifted(sdfg)
+    front = np.array([4, 1, 4, 7, 1, 1, 2], dtype=np.int64)
+    enabled = np.zeros(8, np.int64)
+    enabled[2] = 1
+    out, cnt = np.zeros(7, np.int64), np.zeros(1, np.int64)
+    sdfg(front=front, enabled=enabled, out=out, cnt=cnt, NF=7, NV=8)
+    assert int(cnt[0]) == 3
+    assert out[:3].tolist() == [4, 1, 7]
+    assert enabled.tolist() == [0, 1, 1, 0, 1, 0, 0, 1]
