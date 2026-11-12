@@ -210,7 +210,7 @@ def test_copy_of_a_view_whose_container_is_rewritten_stays():
     assert "t" in sdfg.arrays
 
 
-def stack_arrays_in_parallel_map_sdfg() -> dace.SDFG:
+def stack_arrays_in_parallel_map_sdfg(schedule: dace.ScheduleType = dace.ScheduleType.CPU_Multicore) -> dace.SDFG:
     """``out[i] = (2 + 3) * a[i, n - 1]`` per iteration of a parallel map, each term through a stack array of the
     nested SDFG; the first array is dead when the second is written."""
     body = dace.SDFG("stack_arrays_in_parallel_map_body")
@@ -253,7 +253,7 @@ def stack_arrays_in_parallel_map_sdfg() -> dace.SDFG:
     sdfg.add_array("a", ["m", "n"], dace.float64)
     sdfg.add_array("out", ["m"], dace.float64)
     state = sdfg.add_state()
-    entry, exit_node = state.add_map("rows", {"i": "0:m"}, schedule=dace.ScheduleType.CPU_Multicore)
+    entry, exit_node = state.add_map("rows", {"i": "0:m"}, schedule=schedule)
     mapping = {"i": "i", "m": "m", "n": "n"}
     nested = state.add_nested_sdfg(body, {"a": None}, {"out": None}, symbol_mapping=mapping)
     state.add_memlet_path(state.add_read("a"), entry, nested, dst_conn="a", memlet=dace.Memlet("a[0:m, 0:n]"))
@@ -272,6 +272,14 @@ def test_stack_arrays_of_a_nest_in_a_parallel_map_share_one_buffer():
     assert np.array_equal(out, 5 * a[:, -1])
 
 
+def test_register_arrays_of_a_nest_in_a_kernel_share_one_buffer():
+    """A device thread's register arrays are its own, as a host thread's stack arrays are: they share alike."""
+    sdfg = stack_arrays_in_parallel_map_sdfg(dace.ScheduleType.GPU_Device)
+    body = next(sd for sd in sdfg.all_sdfgs_recursive() if sd is not sdfg)
+    assert MinimizeTransients().apply_pass(sdfg, {}) == 1
+    assert sum(name in body.arrays for name in ("first", "second")) == 1
+
+
 if __name__ == "__main__":
     test_copied_out_transient_is_its_target_region()
     test_copied_in_transient_reads_its_source_region()
@@ -285,3 +293,4 @@ if __name__ == "__main__":
     test_copy_of_a_view_reads_the_view(True)
     test_copy_of_a_view_whose_container_is_rewritten_stays()
     test_stack_arrays_of_a_nest_in_a_parallel_map_share_one_buffer()
+    test_register_arrays_of_a_nest_in_a_kernel_share_one_buffer()

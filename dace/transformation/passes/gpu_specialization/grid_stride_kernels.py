@@ -45,19 +45,15 @@ from dace import SDFG, dtypes, properties, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.gpu_specialization.resident_blocks import DeviceLimits, device_limits
 from dace.transformation.passes.iteration_domain import loop_trip_count
 
-#: Blocks a grid-strided kernel keeps. MI300A holds 304 CUs x 8 blocks of 256 threads resident, so
-#: 2432 is one full device with no tail. MEASURED on ``tsvc_2_s311`` at XL, which is the shape this
-#: pass fires on: 608 -> 2.12 ms, 1216 -> 1.58, 2432 -> 1.28, 4864 -> 1.38, 9728 -> 1.31. One device
-#: is the minimum of that curve; under-filling costs 1.65x and over-filling gives the contention
-#: back.
-DEVICE_GRID_BLOCKS = 2432
-
-#: A grid known at compile time to be at most this many blocks is left alone: folding it would only
-#: add index arithmetic to a kernel that already fits the device once. Symbolic grids are decided at
-#: runtime instead, by the ``Min(DEVICE_GRID_BLOCKS, extent)`` the tiling emits.
-SMALL_GRID_BLOCKS = DEVICE_GRID_BLOCKS
+# A grid-strided kernel keeps the blocks the device holds resident at once (:func:`resident_blocks` of its block
+# width): one full device with no tail. MEASURED on ``tsvc_2_s311`` at XL on MI300A, which is the shape this pass
+# fires on: 608 -> 2.12 ms, 1216 -> 1.58, 2432 -> 1.28, 4864 -> 1.38, 9728 -> 1.31. One device is the minimum of
+# that curve; under-filling costs 1.65x and over-filling gives the contention back. A grid known at compile time
+# to fit within that many blocks is left alone: folding it would only add index arithmetic to a kernel that
+# already fits the device once. Symbolic grids are decided at runtime instead, by the ``Min`` the tiling emits.
 
 #: Launches below which the persistent-kernel note is noise. At ~4 us of launch latency a thousand
 #: launches is ~4 ms, which is the point where the launches start to be visible next to the
@@ -165,10 +161,10 @@ def contended_accumulator(state: SDFGState, entry: nodes.MapEntry) -> bool:
     return False
 
 
-def grid_is_known_small(entry: nodes.MapEntry) -> bool:
-    """``True`` iff ``entry``'s grid is a compile-time constant that already fits the device."""
+def grid_is_known_small(entry: nodes.MapEntry, resident: int) -> bool:
+    """``True`` iff ``entry``'s grid is a compile-time constant of at most ``resident`` blocks."""
     blocks = as_int(entry.map.range.num_elements())
-    return blocks is not None and blocks <= SMALL_GRID_BLOCKS
+    return blocks is not None and blocks <= resident
 
 
 @properties.make_properties
@@ -203,17 +199,18 @@ class GridStrideKernels(ppl.Pass):
             and not is_tile_kernel(s, n)
         ]
         strided = hinted = 0
+        limits: list[DeviceLimits] = []  # asked for at the first kernel that gets that far, once
         for entry, state in kernels:
             # Hint first: the tiling rewrites ``entry`` into a sequential map under a fresh device
             # map, and the launch shape being recorded is the one BEFORE that rewrite.
             hinted += self.hint_persistent(sdfg, state, entry)
-            strided += self.grid_stride(sdfg, state, entry)
+            strided += self.grid_stride(sdfg, state, entry, limits)
         return (strided, hinted) if strided or hinted else None
 
-    def grid_stride(self, sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry) -> int:
+    def grid_stride(self, sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry, limits: list[DeviceLimits]) -> int:
         """Fold ``entry``'s grid onto a device-sized one, or leave it alone. ``1`` iff folded."""
         inner = strip_mined_pair(state, entry)
-        if inner is None or grid_is_known_small(entry):
+        if inner is None:
             return 0
         # The measured gate: only a kernel whose blocks all contend for one accumulator. See the
         # module docstring for the two groups this separates and the numbers behind it.
@@ -237,8 +234,12 @@ class GridStrideKernels(ppl.Pass):
         block_dim = block_threads(entry, inner)
         if block_dim is None:
             return 0
+        limits[:] = limits or [device_limits()]
+        resident = limits[0].resident_blocks(block_dim)
+        if grid_is_known_small(entry, resident):
+            return 0
         where = {"outer_map_entry": entry, "inner_map_entry": inner}
-        options = {"max_grid_dim": DEVICE_GRID_BLOCKS, "block_dim": block_dim}
+        options = {"max_grid_dim": resident, "block_dim": block_dim}
         # ``state.sdfg``, not the root: ``apply_to`` locates the state by scanning the SDFG it is
         # handed, and a kernel inside a nested SDFG (a lifted Reduce, say) is not in the root's
         # states -- it raised StopIteration on two of llr-focus40 before this was the owning SDFG.

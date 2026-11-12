@@ -840,6 +840,31 @@ required:
                             GPU.
                         default: 2
 
+                    device_multiprocessors:
+                        type: int
+                        title: Multiprocessors of the target GPU
+                        description: >
+                            The SM / CU count of the GPU the SDFG is compiled for, which sizes grid-strided
+                            kernels and per-block buffers (resident blocks = multiprocessors x blocks per
+                            multiprocessor). 0 queries the GPU visible at compile time; compiling without a
+                            visible GPU then fails, so set it there. A positive value overrides the query
+                            and is used with the two keys below.
+                        default: 0
+
+                    device_threads_per_multiprocessor:
+                        type: int
+                        title: Resident threads per multiprocessor of the target GPU
+                        description: >
+                            Used when device_multiprocessors is set.
+                        default: 2048
+
+                    device_blocks_per_multiprocessor:
+                        type: int
+                        title: Resident blocks per multiprocessor of the target GPU
+                        description: >
+                            Used when device_multiprocessors is set.
+                        default: 32
+
                     max_concurrent_streams:
                         type: int
                         title: Concurrent execution streams

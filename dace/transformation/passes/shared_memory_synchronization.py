@@ -46,7 +46,9 @@ def followed_by_barrier(node: Node, state: SDFGState) -> bool:
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class DefaultSharedMemorySync(ppl.Pass):
-    """Insert a block :class:`Sync` after ``GPU_ThreadBlock`` map exits and collaborative writes of shared memory.
+    """Insert a block :class:`Sync` after ``GPU_ThreadBlock`` map exits that write shared memory or ask for one
+    (``gpu_force_syncthreads``: a block lowering whose lanes publish global memory to the next one), and after
+    collaborative writes of shared memory.
 
     Barriers stay outside thread-block maps, where thread divergence would deadlock them. So a shared-memory write in
     a sequential map or loop nested in a thread-block map only warns, a write-then-read inside one thread-block map
@@ -89,12 +91,13 @@ class DefaultSharedMemorySync(ppl.Pass):
         )
 
     def identify_synchronization_tb_exits(self, tb_map_exits: dict[MapExit, SDFGState]) -> dict[MapExit, SDFGState]:
-        """The thread-block exits that write shared memory and need a barrier after them."""
+        """The thread-block exits that write shared memory or force a barrier, and need one after them."""
         sync_requiring_exits: dict[MapExit, SDFGState] = {}
         for map_exit, state in tb_map_exits.items():
             map_entry = state.entry_node(map_exit)
             writes_to_smem, race_cond_danger, has_tb_parent = self.tb_exits_analysis(map_entry, map_exit, state)
-            if has_tb_parent or not writes_to_smem or followed_by_barrier(map_exit, state):
+            forced = map_exit.map.gpu_force_syncthreads
+            if has_tb_parent or not (writes_to_smem or forced) or followed_by_barrier(map_exit, state):
                 continue
             if race_cond_danger:
                 warnings.warn(

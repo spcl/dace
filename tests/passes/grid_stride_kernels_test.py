@@ -26,14 +26,22 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.dataflow.add_threadblock_map import to_3d_dims, validate_block_size_limits
 from dace.transformation.passes.gpu_specialization import grid_stride_kernels
-from dace.transformation.passes.gpu_specialization.grid_stride_kernels import (
-    DEVICE_GRID_BLOCKS,
-    PERSISTENT_KERNEL_LEAD,
-    GridStrideKernels,
-)
+from dace.transformation.passes.gpu_specialization.grid_stride_kernels import PERSISTENT_KERNEL_LEAD, GridStrideKernels
 
 N = dace.symbol("N", dtype=dace.int64)
 BLOCK = 256
+#: The device every test targets, pinned by :func:`device` rather than probed: 304 multiprocessors of 2048
+#: threads hold this many blocks of ``BLOCK`` threads.
+DEVICE_GRID_BLOCKS = 304 * 2048 // BLOCK
+
+
+@pytest.fixture(autouse=True)
+def device():
+    with dace.config.set_temporary("compiler", "cuda", "device_multiprocessors", value=304):
+        with dace.config.set_temporary("compiler", "cuda", "device_threads_per_multiprocessor", value=2048):
+            yield
+
+
 SUM = "lambda x, y: x + y"
 
 
