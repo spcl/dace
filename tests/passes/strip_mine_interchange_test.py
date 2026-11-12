@@ -334,7 +334,7 @@ def test_a_short_constant_loop_over_a_cube_moves_into_the_map():
     code = emitted(sdfg)
     body = code[code.index("_internal(") :]
     assert "__dace_tile" not in body, code
-    assert re.search(r"#pragma omp parallel for\s*\n\s*for \(int __i0", body), code
+    assert re.search(r"#pragma omp parallel for( collapse\(\d\))?\s*\n\s*for \(int __i0", body), code
     n, b = 7, 3
     rng = np.random.default_rng(0)
     out, inp, w = rng.random((n, n, n, b)), rng.random((n, n, n, b)), rng.random(4)
