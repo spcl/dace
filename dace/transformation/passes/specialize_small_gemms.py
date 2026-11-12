@@ -9,12 +9,14 @@ body issues a device-wide library call. Lowered as a loop nest it runs in the th
 
 from typing import Any
 
-from dace import SDFG, dtypes, properties
+from dace import SDFG, dtypes, properties, symbolic
+from dace.libraries.blas.nodes.einsum import Einsum
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.matmul import MatMul, _get_matmul_operands, compile_time_extent, is_gemm_shape
+from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_range
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import LoopRegion, SDFGState, SymbolResolver
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -28,17 +30,24 @@ SMALL_MATMUL_DIM = 32
 
 
 def matmul_extents_small(state: SDFGState, node: nodes.LibraryNode, limit: int) -> bool:
-    """True iff every operand/output extent of a matmul library ``node`` is a compile-time constant
-    (a literal, or a symbol ``SDFG.specialize`` fixed) at most ``limit`` (the matmul is known-small).
-    Any other symbolic extent -> not known-small."""
+    """True iff every operand/output extent of library ``node`` is provably at most ``limit``: a compile-time constant
+    (a literal, or a symbol ``SDFG.specialize`` fixed), or bounded by the facts at ``node`` (a symbol relation, a
+    guard, an enclosing range). A ``SMALL`` scale alone bounds nothing."""
     saw = False
+    facts = None
     for e in list(state.in_edges(node)) + list(state.out_edges(node)):
         if e.data is None or e.data.subset is None:
             continue
         for ext in as_range(e.data.subset).size():
             saw = True
             value = compile_time_extent(ext, state.sdfg)
-            if value is None or value > limit:
+            if value is not None:
+                if value > limit:
+                    return False
+                continue
+            if facts is None:
+                facts = SymbolResolver().facts_at(state, node)
+            if not symbolic.provably_le(ext, limit, facts):
                 return False
     return saw
 
@@ -46,8 +55,9 @@ def matmul_extents_small(state: SDFGState, node: nodes.LibraryNode, limit: int) 
 def small_gemm_in_repeated_scope(node: nodes.Node, state: SDFGState) -> bool:
     """A small matrix-matrix product that an enclosing map or loop runs once per iteration.
 
-    A ``Gemm``, or a ``MatMul`` that specializes to one, whose every extent is a compile-time constant at most
-    :data:`SMALL_MATMUL_DIM`, under a map or a loop (across nested-SDFG boundaries).
+    A ``Gemm``, or a ``MatMul`` that specializes to one, whose every extent is provably at most
+    :data:`SMALL_MATMUL_DIM` (:func:`matmul_extents_small`), under a map or a loop (across nested-SDFG boundaries);
+    or such a tiny ``Einsum`` or ``TensorTranspose`` under a parallel map, which inlines rather than calls.
 
     :param node: Any node.
     :param state: The state holding ``node``.
@@ -58,6 +68,8 @@ def small_gemm_in_repeated_scope(node: nodes.Node, state: SDFGState) -> bool:
                 return False
         except ValueError:
             return False
+    elif isinstance(node, (Einsum, TensorTranspose)):
+        return under_parallel_map(node, state) and matmul_extents_small(state, node, SMALL_MATMUL_DIM)
     elif not isinstance(node, Gemm):
         return False
     if not matmul_extents_small(state, node, SMALL_MATMUL_DIM):
@@ -106,15 +118,20 @@ class SpecializeSmallGemms(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """:returns: How many GEMMs were pinned to a loop nest, or ``None`` if none was."""
-        # Only the ``Gemm`` a ``MatMul`` stands for has the loop-nest expansions.
+        # Only the ``Gemm`` a ``MatMul`` or an ``Einsum`` stands for has the loop-nest expansions.
         on_gpu = self.device == dtypes.DeviceType.GPU
-        for node, state in list(sdfg.all_nodes_recursive()):
-            if (
-                isinstance(node, MatMul)
-                and small_gemm_in_repeated_scope(node, state)
-                and (not on_gpu or under_parallel_map(node, state))
-            ):
-                node.expand(state)
+        # An ``Einsum`` expands to the ``MatMul`` it stands for, which expands in the next sweep.
+        expanded = True
+        while expanded:
+            expanded = False
+            for node, state in list(sdfg.all_nodes_recursive()):
+                if (
+                    isinstance(node, (MatMul, Einsum))
+                    and small_gemm_in_repeated_scope(node, state)
+                    and (not on_gpu or under_parallel_map(node, state))
+                ):
+                    node.expand(state)
+                    expanded = True
         pinned = 0
         for node, state in sdfg.all_nodes_recursive():
             if not small_gemm_in_repeated_scope(node, state):
@@ -124,6 +141,9 @@ class SpecializeSmallGemms(ppl.Pass):
                 node.schedule = dtypes.ScheduleType.Sequential
             elif self.device == dtypes.DeviceType.GPU and isinstance(node, Gemm) and under_parallel_map(node, state):
                 node.implementation = "pure"
+            elif isinstance(node, TensorTranspose):
+                node.implementation = "pure"
+                node.schedule = dtypes.ScheduleType.Sequential
             else:
                 continue
             node.auto_select_implementation = False
