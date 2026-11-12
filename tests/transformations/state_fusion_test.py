@@ -3,7 +3,7 @@ import networkx as nx
 import numpy as np
 
 import dace
-from dace.transformation.interstate import StateFusion
+from dace.transformation.interstate import StateFusion, StateFusionExtended
 
 
 # Inter-state condition tests
@@ -633,6 +633,24 @@ def test_side_effects_are_not_fused():
     assert sdfg.apply_transformations(StateFusion) == 1
 
 
+def test_instrumented_states_are_not_fused():
+    """A measured state is measured as it is: no other state is fused into it, nor it into another."""
+    sdfg = dace.SDFG("instrumented_not_fused")
+    sdfg.add_array("a", [4], dace.float64)
+    sdfg.add_array("b", [4], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state_after(first, "second")
+    for state, name in ((first, "a"), (second, "b")):
+        tasklet = state.add_tasklet("write", {}, {"o"}, "o = 1")
+        state.add_edge(tasklet, "o", state.add_write(name), None, dace.Memlet(f"{name}[0]"))
+    for transformation in (StateFusion, StateFusionExtended):
+        for state in (first, second):
+            state.instrument = dace.InstrumentationType.Timer
+            assert not transformation.can_be_applied_to(sdfg, first_state=first, second_state=second)
+            state.instrument = dace.InstrumentationType.No_Instrumentation
+        assert transformation.can_be_applied_to(sdfg, first_state=first, second_state=second)
+
+
 @dace.program
 def publishes(data: dace.float64[4], counter: dace.int32[1]):
     data[:] = 1
@@ -672,4 +690,5 @@ if __name__ == "__main__":
     test_one_writer_ordered_through_a_match_does_not_order_its_sibling()
     test_a_read_behind_an_ordering_edge_is_a_read()
     test_side_effects_are_not_fused()
+    test_instrumented_states_are_not_fused()
     test_atomics_and_pushes_declare_side_effects()

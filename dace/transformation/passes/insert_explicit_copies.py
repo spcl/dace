@@ -10,6 +10,7 @@ from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutils
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -29,6 +30,14 @@ def _derive_matching_dst_subset(src_subset: subsets.Range, dst_desc: data.Data) 
     if symbolic.equal(src_count, dst_count) is not False:
         return dst_range
     return src_subset
+
+
+def _copy_instrumentation(state: SDFGState, node: nodes.Node) -> dtypes.InstrumentationType:
+    """The instrumentation of a copy that becomes a node next to ``node``: that of its state, by which providers
+    measure a copy edge (``on_copy_begin``), except in a GPU kernel, where the measurement of the state includes it."""
+    if is_devicelevel_gpu(state.sdfg, state, node):
+        return dtypes.InstrumentationType.No_Instrumentation
+    return state.instrument
 
 
 def competing_writes(state: SDFGState, target: nodes.Node, edge, name: str, subset: subsets.Subset) -> list:
@@ -232,7 +241,7 @@ class InsertExplicitCopies(ppl.Pass):
             libnode = CopyLibraryNode(name=label)
             # Instrumentation providers decide a copy edge's instrumentation from the state it is in
             # (``on_copy_begin``); as a node the copy needs its own setting to stay measured.
-            libnode.instrument = state.instrument
+            libnode.instrument = _copy_instrumentation(state, src_node)
 
             state.remove_edge(edge)
             state.add_node(libnode)
@@ -322,7 +331,7 @@ class InsertExplicitCopies(ppl.Pass):
         inner_memlet = Memlet(data=inner_node.data, subset=inner_subset)
         label = f"copy_{outer.data}_to_{inner_node.data}" if stage_in else f"copy_{inner_node.data}_to_{outer.data}"
         libnode = CopyLibraryNode(name=label)
-        libnode.instrument = state.instrument
+        libnode.instrument = _copy_instrumentation(state, inner_node)
         state.add_node(libnode)
         if stage_in:
             map_node = edge.src
