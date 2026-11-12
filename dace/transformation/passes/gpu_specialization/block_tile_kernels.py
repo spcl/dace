@@ -40,6 +40,11 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, Sym
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.warp_tiling import WarpTiling
+from dace.transformation.passes.minimize_stride_permutation import (
+    UndecidableStride,
+    score_indexed_strides,
+    stride_difference_sign,
+)
 
 #: What a block-tiled kernel's lane map is, for a CPF reader.
 BLOCK_TILE_HINT = (
@@ -71,7 +76,8 @@ def is_kernel(state: SDFGState, entry: nodes.MapEntry) -> bool:
 def strided_maps(state: SDFGState, kernel: nodes.MapEntry) -> list[tuple[SDFGState, nodes.MapEntry]]:
     """The inner maps to stride across the lanes: the immediate ones that are not provably narrower than
     the block and do not span ``SMALL`` axes only (``nblks``: the offload put them in the kernel to run
-    sequentially, and a handful of iterations would leave all but a handful of lanes idle). A map is
+    sequentially, and a handful of iterations would leave all but a handful of lanes idle). Nor a map whose
+    accesses the kernel's own threads already coalesce (:func:`coalesced_by_the_kernel`). A map is
     parallel by definition; the ``Sequential`` schedule inference gives a map nested in a kernel only
     says one thread would walk it."""
     resolver = SymbolResolver()
@@ -81,7 +87,22 @@ def strided_maps(state: SDFGState, kernel: nodes.MapEntry) -> list[tuple[SDFGSta
         if isinstance(inner, nodes.MapEntry)
         and (inner.map.range.size()[-1] < BLOCK_COLLECTIVE_THREADS) != True
         and not all(xfh.small_map_axes(inner_state, inner, resolver))
+        and not coalesced_by_the_kernel(inner_state, kernel, inner)
     ]
+
+
+def coalesced_by_the_kernel(state: SDFGState, kernel: nodes.MapEntry, inner: nodes.MapEntry) -> bool:
+    """Whether the kernel's thread axis (its last parameter) indexes a smaller unit stride in ``inner``'s body than
+    any parameter of ``inner`` does: adjacent threads already read adjacent elements, and striding ``inner`` across
+    the lanes would give every lane a strided row instead (a column sum ``ys[i, col]`` over ``i``, cegterg; vexx_k's
+    ``sfac[a, g]`` over the atoms ``a``). Each thread then walks ``inner`` itself."""
+    params = [kernel.map.params[-1], *inner.map.params]
+    body = state.scope_subgraph(inner, include_entry=True, include_exit=True)
+    scores = score_indexed_strides(body.edges(), state.sdfg, params)
+    try:
+        return all(stride_difference_sign(scores[params[0]][0], scores[p][0]) < 0 for p in params[1:])
+    except UndecidableStride:
+        return False
 
 
 #: A container each lane of a block-tiled kernel holds its own copy of, as ``(owning SDFG, name)``.

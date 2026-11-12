@@ -14,7 +14,11 @@ import dace
 from dace import dtypes
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.gpu_specialization.block_tile_kernels import BlockTileKernels, updates_shared
+from dace.transformation.passes.gpu_specialization.block_tile_kernels import (
+    BlockTileKernels,
+    strided_maps,
+    updates_shared,
+)
 
 M, N, K, NB, NNZ = (dace.symbol(s) for s in ("M", "N", "K", "NB", "NNZ"))
 SIZES = [(1, 1, 1, 1), (37, 300, 5, 3), (257, 513, 129, 2)]
@@ -428,6 +432,31 @@ def test_a_lane_strided_map_in_a_loop_waits_for_every_lane_before_its_next_trip(
     np.testing.assert_array_equal(cupy.asnumpy(device), np.sort(key, axis=1))
 
 
+def kernel_summing_columns(transposed: bool) -> tuple[dace.SDFGState, dace.nodes.MapEntry, dace.nodes.MapEntry]:
+    """A kernel over ``j`` whose inner map sums ``A[i, j]`` over ``i`` (``A[j, i]`` when ``transposed``)."""
+    sdfg = dace.SDFG("column_sum_kernel" + ("_transposed" if transposed else ""))
+    sdfg.add_array("A", [512, 512], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("out", [512], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    kernel, kernel_exit = state.add_map("kernel", {"j": "0:512"}, schedule=dtypes.ScheduleType.GPU_Device)
+    rows, rows_exit = state.add_map("rows", {"i": "0:512"}, schedule=dtypes.ScheduleType.Sequential)
+    tasklet = state.add_tasklet("acc", {"a"}, {"s"}, "s = a")
+    read = dace.Memlet("A[j, i]" if transposed else "A[i, j]")
+    state.add_memlet_path(state.add_read("A"), kernel, rows, tasklet, dst_conn="a", memlet=read)
+    write = dace.Memlet("out[j]", wcr="lambda x, y: x + y")
+    state.add_memlet_path(tasklet, rows_exit, kernel_exit, state.add_write("out"), src_conn="s", memlet=write)
+    return state, kernel, rows
+
+
+def test_an_inner_map_the_kernel_threads_already_coalesce_is_not_strided_across_the_lanes():
+    """``A[i, j]`` under a kernel over ``j``: adjacent threads read adjacent elements, while lanes over ``i`` would
+    each read a row 512 elements apart. Transposed, the inner map is the contiguous one and takes the lanes."""
+    state, kernel, rows = kernel_summing_columns(transposed=False)
+    assert strided_maps(state, kernel) == []
+    state, kernel, rows = kernel_summing_columns(transposed=True)
+    assert strided_maps(state, kernel) == [(state, rows)]
+
+
 if __name__ == "__main__":
     test_an_inner_reduction_runs_across_the_lanes_of_one_block(matvec)
     test_an_inner_reduction_runs_across_the_lanes_of_one_block(gemm_loops)
@@ -444,3 +473,4 @@ if __name__ == "__main__":
     for sizes in SIZES:
         test_the_block_lowerings_compute_what_numpy_does(*sizes)
     test_a_lane_strided_map_in_a_loop_waits_for_every_lane_before_its_next_trip()
+    test_an_inner_map_the_kernel_threads_already_coalesce_is_not_strided_across_the_lanes()
