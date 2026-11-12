@@ -545,7 +545,9 @@ def test_a_kernel_cut_from_a_program_with_array_reductions_reduces_its_accumulat
     code = cpf.render(call.standalone_sdfg, check_compiles=False).code
 
     assert call.standalone_sdfg.openmp_array_reductions
-    assert "reduction(+:_out_out[0:1])" in code
+    # the one-element accumulator reduces in a local scalar stored back to the argument
+    assert "reduction(+:__red_0__out_out)" in code
+    assert "*(_out_out) = __red_0__out_out;" in code
     assert "omp atomic" not in code
 
 

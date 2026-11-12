@@ -64,7 +64,8 @@ def _compile_and_read_src(sdfg: dace.SDFG):
     csdfg = sdfg.compile()
     src_path = os.path.join(sdfg.build_folder, "src", "cpu", sdfg.name + ".cpp")
     assert os.path.exists(src_path), src_path
-    return csdfg, open(src_path).read()
+    with open(src_path) as f:
+        return csdfg, f.read()
 
 
 def test_scalar_wcr_emits_omp_reduction_clause():
@@ -861,7 +862,54 @@ def test_nested_sdfg_built_after_canonicalize_takes_the_root_flag():
     assert np.allclose(_run_arr(root, X, A0), A0 + X.sum(axis=0))
 
 
+def build_one_element_gather_sum() -> dace.SDFG:
+    """tsvc ``s4115`` as Alloy outlines it: ``acc[0] += a[i] * b[ip[i]]`` over a parallel map into a NON-transient
+    one-element array, the caller's pointer once the nest is a standalone function."""
+    sd = dace.SDFG("wcr_one_element_gather")
+    sd.add_array("a", [N], dace.float64)
+    sd.add_array("b", [N], dace.float64)
+    sd.add_array("ip", [N], dace.int32)
+    sd.add_array("acc", [1], dace.float64)
+    st = sd.add_state()
+    me, mx = st.add_map("m", dict(i="0:N"), schedule=dace.ScheduleType.CPU_Multicore)
+    t = st.add_tasklet("mul", dict.fromkeys(("ai", "bs", "ix")), {"r": None}, "r = ai * bs[ix]")
+    st.add_memlet_path(st.add_read("a"), me, t, dst_conn="ai", memlet=dace.Memlet("a[i]"))
+    st.add_memlet_path(st.add_read("b"), me, t, dst_conn="bs", memlet=dace.Memlet("b[0:N]"))
+    st.add_memlet_path(st.add_read("ip"), me, t, dst_conn="ix", memlet=dace.Memlet("ip[i]"))
+    st.add_memlet_path(t, mx, st.add_write("acc"), src_conn="r", memlet=dace.Memlet("acc[0]", wcr="lambda x, y: x + y"))
+    sd.validate()
+    sd.openmp_array_reductions = True
+    return sd
+
+
+def test_one_element_array_wcr_reduces_into_a_local_scalar():
+    """A one-element section reduction ``reduction(+:acc[0:1])`` keeps GCC from vectorizing the gather (s4115);
+    the map reduces into a local scalar loaded from and stored back to ``acc[0]`` instead."""
+    sd = build_one_element_gather_sum()
+    src = _compile_and_read_src(sd)[1]
+    pragma = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
+    assert any(re.search(r"reduction\(\+:__red_\w*acc\)", l) for l in pragma), "\n".join(pragma)
+    assert not any("[0:1]" in l for l in pragma), "\n".join(pragma)
+    assert "reduce_atomic" not in src, "a covered accumulator must not fall back to atomics"
+    rng = np.random.default_rng(11)
+    n = 1000
+    a, b = rng.standard_normal(n), rng.standard_normal(n)
+    ip = rng.permutation(n).astype(np.int32)
+    acc = np.array([0.5])
+    old = os.environ.get("OMP_NUM_THREADS")
+    os.environ["OMP_NUM_THREADS"] = "4"
+    try:
+        sd(a=a, b=b, ip=ip, acc=acc, N=n)
+    finally:
+        if old is None:
+            os.environ.pop("OMP_NUM_THREADS", None)
+        else:
+            os.environ["OMP_NUM_THREADS"] = old
+    assert np.allclose(acc[0], 0.5 + np.dot(a, b[ip]))
+
+
 if __name__ == "__main__":
+    test_one_element_array_wcr_reduces_into_a_local_scalar()
     test_view_wcr_target_emits_section_clause()
     test_array_wcr_section_covers_only_the_written_element()
     test_array_wcr_two_spans_of_one_array_share_one_clause()

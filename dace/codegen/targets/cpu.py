@@ -3908,6 +3908,36 @@ class CPUCodeGen(TargetCodeGenerator):
             )
         return lines
 
+    def one_element_reductions(
+        self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry, reductions: list[tuple]
+    ) -> tuple[list[tuple], list[tuple]]:
+        """``reductions`` with each one-element section ``p[0:1]`` a tasklet accumulates into replaced by a local
+        scalar the map holds like a sequential accumulator, and those accumulators: GCC does not vectorize a gather
+        reducing into a section (tsvc s4115) and does into a scalar. A persistent or View accumulator keeps its section."""
+        out, held = [], []
+        exit_edges = [e for e in state.in_edges(state.exit_node(map_entry)) if e.data.wcr is not None]
+        for op_str, target, name, declare in reductions:
+            desc = sdfg.arrays[name]
+            edges = [e for e in exit_edges if e.data.data == name]
+            if (
+                declare is not None
+                or type(desc) is not data.Array
+                or not target.endswith("[0:1]")
+                or reduction_alias(sdfg, name) is not None
+                or desc.dtype not in SIMD_REDUCTION_TYPES
+                or not name.isidentifier()
+                or len(edges) != 1
+                or not isinstance(edges[0].src, nodes.Tasklet)
+            ):
+                out.append((op_str, target, name, declare))
+                continue
+            defined_type = self._dispatcher.defined_vars.get(self.ptr(name, desc, sdfg))[0]
+            var = f"__red_{sdfg.cfg_id}_{name}"
+            value = "*(%s)" % cpp.cpp_ptr_expr(sdfg, edges[0].data, defined_type, codegen=self)
+            held.append((name, edges[0].data.subset, op_str, desc.dtype.ctype, value, var))
+            out.append((op_str, var, name, declare))
+        return out, held
+
     def _collect_omp_reductions(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry):
         """Walk the map's WCR-write edges that target an accumulator outside the scope and
         return ``(op_str, clause_target, data_name, declare_line)`` tuples for OpenMP
@@ -4386,6 +4416,7 @@ class CPUCodeGen(TargetCodeGenerator):
         result = callsite_stream
         map_header = ""
         range_private = {}
+        held_reductions = []
 
         # Encapsulate map with a C scope
         needs_brace = self.map_scope_needs_brace(sdfg, state_dfg, node)
@@ -4481,6 +4512,8 @@ class CPUCodeGen(TargetCodeGenerator):
             # reduce is what makes reductions in parallel maps fast. The covered targets are pushed
             # onto ``_omp_reduction_scope_stack`` so the downstream ``write_and_resolve_expr`` skips
             # the now-redundant ``reduce_atomic``.
+            if omp_reductions and not range_private:
+                omp_reductions, held_reductions = self.one_element_reductions(sdfg, state_dfg, node, omp_reductions)
             if omp_reductions:
                 declares = []
                 aliases = (
@@ -4524,11 +4557,12 @@ class CPUCodeGen(TargetCodeGenerator):
         # A sequential map's WCR accumulator lives in a local scalar for the loop's duration --
         # same arithmetic, same order, one load and one store instead of one pair per iteration.
         # The frame is pushed unconditionally so ``_generate_MapExit`` always has one to drain.
-        seq_accumulators = []
+        # A one-element ``reduction`` section is held the same way, in the variable its clause names.
+        seq_accumulators = held_reductions
         if node.map.schedule == dtypes.ScheduleType.Sequential:
             seq_accumulators = self._collect_sequential_accumulators(sdfg, state_dfg, node)
-            for _dname, _subset, _op, ctype, target, var in seq_accumulators:
-                result.write(f"{ctype} {var} = {target};", cfg, state_id, node)
+        for held in seq_accumulators:
+            result.write(f"{held[3]} {held[5]} = {held[4]};", cfg, state_id, node)
         self._seq_accumulator_stack.append(
             {
                 dname: {"var": var, "op": op, "subset": subset, "target": target}
