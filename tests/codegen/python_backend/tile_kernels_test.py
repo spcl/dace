@@ -36,8 +36,8 @@ DIALECTS = [
 #: Per test, the text of each dialect's kernel that shows the node lowered as the test names.
 SPELLINGS = {
     "masked": {
-        "triton": ["tl.program_id(0) * 512", "& _tile_iter_mask", "(int_ceil(N, 512),)"],
-        "cutile": ["ct.bid(0) * 512", "& _tile_iter_mask", "(int_ceil(N, 512),)"],
+        "triton": ["tl.program_id(0) * 512", "mask=_tile_iter_mask", "(int_ceil(N, 512),)"],
+        "cutile": ["ct.bid(0) * 512", "mask=_tile_iter_mask", "(int_ceil(N, 512),)"],
         "tilelang": ["bx * 512", "_tile_iter_mask[lane0]", "T.Kernel(T.ceildiv(N, 512)"],
     },
     "gemm": {
