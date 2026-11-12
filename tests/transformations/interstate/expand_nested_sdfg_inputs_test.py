@@ -474,8 +474,37 @@ def test_a_slice_view_feeding_a_nested_sdfg_is_bypassed_so_the_nested_sdfg_inlin
     assert np.array_equal(out, 2 * rows[2] + 1)
 
 
+def test_a_slice_view_whose_connector_a_deeper_nested_sdfg_takes_is_kept():
+    """The widening restates the callee's own memlets, not a nested SDFG inside it that takes the connector whole: a
+    column View feeding an expanded dot (whose body is such a nest) stays, and the program stays valid (gramschmidt)."""
+    from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
+
+    sdfg = sliced_through_a_view()
+    nested = next(pair[0] for pair in sdfg.all_nodes_recursive() if isinstance(pair[0], dace.nodes.NestedSDFG))
+    nested.sdfg.add_array("x_copy", [3], dace.float64, transient=True)
+    deeper = dace.SDFG("copies_x")
+    deeper.add_array("src", [3], dace.float64)
+    deeper.add_array("dst", [3], dace.float64)
+    deeper.add_state().add_mapped_tasklet(
+        "copy", {"i": "0:3"}, {"a": dace.Memlet("src[i]")}, "b = a", {"b": dace.Memlet("dst[i]")}, external_edges=True
+    )
+    first = nested.sdfg.start_block
+    first.add_nested_sdfg(deeper, {"src"}, {"dst"})
+    call = next(n for n in first.nodes() if isinstance(n, dace.nodes.NestedSDFG))
+    first.add_edge(first.add_read("x"), None, call, "src", dace.Memlet("x[0:3]"))
+    first.add_edge(call, "dst", first.add_write("x_copy"), None, dace.Memlet("x_copy[0:3]"))
+    sdfg.validate()
+
+    sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, options={"top_level_only": True})
+    sdfg.apply_transformations_repeated(InlineMultistateSDFG)
+
+    assert "row" in {n.data for state in sdfg.states() for n in state.data_nodes()}
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_expand_nested_sdfg_inputs_column_scalar_uncollapse_e2e()
     test_expand_terminates_on_wcr_reduction_out_edge()
     test_expand_nested_sdfg_inputs()
     test_a_slice_view_feeding_a_nested_sdfg_is_bypassed_so_the_nested_sdfg_inlines()
+    test_a_slice_view_whose_connector_a_deeper_nested_sdfg_takes_is_kept()
