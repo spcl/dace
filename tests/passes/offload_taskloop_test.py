@@ -473,6 +473,27 @@ def test_a_map_around_a_library_node_left_to_selection_with_a_block_lowering_is_
     assert map_schedule(offloaded(sdfg, heuristics=False), "rows") == dtypes.ScheduleType.GPU_Device
 
 
+@pytest.mark.parametrize("rows", ["8", "M"])
+def test_few_iterations_of_a_large_library_node_left_to_selection_launch_from_the_host(rows):
+    """Eight rows of a default-scale ``K`` reduce would keep eight blocks busy, so the host issues the device-wide
+    reduce per row; over ``M`` rows the map is the kernel and each row runs on its block."""
+    sdfg = dace.SDFG("few_rows_of_a_large_reduce")
+    for name in ("K", "M"):
+        sdfg.add_symbol(name, dace.int64)
+    sdfg.add_array("A", [rows, "K"], dace.float64)
+    sdfg.add_array("B", [rows], dace.float64)
+    sdfg.add_array("row", ["K"], dace.float64, transient=True)
+    state = sdfg.add_state("body")
+    entry, exit_node = state.add_map("rows", dict(i=f"0:{rows}"))
+    reduce_node = state.add_reduce("lambda a, b: a + b", None, 0.0)
+    row = state.add_access("row")
+    state.add_memlet_path(state.add_read("A"), entry, row, memlet=dace.Memlet("A[i, 0:K]", other_subset="0:K"))
+    state.add_edge(row, None, reduce_node, "_in", dace.Memlet("row[0:K]"))
+    state.add_memlet_path(reduce_node, exit_node, state.add_write("B"), memlet=dace.Memlet("B[i]"), src_conn="_out")
+
+    assert is_taskloop_map(state, entry, state.scope_children()) is (rows == "8")
+
+
 def test_a_map_around_an_in_kernel_library_node_is_still_the_kernel():
     """A cub block reduce emits device code and refuses to expand outside a kernel, so the map
     around it is that kernel -- unlike the device-wide reduce, which host code issues."""
