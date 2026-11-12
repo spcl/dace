@@ -8,6 +8,7 @@ from dace import data, dtypes, properties, subsets, symbolic
 from dace.codegen import common
 from dace.libraries.comm import environments, utils
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
+from dace.libraries.standard.nodes.copy.node import copy_node as copy_or_assignment
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
@@ -235,7 +236,16 @@ def pack_noncontiguous_buffers(
             memlet = Memlet(data=src_memlet.data, subset=src_memlet.subset, other_subset=dst_memlet.subset)
             state.add_edge(src, src_conn, dst, dst_conn, memlet)
             return
-        copy_node = CopyLibraryNode(f"copy_{src_memlet.data}_to_{dst_memlet.data}")
+        arrays = state.sdfg.arrays
+        copy_node = copy_or_assignment(
+            state,
+            f"copy_{src_memlet.data}_to_{dst_memlet.data}",
+            src,
+            arrays[src_memlet.data],
+            src_memlet.subset,
+            arrays[dst_memlet.data],
+            dst_memlet.subset,
+        )
         state.add_edge(src, src_conn, copy_node, CopyLibraryNode.INPUT_CONNECTOR_NAME, src_memlet)
         state.add_edge(copy_node, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, dst_conn, dst_memlet)
 

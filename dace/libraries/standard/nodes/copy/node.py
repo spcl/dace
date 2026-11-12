@@ -3,9 +3,10 @@
 
 from typing import TYPE_CHECKING
 
-from dace import dtypes, library, nodes, properties
-from dace.libraries.standard.helper import CURRENT_STREAM_NAME, host_storages
-from dace.libraries.standard.nodes.copy.common import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
+from dace import data, dtypes, library, nodes, properties, subsets
+from dace.libraries.standard.helper import CURRENT_STREAM_NAME, GPU_RESIDENT_STORAGES, host_storages
+from dace.libraries.standard.nodes.copy.common import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, copy_assignment_code
+from dace.sdfg.scope import is_devicelevel_gpu
 
 if TYPE_CHECKING:
     pass
@@ -136,3 +137,27 @@ class CopyLibraryNode(nodes.LibraryNode):
             )
 
         return inp_name, inp, in_subset, out_name, out, out_subset
+
+
+def copy_node(
+    state,
+    label: str,
+    anchor: nodes.Node,
+    inp: data.Data,
+    in_subset: subsets.Subset,
+    out: data.Data,
+    out_subset: subsets.Subset,
+) -> nodes.CodeNode:
+    """The node to copy ``inp[in_subset]`` into ``out[out_subset]`` with, wired through ``_cpy_in``/``_cpy_out``: the
+    assignment tasklet ``_cpy_out = _cpy_in`` when one element moves on one side of the CPU/GPU boundary, else a
+    :class:`CopyLibraryNode`. The caller adds it to ``state``.
+
+    :param anchor: A node of ``state`` in the scope the copy goes into.
+    """
+    one = in_subset.num_elements_exact() == 1 and out_subset.num_elements_exact() == 1
+    if one and (
+        is_devicelevel_gpu(state.sdfg, state, anchor) or not {inp.storage, out.storage} & GPU_RESIDENT_STORAGES
+    ):
+        code = copy_assignment_code(inp, out, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME)
+        return nodes.Tasklet(label, {INPUT_CONNECTOR_NAME: inp.dtype}, {OUTPUT_CONNECTOR_NAME: out.dtype}, code)
+    return CopyLibraryNode(label)

@@ -7,6 +7,7 @@ from typing import Any
 
 from dace import data, dtypes, nodes, properties
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
+from dace.libraries.standard.nodes.copy.node import copy_node
 from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
@@ -98,9 +99,10 @@ class CastNestedSDFGArguments(ppl.Pass):
 
     @staticmethod
     def insert_copy(state: SDFGState, edge, is_input: bool, name: str) -> None:
-        """Route ``edge`` through ``name`` and a :class:`CopyLibraryNode` on the container's side."""
+        """Route ``edge`` through ``name`` and a copy (:func:`copy_node`) on the container's side."""
         src, dst = (edge.data.data, name) if is_input else (name, edge.data.data)
-        cpy = CopyLibraryNode(f"copy_{src}_to_{dst}")
+        arrays, subset = state.sdfg.arrays, edge.data.subset
+        cpy = copy_node(state, f"copy_{src}_to_{dst}", edge.src, arrays[src], subset, arrays[dst], subset)
         cpy.instrument = state.instrument
         access = state.add_access(name)
         outer_memlet = copy.deepcopy(edge.data)
