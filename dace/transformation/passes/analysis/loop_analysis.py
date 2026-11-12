@@ -351,7 +351,9 @@ def range_holds(loop: LoopRegion, bounds: tuple, sdfg: "dace.SDFG", facts: symbo
     containers = {name for name in reads if name in sdfg.arrays}
     if any(sdfg.arrays[name].dtype not in dtypes.INTEGER_TYPES for name in containers):
         return False
-    if containers & set(loop.read_and_write_sets()[1]):
+    if containers and any(
+        dn.data in containers and st.in_degree(dn) > 0 for st in loop.states() for dn in st.data_nodes()
+    ):
         return False
     if interstate_bound_names(loop, loop) & (reads | {iterator}):
         return False
