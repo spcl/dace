@@ -8,13 +8,16 @@ Every transient ``GPU_Shared`` container of a kernel is placed either in static 
 static shared memory of a thread-block. Dynamic containers become views of a flat ``uint8`` buffer at their offsets, so
 the layout of dynamic shared memory is part of the SDFG.
 
-The passes run in this order: ``PrivatizeKernelSharedMemory``, ``LowerDynamicMapState``, ``PlanSharedMemory``,
-``LowerDynamicSharedMemory``.
+The passes run in this order: ``PrivatizeKernelSharedMemory``, ``LowerDynamicMapState``,
+``SharedMemoryInterference``, ``PlanSharedMemory``, ``LowerDynamicSharedMemory``.
 """
 
 import copy
+import itertools
 import warnings
 from dataclasses import dataclass, field
+
+import networkx as nx
 
 from dace import config, dtypes, properties, subsets, symbolic
 from dace import data as dt
@@ -22,7 +25,8 @@ from dace.codegen import common
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.scope import is_thread_block_level, kernel_scope
+from dace.sdfg.scope import THREAD_SCHEDULES, is_in_scope, is_thread_block_level, kernel_scope
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import gpu_helpers
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import StateReachability
@@ -200,6 +204,392 @@ class LowerDynamicMapState(ppl.Pass):
                 for nstate in node.sdfg.states():
                     result.extend(LowerDynamicMapState._dynamic_maps(node.sdfg, nstate, nstate))
         return result
+
+
+#: A shared memory container of a GPU kernel that the passes of this module place (see ``is_shared_container``): the
+#: SDFG that owns it, and its name
+SharedContainer = tuple[SDFG, str]
+
+
+def _level_containers(sdfg: SDFG, names: list[str], nested: list[nodes.NestedSDFG]) -> list[tuple[SDFG, list[str]]]:
+    """Returns the shared containers of an SDFG level and, recursively, of its nested SDFGs, in layout order."""
+    result = [(sdfg, names)]
+    for nsdfg_node in nested:
+        nsdfg = nsdfg_node.sdfg
+        nested_names = sorted(n for n, d in nsdfg.arrays.items() if is_shared_container(d))
+        result.extend(_level_containers(nsdfg, nested_names, _nested_sdfg_nodes(nsdfg)))
+    return result
+
+
+def kernel_shared_containers(sdfg: SDFG, state: SDFGState, kernel_entry: nodes.MapEntry) -> list[SharedContainer]:
+    """
+    Returns the shared containers of a GPU kernel in layout order: those of the kernel's SDFG that the kernel accesses,
+    then, recursively, those of the nested SDFGs in the kernel.
+
+    :param sdfg: The SDFG of the kernel map.
+    :param state: The state of the kernel map.
+    :param kernel_entry: The kernel map.
+    :return: The containers, as pairs of their SDFG and name.
+    """
+    kernel_nodes = state.scope_subgraph(kernel_entry).nodes()
+    names = sorted(
+        {n.data for n in kernel_nodes if isinstance(n, nodes.AccessNode) and is_shared_container(sdfg.arrays[n.data])}
+    )
+    nested = [n for n in kernel_nodes if isinstance(n, nodes.NestedSDFG)]
+    return [(level, name) for level, level_names in _level_containers(sdfg, names, nested) for name in level_names]
+
+
+@dataclass
+class SharedMemoryConflicts:
+    """Which shared memory containers of a GPU kernel may not occupy the same bytes (see ``SharedMemoryInterference``)."""
+
+    #: The containers of the kernel, in layout order
+    containers: list = field(default_factory=list)
+    #: The pairs of containers that conflict, as frozensets
+    pairs: set = field(default_factory=set)
+    #: The containers that conflict with every other one
+    pinned: set = field(default_factory=set)
+
+    def conflict(self, a: SharedContainer, b: SharedContainer) -> bool:
+        """Whether two different containers of the kernel may not share bytes."""
+        return a in self.pinned or b in self.pinned or frozenset((a, b)) in self.pairs
+
+
+class _PinAll(Exception):
+    """The analysis cannot tell which container an access uses, or whether the threads of a block take the same branches:
+    no container of the kernel shares memory."""
+
+
+@dataclass
+class _Atom:
+    """A top-level part of a state that runs as a whole: a code node, a scope, or a copy between two access nodes."""
+
+    first: nodes.Node
+    last: nodes.Node
+    #: The nested SDFG node, if the atom is one
+    nested: nodes.NestedSDFG | None
+    reads: set
+    writes: set
+    #: The containers accessed within a scope (read and written)
+    inside: set
+
+    @property
+    def accesses(self) -> set:
+        return self.reads | self.writes | self.inside
+
+
+class _KernelInterference:
+    """The analysis of ``SharedMemoryInterference`` for one kernel."""
+
+    def __init__(self, sdfg: SDFG, state: SDFGState, kernel_entry: nodes.MapEntry, reachability):
+        self.sdfg, self.state, self.entry = sdfg, state, kernel_entry
+        self.result = SharedMemoryConflicts(kernel_shared_containers(sdfg, state, kernel_entry))
+        self.containers = set(self.result.containers)
+        self.reachability = reachability  # A function that returns the state reachability of the kernel's SDFG
+
+    def run(self, reuse: bool) -> SharedMemoryConflicts:
+        if not reuse or len(self.containers) < 2 or not self._analyzable():
+            self.result.pinned = set(self.containers)
+            return self.result
+        try:
+            self.reach = self.reachability()
+            zeroed = self._zeroed(self.sdfg, [self.state], [c for c in self.containers if c[0] is self.sdfg])
+            atoms = self._atoms(self.sdfg, self.state, self.entry)
+            # Nothing is in use when a kernel starts (see ``PrivatizeKernelSharedMemory``), nor after it
+            self._state(self.sdfg, self.state, atoms, zeroed, zeroed, check_barrier=False)
+        except _PinAll:
+            self.result.pinned = set(self.containers)
+        return self.result
+
+    def _analyzable(self) -> bool:
+        """Whether the kernel's code is that of thread blocks in a ``GPU_Device`` kernel without collaborative copies."""
+        if self.entry.map.schedule != dtypes.ScheduleType.GPU_Device:
+            return False
+        children = [n for n in self.state.scope_children()[self.entry] if not isinstance(n, nodes.ExitNode)]
+        if not children or not is_thread_block_level(self.sdfg, self.state, children[0]):
+            return False
+        return not self._has_collaborative_copy()
+
+    def _has_collaborative_copy(self) -> bool:
+        """Whether the kernel's block-level code copies between GPU containers without a node (a collaborative copy, after
+        which the code generator leaves out the barrier at the start of the next state, see
+        ``gpu_helpers.state_starts_with_block_barrier``)."""
+        graphs = [(self.sdfg, self.state, self.state.scope_subgraph(self.entry))]
+        for node in graphs[0][2].nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                graphs.extend((s.sdfg, s, s) for nsdfg in node.sdfg.all_sdfgs_recursive() for s in nsdfg.states())
+        gpu_storage = (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared)
+        for sdfg, state, graph in graphs:
+            for e in graph.edges():
+                if not isinstance(e.src, nodes.AccessNode) or not isinstance(e.dst, nodes.AccessNode):
+                    continue
+                src, dst = sdfg.arrays[e.src.data], sdfg.arrays[e.dst.data]
+                if isinstance(src, (dt.View, dt.Stream)) or isinstance(dst, (dt.View, dt.Stream)):
+                    continue  # A view of a container, or a queue operation
+                if (
+                    src.storage in gpu_storage
+                    and dst.storage in gpu_storage
+                    and not is_in_scope(sdfg, state, e.dst, THREAD_SCHEDULES)
+                ):
+                    return True
+        return False
+
+    # Containers of accesses
+
+    def _resolve(self, sdfg: SDFG, state: SDFGState, node: nodes.AccessNode) -> set:
+        """The container of the kernel an access node accesses (through views and nested SDFG connectors), as a set of
+        at most one."""
+        desc = sdfg.arrays[node.data]
+        if isinstance(desc, dt.View):
+            viewed = sdutil.get_last_view_node(state, node)
+            if viewed is None:
+                if desc.storage == dtypes.StorageType.GPU_Shared:
+                    raise _PinAll
+                return set()
+            return self._resolve(sdfg, state, viewed)
+        return self._resolve_name(sdfg, node.data)
+
+    def _resolve_name(self, sdfg: SDFG, name: str) -> set:
+        """The container of the kernel that a data descriptor of an SDFG is, as a set of at most one."""
+        if (sdfg, name) in self.containers:
+            return {(sdfg, name)}
+        desc = sdfg.arrays[name]
+        if isinstance(desc, dt.View):
+            raise _PinAll  # Only an access node tells what a view views
+        if desc.transient:
+            return set()  # Not shared memory that these passes place
+        # Data of an enclosing SDFG of the kernel, passed to this one (whatever storage its descriptor has so far)
+        shared = desc.storage == dtypes.StorageType.GPU_Shared
+        if sdfg is not self.sdfg and sdfg.parent_nsdfg_node is not None:
+            nsdfg_node, state, outer = sdfg.parent_nsdfg_node, sdfg.parent, sdfg.parent_sdfg
+            for e in state.in_edges(nsdfg_node):
+                if e.dst_conn == name and isinstance(state.memlet_path(e)[0].src, nodes.AccessNode):
+                    return self._resolve(outer, state, state.memlet_path(e)[0].src)
+            for e in state.out_edges(nsdfg_node):
+                if e.src_conn == name and isinstance(state.memlet_path(e)[-1].dst, nodes.AccessNode):
+                    return self._resolve(outer, state, state.memlet_path(e)[-1].dst)
+        if shared:
+            raise _PinAll
+        return set()
+
+    def _sources(self, sdfg: SDFG, state: SDFGState, node: nodes.Node) -> set:
+        return set().union(
+            *(self._resolve(sdfg, state, e.src) for e in state.in_edges(node) if isinstance(e.src, nodes.AccessNode))
+        )
+
+    def _destinations(self, sdfg: SDFG, state: SDFGState, node: nodes.Node) -> set:
+        return set().union(
+            *(self._resolve(sdfg, state, e.dst) for e in state.out_edges(node) if isinstance(e.dst, nodes.AccessNode))
+        )
+
+    def _pin_nested(self, nsdfg: SDFG) -> None:
+        """Pins the containers of a nested SDFG that threads run on their own (and of those it nests)."""
+        inner = set(nsdfg.all_sdfgs_recursive())
+        self.result.pinned |= {c for c in self.containers if c[0] in inner}
+
+    def _atoms(self, sdfg: SDFG, state: SDFGState, scope: nodes.EntryNode | None) -> list[_Atom]:
+        """The atoms of a state, or of the kernel's scope."""
+        atoms = []
+        for node in state.scope_children()[scope]:
+            if isinstance(node, nodes.EntryNode):
+                exit_ = state.exit_node(node)
+                inside = set()
+                for inner in state.scope_subgraph(node, include_entry=False, include_exit=False).nodes():
+                    if isinstance(inner, nodes.AccessNode):
+                        inside |= self._resolve(sdfg, state, inner)
+                    elif isinstance(inner, nodes.NestedSDFG):
+                        self._pin_nested(inner.sdfg)
+                reads, writes = self._sources(sdfg, state, node), self._destinations(sdfg, state, exit_)
+                atoms.append(_Atom(node, exit_, None, reads, writes, inside))
+            elif isinstance(node, nodes.CodeNode):
+                nested = node if isinstance(node, nodes.NestedSDFG) else None
+                reads, writes = self._sources(sdfg, state, node), self._destinations(sdfg, state, node)
+                atoms.append(_Atom(node, node, nested, reads, writes, set()))
+            elif isinstance(node, nodes.AccessNode):
+                for e in state.out_edges(node):
+                    if isinstance(e.dst, nodes.AccessNode) and not self._is_view_edge(sdfg, state, e):
+                        reads, writes = self._resolve(sdfg, state, node), self._resolve(sdfg, state, e.dst)
+                        atoms.append(_Atom(node, e.dst, None, reads, writes, set()))
+        return atoms
+
+    @staticmethod
+    def _is_view_edge(sdfg: SDFG, state: SDFGState, edge) -> bool:
+        return any(
+            isinstance(sdfg.arrays[n.data], dt.View) and sdutil.get_view_edge(state, n) is edge
+            for n in (edge.src, edge.dst)
+        )
+
+    @staticmethod
+    def _zeroed(sdfg: SDFG, states, containers) -> set:
+        """The containers that are zeroed where they are allocated: in use in their whole SDFG."""
+        names = {n.data for s in states for n in s.data_nodes() if n.setzero}
+        return {c for c in containers if c[1] in names}
+
+    # The analysis
+
+    def _conflict(self, containers: set) -> None:
+        self.result.pairs.update(frozenset(pair) for pair in itertools.combinations(containers, 2))
+
+    def _conflict_between(self, first: set, second: set) -> None:
+        self.result.pairs.update(frozenset((a, b)) for a in first for b in second if a != b)
+
+    def _state(
+        self, sdfg: SDFG, state: SDFGState, atoms: list[_Atom], def_start: set, use_end: set, check_barrier: bool
+    ):
+        """
+        Adds the conflicts of a state of a block-level SDFG, or of the kernel's scope, and analyzes its nested SDFGs.
+
+        :param def_start: The containers that may hold a value written before the state.
+        :param use_end: The containers that may be read after the state.
+        :param check_barrier: Whether the containers that leaf atoms access must be protected by a barrier at the start
+                              of the state (see ``gpu_helpers.state_starts_with_block_barrier``).
+        :return: The containers that threads of the block may still access when others leave the state.
+        """
+        after = {id(a): nx.descendants(state.nx, a.last) for a in atoms}
+
+        def precedes(a: _Atom, b: _Atom) -> bool:
+            return b.first is a.last or b.first in after[id(a)]
+
+        leaves = [a for a in atoms if a.nested is None]
+        touched = set().union(*(a.accesses for a in leaves))
+        self._conflict(touched)  # No barrier separates the leaves of a state
+        if check_barrier and touched and not gpu_helpers.state_starts_with_block_barrier(sdfg, state):
+            self.result.pinned |= touched
+        hot = set()
+        for v in atoms:
+            before = [u for u in atoms if u is not v and not precedes(v, u)]
+            later = [u for u in atoms if u is not v and not precedes(u, v)]
+            defined = set(def_start).union(*(u.writes | u.inside for u in before))
+            used = set(use_end).union(*(u.reads | u.inside for u in later))
+            if v.nested is None:
+                self._conflict(v.accesses | (defined & used))  # What it accesses, and what holds a value across it
+            else:
+                nested_hot = self._sdfg(v.nested.sdfg, defined, used)
+                hot |= nested_hot
+                for u in later:
+                    if u.nested is None:
+                        self._conflict_between(nested_hot, u.accesses)
+        if gpu_helpers.state_ends_with_block_barrier(state):
+            return set()
+        return touched | hot
+
+    def _sdfg(self, sdfg: SDFG, def_in: set, use_out: set) -> set:
+        """
+        Adds the conflicts of a nested SDFG that the threads of a block run together.
+
+        :param def_in: The containers that may hold a value when the SDFG starts.
+        :param use_out: The containers that may be read after the SDFG.
+        :return: The containers that threads of the block may still access when others leave the SDFG.
+        """
+        states = list(sdfg.states())
+        zeroed = self._zeroed(sdfg, states, [c for c in self.containers if c[0] is sdfg])
+        def_in, use_out = def_in | zeroed, use_out | zeroed
+        control = self._control_reads(sdfg)
+        use_out = use_out.union(*(self._resolve_name(sdfg, name) for name in control))
+        reach = self.reach[sdfg.cfg_id]
+        atoms = {s: self._atoms(sdfg, s, None) for s in states}
+        reads = {s: set().union(*(a.reads | a.inside for a in atoms[s])) for s in states}
+        writes = {s: set().union(*(a.writes | a.inside for a in atoms[s])) for s in states}
+        hot = set()
+        for s in states:
+            # The virtual source state writes def_in and reaches every state; every state reaches the virtual sink,
+            # which reads use_out
+            def_start = def_in.union(*(writes[t] for t in states if s in reach[t]))
+            use_end = use_out.union(*(reads[t] for t in reach[s]))
+            hot |= self._state(sdfg, s, atoms[s], def_start, use_end, check_barrier=True)
+        return hot
+
+    def _control_reads(self, sdfg: SDFG) -> set[str]:
+        """The data descriptors that the control flow of an SDFG reads (interstate edges, loops, branch conditions). If
+        one is written by the threads of a thread-block map, the threads of a block may take different branches."""
+        arrays = set(sdfg.arrays.keys())
+        names = set()
+        for region in sdfg.all_control_flow_regions():
+            for e in region.edges():
+                names |= e.data.free_symbols & arrays
+            exprs = []
+            if isinstance(region, LoopRegion):
+                exprs = [region.loop_condition, region.init_statement, region.update_statement]
+            elif isinstance(region, ConditionalBlock):
+                exprs = [condition for condition, _ in region.branches]
+            for expr in exprs:
+                if expr is not None:
+                    names |= expr.get_free_symbols() & arrays
+        for name in names:
+            if sdfg.arrays[name].storage not in (dtypes.StorageType.Register, dtypes.StorageType.Default):
+                continue
+            for state in sdfg.states():
+                for node in state.data_nodes():
+                    if node.data != name:
+                        continue
+                    for e in state.in_edges(node):
+                        if is_in_scope(sdfg, state, state.memlet_path(e)[0].src, THREAD_SCHEDULES):
+                            raise _PinAll  # Per-thread values decide the control flow of the block
+        return names
+
+
+@properties.make_properties
+class SharedMemoryInterference(ppl.Pass):
+    """
+    Finds which shared memory containers of each GPU kernel may share bytes: those never in use at the same time.
+
+    A container is in use where it is *live* (it holds a value that may still be read: written before, on some path
+    or earlier in the state, and read after) or *hot* (threads of the block may still access it since the last barrier).
+    The analysis follows the dataflow of the thread blocks' code of a ``GPU_Device`` kernel, through nested SDFGs that
+    the threads of a block run together, and relies on where the code generator synchronizes the block (see
+    ``gpu_helpers.state_starts_with_block_barrier`` and ``state_ends_with_block_barrier``): no barrier separates the
+    top-level nodes of a state, which therefore all conflict, and a state that accesses shared memory starts with one.
+    Containers of exclusive branches never conflict, which relies on the threads of a block taking the same branches,
+    as the barriers in them require; the analysis gives up on a kernel whose control flow reads values that the threads
+    of a thread-block map wrote. Containers that threads run on their own (in nested SDFGs within thread-block maps),
+    and all containers of other kernels (persistent ones, those whose threads are not scheduled by thread-block maps, or
+    with collaborative copies) conflict with every other.
+
+    No property declares that a container may share memory: a workspace whose last use precedes the first write of a
+    result, in a later state, shares its bytes with the result.
+    """
+
+    CATEGORY: str = "GPU"
+
+    reuse = properties.Property(
+        dtype=bool,
+        allow_none=True,
+        default=None,
+        desc="Whether containers may share memory (if None, the compiler.cuda.shared_memory_reuse configuration entry)",
+    )
+
+    def __init__(self, reuse: bool | None = None):
+        super().__init__()
+        self.reuse = reuse
+
+    def depends_on(self):
+        return {LowerDynamicMapState}
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results) -> dict[nodes.MapEntry, SharedMemoryConflicts] | None:
+        reuse = self.reuse
+        if reuse is None:
+            reuse = config.Config.get_bool("compiler", "cuda", "shared_memory_reuse")
+        reachability: dict[int, dict] = {}
+
+        def reach_of(kernel_sdfg: SDFG):
+            def compute():
+                if id(kernel_sdfg) not in reachability:
+                    reachability[id(kernel_sdfg)] = StateReachability().apply_pass(kernel_sdfg, None)
+                return reachability[id(kernel_sdfg)]
+
+            return compute
+
+        result = {}
+        for kernel_sdfg, kernel_state, kernel_entry in gpu_helpers.gpu_kernels(sdfg):
+            analysis = _KernelInterference(kernel_sdfg, kernel_state, kernel_entry, reach_of(kernel_sdfg))
+            result[kernel_entry] = analysis.run(reuse)
+        return result or None
 
 
 @dataclass
