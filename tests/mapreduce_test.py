@@ -6,7 +6,7 @@ import numpy as np
 
 import dace
 import dace.libraries.standard as stdlib
-from dace.transformation.dataflow import MapFusionVertical, MapReduceFusion, MapWCRFusion
+from dace.transformation.dataflow import MapCollapse, MapFusionVertical, MapReduceFusion, MapWCRFusion
 from dace.transformation.passes import FuseMaps
 
 W = dace.symbol("W")
@@ -453,6 +453,59 @@ def test_a_reduction_written_straight_into_the_outer_map_exit_fuses():
     out = np.zeros(n)
     sdfg(a=a.copy(), out=out, M=m)
     assert np.allclose(out, (a * a).sum(axis=1)), out
+
+
+def blocked_row_sums(stride: int) -> dace.SDFG:
+    """``out[stride*b : stride*b + 4] = (a[4b:4b+4] * a[4b:4b+4]).sum(1)`` for ``b`` in ``0:N``: gem's point blocks."""
+    sdfg = dace.SDFG(f"blocked_row_sums_{stride}")
+    sdfg.add_array("a", (4 * N, M), dace.float64)
+    sdfg.add_array("out", (stride * N,), dace.float64)
+    sdfg.add_transient("sq", (4, M), dace.float64)
+    state = sdfg.add_state()
+    ome, omx = state.add_map("blocks", dict(b="0:N"))
+    ime, imx = state.add_map("elems", dict(i="0:4", j="0:M"))
+    square = state.add_tasklet("square", {"inp"}, {"o"}, "o = inp * inp")
+    state.add_memlet_path(state.add_read("a"), ome, ime, square, dst_conn="inp", memlet=dace.Memlet("a[4*b + i, j]"))
+    sq = state.add_access("sq")
+    state.add_memlet_path(square, imx, sq, src_conn="o", memlet=dace.Memlet("sq[i, j]"))
+    red = state.add_reduce("lambda x, y: x + y", axes=[1], identity=0)
+    state.add_edge(sq, None, red, None, dace.Memlet("sq[0:4, 0:M]"))
+    state.add_memlet_path(red, omx, state.add_write("out"), memlet=dace.Memlet(f"out[{stride}*b:{stride}*b + 4]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_blocks_reducing_into_their_own_tiles_initialize_once_and_collapse():
+    """Every block reduces into a tile of its own, so the identity is written over all tiles once, ahead of the block
+    map, which is then left holding the fused map alone and collapses with it into one map over every point."""
+    sdfg = blocked_row_sums(4)
+    assert sdfg.apply_transformations_repeated(MapReduceFusion) == 1
+    assert len(list(sdfg.states())) == 2, "the identity goes into a state of its own, ahead of the blocks"
+    assert sdfg.apply_transformations_repeated(MapCollapse) == 1
+    sdfg.validate()
+
+    n, m = 3, 5
+    a = np.random.default_rng(20261112).random((4 * n, m))
+    out = np.full(4 * n, 7.0)
+    sdfg(a=a.copy(), out=out, N=n, M=m)
+    assert np.allclose(out, (a * a).sum(axis=1)), out
+
+
+def test_blocks_leaving_gaps_between_their_tiles_keep_the_identity_per_block():
+    """Blocks that write ``out[8b : 8b+4]`` leave the gaps between their tiles untouched: one identity write over the
+    hull of the tiles would zero them, so each block keeps its own."""
+    sdfg = blocked_row_sums(8)
+    assert sdfg.apply_transformations_repeated(MapReduceFusion) == 1
+    assert len(list(sdfg.states())) == 1, "the identity stays inside the block map"
+
+    n, m = 3, 5
+    a = np.random.default_rng(20261113).random((4 * n, m))
+    out = np.full(8 * n, 7.0)
+    sdfg(a=a.copy(), out=out, N=n, M=m)
+    ref = np.full(8 * n, 7.0)
+    for b in range(n):
+        ref[8 * b : 8 * b + 4] = (a[4 * b : 4 * b + 4] ** 2).sum(axis=1)
+    assert np.allclose(out, ref), out
 
 
 def test_a_reduction_into_an_offset_slice_keeps_the_offset():

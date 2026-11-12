@@ -7,9 +7,10 @@ the first parameter of a map, so OpenMP split ``j`` across the threads, every th
 and each of the 3.5e9 updates was an ``omp atomic`` -- 7.1 s against numba's 1.0 s on 16 cores.
 
 The parameters that index the reduced container are the ones whose iterations write DIFFERENT elements,
-so they are the ones to share out. This pass moves them to the front of the map and splits the rest off
-into an inner ``Sequential`` map, which is the same iteration space in an order the code generator proves
-conflict-free: the write leaves the outer map indexed by its own parameter, so no atomic is emitted.
+so they are the ones to share out, all of them (an OpenMP ``collapse``). This pass moves them to the front
+of the map and splits the rest off into an inner ``Sequential`` map, which is the same iteration space in an
+order the code generator proves conflict-free: the write leaves the outer map indexed by its own parameter, so no
+atomic is emitted.
 
 When those axes are all SMALL (ICON's ``max_abs_vcfl[blk]`` over a handful of blocks, reduced over levels and
 cells) sharing them out leaves the threads idle, and collapsing them with a reduced axis puts a contended atomic on
@@ -23,7 +24,7 @@ from dace import SDFG, dtypes, properties, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.dataflow import MapDimShuffle, MapExpansion
+from dace.transformation.dataflow import MapCollapse, MapDimShuffle, MapExpansion
 
 
 def reduction_output_params(state: SDFGState, entry: nodes.MapEntry) -> set[str] | None:
@@ -109,9 +110,16 @@ class SequentializeReductionAxes(ppl.Pass):
             MapExpansion.apply_to(
                 state.sdfg,
                 map_entry=entry,
-                options={"inner_schedule": dtypes.ScheduleType.Sequential, "expansion_limit": 1},
+                options={"inner_schedule": dtypes.ScheduleType.Sequential, "expansion_limit": len(indexing)},
                 save=False,
             )
+            # Every indexing axis is shared out, not only the first: one map over them, collapsed (gem's blocks, points)
+            for _ in range(len(indexing) - 1):
+                inner = next(e.dst for e in state.out_edges(entry) if isinstance(e.dst, nodes.MapEntry))
+                entry, _ = MapCollapse.apply_to(
+                    state.sdfg, outer_map_entry=entry, inner_map_entry=inner, permissive=True, save=False
+                )
+            entry.map.collapse = len(indexing)
         return len(candidates) or None
 
 
