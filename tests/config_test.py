@@ -153,6 +153,13 @@ def test_config_isolation_multi_thread():
     assert initial_value == Config.get(CONFIG_KEY)
 
 
+def test_nondefaults_is_called_on_the_class_and_lists_a_setting_made_in_memory():
+    with set_temporary("compiler", "cpu", "args", value="-O1 -DNONDEFAULTS_PROBE"):
+        changed = Config.nondefaults()
+
+    assert changed["compiler"]["cpu"]["args"] == "-O1 -DNONDEFAULTS_PROBE"
+
+
 if __name__ == "__main__":
     test_set_temporary()
     test_set_temporary_takes_a_dotted_path()
@@ -160,3 +167,4 @@ if __name__ == "__main__":
     test_temporary_config_exception()
     test_set_temporary_exception()
     test_config_isolation_multi_thread()
+    test_nondefaults_is_called_on_the_class_and_lists_a_setting_made_in_memory()

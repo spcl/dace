@@ -123,6 +123,20 @@ def _container_window(
     return outer_subset, [(e + 1 - b) // s == 1 for (b, e, s) in as_range(outer_subset).ranges]
 
 
+def passed_deeper(sdfg: SDFG, name: str) -> bool:
+    """Whether a nested SDFG inside ``sdfg`` takes or gives container ``name``."""
+    for state in sdfg.states():
+        for node in state.data_nodes():
+            if node.data != name:
+                continue
+            # a read reaches its consumers at the leaves of its memlet tree, a write comes from its producers there
+            reads = [leaf.dst for edge in state.out_edges(node) for leaf in state.memlet_tree(edge).leaves()]
+            writes = [leaf.src for edge in state.in_edges(node) for leaf in state.memlet_tree(edge).leaves()]
+            if any(isinstance(end, nodes.NestedSDFG) for end in reads + writes):
+                return True
+    return False
+
+
 def viewed_window(state: SDFGState, edge: MultiConnectorEdge) -> tuple[nodes.AccessNode, Range] | None:
     """The array node a slice View on ``edge``'s source views, and the window of that array ``edge`` reads.
 
@@ -137,6 +151,10 @@ def viewed_window(state: SDFGState, edge: MultiConnectorEdge) -> tuple[nodes.Acc
     view = view_node.desc(state.sdfg)
     feeds = state.in_edges(view_node)
     if not isinstance(view, data.ArrayView) or len(feeds) != 1 or feeds[0].dst_conn != "views":
+        return None
+    callee = edge.dst
+    # the widening restates this connector's memlets, not a deeper nested SDFG that takes it as a whole
+    if isinstance(callee, nodes.NestedSDFG) and passed_deeper(callee.sdfg, edge.dst_conn):
         return None
     base_node, memlet = feeds[0].src, feeds[0].data
     if not isinstance(base_node, nodes.AccessNode) or edge.data.other_subset is not None:
