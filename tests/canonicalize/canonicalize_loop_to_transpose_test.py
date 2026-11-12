@@ -33,6 +33,14 @@ def _apply(sdfg) -> int:
     return (res or {}).get("LoopToTranspose", 0) or 0
 
 
+def _views(sdfg):
+    return [
+        n.data
+        for n, state in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.AccessNode) and isinstance(n.desc(state.sdfg), dace.data.View)
+    ]
+
+
 def _libnodes(sdfg):
     return [type(n).__name__ for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.LibraryNode)]
 
@@ -113,12 +121,13 @@ def test_transpose_3d_lifts_to_tensortranspose_node():
     assert np.allclose(b, ref)
 
 
-def test_sub_region_transpose_lifts_via_view():
-    """Offset sub-block (``i in 1:5``, ``j in 2:6``): the operands are routed
-    through strided Views; only the accessed window is transposed."""
+def test_sub_region_transpose_lifts_on_the_subset():
+    """Offset sub-block (``i in 1:5``, ``j in 2:6``): the node reads and writes the
+    window's subsets of the arrays, through no View; only the window is transposed."""
     sdfg = _sub_region_transpose.to_sdfg(simplify=True)
     assert _apply(sdfg) == 1
     assert "Transpose" in _libnodes(sdfg)
+    assert not _views(sdfg)
     sdfg.validate()
 
     rng = np.random.default_rng(2)
@@ -132,10 +141,11 @@ def test_sub_region_transpose_lifts_via_view():
     assert np.allclose(b, ref)
 
 
-def test_strided_transpose_lifts_via_view():
-    """Strided loops (``range(0, 8, 2)``): the View strides encode the step."""
+def test_strided_transpose_lifts_on_the_subset():
+    """Strided loops (``range(0, 8, 2)``): the memlet steps carry the stride, through no View."""
     sdfg = _strided_transpose.to_sdfg(simplify=True)
     assert _apply(sdfg) == 1
+    assert not _views(sdfg)
     sdfg.validate()
 
     rng = np.random.default_rng(3)

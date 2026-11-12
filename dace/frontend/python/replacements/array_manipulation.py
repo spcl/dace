@@ -7,7 +7,7 @@ import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import StringLiteral
 from dace.frontend.python.nested_call import NestedCall
-from dace.frontend.python.replacements.utils import ProgramVisitor, UfuncInput, UfuncOutput, step_state
+from dace.frontend.python.replacements.utils import ProgramVisitor, UfuncInput, UfuncOutput, operand_read, step_state
 import dace.frontend.python.memlet_parser as mem_parser
 from dace import data, dtypes, subsets, symbolic
 from dace import Memlet, SDFG, SDFGState
@@ -271,22 +271,22 @@ def _transpose(
         # so validation accepts a ``(N, 1)``, and the BLAS expansions now hand a one-element
         # operand to the pure single-element tasklet instead of building an omatcopy call around a
         # scalar (``linalg/nodes/transpose._is_single_element``). Every 2D shape goes to the node.
-        acc1 = state.add_read(inpname)
+        acc1, memlet = operand_read(pv, sdfg, state, inpname)
         acc2 = state.add_write(outname)
         import dace.libraries.linalg  # Avoid import loop
 
         tasklet = dace.libraries.linalg.Transpose("_Transpose_", restype)
         state.add_node(tasklet)
-        state.add_edge(acc1, None, tasklet, "_inp", Memlet.from_array(inpname, arr1))
+        state.add_edge(acc1, None, tasklet, "_inp", memlet)
         state.add_edge(tasklet, "_out", acc2, None, Memlet.from_array(outname, arr2))
     else:  # Tensor transpose
-        read = state.add_read(inpname)
+        read, memlet = operand_read(pv, sdfg, state, inpname, squeeze=False)
         write = state.add_write(outname)
         from dace.libraries.linalg import TensorTranspose  # Avoid import loop
 
         tasklet = TensorTranspose("_TensorTranspose", axes or list(range(len(arr1.shape))))
         state.add_node(tasklet)
-        state.add_edge(read, None, tasklet, "_inp_tensor", Memlet.from_array(inpname, arr1))
+        state.add_edge(read, None, tasklet, "_inp_tensor", memlet)
         state.add_edge(tasklet, "_out_tensor", write, None, Memlet.from_array(outname, arr2))
 
     return outname

@@ -3,6 +3,7 @@
 Contains utility functions and types for replacements in the DaCe Python frontend.
 """
 
+import copy
 import itertools
 import math
 from collections.abc import Mapping, Sequence
@@ -15,6 +16,7 @@ import sympy as sp
 
 from dace import SDFG, Memlet, SDFGState, data, dtypes, symbolic
 from dace.frontend.python import astutils
+from dace.sdfg import nodes
 
 ########################################################################
 # Type hint definitions
@@ -101,6 +103,44 @@ def step_state(pv: "ProgramVisitor", state: SDFGState) -> SDFGState:
     if pv is None:
         return state
     return pv._add_state(f"{state.label}_step")
+
+
+def operand_read(
+    pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, name: str, squeeze: bool = True
+) -> tuple[nodes.AccessNode, Memlet]:
+    """A read of all of ``name`` for a library node that takes subsets. A View of a slice is read as that slice of
+    the array it views: the node finds the leading dimension, offset and step in the memlet, and a View left
+    in front of it blocks fusion and widens the memlets around it to the whole array.
+
+    A View is kept when it is not exactly the slice's non-unit dimensions in the array's stepped strides: a
+    reshape, or a unit dimension the node would squeeze away. With ``squeeze`` off, for a node that numbers the
+    dimensions of its operand (``TensorDot`` axes), the slice must also keep every dimension of the array.
+    A name bound to a container (``b = a[i]``) is a View of all of it, read as that container.
+    """
+    views = pv.views if pv is not None else {}
+    source = name
+    while source in views and views[source][0] in sdfg.arrays:
+        viewed, memlet = views[source]
+        if memlet != Memlet.from_array(viewed, sdfg.arrays[viewed]):
+            break
+        source = viewed
+    desc = sdfg.arrays[source]
+    array, memlet = views.get(source, (None, None))
+    parent = sdfg.arrays.get(array)
+    if isinstance(parent, data.Array) and not isinstance(parent, data.View) and memlet.wcr is None:
+        subset = memlet.subset
+        kept = [i for i, extent in enumerate(subset.size()) if extent != 1 or not squeeze]
+        if (
+            kept
+            and len(kept) == len(desc.shape)
+            and all(symbolic.equal(subset.size()[i], extent) is True for i, extent in zip(kept, desc.shape))
+            and all(
+                symbolic.equal(parent.strides[i] * subset.ranges[i][2], stride) is True
+                for i, stride in zip(kept, desc.strides)
+            )
+        ):
+            return state.add_read(array), Memlet(data=array, subset=copy.deepcopy(subset))
+    return state.add_read(source), Memlet.from_array(source, desc)
 
 
 ########################################################################

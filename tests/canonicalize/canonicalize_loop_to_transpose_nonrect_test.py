@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``LoopToTranspose`` must refuse a non-rectangular nest.
 
-The lift reads each loop's ``(init, last, stride)`` and rewrites the nest into a strided View pair. That
+The lift reads each loop's ``(init, last, stride)`` and rewrites the nest into a pair of strided subsets. That
 is only valid over a rectangular iteration space: a triangular one (``for j in range(i+1, M)``) is not a
-transposable box, and lifting it splices the outer iterator into the View subsets
+transposable box, and lifting it splices the outer iterator into those subsets
 (``B[0:M-1, _loop_it_0+1:M]``). ``add_view`` then auto-registers that iterator in ``sdfg.symbols``, so it
 reaches ``arglist()`` and the call fails with ``Missing program argument "_loop_it_0"`` -- a stranded
 symbol standing in for a wrong answer.

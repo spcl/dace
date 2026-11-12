@@ -640,16 +640,19 @@ class StateValues:
         """``Sum(a[t] * b[t])`` of a vector-vector ``Dot`` / ``MatMul``."""
         if type(node).__name__ not in ("Dot", "MatMul"):
             raise Refused(f"library node {type(node).__name__}")
-        sdfg = self.state.sdfg
         operands = value_edges(self.state.in_edges(node))
         if len(operands) != 2:
             raise Refused("inner product without two operands")
         t: sympy.Symbol | None = None
         product: sympy.Expr = sympy.S.One
         for edge in operands:
-            if not isinstance(edge.src, nodes.AccessNode) or len(sdfg.arrays[edge.src.data].shape) != 1:
+            # A vector is one moving axis of its container: all of a 1-D one, or a row or column of a larger one.
+            axes = list(edge.data.subset.ndrange()) if isinstance(edge.src, nodes.AccessNode) else []
+            moving = [a for a, (b, e, _) in enumerate(axes) if not same(plain(b), plain(e))]
+            if len(moving) > 1 or (not moving and len(axes) != 1):
                 raise Refused("inner product of a non-vector")
-            ((begin, end, step),) = edge.data.subset.ndrange()
+            axis = moving[0] if moving else 0
+            begin, end, step = axes[axis]
             lo, hi = plain(begin).xreplace(self.frame.bind), plain(end).xreplace(self.frame.bind)
             if not same(plain(step), 1):
                 raise Refused("strided operand")
@@ -657,7 +660,9 @@ class StateValues:
                 t = self.evaluator.symbol("dot", sympy.S.Zero, hi - lo)
             elif not same(self.evaluator.facts[t][1], hi - lo):
                 raise Refused("operands of different lengths")
-            product = product * self.value_at(edge.src, (lo + t,))
+            index = [plain(b).xreplace(self.frame.bind) for b, _, _ in axes]
+            index[axis] = lo + t
+            product = product * self.value_at(edge.src, tuple(index))
         assert t is not None
         return sympy.Sum(product, (t, sympy.S.Zero, self.evaluator.facts[t][1]))
 

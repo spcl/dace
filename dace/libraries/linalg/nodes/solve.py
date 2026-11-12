@@ -10,6 +10,7 @@ import dace.sdfg.nodes
 from dace import SDFG, Memlet, SDFGState, symbolic
 from dace.libraries import hip_dialect
 from dace.libraries.blas import environments as blas_environments
+from dace.libraries.blas.blas_helpers import stepped_strides
 from dace.libraries.lapack import Getrf, Getrs, environments
 from dace.libraries.lapack import block as lapack_block
 from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock
@@ -429,9 +430,9 @@ class Solve(dace.sdfg.nodes.LibraryNode):
         if not np.array_equal(shape_bin, shape_out):
             raise ValueError("Squeezed shape of second input and output must be the same")
 
-        strides_ain = np.array(desc_ain.strides)[dims_ain].tolist()
-        strides_bin = np.array(desc_bin.strides)[dims_bin].tolist()
-        strides_out = np.array(desc_out.strides)[dims_out].tolist()
+        strides_ain = [stepped_strides(desc_ain, ain_memlet.subset)[d] for d in dims_ain]
+        strides_bin = [stepped_strides(desc_bin, bin_memlet.subset)[d] for d in dims_bin]
+        strides_out = [stepped_strides(desc_out, out_memlet.subset)[d] for d in dims_out]
         if strides_ain[-1] != 1:
             raise ValueError("Matrices with column strides greater than 1 are unsupported")
 

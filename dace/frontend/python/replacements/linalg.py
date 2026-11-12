@@ -6,7 +6,7 @@ Contains linear algebra function and operator replacements.
 import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import DaceSyntaxError, StringLiteral
-from dace.frontend.python.replacements.utils import ProgramVisitor, complex_to_scalar, step_state
+from dace.frontend.python.replacements.utils import ProgramVisitor, complex_to_scalar, operand_read, step_state
 from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
 import ast
@@ -148,14 +148,13 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
     op3, arr3 = sdfg.add_transient(visitor.get_target_name(), output_shape, restype, arr1.storage, find_new_name=True)
 
-    acc1 = state.add_read(op1)
-    acc2 = state.add_read(op2)
     acc3 = state.add_write(op3)
 
     tasklet = MatMul("_MatMult_")
     state.add_node(tasklet)
-    state.add_edge(acc1, None, tasklet, "_a", Memlet.from_array(op1, arr1))
-    state.add_edge(acc2, None, tasklet, "_b", Memlet.from_array(op2, arr2))
+    for op, conn in ((op1, "_a"), (op2, "_b")):
+        acc, memlet = operand_read(visitor, sdfg, state, op)
+        state.add_edge(acc, None, tasklet, conn, memlet)
     state.add_edge(tasklet, "_c", acc3, None, Memlet.from_array(op3, arr3))
 
     return op3
@@ -273,11 +272,11 @@ def _inv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_op: str):
 
     from dace.libraries.linalg import Inv
 
-    inp = state.add_read(inp_op)
+    inp, inp_memlet = operand_read(pv, sdfg, state, inp_op)
     out = state.add_write(out_arr[0])
     inv_node = Inv("inv", overwrite_a=False, use_getri=True)
 
-    state.add_memlet_path(inp, inv_node, dst_conn="_ain", memlet=Memlet.from_array(inp_op, inp_arr))
+    state.add_memlet_path(inp, inv_node, dst_conn="_ain", memlet=inp_memlet)
     state.add_memlet_path(inv_node, out, src_conn="_aout", memlet=Memlet.from_array(*out_arr))
 
     return out_arr[0]
@@ -291,19 +290,17 @@ def _solve(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: st
         if not isinstance(op, str) or not op in sdfg.arrays.keys():
             raise SyntaxError
 
-    a_arr = sdfg.arrays[op_a]
     b_arr = sdfg.arrays[op_b]
     out_arr = pv.add_temp_transient(b_arr.shape, b_arr.dtype, storage=b_arr.storage)
 
     from dace.libraries.linalg import Solve
 
-    a_inp = state.add_read(op_a)
-    b_inp = state.add_read(op_b)
     out = state.add_write(out_arr[0])
     solve_node = Solve("solve")
 
-    state.add_memlet_path(a_inp, solve_node, dst_conn="_ain", memlet=Memlet.from_array(op_a, a_arr))
-    state.add_memlet_path(b_inp, solve_node, dst_conn="_bin", memlet=Memlet.from_array(op_b, b_arr))
+    for op, conn in ((op_a, "_ain"), (op_b, "_bin")):
+        acc, memlet = operand_read(pv, sdfg, state, op)
+        state.add_memlet_path(acc, solve_node, dst_conn=conn, memlet=memlet)
     state.add_memlet_path(solve_node, out, src_conn="_bout", memlet=Memlet.from_array(*out_arr))
 
     return out_arr[0]
@@ -435,12 +432,11 @@ def _tensordot(
 
     from dace.libraries.linalg import TensorDot
 
-    a = state.add_read(op_a)
-    b = state.add_read(op_b)
     c = state.add_write(op_c)
     tasklet = TensorDot("_TensorDot_", left_axes, right_axes, out_axes)
-    state.add_edge(a, None, tasklet, "_left_tensor", Memlet.from_array(op_a, arr_a))
-    state.add_edge(b, None, tasklet, "_right_tensor", Memlet.from_array(op_b, arr_b))
+    for op, conn in ((op_a, "_left_tensor"), (op_b, "_right_tensor")):
+        acc, memlet = operand_read(pv, sdfg, state, op, squeeze=False)
+        state.add_edge(acc, None, tasklet, conn, memlet)
     state.add_edge(tasklet, "_out_tensor", c, None, Memlet.from_array(op_c, arr_c))
 
     return op_c
