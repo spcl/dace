@@ -178,7 +178,6 @@ def test_a_buffer_under_a_parallel_map_is_not_promoted():
     assert MakeTransientsPersistent().apply_pass(sdfg, {}) is None
 
 
-
 def unit_buffer(name: str, storage: dace.StorageType, setzero: bool = False) -> dace.SDFG:
     """``buf[0] = a[0] * 2; out[0] = buf[0]`` through the one-element transient ``buf`` in ``storage``."""
     sdfg = loop_with_transient(name, [1])
