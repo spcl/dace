@@ -156,6 +156,7 @@ from dace.transformation.passes.simplification.continue_to_condition import Cont
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
 from dace.transformation.passes.simplify import SimplifyPass
+from dace.transformation.passes.single_element_library_nodes import SingleElementLibraryNodes
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.symbol_ssa import SymbolSSA
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
@@ -318,6 +319,8 @@ class StructuralCleanup(ppl.Pass):
             RedundantOrderingEdgeElimination(),
             # A View a later pass made (inlining a call, nesting a loop body) reads its array directly again
             RemoveViews(),
+            # A library node over one element per operand is the tasklet it computes
+            SingleElementLibraryNodes(),
             # After the state fusion above, so a copy and its readers share a state: redundant copies fold away
             ppl.Pipeline([ArrayElimination(fold_ordered_copies=True, nested=True)]),
             # A shifted copy array elimination keeps (read in several states) is read at the shifted source index

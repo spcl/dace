@@ -53,6 +53,12 @@ class Einsum(nodes.LibraryNode):
         category="Semantics", desc="The coefficient to multiply the output with when added to the product", default=0.0
     )
 
+    def scalar_code(self, state) -> str | None:
+        if "_beta" in self.in_connectors or not symbolic.equal_valued(0, self.beta):
+            return None
+        (out,) = self.out_connectors
+        return f"{out} = ({self.alpha}) * " + " * ".join(sorted(self.in_connectors))
+
 
 # Define the expansion, which specializes the einsum by lowering it to either a BLAS operation or a direct contraction
 @library.register_expansion(Einsum, "specialize")

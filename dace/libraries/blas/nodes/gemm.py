@@ -1287,6 +1287,12 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
             blas_helpers.promote_operands(self, state, ("_a", "_b", "_c"), state.sdfg.arrays[out_edge.data.data].dtype)
         return super().expand(state_or_sdfg, state_or_impl, **kwargs)
 
+    def scalar_code(self, state) -> str | None:
+        if self.alpha_input or self.beta_input:
+            return None
+        prior = f" + ({self.beta}) * _c_in" if "_c" in self.in_connectors else ""
+        return f"_c = ({self.alpha}) * _a * _b{prior}"
+
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)
         # ``_alpha`` / ``_beta`` runtime coefficient connectors are not matrix operands.

@@ -87,6 +87,10 @@ class CopyLibraryNode(nodes.LibraryNode):
             return dtypes.StorageType.Default
         return state.sdfg.arrays[outer.data].storage
 
+    def scalar_code(self, state) -> str | None:
+        _, inp, _, _, out, _ = self.validate(state.sdfg, state)
+        return copy_assignment_code(inp, out, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME)
+
     def validate(self, sdfg, state, allow_cross_storage=True):
         """Resolve in/out edges, names, and subsets: ``(inp_name, inp, in_subset, out_name, out,
         out_subset)``. Raises ``ValueError`` if not wired with exactly one input and one output

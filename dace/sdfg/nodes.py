@@ -1913,6 +1913,12 @@ class LibraryNode(CodeNode):
         """
         return False
 
+    def scalar_code(self, state) -> str | None:
+        """The Python tasklet code this node is when every operand is one element, over its own connectors (an input
+        connector that is also an output reads as ``<name>_in``); ``None`` when the node has no such form. Used by
+        :class:`~dace.transformation.passes.single_element_library_nodes.SingleElementLibraryNodes`."""
+        return None
+
     def has_ordered_side_effects(self, sdfg) -> bool:
         """Returns True if this library node's side effect must not be reordered relative to others."""
         return self.has_side_effects(sdfg)

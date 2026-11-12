@@ -2099,6 +2099,18 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
     def __label__(self, sdfg, state):
         return str(self).replace(" Axes", "\nAxes")
 
+    def scalar_code(self, state) -> str | None:
+        # Without an identity the reduction accumulates onto the output's prior value: no plain assignment
+        form = {
+            dtypes.ReductionType.Sum: "({0}) + {1}",
+            dtypes.ReductionType.Product: "({0}) * {1}",
+            dtypes.ReductionType.Min: "min({0}, {1})",
+            dtypes.ReductionType.Max: "max({0}, {1})",
+        }.get(detect_reduction_type(self.wcr))
+        if form is None or not isinstance(self.identity, (int, float)) or not numpy.isfinite(self.identity):
+            return None
+        return f"{OUTPUT_CONNECTOR_NAME} = " + form.format(self.identity, INPUT_CONNECTOR_NAME)
+
     def validate(self, sdfg, state):
         if len(state.in_edges(self)) != 1:
             raise ValueError("Reduce node must have one input")

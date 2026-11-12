@@ -347,6 +347,9 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         self.accumulator_type = accumulator_type
         self.conjugate = conjugate
 
+    def scalar_code(self, state) -> str | None:
+        return None if self.conjugate else "_result = _x * _y"
+
     def validate(self, sdfg, state):
         """
         :return: A three-tuple (x, y, res) of the three data descriptors in the
