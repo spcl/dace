@@ -6,6 +6,8 @@ from collections.abc import Sequence
 from numbers import Number
 from typing import Any
 
+import sympy
+
 import dace
 from dace import dtypes, library, nodes, properties, symbolic
 from dace.codegen.common import global_code_id
@@ -18,10 +20,19 @@ from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
 
 
-def moves_whole_container(desc: dace.data.Data, shape: Sequence[Any]) -> bool:
-    """True iff a memlet carrying ``shape`` spans all of ``desc`` and ``desc`` is C-packed. A container of the
-    memlet's shape can still be a slice of a larger array (TTGT's ``_left_tensor``), laid out with its strides."""
-    return symbolic.shapes_equal(shape, desc.shape) and desc.is_packed_c_strides()
+def outer_size(shape: Sequence[Any], strides: Sequence[Any]) -> list | None:
+    """HPTT's row-major "outer size" of a tensor of extents ``shape`` laid out in ``strides``: mode ``i`` steps by
+    the product of the outer sizes after it. ``None`` when the strides are no such product (no unit innermost
+    stride, or a stride the next one does not divide)."""
+    if symbolic.equal(strides[-1], 1) is not True:
+        return None
+    outer = [shape[0]]
+    for stride, inner in zip(strides[:-1], strides[1:]):
+        ratio = sympy.cancel(sympy.sympify(stride) / sympy.sympify(inner))
+        if ratio.as_numer_denom()[1] != 1:
+            return None
+        outer.append(ratio)
+    return outer
 
 
 @library.expansion
@@ -195,11 +206,12 @@ class ExpandHPTT(ExpandTransformation):
         from dace.codegen.common import sym2cpp  # Avoid import loop
 
         inp_tensor, out_tensor, inp_shape, out_shape = node.validate(parent_sdfg, parent_state)
-        # HPTT expresses a non-packed operand only as an "outer size" per mode -- it cannot take a
-        # stride array -- so a memlet moving a slice of a larger container has no faithful call here.
-        if not (moves_whole_container(inp_tensor, inp_shape) and moves_whole_container(out_tensor, out_shape)):
+        # HPTT takes a non-packed operand only as an "outer size" per mode, no stride array: a subset whose
+        # strides are no such product has no faithful call here.
+        outer_inp, outer_out = outer_size(inp_shape, inp_tensor.strides), outer_size(out_shape, out_tensor.strides)
+        if outer_inp is None or outer_out is None:
             warnings.warn(
-                "HPTT takes no stride array, so it cannot transpose a subset of a larger "
+                "HPTT takes no stride array, so it cannot transpose this subset of a larger "
                 "container, falling back to the pure implementation"
             )
             return ExpandPure.expansion(node, parent_state, parent_sdfg)
@@ -226,7 +238,9 @@ class ExpandHPTT(ExpandTransformation):
         code = f"""
             int perm[{len(inp_shape)}] = {{{axes}}};
             int size[{len(inp_shape)}] = {{{shape}}};
-            {dchar}TensorTranspose(perm, {len(inp_shape)}, {alpha}, {conj_a}{inp_arg}, size, NULL, {beta}, {out_arg}, NULL, omp_get_max_threads(), 1);
+            int outer_inp[{len(inp_shape)}] = {{{",".join(sym2cpp(s) for s in outer_inp)}}};
+            int outer_out[{len(inp_shape)}] = {{{",".join(sym2cpp(s) for s in outer_out)}}};
+            {dchar}TensorTranspose(perm, {len(inp_shape)}, {alpha}, {conj_a}{inp_arg}, size, outer_inp, {beta}, {out_arg}, outer_out, omp_get_max_threads(), 1);
         """
 
         return nodes.Tasklet(
@@ -564,14 +578,14 @@ class TensorTranspose(nodes.LibraryNode):
         Validates the tensor transposition operation.
 
         :return: A tuple (inp_tensor, out_tensor, inp_shape, out_shape) -- the data descriptors in
-                 the parent SDFG, and the extents the memlets actually move.
+                 the parent SDFG in the strides the memlets step them by, and the extents the memlets move.
         """
 
         inp_tensor, out_tensor = None, None
         inp_shape, out_shape = None, None
         for e in state.out_edges(self):
             if e.src_conn == "_out_tensor":
-                out_tensor = sdfg.arrays[e.data.data]
+                out_tensor = blas_helpers.stepped_descriptor(sdfg.arrays[e.data.data], e.data.subset)
                 # The extents come from the SUBSET, not the descriptor: a transpose may write into a
                 # slice of a larger container -- densenet appends 32 channels into channels 64:96 of
                 # a 256-channel concatenation buffer -- and comparing the permuted input against the
@@ -579,7 +593,7 @@ class TensorTranspose(nodes.LibraryNode):
                 out_shape = e.data.subset.size()
         for e in state.in_edges(self):
             if e.dst_conn == "_inp_tensor":
-                inp_tensor = sdfg.arrays[e.data.data]
+                inp_tensor = blas_helpers.stepped_descriptor(sdfg.arrays[e.data.data], e.data.subset)
                 inp_shape = e.data.subset.size()
 
         if not inp_tensor:

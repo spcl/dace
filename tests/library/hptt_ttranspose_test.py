@@ -53,9 +53,9 @@ def ttgt_conv_tap(x: dace.float64[2, 3, 6, 5], w: dace.float64[4, 3]):
     return np.tensordot(x[:, :, 1:5, 1:4], w, axes=([1], [1]))
 
 
-def test_hptt_leaves_a_strided_ttgt_operand_to_the_pure_transpose():
-    """TTGT transposes a convolution window held in a container of the window's shape with the input's strides; HPTT
-    reads it packed (NestForge #87), so the transpose takes the pure expansion."""
+def test_hptt_transposes_a_ttgt_window_through_its_outer_sizes():
+    """TTGT transposes a convolution window held in a container of the window's shape with the input's strides
+    (NestForge #87). HPTT reads it through per-mode outer sizes, the strides' quotients, instead of packed."""
     sdfg = ttgt_conv_tap.to_sdfg(simplify=True)
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, dace.libraries.linalg.TensorDot):
@@ -64,10 +64,37 @@ def test_hptt_leaves_a_strided_ttgt_operand_to_the_pure_transpose():
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, TensorTranspose):
             node.implementation = "HPTT"
-    with pytest.warns(UserWarning, match="HPTT takes no stride array"):
-        sdfg.expand_library_nodes()
+    sdfg.expand_library_nodes()
     code = [n.code.as_string for n, parent in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
-    assert not any("TensorTranspose(perm" in c for c in code), code
+    assert any("outer_inp[4]={2,3,6,5}" in c.replace(" ", "") for c in code), code
+
+
+def test_hptt_refuses_a_subset_without_a_unit_innermost_stride():
+    """A step on the innermost axis leaves no outer size HPTT can take: the transpose takes the pure expansion."""
+    sdfg, state, node = transpose_sdfg("hptt_inner_step", dace.float64)
+    (edge,) = state.in_edges(node)
+    edge.data = dace.Memlet("x[0:2, 0:4, 0:3:2]")
+    (edge,) = state.out_edges(node)
+    edge.data = dace.Memlet("y[0:2, 0:2, 0:4]")
+    with pytest.warns(UserWarning, match="HPTT takes no stride array"):
+        assert isinstance(ExpandHPTT.expansion(node, state, sdfg), dace.SDFG)
+
+
+@pytest.mark.skipif("HPTT_ROOT" not in os.environ, reason="HPTT is not installed")
+def test_an_hptt_transpose_of_a_strided_offset_window_matches_numpy():
+    """``x[1:4, 0:8:2, 1:3]`` into ``y[0:2, 1:4, 0:4]``: offsets, a step and a padded output, all in the outer sizes."""
+    sdfg, state, node = transpose_sdfg("hptt_window", dace.float64)
+    (edge,) = state.in_edges(node)
+    edge.data = dace.Memlet("x[1:4, 0:8:2, 1:3]")
+    (edge,) = state.out_edges(node)
+    edge.data = dace.Memlet("y[0:2, 1:4, 0:4]")
+    rng = np.random.default_rng(4)
+    x = rng.standard_normal((4, 8, 3))
+    y = np.zeros((3, 4, 8))
+    ref = y.copy()
+    ref[0:2, 1:4, 0:4] = np.transpose(x[1:4, 0:8:2, 1:3], (2, 0, 1))
+    sdfg(x=x, y=y)
+    assert np.allclose(y, ref)
 
 
 def transpose_sdfg(name: str, dtype) -> tuple[dace.SDFG, dace.SDFGState, TensorTranspose]:

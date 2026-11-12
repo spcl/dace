@@ -9,6 +9,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace import Memlet
 from dace.libraries.blas import environments as blas_environments
+from dace.libraries.blas.blas_helpers import stepped_strides
 from dace.libraries.lapack import block as lapack_block
 from dace.libraries.lapack import environments
 from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock
@@ -387,8 +388,8 @@ class Inv(dace.sdfg.nodes.LibraryNode):
         if not np.array_equal(shape1, shape2):
             raise ValueError("Squeezed shape of input and output must be the same")
 
-        strides1 = np.array(desc_ain.strides)[dims1].tolist()
-        strides2 = np.array(desc_aout.strides)[dims2].tolist()
+        strides1 = [stepped_strides(desc_ain, in_memlet.subset)[d] for d in dims1]
+        strides2 = [stepped_strides(desc_aout, out_memlet.subset)[d] for d in dims2]
         if strides2[-1] != 1:
             raise ValueError("Matrices with column strides greater than 1 are unsupported")
 
