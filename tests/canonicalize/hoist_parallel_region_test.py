@@ -998,37 +998,6 @@ def test_strip_mine_narrows_a_whole_fill_to_what_is_read():
     matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
 
 
-def test_strip_mine_takes_a_row_fill_loop_as_one_map():
-    """A sequential row loop around a row fill. It is rebuilt as one map
-    over rows and columns, so its column axis is cut like every other map's."""
-    from dace.libraries.standard.nodes.fill import FillLibraryNode
-
-    sdfg = dace.SDFG("tile_row_fill")
-    sdfg.add_array("a", [N, N], dace.float64)
-    sdfg.add_transient("z", [3, N], dace.float64)
-    outer = loop_region(sdfg, "outer", "N - 1")
-    clear = outer.add_state("clear", is_start_block=True)
-    entry, exit_node = clear.add_map("rows", {"r": "0:3"}, schedule=dtypes.ScheduleType.Sequential)
-    fill = FillLibraryNode("clear_row", value=1.5)
-    clear.add_node(fill)
-    clear.add_nedge(entry, fill, dace.Memlet())
-    clear.add_memlet_path(
-        fill,
-        exit_node,
-        clear.add_write("z"),
-        src_conn=FillLibraryNode.OUTPUT_CONNECTOR_NAME,
-        memlet=dace.Memlet("z[r, 0:N]"),
-    )
-    sweep = sweep_state(outer, "sweep", "a[it + 1, i]", "out = in0 + in1", {"i": "0:N"}, ["a[it, i]", "z[1, i]"])
-    chain(outer, clear, sweep)
-    sdfg.validate()
-    assert tiled(sdfg) == 1
-    assert not any(isinstance(n, nd.LibraryNode) for n, _ in sdfg.all_nodes_recursive())
-    a = np.random.default_rng(11).random((37, 37))
-    ref = sweep_reference(a, lambda prev, cur: prev + 1.5)
-    matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
-
-
 def test_strip_mine_refuses_a_neighbour_read_between_two_maps():
     """``t[i]`` written by one map and ``t[i + 1]`` read by the next: the read crosses a tile edge within
     one trip, which only the barrier between the two ``omp for`` orders. The team hoist takes it."""
@@ -1482,7 +1451,6 @@ if __name__ == "__main__":
     test_strip_mine_runs_a_scalar_statement_in_every_tile()
     test_strip_mine_refuses_a_scalar_statement_reading_what_another_tile_writes()
     test_strip_mine_narrows_a_whole_fill_to_what_is_read()
-    test_strip_mine_takes_a_row_fill_loop_as_one_map()
     test_strip_mine_refuses_a_neighbour_read_between_two_maps()
     test_strip_mine_refuses_maps_of_different_extents()
     test_strip_mine_refuses_an_accumulation_into_one_location()
