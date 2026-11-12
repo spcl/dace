@@ -1035,9 +1035,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     return None
                 if producer_edge.data.wcr is not None:
                     return None
-                # A conditional writer fused into its consumer wraps the consumer's statements in the writer's guard,
-                #  one nested SDFG each: warpx's per-particle maps went from 37 to 1603 nested SDFGs, 1.7x slower.
-                if producer_edge.data.dynamic:
+                # A conditional writer fused into a consumer under another guard wraps the consumer's statements in the
+                #  writer's guard, one nested SDFG each: warpx's per-particle maps went from 37 to 1603 nested SDFGs,
+                #  1.7x slower. Under the same guard the two bodies merge into one (`NormalizeMapBody`, `MergeGuards`).
+                if producer_edge.data.dynamic and not self.guarded_alike(state, producer_edge, second_map_entry):
                     return None
                 # `compute_reduced_intermediate()` sizes the new intermediate from this subset
                 #  and `compute_offset_subset()` walks it dimension by dimension, so a subset
@@ -2893,6 +2894,57 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         # There is no reason for us to allow it.
         return False
+
+    @staticmethod
+    def guarded_alike(
+        state: SDFGState, producer_edge: graph.MultiConnectorEdge[dace.Memlet], second_map_entry: nodes.MapEntry
+    ) -> bool:
+        """Whether a conditional write is a guard body's unconditional write, and every reader of it in the second Map
+        runs under a provably equal guard: then no element is read that the write skipped.
+
+        Each side is a nested SDFG whose only non-empty block is one single-branch guard over one state, with no
+        interstate assignment, whose condition reads symbols only and no Map parameter: nothing in the state can
+        change it between the two.
+        """
+        from dace.transformation.interstate.move_if_into_map import single_meaningful_state
+        from dace.transformation.interstate.move_map_invariant_if_up import (
+            _resolve_through_mapping,
+            _single_meaningful_conditional,
+        )
+
+        def guard(nsdfg: nodes.Node, params: list[str]) -> tuple[str, SDFGState] | None:
+            if not isinstance(nsdfg, nodes.NestedSDFG) or any(e.data.assignments for e in nsdfg.sdfg.edges()):
+                return None
+            block = _single_meaningful_conditional(nsdfg.sdfg)
+            if block is None or len(block.branches) != 1 or block.branches[0][0] is None:
+                return None
+            body = single_meaningful_state(block.branches[0][1])
+            condition, free = _resolve_through_mapping(block.branches[0][0], nsdfg.symbol_mapping)
+            if body is None or free & (set(nsdfg.in_connectors) | set(params)):
+                return None
+            return condition, body
+
+        # Fused in place, the write reaches the Map exit through an access node inside the Map
+        writer = producer_edge
+        while isinstance(writer.src, nodes.AccessNode) and state.in_degree(writer.src) == 1:
+            writer = state.in_edges(writer.src)[0]
+        if not isinstance(writer.src, nodes.NestedSDFG):
+            return False
+        producer = guard(writer.src, state.entry_node(writer.src).map.params)
+        if producer is None:
+            return False
+        written = [e for n in producer[1].data_nodes() if n.data == writer.src_conn for e in producer[1].in_edges(n)]
+        if not written or any(e.data.dynamic for e in written):
+            return False
+        intermediate = state.memlet_path(producer_edge)[-1].dst
+        for edge in state.out_edges(intermediate):
+            if edge.dst is not second_map_entry or edge.dst_conn is None:
+                continue
+            for inner in state.out_edges_by_connector(second_map_entry, "OUT_" + edge.dst_conn[3:]):
+                consumer = guard(inner.dst, second_map_entry.map.params)
+                if consumer is None or not symbolic.guards_equal(producer[0], consumer[0]):
+                    return False
+        return True
 
     @staticmethod
     def _nsdfg_producer_carries_intermediate(

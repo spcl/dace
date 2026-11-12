@@ -83,7 +83,7 @@ def _uniquify_data_against(inner: SDFG, taken_data: Iterable[str]) -> dict[str, 
 
 def shared_carrier_connectors(
     state: SDFGState, keep: nodes.NestedSDFG, drop: nodes.NestedSDFG
-) -> dict[str, tuple[str, nodes.AccessNode]] | None:
+) -> dict[str, tuple[str, nodes.AccessNode, bool]] | None:
     """Connectors of ``drop`` that read a container ``keep`` writes, or ``None`` to refuse the merge.
 
     ``MapFusion`` leaves a producer and its consumer as siblings wired through one outer AccessNode
@@ -93,41 +93,43 @@ def shared_carrier_connectors(
     dependence belongs INSIDE: bind tail's inner array to keep's, and the value crosses the
     sequencing edge instead of the state.
 
-    That is only sound when the carrier is a pure intermediate. Two refusals:
+    Two refusals:
 
     * the REVERSE direction (``keep`` reads what ``drop`` writes) forms the same cycle, but
       publishing the write would need a second AccessNode plus every downstream reader moved onto
       it -- no corpus kernel merges siblings that way;
-    * a carrier anything ELSE touches cannot be internalized, and leaving the outer write behind
-      would strand a sink inside the map scope that reaches no exit -- ``all_nodes_between`` then
-      reports the whole body as empty and every pass that walks map bodies skips the map.
+    * a carrier anything else writes is no value of ``keep`` alone, and a carrier only ``drop`` reads is private: its
+      outer write goes, since it would strand a sink inside the map scope that reaches no exit (``all_nodes_between``
+      then reports the whole body as empty and every pass that walks map bodies skips the map), so a private carrier
+      another state observes, or that is no transient, cannot be internalized.
+
+    A carrier other nodes read as well stays published: ``keep`` still writes it for them.
 
     :param state: The state holding both nested SDFGs.
     :param keep: The merge base, topologically first.
     :param drop: The sibling being folded into ``keep``.
-    :returns: ``{drop in-connector: (keep out-connector, carrier node)}``, or ``None`` to refuse.
+    :returns: ``{drop in-connector: (keep out-connector, carrier node, private)}``, or ``None`` to refuse.
     """
     produced = {e.data.data: e.src_conn for e in state.out_edges(keep) if e.data.data is not None}
     consumed = {e.data.data for e in state.in_edges(keep) if e.data.data is not None}
     if any(e.data.data in consumed for e in state.out_edges(drop) if e.data.data is not None):
         return None
 
-    forward: dict[str, tuple[str, nodes.AccessNode]] = {}
+    forward: dict[str, tuple[str, nodes.AccessNode, bool]] = {}
     # One whole-SDFG count for all carriers, built on first need -- most edges never reach it.
     elsewhere: Counter | None = None
     for e in state.in_edges(drop):
         if e.data.data not in produced or not isinstance(e.src, nodes.AccessNode):
             continue
         carrier, name = e.src, e.data.data
-        if elsewhere is None:
-            elsewhere = Counter(n.data for st in state.sdfg.states() for n in st.data_nodes())
-        if elsewhere[name] != 1 or not required(state.sdfg.arrays[required(name)]).transient:
-            return None  # something else observes it: cannot be made internal
-        if any(oe.dst is not drop for oe in state.out_edges(carrier)):
-            return None
         if any(ie.src is not keep for ie in state.in_edges(carrier)):
             return None
-        forward[e.dst_conn] = (produced[name], carrier)
+        private = all(oe.dst is drop for oe in state.out_edges(carrier))
+        if private and elsewhere is None:
+            elsewhere = Counter(n.data for st in state.sdfg.states() for n in st.data_nodes())
+        if private and (required(elsewhere)[name] != 1 or not required(state.sdfg.arrays[required(name)]).transient):
+            return None  # something else observes it: cannot be made internal
+        forward[e.dst_conn] = (produced[name], carrier, private)
     return forward
 
 
@@ -208,9 +210,11 @@ def bound_apart_in_tail(base: SDFG, tail: SDFG) -> dict[str, str]:
 def linked_through_other_nodes(
     state: SDFGState, keep: nodes.NestedSDFG, drop: nodes.NestedSDFG, carriers: set[nodes.Node]
 ) -> bool:
-    """Whether a path inside their map scope leads from ``keep`` to ``drop`` other than through ``carriers``."""
+    """Whether a path inside their map scope leads from ``keep`` to ``drop`` other than through a carrier's own edge to
+    ``drop``: the other readers of a published carrier are on such paths."""
     scope_exit = state.exit_node(state.entry_node(keep))
     stack = [e.dst for e in state.out_edges(keep) if e.dst not in carriers]
+    stack += [e.dst for carrier in carriers for e in state.out_edges(carrier) if e.dst is not drop]
     seen: set[nodes.Node] = set()
     while stack:
         node = stack.pop()
@@ -356,7 +360,7 @@ class NormalizeMapBody(ppl.Pass):
             carried = shared_carrier_connectors(state, keep, drop)
             if carried is None:
                 break
-            if linked_through_other_nodes(state, keep, drop, {carrier for connector, carrier in carried.values()}):
+            if linked_through_other_nodes(state, keep, drop, {carrier for _, carrier, _ in carried.values()}):
                 # The merged node would feed the nodes between and read them back: a cycle
                 continue
             merged = True
@@ -379,7 +383,7 @@ class NormalizeMapBody(ppl.Pass):
             drepl = _uniquify_data_against(tail, reserved)
             # A container keep WRITES and drop READS is one value, not two: point tail's copy at
             # keep's array so it crosses the sequencing edge ``_append_cfg`` adds.
-            for drop_conn, (keep_conn, carrier) in carried.items():
+            for drop_conn, (keep_conn, _carrier, _private) in carried.items():
                 renamed = drepl.get(drop_conn, drop_conn)
                 if renamed != keep_conn:
                     replace_datadesc_names(tail, {renamed: keep_conn})
@@ -444,10 +448,12 @@ class NormalizeMapBody(ppl.Pass):
                 state.add_edge(keep, conn, e.dst, e.dst_conn, copy.deepcopy(e.data))
                 state.remove_edge(e)
 
-            # The carrier is now produced AND consumed inside ``keep``, so its outer plumbing is
+            # A carrier only ``drop`` read is now produced AND consumed inside ``keep``, so its outer plumbing is
             # dead. Left in place it is a sink the map exit never reaches, which makes the whole
             # body invisible to ``all_nodes_between``.
-            for keep_conn, carrier in carried.values():
+            for keep_conn, carrier, alone in carried.values():
+                if not alone:
+                    continue
                 for oe in list(state.out_edges(keep)):
                     if oe.dst is carrier:
                         state.remove_edge(oe)
