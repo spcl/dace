@@ -127,6 +127,11 @@ def descendants(state: SDFGState, node: nodes.Node) -> set[nodes.Node]:
     return seen
 
 
+def data_edges(state: SDFGState, node: nodes.Node, incoming: bool) -> list[MultiConnectorEdge]:
+    """The in- (or out-) edges of ``node`` that carry data, not order."""
+    return [e for e in (state.in_edges(node) if incoming else state.out_edges(node)) if not e.data.is_empty()]
+
+
 def code_connector_names(states: Iterable[SDFGState]) -> set[str]:
     """The connector names of the code nodes of ``states``, library nodes and nested SDFGs apart."""
     names: set[str] = set()
@@ -287,7 +292,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if any(
                 not _is_view_of(nstate, neighbor, n)
                 for n in accesses
-                for neighbor in itertools.chain(nstate.predecessors(n), nstate.successors(n))
+                for neighbor in [e.src for e in data_edges(nstate, n, True)] + [e.dst for e in data_edges(nstate, n, False)]
                 if isinstance(neighbor, (nodes.AccessNode, nodes.LibraryNode))
             ):
                 continue
@@ -373,8 +378,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
                         node.data in out_connectors
                         and node.data in in_connectors
                         and node.data not in shared_connectors
-                        and nstate.out_degree(node) > 0
-                        and nstate.in_degree(node) > 0
+                        and data_edges(nstate, node, False)
+                        and data_edges(nstate, node, True)
                     ):
                         return False
                     # An element input copied straight into an element output is staged in the scope
@@ -386,7 +391,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                             e.dst.data in out_connectors
                             and self._staged_copy_form(graph, nested_sdfg, node.data, e.dst.data) is None
                         )
-                        for e in nstate.out_edges(node)
+                        for e in data_edges(nstate, node, False)
                         if isinstance(e.dst, nodes.AccessNode)
                     ):
                         return False
@@ -414,15 +419,15 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 if node.data not in valid_inpconns and node.data in in_connectors:
                     if nstate.entry_node(node) is not None:
                         pass  # Invalid matching node, in scope
-                    elif nstate.in_degree(node) > 0:
-                        pass  # Invalid matching node, has incoming edges
+                    elif data_edges(nstate, node, True):
+                        pass  # Invalid matching node, has incoming data (``_order_by_tasklet`` takes its ordering edges)
                     else:
                         valid_inpconns.add(node.data)
                 if node.data not in valid_outconns and node.data in out_connectors:
                     if nstate.entry_node(node) is not None:
                         pass  # Invalid matching node, in scope
-                    elif nstate.out_degree(node) > 0:
-                        pass  # Invalid matching node, has outgoing edges
+                    elif data_edges(nstate, node, False):
+                        pass  # Invalid matching node, has outgoing data
                     else:
                         valid_outconns.add(node.data)
                 if node.data in rem_inpconns:
@@ -766,6 +771,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     name = sdfg.add_datadesc(new_name, datadesc)
                     transients[node.data] = name
 
+        self._order_by_tasklet(nstate, inputs.keys() | outputs.keys())
+
         # Collect nodes to add to top-level graph
         new_incoming_edges: dict[nodes.Node, MultiConnectorEdge] = {}
         new_outgoing_edges: dict[nodes.Node, MultiConnectorEdge] = {}
@@ -1073,6 +1080,29 @@ class InlineSDFG(transformation.SingleStateTransformation):
         for dnode in state.data_nodes():
             if state.degree(dnode) == 0 and dnode not in isolated_nodes:
                 state.remove_node(dnode)
+
+    @staticmethod
+    def _order_by_tasklet(nstate: SDFGState, connectors: set[str]) -> None:
+        """Hand the ordering edges of each connector access node that may become a boundary node -- read but not
+        written, or written but not read, inside -- to an empty tasklet standing in its place: reconnecting the
+        boundary node to the outer path drops it, so the order it carried rests on a node that stays. The tasklet
+        takes every edge of the node, data edges as empty ones, so it orders exactly what the node ordered."""
+        for node in list(nstate.data_nodes()):
+            if node.data not in connectors or all(not e.data.is_empty() for e in nstate.all_edges(node)):
+                continue
+            if data_edges(nstate, node, True) and data_edges(nstate, node, False):
+                continue
+            order = nstate.add_tasklet(f"{node.data}_order", {}, {}, "")
+            for edge in list(nstate.in_edges(node)):
+                nstate.add_nedge(edge.src, order, Memlet())
+                if edge.data.is_empty():
+                    nstate.remove_edge(edge)
+            for edge in list(nstate.out_edges(node)):
+                nstate.add_nedge(order, edge.dst, Memlet())
+                if edge.data.is_empty():
+                    nstate.remove_edge(edge)
+            if nstate.degree(node) == 0:
+                nstate.remove_node(node)
 
     @staticmethod
     def _stage_connector_copies(
