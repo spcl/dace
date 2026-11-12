@@ -2,8 +2,10 @@
 import unittest
 
 import networkx
+import numpy as np
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.dataflow import TrivialMapElimination
 
 
@@ -442,6 +444,66 @@ def test_the_order_reaches_a_nested_scope_at_its_entry():
     assert all(e.src is ie for e in state.in_edges(t1))
 
 
+
+def two_state_body() -> dace.SDFG:
+    """``t = 2 * a`` then, in a state of its own, ``b = t + 1``: a body only multistate inlining takes."""
+    inner = dace.SDFG("two_state_body")
+    inner.add_array("a", [1], dace.float64)
+    inner.add_array("b", [1], dace.float64)
+    inner.add_scalar("t", dace.float64, transient=True)
+    first = inner.add_state("first")
+    task = first.add_tasklet("double", {"inp"}, {"res"}, "res = 2 * inp")
+    first.add_edge(first.add_read("a"), None, task, "inp", dace.Memlet("a[0]"))
+    first.add_edge(task, "res", first.add_write("t"), None, dace.Memlet("t[0]"))
+    second = inner.add_state_after(first, "second")
+    task = second.add_tasklet("inc", {"inp"}, {"res"}, "res = inp + 1")
+    second.add_edge(second.add_read("t"), None, task, "inp", dace.Memlet("t[0]"))
+    second.add_edge(task, "res", second.add_write("b"), None, dace.Memlet("b[0]"))
+    return inner
+
+
+def lane_map_sdfg(outer_map: bool) -> dace.SDFG:
+    """A one-lane map ``i = 3`` around the two-state body, at the top level or inside a map over ``j``."""
+    sdfg = dace.SDFG("lane_map_outer" if outer_map else "lane_map")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    state = sdfg.add_state()
+    index = "j" if outer_map else "i"
+    scopes = [state.add_map("outer", dict(j="0:8"))] if outer_map else []
+    scopes.append(state.add_map("lane", dict(i="3")))
+    body = state.add_nested_sdfg(two_state_body(), {"a"}, {"b"})
+    entries = [entry for entry, _ in scopes]
+    exits = [exit_ for _, exit_ in reversed(scopes)]
+    state.add_memlet_path(state.add_read("A"), *entries, body, dst_conn="a", memlet=dace.Memlet(f"A[{index}]"))
+    state.add_memlet_path(body, *exits, state.add_write("B"), src_conn="b", memlet=dace.Memlet(f"B[{index}]"))
+    convert_legacy_nested_sdfgs(sdfg)
+    sdfg.validate()
+    return sdfg
+
+
+def test_the_body_a_removed_lane_map_unwraps_is_inlined_over_its_states():
+    sdfg = lane_map_sdfg(outer_map=False)
+    assert sdfg.apply_transformations(TrivialMapElimination) == 1
+    sdfg.validate()
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert len(list(sdfg.states())) >= 2, "the two body states are spliced into the outer control flow"
+    a = np.arange(8, dtype=np.float64)
+    b = np.zeros(8)
+    sdfg(A=a, B=b)
+    assert b[3] == 2 * a[3] + 1 and not np.any(np.delete(b, 3))
+
+
+def test_a_body_still_inside_a_map_stays_nested():
+    sdfg = lane_map_sdfg(outer_map=True)
+    assert sdfg.apply_transformations(TrivialMapElimination) == 1
+    sdfg.validate()
+    assert len([n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]) == 1
+    a = np.arange(8, dtype=np.float64)
+    b = np.zeros(8)
+    sdfg(A=a, B=b)
+    assert np.array_equal(b, 2 * a + 1)
+
+
 if __name__ == "__main__":
     test_removing_a_trivial_map_keeps_the_order_its_empty_edges_held()
     test_removing_a_trivial_map_keeps_the_order_its_data_inputs_held()
@@ -450,4 +512,6 @@ if __name__ == "__main__":
     test_a_body_node_the_entry_reaches_only_by_an_ordering_edge_stays_after_the_inputs()
     test_an_ordering_edge_out_of_the_removed_map_still_orders_its_body()
     test_the_order_reaches_a_nested_scope_at_its_entry()
+    test_the_body_a_removed_lane_map_unwraps_is_inlined_over_its_states()
+    test_a_body_still_inside_a_map_stays_nested()
     unittest.main()

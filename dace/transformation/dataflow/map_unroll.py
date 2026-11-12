@@ -7,7 +7,7 @@ from dace import data as dt
 from dace.sdfg import InterstateEdge, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import SDFGState
-from dace.transformation import transformation
+from dace.transformation import helpers, transformation
 
 
 class MapUnroll(transformation.SingleStateTransformation):
@@ -63,6 +63,9 @@ class MapUnroll(transformation.SingleStateTransformation):
             end += step  # Make non-inclusive
             constant_ranges.append(range(begin, end, step))
         index_tuples = itertools.product(*constant_ranges)
+        # The nested SDFGs right under the map: each copy ends outside every scope
+        bodies = [n for n in state.scope_children()[map_entry] if isinstance(n, nodes.NestedSDFG)]
+        freed = []
         for t in index_tuples:
             suffix = "_" + "_".join(map(str, t))
             node_to_unrolled = {}
@@ -111,10 +114,16 @@ class MapUnroll(transformation.SingleStateTransformation):
                     for k, v in edge.data.assignments.items():
                         pass
 
-            # Eliminate the now trivial map
+            # Eliminate the now trivial map; its bodies are inlined once the original subgraph is gone
             TrivialMapElimination.apply_to(
-                sdfg, verify=False, annotate=False, save=False, map_entry=node_to_unrolled[map_entry]
+                sdfg,
+                options={"inline_freed": False},
+                verify=False,
+                annotate=False,
+                save=False,
+                map_entry=node_to_unrolled[map_entry],
             )
+            freed += [node_to_unrolled[n] for n in bodies]
 
         # Removing these nodes implicitly also removes their memlets. An access node the map shares with a computation
         # beside it (the subgraph holds only the map's ancestors and descendants) stays and keeps feeding that one.
@@ -129,3 +138,4 @@ class MapUnroll(transformation.SingleStateTransformation):
 
         for mem in local_memories:
             sdfg.remove_data(mem)
+        helpers.inline_freed_nested_sdfgs(sdfg, freed)
