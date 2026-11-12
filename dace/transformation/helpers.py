@@ -2965,3 +2965,31 @@ def get_parent_map_and_loop_scopes(
         parent_nsdfg_parent_state = parent_sdfg.parent if parent_nsdfg_node is not None else None
 
     return parent_scopes
+
+
+def inline_freed_nested_sdfgs(sdfg: SDFG, freed: Iterable[nodes.NestedSDFG]) -> int:
+    """Inline every nested SDFG of ``freed`` that no scope encloses any more: through ``InlineSDFG`` if it has one
+    state, else through ``InlineMultistateSDFG`` where that is legal. A transformation that removes a map scope calls
+    it with the nested SDFGs it unwrapped; no later stage inlines a multistate body, and nothing else is probed.
+
+    :param sdfg: The SDFG whose states hold ``freed``.
+    :param freed: The nested SDFG nodes the caller took out of a scope.
+    :returns: How many were inlined.
+    """
+    from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG
+
+    inlined = 0
+    for node in freed:
+        # An inlining over several states moves the nodes after the nested SDFG into a state of their own, and an
+        #  inlined wrapper moves the node into its parent
+        state = node.sdfg.parent
+        if not isinstance(state, SDFGState) or node not in state.nodes():
+            state = next((st for st in sdfg.states() if node in st.nodes()), None)
+        if state is None or state.entry_node(node) is not None:
+            continue
+        for inline in (InlineSDFG, InlineMultistateSDFG):
+            if inline.can_be_applied_to(state.sdfg, nested_sdfg=node):
+                inline.apply_to(state.sdfg, verify=False, nested_sdfg=node)
+                inlined += 1
+                break
+    return inlined
