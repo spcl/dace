@@ -18,7 +18,8 @@ from dace.transformation.transformation import ExpandTransformation
 
 def pure_dot_sdfg(node, parent_state, parent_sdfg, n=None):
     """The operands of a pure DOT expansion: its SDFG with ``_x``, ``_y`` and ``_result``, the length, the
-    multiply tasklet code and the result type."""
+    multiply tasklet code, the result type and the multiply's connectors. The expansion may be inlined into the parent,
+    so the connectors name none of its containers (an einsum lifted from a tasklet keeps its ``__out`` as an array)."""
     (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(parent_sdfg, parent_state)
 
     n = n or node.n or sz
@@ -38,11 +39,14 @@ def pure_dot_sdfg(node, parent_state, parent_sdfg, n=None):
     # Fortran DOT_PRODUCT(a, b) for complex a is SUM(CONJG(a)*b) = BLAS ?dotc; the
     # default Dot models ?dotu (no conjugation). conj on a real type would promote to
     # complex, so only apply it for complex operands.
+    x, y, out = "__x", "__y", "__out"
+    while {x, y, out} & (parent_sdfg.arrays.keys() | parent_sdfg.symbols.keys()):
+        x, y, out = "_" + x, "_" + y, "_" + out
     if node.conjugate and desc_x.dtype.is_complex():
-        mul_program = "__out = conj(__x) * __y"
+        mul_program = f"{out} = conj({x}) * {y}"
     else:
-        mul_program = "__out = __x * __y"
-    return sdfg, n, mul_program, dtype_result
+        mul_program = f"{out} = {x} * {y}"
+    return sdfg, n, mul_program, dtype_result, (x, y, out)
 
 
 @dace.library.expansion
@@ -55,7 +59,7 @@ class ExpandDotPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        sdfg, n, mul_program, dtype_result = pure_dot_sdfg(node, parent_state, parent_sdfg, n)
+        sdfg, n, mul_program, dtype_result, (x, y, out) = pure_dot_sdfg(node, parent_state, parent_sdfg, n)
 
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
@@ -79,9 +83,9 @@ class ExpandDotPure(ExpandTransformation):
         state.add_mapped_tasklet(
             "dot",
             {"__i": f"0:{n}"},
-            {"__x": dace.Memlet("_x[__i]"), "__y": dace.Memlet("_y[__i]")},
+            {x: dace.Memlet("_x[__i]"), y: dace.Memlet("_y[__i]")},
             mul_program,
-            {"__out": dace.Memlet("_result[0]", wcr="lambda x, y: x + y")},
+            {out: dace.Memlet("_result[0]", wcr="lambda x, y: x + y")},
             external_edges=True,
             output_nodes=None,
         )
@@ -99,7 +103,7 @@ class ExpandDotPureAccumulate(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        sdfg, n, mul_program, dtype_result = pure_dot_sdfg(node, parent_state, parent_sdfg, n)
+        sdfg, n, mul_program, dtype_result, (x, y, out) = pure_dot_sdfg(node, parent_state, parent_sdfg, n)
 
         sdfg.add_scalar("_acc", dtype_result, transient=True, storage=dace.StorageType.Register)
         state = sdfg.add_state(node.label + "_state")
@@ -107,12 +111,12 @@ class ExpandDotPureAccumulate(ExpandTransformation):
         zero = state.add_tasklet("_dot_init", {}, {"_out"}, "_out = 0")
         state.add_edge(zero, "_out", seeded, None, dace.Memlet("_acc[0]"))
         entry, exit_node = state.add_map("dot", {"__i": f"0:{n}"})
-        mul = state.add_tasklet("dot", {"__x": None, "__y": None}, {"__out"}, mul_program)
-        state.add_memlet_path(state.add_read("_x"), entry, mul, dst_conn="__x", memlet=dace.Memlet("_x[__i]"))
-        state.add_memlet_path(state.add_read("_y"), entry, mul, dst_conn="__y", memlet=dace.Memlet("_y[__i]"))
+        mul = state.add_tasklet("dot", {x: None, y: None}, {out}, mul_program)
+        state.add_memlet_path(state.add_read("_x"), entry, mul, dst_conn=x, memlet=dace.Memlet("_x[__i]"))
+        state.add_memlet_path(state.add_read("_y"), entry, mul, dst_conn=y, memlet=dace.Memlet("_y[__i]"))
         summed = state.add_access("_acc")
         state.add_memlet_path(
-            mul, exit_node, summed, src_conn="__out", memlet=dace.Memlet("_acc[0]", wcr="lambda x, y: x + y")
+            mul, exit_node, summed, src_conn=out, memlet=dace.Memlet("_acc[0]", wcr="lambda x, y: x + y")
         )
         state.add_nedge(seeded, entry, dace.Memlet())
         state.add_nedge(summed, state.add_write("_result"), dace.Memlet("_acc[0] -> [0]"))

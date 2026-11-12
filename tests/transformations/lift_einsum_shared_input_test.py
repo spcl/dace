@@ -55,16 +55,16 @@ def test_both_operands_of_one_map_input_are_wired():
     assert np.allclose(out, (c * c).sum(axis=1))
 
 
-def test_ordering_edge_into_the_map_orders_the_einsum():
+def test_zeroing_ordered_before_the_map_becomes_an_overwrite():
+    """The zeroing ordered before the sum (an empty edge only) is the sum's identity: the einsum overwrites ``out``
+    and the zeroing, which it covers, goes. ``out`` starts at 3.0, so a fold onto it would show."""
     sdfg = row_square_norms(zero_first=True)
     state = sdfg.start_state
-    zeroed = next(e.src for e in state.edges() if e.data.is_empty() and isinstance(e.src, dace.nodes.AccessNode))
     assert sdfg.apply_transformations(LiftEinsum) == 1
     sdfg.validate()
     einsum = next(n for n in state.nodes() if isinstance(n, Einsum))
-    assert dace.symbolic.equal_valued(1, einsum.beta)
-    # the einsum folds onto the zeroed ``out``: without the edge nothing orders the zeroing before it
-    assert [e.src for e in state.in_edges(einsum) if e.data.is_empty()] == [zeroed]
+    assert dace.symbolic.equal_valued(0, einsum.beta)
+    assert not any(isinstance(n, dace.nodes.MapEntry) for n in state.nodes())
     m, n = 5, 7
     c = np.random.default_rng(0).random((m, n))
     out = np.full(m, 3.0)
@@ -74,4 +74,4 @@ def test_ordering_edge_into_the_map_orders_the_einsum():
 
 if __name__ == "__main__":
     test_both_operands_of_one_map_input_are_wired()
-    test_ordering_edge_into_the_map_orders_the_einsum()
+    test_zeroing_ordered_before_the_map_becomes_an_overwrite()
