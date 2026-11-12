@@ -740,6 +740,26 @@ def test_a_symbol_mapping_read_of_a_lifted_buffer_gains_the_kernel_index():
     sdfg.validate()
 
 
+def test_a_tasklet_body_naming_a_buffer_of_a_nest_without_slicing_maps_gains_the_kernel_index():
+    """No slicing map lies between the kernel and the nest owning ``order``; once the nest is widened to the lifted
+    buffer, a body naming ``order[1]`` instead of its connector must still read its own thread's row."""
+    sdfg = kernel_with_interstate_buffer_read()
+    body = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
+    use = next(s for s in body.states() if s.label == "use")
+    pick = next(n for n in use.nodes() if isinstance(n, dace.nodes.Tasklet))
+    pick.add_in_connector("__ord")
+    pick.code = dace.properties.CodeBlock("__out = __in * order[1]")
+    use.add_edge(use.add_read("order"), None, pick, "__ord", dace.Memlet("order[0:NZ]"))
+    sdfg.validate()
+
+    assert lift(sdfg) == 1
+
+    assert len(body.arrays["order"].shape) == 2, body.arrays["order"].shape
+    assert ast.unparse(ast.parse(pick.code.as_string)) == "__out = __in * order[i, 1]", pick.code.as_string
+    sdfg.validate()
+    sdfg.generate_code()
+
+
 def test_control_flow_reading_a_per_thread_buffer_is_refused():
     """Written inside a thread-block map of its own SDFG, the buffer has no one element for an interstate edge."""
     sdfg = kernel_with_interstate_buffer_read()

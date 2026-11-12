@@ -716,9 +716,10 @@ def plan_lift(name: str, owner: SDFG, kernel: Scope, coalesced: bool) -> LiftPla
         plan_owner_edits(plan, sdicts, stop)
         if stop is None:
             refuse_control_flow_reads(owner, name)
-    elif any(isinstance(n, nodes.Tasklet) and needs_prefix(n, name) for state in sdicts for n in state.nodes()):
-        # Widening the nest restates memlets and control flow, not tasklet bodies.
-        raise NotImplementedError(f"A tasklet of {owner.name} names '{name}' in its body")
+    else:
+        # Widening the nest restates memlets, control flow and Python tasklet bodies; ``needs_prefix`` refuses others
+        for node in (n for state in sdicts for n in state.nodes() if isinstance(n, nodes.Tasklet)):
+            needs_prefix(node, name)
     lifted = copy.deepcopy(sized)
     apply_layout(lifted, plan.layout)
     if not plan_hops(plan, lifted, kernel_sdfg):
