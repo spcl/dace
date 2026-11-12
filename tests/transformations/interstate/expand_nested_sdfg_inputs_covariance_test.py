@@ -156,7 +156,9 @@ def _rowsum16(a: dace.float64[M, M16], out: dace.float64[M]):
 
 def _rowsum16_via_map_to_for_loop(sdfg: dace.SDFG) -> None:
     PatternMatchAndApplyRepeated([MapExpansion()]).apply_pass(sdfg, {})
-    PatternMatchAndApplyRepeated([MapToForLoop()]).apply_pass(sdfg, {})
+    to_loop = MapToForLoop()
+    to_loop.inline_freed = False  # the row body stays nested for ExpandNestedSDFGInputs
+    PatternMatchAndApplyRepeated([to_loop]).apply_pass(sdfg, {})
 
 
 def test_rowsum16_expand_inline_value_exact():
