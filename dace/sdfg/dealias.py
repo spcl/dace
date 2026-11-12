@@ -617,6 +617,13 @@ def _widening_feasible(sdfg: SDFG, name: str, desc: data.Data, passed_symbols: s
     return True
 
 
+class SubscriptReplacer(MemletReplacer):
+    """Moves only subscripts: a tasklet body naming a container whole hands its pointer on, no access to move."""
+
+    def visit_Name(self, node: ast.Name) -> ast.Name:
+        return node
+
+
 def _restate_container(
     sdfg: SDFG,
     name: str,
@@ -629,8 +636,9 @@ def _restate_container(
     """
     Restates container ``name`` as ``new_desc`` and moves every access of it accordingly.
 
-    Memlets on edges, memlets in meta code (conditions, assignments, loop headers) and the connectors
-    of the nested SDFGs below that describe the same container all follow; the latter recursively.
+    Memlets on edges, memlets in meta code (conditions, assignments, loop headers), subscripts in
+    Python tasklet bodies and the connectors of the nested SDFGs below that describe the same
+    container all follow; the latter recursively.
 
     :param sdfg: The SDFG the container belongs to.
     :param name: The name of the container.
@@ -658,8 +666,15 @@ def _restate_container(
                 continue
             for stmt in code.code:
                 replacer.visit(stmt)
+    # A Python tasklet may subscript the container in its body rather than through a connector (the frontend's
+    # indirections, ``InlineTaskletConnectors``); those subscripts move like memlets
+    subscripts = SubscriptReplacer(sdfg.arrays, move, {name})
     for state in sdfg.states():
         for node in state.nodes():
+            if isinstance(node, nd.Tasklet) and node.language is dtypes.Language.Python:
+                if name not in node.in_connectors and name not in node.out_connectors:
+                    for stmt in node.code.code:
+                        subscripts.visit(stmt)
             if not isinstance(node, nd.NestedSDFG):
                 continue
             for sym, value in list(node.symbol_mapping.items()):

@@ -12,6 +12,7 @@ import dace
 from dace import dtypes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.helpers import nest_state_subgraph
+from dace.transformation.passes.canonicalize.finalize import force_loop_scoped_registers
 from dace.transformation.passes.move_array_out_of_kernel import (
     MoveArrayOutOfKernel,
     lifted_layout,
@@ -205,6 +206,57 @@ def test_a_symbolically_sized_register_array_is_moved_to_global_memory():
     sdfg = wrap_kernel_around_a_body_it_never_reaches()
     body = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
     body.arrays["tmp"].storage = REGISTER
+
+    assert lift(sdfg) == 1
+
+    assert sdfg.arrays["tmp"].storage == GLOBAL and len(sdfg.arrays["tmp"].shape) == 2, sdfg.arrays["tmp"]
+    assert body.arrays["tmp"].storage == GLOBAL and not body.arrays["tmp"].transient
+    sdfg.validate()
+
+
+def kernel_around_a_loop_transient() -> tuple[dace.SDFG, dace.SDFG]:
+    """``out[w] = 2 * a[w]`` through ``tmp[NZ]``, which the loop of a body under kernel ``w`` allocates per iteration."""
+    body = dace.SDFG("loop_body")
+    body.add_symbol("w", dace.int64)
+    body.add_array("a", [NZ], dace.float64, storage=GLOBAL)
+    body.add_array("out", [NZ], dace.float64, storage=GLOBAL)
+    body.add_transient("tmp", [NZ], dace.float64)
+    loop = LoopRegion("again", "t < 2", "t", "t = 0", "t = t + 1")
+    body.add_node(loop, is_start_block=True)
+    fill = loop.add_state("fill", is_start_block=True)
+    drain = loop.add_state_after(fill, "drain")
+    fill.add_edge(
+        fill.add_read("a"),
+        None,
+        fill.add_tasklet("double", {"i"}, {"o"}, "o = 2.0 * i"),
+        "i",
+        dace.Memlet("a[w]"),
+    )
+    double = next(n for n in fill.nodes() if isinstance(n, dace.nodes.Tasklet))
+    fill.add_edge(double, "o", fill.add_write("tmp"), None, dace.Memlet("tmp[0]"))
+    copy = drain.add_tasklet("copy", {"i"}, {"o"}, "o = i")
+    drain.add_edge(drain.add_read("tmp"), None, copy, "i", dace.Memlet("tmp[0]"))
+    drain.add_edge(copy, "o", drain.add_write("out"), None, dace.Memlet("out[w]"))
+
+    sdfg = dace.SDFG("kernel_loop_transient")
+    sdfg.add_array("a", [NZ], dace.float64, storage=GLOBAL)
+    sdfg.add_array("out", [NZ], dace.float64, storage=GLOBAL)
+    state = sdfg.add_state("grid", is_start_block=True)
+    entry, exit_node = state.add_map("kernel", dict(w="0:NZ"), schedule=GPU_DEVICE)
+    nsdfg = state.add_nested_sdfg(body, {"a": None}, {"out": None}, symbol_mapping=dict(NZ=NZ, w="w"))
+    state.add_memlet_path(state.add_read("a"), entry, nsdfg, dst_conn="a", memlet=dace.Memlet("a[0:NZ]"))
+    state.add_memlet_path(nsdfg, exit_node, state.add_write("out"), src_conn="out", memlet=dace.Memlet("out[0:NZ]"))
+    sdfg.validate()
+    return sdfg, body
+
+
+def test_a_loop_transient_the_gpu_target_forces_onto_the_stack_is_moved_out_of_the_kernel():
+    """The GPU target marks a kernel loop's transient as a forced register, as the CPU target does; a GPU thread has
+    no variable-length array, so the forced marking makes it a move candidate like any symbolically sized register."""
+    sdfg, body = kernel_around_a_loop_transient()
+
+    assert force_loop_scoped_registers(sdfg, [body]) == 1
+    assert body.arrays["tmp"].storage.force
 
     assert lift(sdfg) == 1
 
@@ -686,6 +738,26 @@ def test_a_symbol_mapping_read_of_a_lifted_buffer_gains_the_kernel_index():
 
     assert str(nest.symbol_mapping["s"]) == "order[i, 1]", nest.symbol_mapping
     sdfg.validate()
+
+
+def test_a_tasklet_body_naming_a_buffer_of_a_nest_without_slicing_maps_gains_the_kernel_index():
+    """No slicing map lies between the kernel and the nest owning ``order``; once the nest is widened to the lifted
+    buffer, a body naming ``order[1]`` instead of its connector must still read its own thread's row."""
+    sdfg = kernel_with_interstate_buffer_read()
+    body = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
+    use = next(s for s in body.states() if s.label == "use")
+    pick = next(n for n in use.nodes() if isinstance(n, dace.nodes.Tasklet))
+    pick.add_in_connector("__ord")
+    pick.code = dace.properties.CodeBlock("__out = __in * order[1]")
+    use.add_edge(use.add_read("order"), None, pick, "__ord", dace.Memlet("order[0:NZ]"))
+    sdfg.validate()
+
+    assert lift(sdfg) == 1
+
+    assert len(body.arrays["order"].shape) == 2, body.arrays["order"].shape
+    assert ast.unparse(ast.parse(pick.code.as_string)) == "__out = __in * order[i, 1]", pick.code.as_string
+    sdfg.validate()
+    sdfg.generate_code()
 
 
 def test_control_flow_reading_a_per_thread_buffer_is_refused():
@@ -1390,6 +1462,7 @@ def test_a_copy_into_a_lifted_array_naming_only_its_source_gains_the_kernel_inde
 
 
 if __name__ == "__main__":
+    test_a_loop_transient_the_gpu_target_forces_onto_the_stack_is_moved_out_of_the_kernel()
     test_tile_extent(sympy.Min(N - 1, B_I + 31), B_I, 32)
     test_tile_extent(N - 1, sympy.Integer(0), N)
     test_lifted_dimensions_are_prepended_keeping_the_own_layout(

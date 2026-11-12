@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import re
+import warnings
 
 import numpy as np
 import pytest
@@ -430,6 +431,22 @@ def test_batchmm_symbolic_alpha_pure():
 SHARED_BATCH = re.compile(r"#pragma omp parallel for\s+for \(int __ib = 0;")
 
 
+def test_batchmm_unit_column_rhs_keeps_its_k_dimension():
+    """``B[b, k, 1]`` is a batch of k-by-1 matrices, not a (b, k) matrix: no k-mode warning, NumPy's product."""
+    b, m, k = (dace.symbol(s, dace.int64, positive=True) for s in "bmk")
+    symbolic = create_bmm_sdfg(dace.float64, [b, m, k], [b, k, 1], [b, m, 1], 1, 0, "pure", "bmm_unit_column_sym")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        symbolic.validate()
+
+    sdfg = create_bmm_sdfg(dace.float64, [2, 4, 3], [2, 3, 1], [2, 4, 1], 1, 0, "pure", "bmm_unit_column")
+    rng = np.random.default_rng(0)
+    A, B = rng.random((2, 4, 3)), rng.random((2, 3, 1))
+    C = np.zeros((2, 4, 1))
+    sdfg(A=A, B=B, C=C)
+    np.testing.assert_allclose(C, A @ B)
+
+
 def lowered_code(program) -> str:
     with change_default(blas, "OpenBLAS"):
         sdfg = program.to_sdfg()
@@ -501,6 +518,7 @@ def test_a_batched_matmul_under_a_sequential_loop_shares_out_its_batch():
 
 
 if __name__ == "__main__":
+    test_batchmm_unit_column_rhs_keeps_its_k_dimension()
     test_a_top_level_batched_matmul_shares_out_its_batch()
     test_an_einsum_batched_matmul_at_top_level_shares_out_its_batch()
     test_a_small_batch_keeps_the_sequential_loop()

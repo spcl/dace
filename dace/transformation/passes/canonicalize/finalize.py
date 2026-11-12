@@ -41,6 +41,7 @@ from dace.libraries.standard.nodes.symmetrize import Symmetrize
 from dace.ordered import OrderedSet
 from dace.sdfg import infer_types, nodes
 from dace.sdfg.narrowing import as_range
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import helpers as xfh
 from dace.transformation.auto.auto_optimize import (
@@ -69,10 +70,7 @@ from dace.transformation.passes.cpu_specialization.demote_level_maps import (
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
 from dace.transformation.passes.cpu_specialization.interchange_loops_into_lane_maps import InterchangeLoopsIntoLaneMaps
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
-from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import (
-    assigned_in_enclosing_loop,
-    release_one_trip_maps,
-)
+from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import release_one_trip_maps
 from dace.transformation.passes.cpu_specialization.strip_mine_interchange import StripMineInterchange
 from dace.transformation.passes.equalize_symbol_dtypes import equalized
 from dace.transformation.passes.fuse_maps import FuseMaps
@@ -539,6 +537,16 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
         force_loop_scoped_registers(sdfg)
         force_registers(sdfg)
     else:
+        # A kernel's loop allocates per thread too; MoveArrayOutOfKernel lifts the forced arrays out of the kernel.
+        force_loop_scoped_registers(
+            sdfg,
+            [
+                sd
+                for sd in sdfg.all_sdfgs_recursive()
+                if sd.parent_nsdfg_node is not None
+                and is_devicelevel_gpu(sd.parent_sdfg, sd.parent, sd.parent_nsdfg_node)
+            ],
+        )
         pool_gpu_transients(sdfg)
 
 
@@ -632,15 +640,16 @@ def enclosing_loops(state: SDFGState) -> list[LoopRegion]:
     return loops
 
 
-def force_loop_scoped_registers(sdfg: SDFG) -> int:
-    """Take every transient array a sequential loop allocates once per iteration off the per-iteration heap: one the
-    iteration sizes (warpx's ``order + 2 - dil[ip]`` stencil scratch, a ``new``/``delete`` pair per particle
-    otherwise) becomes a stack VLA, one of a size fixed on entry to the program is allocated once per call.
+def force_loop_scoped_registers(sdfg: SDFG, sdfgs: list[SDFG] | None = None) -> int:
+    """Take every transient array a sequential loop allocates once per iteration off the per-iteration heap: one of a
+    size fixed on entry to the program is allocated once per call, every other one (warpx's ``order + 2 - dil[ip]``
+    stencil scratch, a ``new``/``delete`` pair per particle otherwise) becomes a stack VLA.
 
-    :returns: the number of arrays moved, nested SDFGs included.
+    :param sdfgs: the SDFGs whose arrays are moved; ``sdfg`` and every nested SDFG by default.
+    :returns: the number of arrays moved.
     """
     moved = 0
-    for sd in sdfg.all_sdfgs_recursive():
+    for sd in sdfg.all_sdfgs_recursive() if sdfgs is None else sdfgs:
         homes: dict[str, set[SDFGState]] = {}
         for state in sd.states():
             for node in state.data_nodes():
@@ -666,12 +675,10 @@ def force_loop_scoped_registers(sdfg: SDFG) -> int:
             if any(outermost_map(st, n) is not None for st in states for n in st.data_nodes() if n.data == name):
                 continue
             names = {str(free) for free in symbolic.pystr_to_symbolic(desc.total_size).free_symbols}
-            if assigned_in_enclosing_loop(states[0], names):
-                desc.storage = dtypes.StorageType.Register(force=True)
-            elif sd is sdfg and not names & assigned:
+            if sd is sdfg and not names & assigned:
                 desc.lifetime = dtypes.AllocationLifetime.SDFG
             else:
-                continue
+                desc.storage = dtypes.StorageType.Register(force=True)
             moved += 1
     return moved
 

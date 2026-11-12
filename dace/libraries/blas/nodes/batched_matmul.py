@@ -719,22 +719,9 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         in_edges = state.in_edges(self)
         if len(in_edges) != 2:
             raise ValueError("Expected exactly two inputs to batched matrix-matrix product")
-        full0 = full1 = None
-        for _, _, _, dst_conn, memlet in state.in_edges(self):
-            if dst_conn == "_a":
-                full0 = memlet.subset.size()
-                subset = dc(memlet.subset)
-                subset.squeeze()
-                size0 = subset.size()
-            if dst_conn == "_b":
-                full1 = memlet.subset.size()
-                subset = dc(memlet.subset)
-                subset.squeeze()
-                size1 = subset.size()
-
-        # A degenerate operand dimension is squeezed with a unit batch; the unsqueezed sizes still define the operation
-        if len(size0) <= 2 and len(size1) <= 2 and (len(full0) >= 3 or len(full1) >= 3):
-            size0, size1 = full0, full1
+        # NumPy matmul semantics on the real extents: squeezing would turn B[b, k, 1] into a (b, k) matrix
+        sizes = {edge.dst_conn: edge.data.subset.size() for edge in in_edges}
+        size0, size1 = sizes["_a"], sizes["_b"]
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from batched matrix-matrix product")
@@ -757,11 +744,7 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         # given expansion can express a broadcast is the expansion's business, not the node's
         # (the pure lowering indexes a broadcast dimension at 0; the BLAS ones walk a fixed batch
         # stride and refuse, see ``refuse_broadcast_batches``).
-        # ``squeeze()`` drops EVERY extent-1 dimension and cannot tell an index singleton from a
-        # slice singleton, so a broadcast batch axis disappears from ``size0``/``size1`` before it
-        # can be examined -- ``(2,1,M,K) @ (1,3,K,N)`` arrives here looking like batch 2 vs batch 3.
-        # The batch analysis therefore reads the UNSQUEEZED extents.
-        batch0, batch1 = full0[:-2], full1[:-2]
+        batch0, batch1 = size0[:-2], size1[:-2]
         if batch0 and batch1:
             offset = len(batch0) - len(batch1)
             paired = zip(batch0[offset:], batch1) if offset >= 0 else zip(batch0, batch1[-offset:])
