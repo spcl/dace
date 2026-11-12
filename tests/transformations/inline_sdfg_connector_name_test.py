@@ -3,10 +3,11 @@
 forbids data to share (an expanded copy's tasklet reads ``_cpy_in``, and so is named every copy nest's local view)."""
 
 import numpy as np
+import pytest
 
 import dace
 from dace.libraries.standard.nodes import CopyLibraryNode
-from dace.transformation.interstate import InlineSDFG
+from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG
 
 #: The connector names of an expanded copy's tasklet, which every copy nest also gives its local views.
 CPY_IN, CPY_OUT = CopyLibraryNode.INPUT_CONNECTOR_NAME, CopyLibraryNode.OUTPUT_CONNECTOR_NAME
@@ -71,5 +72,44 @@ def test_an_inlined_transient_is_named_apart_from_a_connector():
     assert np.allclose(b, 2 * a) and np.allclose(d, c)
 
 
+@pytest.mark.parametrize("language", [dace.Language.Python, dace.Language.CPP])
+@pytest.mark.parametrize("inliner", [InlineSDFG, InlineMultistateSDFG])
+def test_inlined_tasklet_connectors_are_renamed_apart_from_parent_data_and_symbols(inliner, language):
+    """A nested ``N = B * 2`` tasklet, inlined into a parent with an array ``B`` and a symbol ``N``."""
+    nest = dace.SDFG("nest")
+    nest.add_array("inp", [1], dace.float64)
+    nest.add_array("out", [1], dace.float64)
+    ns = nest.add_state("s", is_start_block=True)
+    code = "N = B * 2" if language == dace.Language.Python else "N = B * 2;"
+    tasklet = ns.add_tasklet("double", {"B": None}, {"N": None}, code, language=language)
+    ns.add_edge(ns.add_read("inp"), None, tasklet, "B", dace.Memlet("inp[0]"))
+    ns.add_edge(tasklet, "N", ns.add_write("out"), None, dace.Memlet("out[0]"))
+    if inliner is InlineMultistateSDFG:
+        nest.add_state_after(ns)
+
+    sdfg = dace.SDFG(f"inline_connectors_named_like_parent_names_{inliner.__name__}_{language.name}")
+    for name in ("X", "Y", "B"):
+        sdfg.add_array(name, [1], dace.float64)
+    sdfg.add_symbol("N", dace.int64)
+    state = sdfg.add_state("call", is_start_block=True)
+    node = state.add_nested_sdfg(nest, {"inp": None}, {"out": None}, symbol_mapping={})
+    state.add_edge(state.add_read("X"), None, node, "inp", dace.Memlet("X[0]"))
+    state.add_edge(node, "out", state.add_write("Y"), None, dace.Memlet("Y[0]"))
+    after = sdfg.add_state_after(state, "use")
+    tasklet = after.add_tasklet("read_symbol", {}, {"o": None}, "o = N")
+    after.add_edge(tasklet, "o", after.add_write("B"), None, dace.Memlet("B[0]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(inliner) == 1
+    sdfg.validate()
+
+    x, y, b = np.full(1, 3.0), np.zeros(1), np.zeros(1)
+    sdfg(X=x, Y=y, B=b, N=7)
+    assert y[0] == 6 and b[0] == 7, (y, b)
+
+
 if __name__ == "__main__":
     test_an_inlined_transient_is_named_apart_from_a_connector()
+    for inliner in [InlineSDFG, InlineMultistateSDFG]:
+        for language in [dace.Language.Python, dace.Language.CPP]:
+            test_inlined_tasklet_connectors_are_renamed_apart_from_parent_data_and_symbols(inliner, language)

@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains functionality to perform find-and-replace of symbols in SDFGs."""
 
+import ast
 import re
 import warnings
 from copy import deepcopy
@@ -155,6 +156,39 @@ def replace(subgraph: "StateSubgraphView", name: str, new_name: str):
     if str(name) == str(new_name):
         return
     replace_dict(subgraph, {name: new_name})
+
+
+def rename_clashing_tasklet_connectors(sdfg: "dace.SDFG", reserved: set[str]) -> None:
+    """
+    Renames every connector of a tasklet in ``sdfg`` (not in nested SDFGs) that is named like one of ``reserved``, in
+    its edges and code. Inlining moves the tasklets into a parent whose data and symbols they may not shadow.
+
+    :param sdfg: The SDFG whose tasklets to rename the connectors of.
+    :param reserved: The names a connector may not take.
+    """
+    for state in sdfg.states():
+        for node in state.nodes():
+            if not isinstance(node, nodes.Tasklet):
+                continue
+            conns = node.in_connectors.keys() | node.out_connectors.keys()
+            taken = reserved | conns | sdfg.arrays.keys() | sdfg.symbols.keys()
+            renames: dict[str, str] = {}
+            for conn in sorted(conns & reserved):
+                renames[conn] = dace.utils.find_new_name(conn, taken)
+                taken.add(renames[conn])
+            if not renames:
+                continue
+            node.in_connectors = {renames.get(k, k): v for k, v in node.in_connectors.items()}
+            node.out_connectors = {renames.get(k, k): v for k, v in node.out_connectors.items()}
+            for e in state.in_edges(node):
+                e.dst_conn = renames.get(e.dst_conn, e.dst_conn)
+            for e in state.out_edges(node):
+                e.src_conn = renames.get(e.src_conn, e.src_conn)
+            if node.code.language is dtypes.Language.Python:
+                for name in (n for stmt in node.code.code for n in ast.walk(stmt) if isinstance(n, ast.Name)):
+                    name.id = renames.get(name.id, name.id)
+            else:
+                node.code.as_string = tokenize_cpp.sub(lambda m: renames.get(m[0], m[0]), node.code.as_string)
 
 
 def declared_ctype(name: str, sdfg: Optional["dace.SDFG"]) -> str | None:
