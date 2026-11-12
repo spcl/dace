@@ -429,7 +429,9 @@ class LoopToScan(ppl.Pass):
 
         if stride_guard_is_statically_dischargeable(infos, sdfg.facts()) and _lift_proven_doall_to_map(loop, sdfg):
             return
-        specialize_loop_under_condition(loop, guard, _lift, sdfg)
+        # The fallback knows the guard failed (``stride <= 0``), which ends matching it again (``_stride_disproven``);
+        # unpinned, it stays open to the passes for that case (BreakAntiDependence's read-ahead rename)
+        specialize_loop_under_condition(loop, guard, _lift, sdfg, pin=False)
 
     def _specialize_affine_by_distance(
         self, parent: ControlFlowRegion, loop: LoopRegion, info: "_AffineScan", sdfg: SDFG
@@ -587,6 +589,8 @@ class LoopToScan(ppl.Pass):
                 ]
             if infos:
                 guard = _symbolic_stride_guard(infos, owner.facts())
+                if guard is not None and _stride_disproven(infos, SymbolResolver().facts_at(loop)):
+                    continue
                 if guard is not None:
                     # At least one matched scan has a symbolic stride whose sign
                     # is unproven. The residue-class decomposition is valid only
@@ -2961,6 +2965,16 @@ def residue_classes_too_narrow_for_gpu(infos: list["_Scan"]) -> bool:
     may be large, and refusing on a guess would lose the lift wherever it is the right one.
     """
     return bool(infos) and all(isinstance(i.scan_stride, int) and i.scan_stride > 1 for i in infos)
+
+
+def _stride_disproven(infos: list["_Scan"], facts: symbolic.Facts) -> bool:
+    """Whether ``facts`` prove some matched scan's symbolic stride below 1, where no residue-class scan runs: the
+    fallback of a ``stride >= 1`` specialization (:meth:`LoopToScan._specialize_scan_under_stride_guard`)."""
+    for info in infos:
+        s = as_basic(info.scan_stride) if isinstance(info.scan_stride, symbolic.SymExpr) else info.scan_stride
+        if isinstance(s, sympy.Basic) and not s.is_Integer and loop_analysis._provably_le(s, 0, facts):
+            return True
+    return False
 
 
 def _symbolic_stride_guard(infos: list["_Scan"], facts: symbolic.Facts) -> str | None:

@@ -100,6 +100,7 @@ def specialize_loop_under_condition(
     parallelize: Callable[[LoopRegion, ControlFlowRegion, SDFG], None],
     owner_sdfg: SDFG | None = None,
     assume: bool = False,
+    pin: bool = True,
 ) -> ConditionalBlock | None:
     """Replace ``loop`` with ``if (condition) { parallel } else { original loop }``.
 
@@ -114,6 +115,8 @@ def specialize_loop_under_condition(
         Skip the two-way conditional entirely and parallelize ``loop`` in place -- emit only the
         parallel form, with no sequential fallback. Unsound if the condition is ever violated
         (the caller owns that contract); returns ``None`` since no ``ConditionalBlock`` is built.
+    :param pin: Pin the fallback sequential. A caller whose fallback the facts there (the failed ``condition``) keep
+        it from specializing again, and which another pass may still parallelize, passes ``False``.
     :returns: The inserted :class:`ConditionalBlock`, or ``None`` in ``assume`` mode.
     """
     if owner_sdfg is None:
@@ -138,7 +141,7 @@ def specialize_loop_under_condition(
     # Pin the fallback sequential so no later parallelizer (LoopToMap / LoopToReduce)
     # lifts it back to a Map -- it exists for values violating ``condition`` and must
     # stay sequential.
-    seq_loop.pinned_sequential = True
+    seq_loop.pinned_sequential = pin
     conditional, par_region, seq_region = version_block(
         loop,
         f"{loop.label}_specialize",

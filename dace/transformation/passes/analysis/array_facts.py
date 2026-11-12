@@ -29,6 +29,7 @@ from dace.libraries.standard.nodes.scan import Scan, ScanOp, segmented
 from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg.analysis.cfg import collect_enclosing_conditions
+from dace.sdfg.narrowing import as_expr
 from dace.sdfg.sdfg import SDFG, interstate_bound_names
 from dace.sdfg.state import (
     ConditionalBlock,
@@ -622,34 +623,37 @@ def extreme(value: Any, ranges: list[tuple[str, Any, Any]], upper: bool) -> Any 
     return value
 
 
-def store_bounds(sdfg: SDFG, state: SDFGState, edge: Any) -> tuple[Any, Any] | None:
-    """``(lo, hi)`` of every value ``edge`` stores: a constant fill, or a tasklet (or a nested SDFG's one store, see
-    :func:`nested_store`) assigning an expression affine in the enclosing map parameters and loop iterators, at their
-    extremes; None unless both read only names nothing in
-    ``sdfg`` assigns."""
+def stored_value(state: SDFGState, edge: Any) -> Any | None:
+    """What ``edge`` stores, when it is the same integer polynomial every time: a constant fill, or the expression a
+    tasklet without inputs (or a nested SDFG's one store, see :func:`nested_store`) assigns. A stored float would be
+    truncated, a ``Mod`` or ``floor`` has no slope."""
     node, inner = producer(state, edge)
     if node is None or edge.data.wcr is not None or inner.data.wcr is not None:
         return None
     if isinstance(node, FillLibraryNode):
         constant = integer_constant(repr(node.value))
-        return None if node.value_edge(state) is not None or constant is None else (sympy.Integer(constant),) * 2
+        return None if node.value_edge(state) is not None or constant is None else sympy.Integer(constant)
     if isinstance(node, nodes.NestedSDFG):
         nested = nested_store(node, inner.src_conn)
         value = None if nested is None else nested[1]
     else:
         text = assignment_value(node) if isinstance(node, nodes.Tasklet) and not node.in_connectors else None
         value = None if text is None else symbolic.pystr_to_symbolic(text)
-    # An integer polynomial: a stored float would be truncated, a ``Mod`` or ``floor`` has no slope
     if not isinstance(value, sympy.Expr) or not value.is_polynomial():
         return None
-    if not all(number.is_Integer for number in value.atoms(sympy.Number)):
-        return None
+    return value if all(number.is_Integer for number in value.atoms(sympy.Number)) else None
+
+
+def scope_ranges(sdfg: SDFG, state: SDFGState, node: nodes.Node) -> list[tuple[str, Any, Any]] | None:
+    """``(name, lo, hi)`` of each map parameter and loop iterator around ``node``, innermost first, whose range holds
+    and whose step is positive (a negative loop step swaps the bounds); None for a loop whose step sign is
+    unknown."""
     ranges = []
     entry = state.entry_node(node)
     while entry is not None:
         if isinstance(entry, nodes.MapEntry):
-            for name, (lo, hi, step) in zip(entry.map.params, entry.map.range.ranges):
-                if sympy.sympify(step).is_positive:
+            for name, (lo, hi, step) in zip(entry.map.params, entry.map.range.ranges, strict=True):
+                if as_expr(step).is_positive:
                     ranges.append((name, lo, hi))
         entry = state.entry_node(entry)
     region = state.parent_graph
@@ -657,12 +661,23 @@ def store_bounds(sdfg: SDFG, state: SDFGState, edge: Any) -> tuple[Any, Any] | N
         bounds = loop_range(region) if isinstance(region, LoopRegion) and not region.inverted else None
         if bounds is not None and loop_analysis.range_holds(region, bounds, sdfg):
             start, end, step = bounds
+            if step.is_positive is None:
+                return None
             ranges.append((region.loop_variable, *((start, end) if step.is_positive else (end, start))))
         region = region.parent_graph
+    return ranges
+
+
+def store_bounds(sdfg: SDFG, state: SDFGState, edge: Any, invariant: set[str]) -> tuple[Any, Any] | None:
+    """``(lo, hi)`` of every value ``edge`` stores (:func:`stored_value`), affine in the enclosing map parameters and
+    loop iterators (:func:`scope_ranges`), at their extremes; None unless both read only ``invariant`` names."""
+    value = stored_value(state, edge)
+    ranges = None if value is None else scope_ranges(sdfg, state, producer(state, edge)[0])
+    if ranges is None:
+        return None
     lo, hi = extreme(value, ranges, False), extreme(value, ranges, True)
     if lo is None or hi is None or lo.atoms(symbolic.Subscript) or hi.atoms(symbolic.Subscript):
         return None
-    invariant = sdfg.symbols.keys() - interstate_bound_names(sdfg)
     return (lo, hi) if {str(s) for b in (lo, hi) for s in b.free_symbols} <= invariant else None
 
 
@@ -679,31 +694,50 @@ def widest(bounds: list[Any], upper: bool, facts: symbolic.Facts) -> Any | None:
     return None
 
 
-def bounded_fact(sdfg: SDFG, name: str) -> ArrayFact | None:
-    """``BOUNDED`` of the one-dimensional integer transient ``name`` when every store into it is bounded
+def bounded_facts(sdfg: SDFG) -> dict[str, ArrayFact]:
+    """``BOUNDED`` of each one-dimensional integer transient of ``sdfg`` every store into which is bounded
     (:func:`store_bounds`): over the smallest of their lower bounds and the largest of their upper bounds, if the
-    SDFG's facts order them. Holds for every value the program stores, so at every point."""
-    desc = sdfg.arrays.get(name)
-    if desc is None or not desc.transient or len(desc.shape) != 1 or desc.dtype not in dtypes.INTEGER_TYPES:
-        return None
+    SDFG's facts order them. Holds for every value the program stores, so at every point. Derived in one walk over
+    the SDFG's states, for the span of one :func:`facts_at` caller, as :func:`nonnegative_containers` is."""
+    candidates = {
+        name
+        for name, desc in sdfg.arrays.items()
+        if desc.transient and len(desc.shape) == 1 and desc.dtype in dtypes.INTEGER_TYPES
+    }
     # A view or reference stores into a container under another name
-    if any(isinstance(d, (dt.View, dt.Reference)) for d in sdfg.arrays.values()):
-        return None
-    found = [store_bounds(sdfg, st, e) for st, e in write_edges(sdfg, name)]
-    if not found or None in found:
-        return None
-    facts = sdfg.facts()
-    lo, hi = widest([b[0] for b in found], False, facts), widest([b[1] for b in found], True, facts)
-    if lo is None or hi is None:
-        return None
-    return ArrayFact(FactKind.BOUNDED, name, lo, hi, origin="every store is bounded")
+    if not candidates or any(isinstance(d, (dt.View, dt.Reference)) for d in sdfg.arrays.values()):
+        return {}
+    invariant = sdfg.symbols.keys() - interstate_bound_names(sdfg)
+    stores: dict[str, list[tuple[Any, Any] | None]] = {}
+    for state in sdfg.states():
+        for dn in state.data_nodes():
+            if dn.data in candidates:
+                stores.setdefault(dn.data, []).extend(
+                    store_bounds(sdfg, state, e, invariant) for e in state.in_edges(dn) if not e.data.is_empty()
+                )
+    found: dict[str, ArrayFact] = {}
+    facts = None
+    for name, bounds in stores.items():
+        if not bounds or None in bounds:
+            continue
+        facts = sdfg.facts() if facts is None else facts
+        lo, hi = widest([b[0] for b in bounds], False, facts), widest([b[1] for b in bounds], True, facts)
+        if lo is not None and hi is not None:
+            found[name] = ArrayFact(FactKind.BOUNDED, name, lo, hi, origin="every store is bounded")
+    return found
 
 
 def facts_at(
-    sdfg: SDFG, block: ControlFlowBlock, names: Iterable[str], nonneg: set[str] | None = None
+    sdfg: SDFG,
+    block: ControlFlowBlock,
+    names: Iterable[str],
+    nonneg: set[str] | None = None,
+    bounded: dict[str, ArrayFact] | None = None,
 ) -> list[ArrayFact]:
     """The facts known of each of ``names`` on entry to ``block``: derived from the nearest writers before it, or,
-    when nothing before it writes the container, the ones assumed on entry to the SDFG (:func:`declared_facts`)."""
+    when nothing before it writes the container, the ones assumed on entry to the SDFG (:func:`declared_facts`).
+    ``nonneg`` and ``bounded`` are :func:`nonnegative_containers` and :func:`bounded_facts` of ``sdfg``, when the
+    caller holds them while ``sdfg`` is unchanged; derived here on first need otherwise."""
     chain, _ = preceding_chain(block)
     found: list[ArrayFact] = []
     for name in names:
@@ -719,8 +753,10 @@ def facts_at(
             found.append(fact)
         elif nonneg is not None and name in nonneg:
             found.append(ArrayFact(FactKind.NONNEGATIVE, name, origin="every store is nonnegative"))
-        if (bounded := bounded_fact(sdfg, name)) is not None:
-            found.append(bounded)
+        if bounded is None:
+            bounded = bounded_facts(sdfg)
+        if name in bounded:
+            found.append(bounded[name])
         found.extend(f for f in declared_facts(block, name) if f not in found)
     return found
 

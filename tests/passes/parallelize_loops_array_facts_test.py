@@ -472,10 +472,10 @@ def test_a_running_maximum_is_nondecreasing_whatever_it_reads():
     assert array_facts.FactKind.NONDECREASING not in kinds(sdfg, loop)
 
 
-def stored_index(value: str, assigned: bool = False) -> tuple[dace.SDFG, LoopRegion]:
-    """``idx`` (a transient) filled with -1, then ``idx[i] = value`` over a map ``i < N``, then a loop reading ``idx``;
-    ``value`` may read ``s``, which an edge assigns when ``assigned``. Returns the SDFG and the loop."""
-    sdfg = dace.SDFG(f"stored_index_{abs(hash((value, assigned)))}")
+def stored_index(value: str, assigned: bool = False, span: str = "0:N") -> tuple[dace.SDFG, LoopRegion]:
+    """``idx`` (a transient) filled with -1, then ``idx[i] = value`` over a map ``i`` in ``span``, then a loop reading
+    ``idx``; ``value`` may read ``s``, which an edge assigns when ``assigned``. Returns the SDFG and the loop."""
+    sdfg = dace.SDFG(f"stored_index_{abs(hash((value, assigned, span)))}")
     sdfg.add_symbol("N", dace.int64)
     sdfg.add_symbol("s", dace.int64)
     sdfg.add_array("idx", ["N"], dace.int64, transient=True)
@@ -486,7 +486,7 @@ def stored_index(value: str, assigned: bool = False) -> tuple[dace.SDFG, LoopReg
     first.add_edge(node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, first.add_write("idx"), None, dace.Memlet("idx[0:N]"))
     store = sdfg.add_state("store")
     sdfg.add_edge(first, store, dace.InterstateEdge(assignments={"s": "N"} if assigned else None))
-    store.add_mapped_tasklet("st", {"i": "0:N"}, {}, f"o = {value}", {"o": dace.Memlet("idx[i]")}, external_edges=True)
+    store.add_mapped_tasklet("st", {"i": span}, {}, f"o = {value}", {"o": dace.Memlet("idx[i]")}, external_edges=True)
     loop = LoopRegion("use", "r < N", "r", "r = 0", "r = r + 1")
     sdfg.add_node(loop)
     sdfg.add_edge(store, loop, dace.InterstateEdge())
@@ -507,7 +507,14 @@ def bounded(sdfg: dace.SDFG, loop: LoopRegion) -> list[tuple[str, str]]:
 
 def test_every_bounded_store_bounds_the_elements():
     """The fill stores -1, the map ``N - 1 - i`` over ``i`` in ``[0, N - 1]``: every element lies in ``[-1, N - 1]``."""
-    assert bounded(*stored_index("N - 1 - i")) == [("-1", "N - 1")]
+    sdfg, loop = stored_index("N - 1 - i")
+    assert bounded(sdfg, loop) == [("-1", "N - 1")]
+    assert list(array_facts.bounded_facts(sdfg)) == ["idx"], "one walk derives the facts of every container"
+
+
+def test_a_map_step_of_unknown_sign_bounds_nothing():
+    """``i`` over ``0:N:s`` with ``s`` of unknown sign: the extremes of ``i`` are not known."""
+    assert bounded(*stored_index("i", span="0:N:s")) == []
 
 
 @pytest.mark.parametrize(

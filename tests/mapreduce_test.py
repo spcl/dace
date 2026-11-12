@@ -455,11 +455,12 @@ def test_a_reduction_written_straight_into_the_outer_map_exit_fuses():
     assert np.allclose(out, (a * a).sum(axis=1)), out
 
 
-def blocked_row_sums(stride: int) -> dace.SDFG:
-    """``out[stride*b : stride*b + 4] = (a[4b:4b+4] * a[4b:4b+4]).sum(1)`` for ``b`` in ``0:N``: gem's point blocks."""
-    sdfg = dace.SDFG(f"blocked_row_sums_{stride}")
+def blocked_row_sums(stride: int, flag: bool = False) -> dace.SDFG:
+    """``out[stride*b : stride*b + 4] = (a[4b:4b+4] * a[4b:4b+4]).sum(1)`` for ``b`` in ``0:N``: gem's point blocks.
+    With ``flag``, every block also stores ``1`` into ``out[stride*N]``, past the tiles."""
+    sdfg = dace.SDFG(f"blocked_row_sums_{stride}_{flag}")
     sdfg.add_array("a", (4 * N, M), dace.float64)
-    sdfg.add_array("out", (stride * N,), dace.float64)
+    sdfg.add_array("out", (stride * N + int(flag),), dace.float64)
     sdfg.add_transient("sq", (4, M), dace.float64)
     state = sdfg.add_state()
     ome, omx = state.add_map("blocks", dict(b="0:N"))
@@ -470,7 +471,12 @@ def blocked_row_sums(stride: int) -> dace.SDFG:
     state.add_memlet_path(square, imx, sq, src_conn="o", memlet=dace.Memlet("sq[i, j]"))
     red = state.add_reduce("lambda x, y: x + y", axes=[1], identity=0)
     state.add_edge(sq, None, red, None, dace.Memlet("sq[0:4, 0:M]"))
-    state.add_memlet_path(red, omx, state.add_write("out"), memlet=dace.Memlet(f"out[{stride}*b:{stride}*b + 4]"))
+    out = state.add_write("out")
+    state.add_memlet_path(red, omx, out, memlet=dace.Memlet(f"out[{stride}*b:{stride}*b + 4]"))
+    if flag:
+        mark = state.add_tasklet("mark", {}, {"o"}, "o = 1.0")
+        state.add_nedge(ome, mark, dace.Memlet())
+        state.add_memlet_path(mark, omx, out, src_conn="o", memlet=dace.Memlet(f"out[{stride}*N]"))
     sdfg.validate()
     return sdfg
 
@@ -506,6 +512,21 @@ def test_blocks_leaving_gaps_between_their_tiles_keep_the_identity_per_block():
     for b in range(n):
         ref[8 * b : 8 * b + 4] = (a[4 * b : 4 * b + 4] ** 2).sum(axis=1)
     assert np.allclose(out, ref), out
+
+
+def test_blocks_also_writing_the_output_elsewhere_keep_the_identity_per_block():
+    """Every block also stores into ``out`` past its tile: the block map writes ``out`` other than through the
+    reduction, so the identity is not hoisted ahead of it (a per-block write would overwrite such a store, a hoisted
+    one would not)."""
+    sdfg = blocked_row_sums(4, flag=True)
+    assert sdfg.apply_transformations_repeated(MapReduceFusion) == 1
+    assert len(list(sdfg.states())) == 1, "the identity stays inside the block map"
+
+    n, m = 3, 5
+    a = np.random.default_rng(20261114).random((4 * n, m))
+    out = np.full(4 * n + 1, 7.0)
+    sdfg(a=a.copy(), out=out, N=n, M=m)
+    assert np.allclose(out[:-1], (a * a).sum(axis=1)) and out[-1] == 1.0, out
 
 
 def test_a_reduction_into_an_offset_slice_keeps_the_offset():

@@ -72,7 +72,7 @@ class SolverFacts:
     replaces such a symbol by its value, so the query reads the array and its facts apply.
     """
 
-    __slots__ = ("loop", "symbols", "excluded", "written", "known", "bindings", "offered", "used")
+    __slots__ = ("loop", "symbols", "excluded", "written", "known", "bounded", "bindings", "offered", "used")
 
     def __init__(self, loop: LoopRegion, symbols: symbolic.Facts, varying: set[str]) -> None:
         self.loop = loop
@@ -80,6 +80,8 @@ class SolverFacts:
         self.excluded = set(varying) | {loop.loop_variable}
         self.written: set[str] | None = None
         self.known: dict[str, list[array_facts.ArrayFact]] = {}
+        #: :func:`array_facts.bounded_facts` of the loop's SDFG, derived on first use and held as ``known`` is.
+        self.bounded: dict[str, array_facts.ArrayFact] | None = None
         self.bindings: dict[str, Any] | None = None
         #: The array facts the current query was offered, and those a proof relied on.
         self.offered: list[array_facts.ArrayFact] = []
@@ -114,7 +116,9 @@ class SolverFacts:
         for name in sorted(names - self.written):
             if name not in self.known:
                 with canon_stats.timed("z3", self.loop):
-                    self.known[name] = array_facts.facts_at(self.loop.sdfg, self.loop, [name])
+                    if self.bounded is None:
+                        self.bounded = array_facts.bounded_facts(self.loop.sdfg)
+                    self.known[name] = array_facts.facts_at(self.loop.sdfg, self.loop, [name], bounded=self.bounded)
             found.extend(self.known[name])
         return found
 

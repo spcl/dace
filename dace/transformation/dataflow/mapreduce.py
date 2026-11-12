@@ -4,10 +4,8 @@ transformation."""
 
 from typing import Any
 
-import sympy
-
 from dace import data as dt
-from dace import subsets
+from dace import subsets, symbolic
 from dace.memlet import Memlet
 from dace.properties import Property, make_properties
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -171,7 +169,7 @@ class MapReduceFusion(pm.SingleStateTransformation):
         memlet_edge.data.subset = type(memlet_edge.data.subset)(filtered_subset)
 
         # Add edge from map exit to output array
-        graph.add_edge(
+        fused = graph.add_edge(
             memlet_edge.dst,
             "OUT_" + memlet_edge.dst_conn[3:],
             array_edge.dst,
@@ -202,9 +200,13 @@ class MapReduceFusion(pm.SingleStateTransformation):
         # A top-level outer map whose every iteration reduces into a tile of its own writes the identity over all the
         # tiles once, ahead of it: its body is then the fused map alone, which collapses into it (gem's point blocks).
         tiles = tile_union(array_edge.data.subset, scope.map) if scope and not graph.entry_node(scope) else None
-        if tiles is not None and not any(
-            name is None or name == array_edge.data.data
-            for name, _ in mfhelper.scope_accesses(graph, scope, graph.exit_node(scope))[0]
+        if (
+            tiles is not None
+            and not any(
+                name is None or name == array_edge.data.data
+                for name, _ in mfhelper.scope_accesses(graph, scope, graph.exit_node(scope))[0]
+            )
+            and not written_elsewhere(graph, scope, array_edge.data.data, graph.memlet_path(fused))
         ):
             init_args = (init_args[0], [(f"o{i}", f"{b}:{e + 1}") for i, (b, e) in enumerate(tiles)], *init_args[2:])
             scope = None
@@ -221,24 +223,36 @@ class MapReduceFusion(pm.SingleStateTransformation):
         graph.add_nedge(init_out, tmap_entry, Memlet())
 
 
+def written_elsewhere(graph: SDFGState, scope: nodes.MapEntry, name: str, path: list) -> bool:
+    """Whether ``graph`` writes ``name`` other than along ``path``, the fused reduction's write out of ``scope``, or
+    ``scope`` writes through a View that does not resolve. A per-iteration identity write would overwrite such a write
+    where one hoisted ahead of ``scope`` does not."""
+    scope_exit = graph.exit_node(scope)
+    if any(written is None for written, _ in mfhelper.scope_accesses(graph, scope, scope_exit)[1]):
+        return True
+    edges = [e for node in graph.data_nodes() if node.data == name for e in graph.in_edges(node)]
+    edges += [e for e in graph.in_edges(scope_exit) if e.data.data == name]
+    return any(not e.data.is_empty() and e not in path for e in edges)
+
+
 def tile_union(subset, outer: nodes.Map) -> list[tuple[Any, Any]] | None:
     """The ``(begin, end)`` ranges ``subset`` covers over all iterations of ``outer``, when they partition it: every
     dimension is either the same in every iteration or a tile ``c*p + a : c*p + a + c`` of one parameter ``p``, both
     unit-step, and every parameter tiles one dimension. ``None`` otherwise (iterations overlap, or leave gaps)."""
     if not isinstance(subset, subsets.Range):
         return None
-    ranges = dict(zip(outer.params, outer.range))
+    ranges = dict(zip(outer.params, outer.range, strict=True))
     tiles, used = [], set()
-    for begin, end, step in subset:
-        begin, end = sympy.sympify(begin), sympy.sympify(end)
+    for first, last, step in subset:
+        begin, end = symbolic.pystr_to_symbolic(first), symbolic.pystr_to_symbolic(last)
         tiled = [s for s in begin.free_symbols | end.free_symbols if str(s) in ranges]
         if not tiled:
             tiles.append((begin, end))
             continue
         p = tiled[0]
         lo, hi, outer_step = ranges[str(p)]
-        extent, coef = sympy.simplify(end - begin + 1), sympy.diff(begin, p)
-        if len(tiled) > 1 or str(p) in used or step != 1 or outer_step != 1 or sympy.simplify(coef - extent) != 0:
+        extent, coef = symbolic.simplify(end - begin + 1), begin.diff(p)
+        if len(tiled) > 1 or str(p) in used or step != 1 or outer_step != 1 or symbolic.simplify(coef - extent) != 0:
             return None
         if any(str(s) in ranges for s in extent.free_symbols | coef.free_symbols):
             return None
