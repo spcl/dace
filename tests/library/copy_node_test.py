@@ -156,6 +156,34 @@ def test_copy_pure_cpu():
     assert np.all(B[100:] == 0)
 
 
+def test_copy_pure_map_runs_over_the_destinations_own_bounds():
+    """The ``MappedTasklet`` map of ``B[50:100] = A[150:200]`` ranges over ``50:100``, the elements a neighbouring map
+    writing ``B`` runs over: inlined, it reads ``A[__i0 + 100]`` and writes ``B[__i0]``."""
+    from dace.transformation.interstate import InlineSDFG
+
+    sdfg, _ = _make_copy_sdfg(
+        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.CPU_Heap, subset="150:200", name="A"),
+        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.CPU_Heap, subset="50:100", name="B"),
+        implementation="MappedTasklet",
+        name="copy_pure_own_bounds",
+    )
+    sdfg.expand_library_nodes(recursive=False)
+    nested = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
+    InlineSDFG.apply_to(sdfg, nested_sdfg=nested)
+    (entry,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+    assert entry.map.range == dace.subsets.Range.from_string("50:100")
+    (state,) = sdfg.states()
+    (tasklet,) = [n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet)]
+    assert state.in_edges(tasklet)[0].data.subset == dace.subsets.Range.from_string("__i0 + 100")
+    assert state.out_edges(tasklet)[0].data.subset == dace.subsets.Range.from_string("__i0")
+    sdfg.validate()
+    A = np.arange(200, dtype=np.float64)
+    B = np.zeros(200)
+    sdfg(A=A, B=B)
+    np.testing.assert_array_equal(B[50:100], A[150:200])
+    assert np.all(B[:50] == 0) and np.all(B[100:] == 0)
+
+
 def test_copy_pure_moves_a_single_element():
     """A Copy narrowed to one element (as moving a loop into its lanes does) collapses to no dimension at all."""
     sdfg, _ = _make_copy_sdfg(
@@ -3016,6 +3044,7 @@ def test_shared_collective_lane_axis_follows_the_global_side_both_directions():
 
 if __name__ == "__main__":
     test_copy_pure_cpu()
+    test_copy_pure_map_runs_over_the_destinations_own_bounds()
     test_copy_cpu_memcpy()
     test_copy_fortran_packed_same_rank()
     test_copy_fortran_packed_strided_slice()

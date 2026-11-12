@@ -168,6 +168,29 @@ def collapse_to_elements(
     return (shape, strides) if shape else ([1], [1])
 
 
+def element_map(
+    params: list[str], subset: dace.subsets.Range, lengths: list[dace.symbolic.SymExpr]
+) -> tuple[dict[str, tuple], dace.subsets.Range]:
+    """The ranges and the index of an element-wise expansion's map over ``subset`` collapsed by
+    :func:`collapse_to_elements` to ``lengths``, one parameter of ``params`` per collapsed dimension. A unit-step
+    dimension ranges over the subset's own bounds and indexes the 0-based connector at ``param - begin``: inlined,
+    the map then runs where the maps around it over the same elements run, and fuses with them. A strided or tiled
+    dimension counts from zero.
+
+    :returns: ``(ranges, index)``: ``param -> (begin, end, 1)`` and the connector's element index.
+    """
+    origins = []
+    for (begin, _, step), tile, size in zip(subset, subset.tile_sizes, subset.size_exact()):
+        if size / tile != 1:
+            origins.append(begin if step == 1 and tile == 1 else 0)
+        if tile != 1:
+            origins.append(0)
+    origins = origins or [0]
+    ranges = {p: (b, b + n - 1, 1) for p, b, n in zip(params, origins, lengths, strict=True)}
+    index = dace.subsets.Range([(dace.symbolic.symbol(p) - b,) * 2 + (1,) for p, b in zip(params, origins)])
+    return ranges, index
+
+
 def is_parallel_cpu_transfer_size(num_elements: dace.symbolic.SymbolicType, facts: dace.symbolic.Facts) -> bool:
     """False only when ``num_elements`` is a compile-time constant below
     ``compiler.cpu.parallel_transfer_min_elements``; a symbolic (unknown-at-compile-time) size
