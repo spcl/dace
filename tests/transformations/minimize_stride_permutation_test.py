@@ -396,6 +396,50 @@ def test_equal_strides_keep_the_order_whatever_the_offsets():
     assert _nest_param_order(sdfg) == ["i", "j"]
 
 
+@dace.program
+def unit_stride_tie_2d(A: dace.float64[3, 5], B: dace.float64[5, 3], C: dace.float64[3, 5]):
+    for k, i in dace.map[0:5, 0:3]:
+        C[i, k] = A[i, k] + B[k, i]
+
+
+def test_equal_minimal_strides_go_by_their_total():
+    """``k`` and ``i`` both index a unit stride once; ``i`` also indexes ``A`` and ``C`` at stride 5 where ``k``
+    indexes ``B`` at stride 3, so ``k`` goes inside: two of three accesses contiguous instead of one."""
+    rng = np.random.default_rng(42)
+    sdfg = _expanded(unit_stride_tie_2d)
+    assert _nest_param_order(sdfg) == ["k", "i"]
+    a, b = rng.random((3, 5)), rng.random((5, 3))
+
+    assert MinimizeStridePermutation().apply_pass(sdfg, {}) is not None
+    assert _nest_param_order(sdfg) == ["i", "k"]
+    assert MinimizeStridePermutation().apply_pass(sdfg, {}) is None
+
+    out = np.zeros((3, 5))
+    sdfg(A=a.copy(), B=b.copy(), C=out)
+    assert np.allclose(out, a + b.T)
+
+
+@dace.program
+def mixed_dtype_einsum(a: dace.complex128[3, 4, 5], b: dace.float64[5, 3, 4]):
+    return np.einsum("ijk,kij->ij", a, b)
+
+
+def test_pure_einsum_map_is_emitted_in_min_stride_order():
+    """The scalar einsum nest (operands of two dtypes) takes the operands' layouts, not the letters' order: ``i``
+    (stride 4 at least) outermost, ``j`` (unit stride in ``b`` and the output) innermost."""
+    rng = np.random.default_rng(42)
+    sdfg = mixed_dtype_einsum.to_sdfg(simplify=False)
+    orders = [
+        node.map.params
+        for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, nodes.MapEntry) and node.map.params[0].startswith("__einsum_") and len(node.map.params) == 3
+    ]
+    assert orders == [["__einsum_i", "__einsum_k", "__einsum_j"]]
+    a = rng.random((3, 4, 5)) + 1j * rng.random((3, 4, 5))
+    b = rng.random((5, 3, 4))
+    assert np.allclose(sdfg(a=a, b=b), np.einsum("ijk,kij->ij", a, b))
+
+
 if __name__ == "__main__":
     test_integer_dims_two_level_reordered()
     test_integer_dims_already_canonical_is_noop()
@@ -411,3 +455,5 @@ if __name__ == "__main__":
     test_three_level_cycle_reordered()
     test_nest_inside_a_nested_sdfg_is_reordered()
     test_equal_strides_keep_the_order_whatever_the_offsets()
+    test_equal_minimal_strides_go_by_their_total()
+    test_pure_einsum_map_is_emitted_in_min_stride_order()

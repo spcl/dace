@@ -735,7 +735,7 @@ def _create_einsum_internal(
         wcr = "lambda a,b: a+b" if is_conflicted else None
         alphacode = "" if symbolic.equal_valued(1, alpha) else f"{alpha} * "
         # Pure einsum map
-        state.add_mapped_tasklet(
+        _, entry, _ = state.add_mapped_tasklet(
             "einsum",
             {param[k]: "0:%s" % v for k, v in chardict.items()},
             # One connector per term: an operand may repeat under other indices (``ij,ji->i``).
@@ -750,6 +750,14 @@ def _create_einsum_internal(
             schedule=schedule,
             external_edges=True,
         )
+        # The letters' order says nothing about the operands' layouts: the smallest-strided index goes innermost
+        from dace.transformation.passes.minimize_stride_permutation import min_stride_order
+
+        body = state.scope_subgraph(entry, include_entry=True, include_exit=True)
+        order = min_stride_order(body.edges(), sdfg, list(entry.map.params))
+        if order is not None:
+            entry.map.params = [entry.map.params[i] for i in order]
+            entry.map.range = subsets.Range([entry.map.range[i] for i in order])
     else:
         # Represent einsum as a GEMM or batched GEMM (using library nodes)
         a_desc = sdfg.arrays[arrays[0]]

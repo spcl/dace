@@ -18,8 +18,9 @@ canonical and performs no further interchange):
 2. Each parameter receives a score equal to the smallest array stride it
    linearly indexes with a unit coefficient (``+inf`` if it never does). The
    parameter whose smallest indexed stride is smallest belongs innermost.
-3. Parameters with equal (or not comparable) scores keep their current
-   relative order (a stable sort), so the target order is stable.
+3. Equal minima are ordered by the total of the unit-coefficient strides a
+   parameter indexes (larger outside); still equal (or not comparable)
+   scores keep their current relative order (a stable sort).
 
 The desired permutation is realized exclusively through a sequence of legal
 adjacent :class:`~dace.transformation.dataflow.map_interchange.MapInterchange`
@@ -165,6 +166,35 @@ def stride_difference_sign(a, b) -> int:
     raise UndecidableStride(f"{a} vs {b}")
 
 
+def min_stride_order(edges, sdfg: SDFG, params: list[str]) -> list[int] | None:
+    """The outer-to-inner order of ``params`` by the strides they index in the memlets of ``edges``.
+
+    Descending minimal unit-coefficient stride (the smallest belongs innermost); equal minima by descending total
+    of those strides (a parameter homing on a large stride elsewhere is worse innermost: ``x[i, j, k, l] * y[l, i,
+    j, k]`` puts ``k`` inside ``l``). Equal pairs, and minima that tie with an undecidable total, keep their order (a
+    stable sort). No tie-break on the accesses' constant offsets: they say nothing about locality (lavamd's
+    all-pairs nest).
+
+    :returns: ``order[k]``, the index into ``params`` that belongs at depth ``k``; ``None`` if two scores compare
+              undecidably (:func:`stride_difference_sign`).
+    """
+    scores = score_indexed_strides(edges, sdfg, params)
+
+    def compare(i: int, j: int) -> int:
+        left, right = scores[params[i]], scores[params[j]]
+        if sign := stride_difference_sign(left[0], right[0]):
+            return -sign
+        try:
+            return -stride_difference_sign(left[1], right[1])
+        except UndecidableStride:  # an undecided tie-break leaves the tie
+            return 0
+
+    try:
+        return sorted(range(len(params)), key=functools.cmp_to_key(compare))
+    except UndecidableStride:
+        return None
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class MinimizeStridePermutation(ppl.Pass):
@@ -261,29 +291,11 @@ class MinimizeStridePermutation(ppl.Pass):
         :returns: The number of map splits and adjacent interchanges applied.
         """
         params = [param for me in nest for param in me.map.params]
-        scores = self._score_parameters(state, sdfg, nest, params)
-
-        # Build a totally-ordered numeric key per parameter. Smaller indexed
-        # stride => deeper (more inner), so the outer..inner target order
-        # sorts by *descending* stride. A parameter without a unit-coefficient
-        # "home" gets ``+inf`` and is forced outermost. Parameters with equal (or incomparable,
-        # e.g. symbolic) scores keep their current relative order via the
-        # stable sort below -- no positional tiebreak, otherwise reordering
-        # would change the key and the pass would not be idempotent. When all
-        # strides are symbolic the scores tie and the order is left unchanged,
-        # which is the intended behavior (magnitudes are undecidable).
-        def compare(i: int, j: int) -> int:
-            # Descending stride: the smallest-strided parameter belongs innermost. Decided symbolically, see
-            # :func:`stride_difference_sign`. No tie-break on the accesses' constant offsets: they say nothing about
-            # locality, and on an all-pairs nest (lavamd) they pull the accumulated axis out of the innermost place.
-            return -stride_difference_sign(scores[i], scores[j])
-
-        try:
-            order = sorted(range(len(params)), key=functools.cmp_to_key(compare))
-        except UndecidableStride:
-            return 0
+        # The innermost entry and exit belong to the scan: the per-iteration memlets live on their edges
+        body = state.scope_subgraph(nest[-1], include_entry=True, include_exit=True)
+        order = min_stride_order(body.edges(), sdfg, params)
         # ``order[k]`` is the original index that should end up at depth ``k``.
-        if order == list(range(len(params))):
+        if order is None or order == list(range(len(params))):
             return 0
         # A multi-parameter level is split into one map per parameter, in its own order, so the permutation
         # below runs over single-parameter levels; the collapse stage that follows this pass joins the
@@ -352,21 +364,3 @@ class MinimizeStridePermutation(ppl.Pass):
         nest[depth], nest[depth + 1] = inner_entry, outer_entry
         return True
 
-    def _score_parameters(
-        self, state: SDFGState, sdfg: SDFG, nest: list[nodes.MapEntry], params: list[str]
-    ) -> list[object]:
-        """Compute the stride score of each param.
-
-        :param state: The containing state.
-        :param sdfg: The SDFG owning ``state``.
-        :param nest: Map entries from outermost to innermost.
-        :param params: The parameters of the nest, outermost first.
-        :returns: The minimal unit-coefficient stride of each param, parallel to ``params``.
-        """
-        # Include the innermost entry and exit so that the per-iteration
-        # indexed memlets (which live on the edges between the inner map
-        # entry/exit and the body) are part of the scanned subgraph.
-        innermost_entry = nest[-1]
-        body = state.scope_subgraph(innermost_entry, include_entry=True, include_exit=True)
-        scores = score_indexed_strides(body.edges(), sdfg, params)
-        return [scores[p][0] for p in params]
