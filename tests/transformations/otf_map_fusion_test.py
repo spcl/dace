@@ -1027,6 +1027,47 @@ def test_an_empty_memlet_into_the_consumer_is_not_fused():
     assert not OTFMapFusion.can_be_applied_to(sdfg, **where)
 
 
+def test_an_empty_memlet_into_the_producer_exit_fuses():
+    """``T = A + 1`` by a map whose body also holds a node that reaches the map exit only by an empty memlet, then
+    ``B = 2 T``. The check iterated the empty memlet's ``None`` subset and raised ``TypeError`` (vexx_k's
+    RecomputeIntermediates); the edge only orders the node before the scope's end, so the producer recomputes in the
+    consumer with the node ordered before the per-iteration buffer, bit-exact."""
+    sdfg = dace.SDFG("otf_empty_memlet_producer_exit")
+    for name in ("A", "B"):
+        sdfg.add_array(name, [16], dace.float64)
+    sdfg.add_transient("T", [16], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("produce", dict(i="0:16"))
+    tasklet = state.add_tasklet("add", {"a"}, {"o"}, "o = a + 1.0")
+    state.add_memlet_path(state.add_read("A"), entry, tasklet, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    t = state.add_access("T")
+    state.add_memlet_path(tasklet, exit_, t, src_conn="o", memlet=dace.Memlet("T[i]"))
+    side = state.add_tasklet("side", {}, {}, "")
+    state.add_nedge(entry, side, dace.Memlet())
+    state.add_nedge(side, exit_, dace.Memlet())
+    _, consume_entry, _ = state.add_mapped_tasklet(
+        "consume",
+        dict(j="0:16"),
+        {"x": dace.Memlet("T[j]")},
+        "y = 2.0 * x",
+        {"y": dace.Memlet("B[j]")},
+        external_edges=True,
+        input_nodes={"T": t},
+        output_nodes={"B": state.add_write("B")},
+    )
+    sdfg.validate()
+    where = dict(first_map_exit=exit_, array=t, second_map_entry=consume_entry)
+    assert OTFMapFusion.can_be_applied_to(sdfg, **where)
+    OTFMapFusion.apply_to(sdfg, **where)
+    sdfg.validate()
+    assert count_maps(sdfg) == 1
+
+    A = np.arange(16, dtype=np.float64)
+    B = np.zeros(16)
+    sdfg(A=A, B=B)
+    assert np.array_equal(B, 2.0 * (A + 1.0))
+
+
 def test_a_producer_ranging_over_a_value_it_reads_is_not_fused():
     """``T[i] = A[i] + 1`` for ``i < m``, ``m`` read from ``L[0]``, then ``B = 2 T`` over all 16 elements. The produced
     subset ``T[0:16]`` is dynamic: elements past ``m`` keep what ``T`` held, which the recomputing copy would overwrite
@@ -1430,3 +1471,4 @@ if __name__ == "__main__":
     test_the_producer_copy_follows_graph_order()
     test_a_copy_reads_a_transient_the_producer_only_reads_under_its_own_name()
     test_a_copy_adds_no_argument_for_a_global_the_producer_reads()
+    test_an_empty_memlet_into_the_producer_exit_fuses()

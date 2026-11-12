@@ -170,6 +170,9 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         produce_memlets = {}
         for edge in graph.in_edges(self.first_map_exit):
             memlet = edge.data
+            # An empty memlet orders a body node before the scope's end and produces nothing
+            if memlet.is_empty():
+                continue
             # Unique
             if memlet.data in produce_memlets:
                 return False
@@ -341,7 +344,8 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         produce_memlets = {}
         for edge in graph.in_edges(first_map_exit):
             memlet = edge.data
-            produce_memlets[memlet.data] = memlet
+            if not memlet.is_empty():
+                produce_memlets[memlet.data] = memlet
 
         # Group by same access scheme
         consume_memlets = {}
@@ -424,6 +428,11 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                     for node in otf_nodes:
                         # Connect new OTF nodes to tmp_access for write
                         for edge in graph.edges_between(node, first_map_exit):
+                            # An ordering edge keeps the node before the buffer, the end of what the copy computes
+                            if edge.data.is_empty():
+                                graph.add_edge(edge.src, None, tmp_access, None, Memlet())
+                                graph.remove_edge(edge)
+                                continue
                             # A nested SDFG connector follows the write into the per-iteration buffer
                             if isinstance(edge.src, nds.NestedSDFG) and edge.src_conn in edge.src.sdfg.arrays:
                                 if not edge.src.sdfg.arrays[edge.src_conn].is_equivalent(tmp_desc):
