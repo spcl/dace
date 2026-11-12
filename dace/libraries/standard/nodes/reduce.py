@@ -2051,6 +2051,19 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
     # Properties
     axes = ListProperty(element_type=int, allow_none=True, category="Semantics")
 
+    operand_subsets = "squeeze"
+
+    def operand_dims(self, connector, subset, array, operand):
+        # Only the input: ``axes`` numbers its dimensions, so they move with them (``rebind_operand``)
+        if connector != INPUT_CONNECTOR_NAME:
+            return None
+        return super().operand_dims(connector, subset, array, operand)
+
+    def rebind_operand(self, connector: str, dims: list[int]) -> None:
+        # Every axis of the operand stays a full reduction (``None``), which the vendor expansions match on
+        if self.axes is not None:
+            self.axes = None if len(self.axes) == len(dims) else [dims[a] for a in self.axes]
+
     def folds_onto_output(self) -> bool:
         # Without an identity the fold starts from the output: the expansion emits no init.
         return self.wcr is not None and self.identity is None

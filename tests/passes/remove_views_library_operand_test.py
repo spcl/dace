@@ -9,6 +9,7 @@ import dace
 from dace import data as dt
 from dace.libraries.blas import MatMul
 from dace.libraries.linalg import TensorDot
+from dace.libraries.standard import Reduce
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
@@ -42,6 +43,22 @@ def matmul_into_plane_sdfg(name: str) -> tuple[dace.SDFG, MatMul]:
     return sdfg, mm
 
 
+def reduce_sdfg(name: str, view_shape, view_strides, viewed: str, axes) -> tuple[dace.SDFG, Reduce]:
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("P", [L, M, K], dace.float64)
+    out_shape = [1] if axes is None or len(axes) == len(view_shape) else [M]
+    sdfg.add_array("out", out_shape, dace.float64)
+    sdfg.add_view("pv", view_shape, dace.float64, strides=view_strides)
+    state = sdfg.add_state()
+    red = Reduce("red", "lambda a, b: a + b", axes=axes, identity=0)
+    state.add_node(red)
+    pv = state.add_access("pv")
+    state.add_edge(state.add_read("P"), None, pv, "views", dace.Memlet(viewed))
+    state.add_edge(pv, None, red, "_in", dace.Memlet.from_array("pv", sdfg.arrays["pv"]))
+    state.add_edge(red, "_out", state.add_write("out"), None, dace.Memlet.from_array("out", sdfg.arrays["out"]))
+    return sdfg, red
+
+
 def test_matmul_writes_a_plane_without_a_view():
     """A MatMul output View of ``X[1]`` goes; ``_c`` writes the 3-D subset, which MatMul squeezes."""
     sdfg, mm = matmul_into_plane_sdfg("rv_libop_matmul_plane")
@@ -56,6 +73,28 @@ def test_matmul_writes_a_plane_without_a_view():
     expected[1] = A @ B
     sdfg(A=A, B=B, X=X)
     assert np.allclose(X, expected)
+
+
+def test_reduce_of_a_strided_column_maps_its_axes_through_the_subset():
+    """A full Reduce of ``P[1, :, 2]`` reads the subset; every axis reduced stays a full reduction (``axes=None``)."""
+    sdfg, red = reduce_sdfg("rv_libop_reduce_column", [M], [K], f"P[1, 0:{M}, 2]", [0])
+    RemoveViews().apply_pass(sdfg, {})
+    assert not views(sdfg)
+    assert red.axes is None
+    P, out = np.random.default_rng(4).random((L, M, K)), np.zeros(1)
+    sdfg(P=P, out=out)
+    assert np.allclose(out[0], P[1, :, 2].sum())
+
+
+def test_partial_reduce_of_a_plane_renumbers_its_axis():
+    """Reducing axis 1 of the View of ``P[1]`` reduces axis 2 of the subset ``P[1, 0:M, 0:K]``."""
+    sdfg, red = reduce_sdfg("rv_libop_reduce_plane", [M, K], [K, 1], f"P[1, 0:{M}, 0:{K}]", [1])
+    RemoveViews().apply_pass(sdfg, {})
+    assert not views(sdfg)
+    assert list(red.axes) == [2]
+    P, out = np.random.default_rng(5).random((L, M, K)), np.zeros(M)
+    sdfg(P=P, out=out)
+    assert np.allclose(out, P[1].sum(axis=1))
 
 
 def test_tensordot_keeps_a_view_that_drops_a_dimension():
@@ -101,6 +140,11 @@ def matmul_into_plane(A: dace.float64[M, K], B: dace.float64[K, N], X: dace.floa
     X[1, :, :] = A @ B
 
 
+@dace.program
+def sum_of_strided_column(P: dace.float64[L, M, 2], out: dace.float64[1]):
+    out[0] = np.sum(P[1, :, 1])
+
+
 def run_canonical(prog, target: str = "cpu") -> None:
     sdfg = prog.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True, validate_all=False, target=target)
@@ -126,9 +170,9 @@ def run_canonical(prog, target: str = "cpu") -> None:
         assert np.allclose(args[name], expected[name]), name
 
 
-@pytest.mark.parametrize("prog", [matmul_into_plane], ids=lambda p: p.name)
+@pytest.mark.parametrize("prog", [matmul_into_plane, sum_of_strided_column], ids=lambda p: p.name)
 def test_the_canonical_form_has_no_view_next_to_the_node(prog):
-    """quatrex's ``xl_d[0] = a @ b``: no View after canonicalization."""
+    """quatrex's ``xl_d[0] = a @ b`` and vexx_k's sum over ``egrp_pairs[eg, :, 1]``: no View after canonicalization."""
     run_canonical(prog)
 
 
@@ -140,6 +184,9 @@ def test_the_gpu_gemm_writes_a_plane():
 
 if __name__ == "__main__":
     test_matmul_writes_a_plane_without_a_view()
+    test_reduce_of_a_strided_column_maps_its_axes_through_the_subset()
+    test_partial_reduce_of_a_plane_renumbers_its_axis()
     test_tensordot_keeps_a_view_that_drops_a_dimension()
     test_matmul_keeps_a_view_with_a_unit_row()
     test_the_canonical_form_has_no_view_next_to_the_node(matmul_into_plane)
+    test_the_canonical_form_has_no_view_next_to_the_node(sum_of_strided_column)
