@@ -46,15 +46,6 @@ def dynamic_map_block_dims() -> tuple[int, ...]:
     return tuple(int(x) for x in value.split(","))
 
 
-def dynamic_map_block_size() -> int:
-    """
-    Returns the total thread-block size of dynamic thread-block maps (``compiler.cuda.dynamic_map_block_size``).
-
-    :return: The number of threads in a thread-block.
-    """
-    return math.prod(dynamic_map_block_dims())
-
-
 def gpu_scope_maps(subgraph: SDFGState | StateSubgraphView) -> list[tuple[nodes.Map, dict[sympy.Symbol, sympy.Basic]]]:
     """
     Returns the ``GPU_Device``, ``GPU_ThreadBlock`` and ``GPU_ThreadBlock_Dynamic`` maps of a (kernel scope)

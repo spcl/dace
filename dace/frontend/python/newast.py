@@ -1104,6 +1104,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
         self.views: dict[str, tuple[str, Memlet]] = {}  # Keeps track of views
+        self.size_symbols: list[str] = []  # Symbols read from a size-1 descriptor on an interstate edge
         self.nested_closure_arrays: dict[str, tuple[Any, data.Data]] = {}
         self.annotated_types: dict[str, data.Data] = annotated_types or {}
 
@@ -1253,6 +1254,9 @@ class ProgramVisitor(ExtNodeVisitor):
         for arrname, arr in self.sdfg.arrays.items():
             # Return values become non-transient (accessible by the outside)
             if arrname.startswith("__return"):
+                # The caller sizes a return value before the interstate edge assigning the symbol runs
+                if any(str(s) in self.size_symbols for s in arr.free_symbols):
+                    raise DaceSyntaxError(self, self.program_ast, f"Data-dependent shape {arr.shape} is not allowed.")
                 arr.transient = False
                 self.outputs[arrname] = (None, Memlet.from_array(arrname, arr), [])
 
@@ -5429,7 +5433,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # We also check the type of the slice attribute of the node
         # in order to distinguish between A[0] and A[0:1], which are semantically different in numpy
         # (the former is an index, the latter is a slice).
-        is_index = range_is_index(expr.subset) and not isinstance(node.slice, ast.Slice)
+        # A[1:2, 1:2] has index-shaped ranges but non-empty slice_dims forces the slice path (stays 2-D).
+        is_index = range_is_index(expr.subset) and not isinstance(node.slice, ast.Slice) and not expr.slice_dims
         other_subset = copy.deepcopy(expr.subset)
         strides = list(arrobj.strides)
 
@@ -5441,7 +5446,9 @@ class ProgramVisitor(ExtNodeVisitor):
             for i in new_axes:
                 strides.insert(i, 1)
         length = len(other_subset)
-        nsqz = other_subset.squeeze(ignore_indices=new_axes)
+        # Squeeze only scalar-index dims; a length-1 slice keeps its axis. slice_dims count the axes before new_axes.
+        subset_axes = [i for i in range(length) if i not in new_axes]
+        nsqz = other_subset.squeeze(ignore_indices=new_axes + [subset_axes[dim] for dim in expr.slice_dims])
         sqz = [i for i in range(length) if i not in nsqz]
         for i in reversed(sqz):
             strides.pop(i)
@@ -5505,6 +5512,33 @@ class ProgramVisitor(ExtNodeVisitor):
                 ),
             )
         return tmp
+
+    def promote_scalar_to_symbol(self, scalar: str) -> symbolic.symbol:
+        """
+        Reads a size-1 descriptor into a fresh symbol on a new interstate edge, keeping the descriptor. Sizes an
+        array, so unlike a subscript promotion the symbol is never reassigned.
+
+        :param scalar: Name of the data descriptor to read.
+        :return: The new symbol.
+        """
+        desc = self.sdfg.arrays[scalar]
+        name = self.sdfg.add_symbol(f"__sym_{scalar}", desc.dtype, find_new_name=True)
+        self.size_symbols.append(name)
+        sym = dace.symbol(name, dtype=desc.dtype)
+        # Nested scopes resolve free symbols through globals
+        self.globals[name] = sym
+        state = self._add_state(f"promote_{scalar}_to_{name}")
+        rhs = scalar
+        if not isinstance(desc, data.Scalar):
+            # A size-1 array reads by subscript, or the assignment would take its pointer. Only an access node binds a
+            # view, so an edge reads the array behind it.
+            subset = subsets.Range([(0, 0, 1)] * len(desc.shape))
+            while scalar in self.views:
+                scalar, memlet = self.views[scalar]
+                subset = memlet.subset.compose(subset)
+            rhs = f"{scalar}[{', '.join(map(str, subset.min_element()))}]"
+        state.parent_graph.in_edges(state)[0].data.assignments = {name: rhs}
+        return sym
 
     def _parse_subscript_slice(self, s: ast.AST, multidim: bool = False) -> Any | tuple[Any | str | symbolic.symbol]:
         """Parses the slice attribute of an ast.Subscript node.
