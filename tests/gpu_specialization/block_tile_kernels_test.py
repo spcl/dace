@@ -14,7 +14,12 @@ import dace
 from dace import dtypes
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.gpu_specialization.block_tile_kernels import BlockTileKernels, updates_shared
+from dace.transformation.passes.gpu_specialization.block_tile_kernels import (
+    BlockTileKernels,
+    place_barriers,
+    tile_per_cta,
+    updates_shared,
+)
 
 M, N, K, NB, NNZ = (dace.symbol(s) for s in ("M", "N", "K", "NB", "NNZ"))
 SIZES = [(1, 1, 1, 1), (37, 300, 5, 3), (257, 513, 129, 2)]
@@ -428,6 +433,93 @@ def test_a_lane_strided_map_in_a_loop_waits_for_every_lane_before_its_next_trip(
     np.testing.assert_array_equal(cupy.asnumpy(device), np.sort(key, axis=1))
 
 
+T = dace.symbol("T")
+TABLE = [3, 1, 0, 2]
+
+
+def per_task_table_and_row() -> tuple[dace.SDFG, dace.SDFGState, dace.nodes.MapEntry]:
+    """Per task ``t``: four scalar stores fill ``tab``, a map fills ``row[j] = 2 * A[t, j]``, a map reads
+    ``out[t, k] = row[tab[k]]``. ``tab`` and ``row`` become per-CTA arrays."""
+    body = dace.SDFG("per_task_body")
+    body.add_symbol("t", dace.int64)
+    body.add_array("A", [T, N], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    body.add_array("out", [T, 4], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    body.add_transient("tab", [4], dace.int64)
+    body.add_transient("row", [N], dace.float64)
+    st = body.add_state()
+    tab, row = st.add_access("tab"), st.add_access("row")
+    for k, value in enumerate(TABLE):
+        store = st.add_tasklet(f"store{k}", {}, {"o"}, f"o = {value}")
+        st.add_edge(store, "o", tab, None, dace.Memlet(f"tab[{k}]"))
+    st.add_mapped_tasklet(
+        "fill", {"j": "0:N"}, {"a": dace.Memlet("A[t, j]")}, "r = 2 * a", {"r": dace.Memlet("row[j]")},
+        input_nodes={"A": st.add_read("A")}, output_nodes={"row": row}, external_edges=True,
+    )
+    st.add_mapped_tasklet(
+        "gather", {"k": "0:4"}, {"tb": dace.Memlet("tab[k]"), "rw": dace.Memlet("row[0:N]")}, "o = rw[tb]",
+        {"o": dace.Memlet("out[t, k]")}, input_nodes={"tab": tab, "row": row}, external_edges=True,
+    )
+    sdfg = dace.SDFG("per_task_table_and_row")
+    sdfg.add_array("A", [T, N], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("out", [T, 4], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    kernel, kernel_exit = state.add_map("tasks", {"t": "0:T"}, schedule=dtypes.ScheduleType.GPU_Device)
+    nest = state.add_nested_sdfg(body, {"A": None}, {"out": None}, {"t": "t", "N": "N", "T": "T"})
+    state.add_memlet_path(state.add_read("A"), kernel, nest, dst_conn="A", memlet=dace.Memlet("A[0:T, 0:N]"))
+    state.add_memlet_path(nest, kernel_exit, state.add_write("out"), src_conn="out", memlet=dace.Memlet("out[0:T, 0:4]"))
+    sdfg.validate()
+    return sdfg, state, kernel
+
+
+def barriers_in(sdfg: dace.SDFG) -> int:
+    tasklets = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet) and n.label == "lane_barrier"]
+    syncs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapExit) and n.map.gpu_force_syncthreads]
+    return len(tasklets) + len(syncs)
+
+
+def test_per_cta_lane_zero_stores_share_one_barrier_and_independent_steps_none():
+    """The four lane-0 stores run back to back; the row fill touches nothing they do. Only the gather, which reads
+    both, waits; the state ends at a barrier so the next task starts fenced."""
+    sdfg, state, kernel = per_task_table_and_row()
+    assert tile_per_cta(state, kernel)
+    sdfg.validate()
+    guards = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG) and n.label == "lane_zero"]
+    assert len(guards) == len(TABLE)
+    assert barriers_in(sdfg) == 2
+
+
+def test_a_step_reading_what_another_wrote_through_a_view_waits_at_a_barrier():
+    """``V`` views ``G``: the second map reads what the first wrote, under another name."""
+    sdfg = dace.SDFG("write_view_read_container")
+    sdfg.add_array("G", [64], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("H", [64], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_view("V", [64], dace.float64)
+    state = sdfg.add_state()
+    view, container = state.add_access("V"), state.add_access("G")
+    state.add_edge(view, "views", container, None, dace.Memlet("G[0:64]"))
+    state.add_mapped_tasklet(
+        "write", {"i": "0:64"}, {}, "v = i", {"v": dace.Memlet("V[i]")}, output_nodes={"V": view}, external_edges=True
+    )
+    state.add_mapped_tasklet(
+        "read", {"i": "0:64"}, {"g": dace.Memlet("G[63 - i]")}, "h = g", {"h": dace.Memlet("H[i]")},
+        input_nodes={"G": container}, external_edges=True,
+    )
+    place_barriers(state, OrderedSet())
+    sdfg.validate()
+    assert barriers_in(sdfg) == 2
+
+
+@pytest.mark.gpu
+def test_per_cta_lane_zero_stores_and_lane_maps_match_numpy():
+    cupy = pytest.importorskip("cupy")
+    sdfg, state, kernel = per_task_table_and_row()
+    tile_per_cta(state, kernel)
+    A = np.random.default_rng(12).random((300, 70))
+    out = cupy.zeros((300, 4))
+    sdfg(A=cupy.asarray(A), out=out, T=300, N=70)
+    np.testing.assert_allclose(cupy.asnumpy(out), 2 * A[:, TABLE])
+
+
 if __name__ == "__main__":
     test_an_inner_reduction_runs_across_the_lanes_of_one_block(matvec)
     test_an_inner_reduction_runs_across_the_lanes_of_one_block(gemm_loops)
@@ -444,3 +536,6 @@ if __name__ == "__main__":
     for sizes in SIZES:
         test_the_block_lowerings_compute_what_numpy_does(*sizes)
     test_a_lane_strided_map_in_a_loop_waits_for_every_lane_before_its_next_trip()
+    test_per_cta_lane_zero_stores_share_one_barrier_and_independent_steps_none()
+    test_a_step_reading_what_another_wrote_through_a_view_waits_at_a_barrier()
+    test_per_cta_lane_zero_stores_and_lane_maps_match_numpy()
