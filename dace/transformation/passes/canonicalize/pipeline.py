@@ -1108,7 +1108,7 @@ def finish() -> Stages:
     s: Stages = [(FINISH, StructuralCleanup())]
     s += [
         (FINISH, OptionalArrayInference()),
-        (FINISH, ConvertLengthOneArraysToScalars()),
+        (FINISH, ConvertLengthOneArraysToScalars(single_element=True)),
         (FINISH, DeadFillElimination()),
         (FINISH, PruneUnreferencedTransients()),
         (FINISH, InlineControlFlowRegions()),

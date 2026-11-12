@@ -438,7 +438,8 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
           must stay an aliasable source;
         * a neighbor generates code we cannot rewrite from ``buf[0]`` to ``buf``: an unexpanded
           library node, a non-Python (C++) tasklet, or a GPU-scheduled map that uses the buffer as a
-          multi-thread collective.
+          multi-thread collective;
+        * a nested SDFG takes a higher-rank single-element array through a connector.
 
         For GPU maps we only block the *input* side (edges into a ``MapEntry``) and the *partial* side
         (edges from an inside node into a ``MapExit``). A ``MapExit``-to-outside edge is a normal map
@@ -464,6 +465,11 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                         blocked.add(node.data)
                         break
                     if isinstance(nb, nodes.Tasklet) and nb.language != dtypes.Language.Python:
+                        blocked.add(node.data)
+                        break
+                    if isinstance(nb, nodes.NestedSDFG) and len(arr.shape) > 1:
+                        # A connector takes a Scalar for a ``(1,)`` array only (``Array.is_equivalent``): the
+                        # nested SDFG's own ``(1, 1)`` descriptor would no longer match.
                         blocked.add(node.data)
                         break
                     if isinstance(nb, nodes.MapEntry) and nb.map.schedule in dtypes.GPU_SCHEDULES:

@@ -27,9 +27,9 @@ which must overwrite all of it first:
   anywhere in it, whose body chain holds a state that writes the slice ``array[..., v, ...]`` whole;
 * a conditional with an ``else`` whose every branch does, its conditions not reading the array.
 
-A top-level map writing a transient element for element (``np.zeros`` lowered as a map) shrinks to what a copy in
-its state leaves when the copy overwrites all of it but a prefix or suffix of one axis before anything reads it
-(``sink = np.zeros(n + 1); sink[0:n] = c`` zeroes row ``n`` only); it goes when the copy leaves nothing.
+A memset, or a top-level map writing a transient element for element (``np.zeros`` lowered as a map), shrinks to
+what a copy in its state leaves when the copy overwrites all of it but a prefix or suffix of one axis before anything
+reads it (``sink = np.zeros(n + 1); sink[0:n] = c`` zeroes row ``n`` only); it goes when the copy leaves nothing.
 
 A fill ahead of a loop is dead when no iteration observes it, even when the array is read inside the loop. quatrex_rgf
 allocates its per-energy workspaces with ``np.zeros`` ahead of the energy loop::
@@ -49,6 +49,9 @@ Outside a loop, the overwrite need not cover the whole array, only every subset 
 nobody reads never shows its fill. The write may index an axis by ``p + c`` (``al[i + 2]`` over ``0:n + 3``). A read
 whose subset is not a range over symbols that no interstate edge, loop or scope rebinds (a control-flow read, a read
 through a written View) counts as unknown and keeps the fill.
+
+A memset of a program argument (``out[:] = 0; out[:] = a + 1``) goes or shrinks by the same rules, in the outermost
+SDFG only and without the loop rule or the read coverage: the caller sees every element it leaves.
 
 Anything else (a partial or indirect write, a conditional one without ``else``, a read in between, a
 nested SDFG writing it) keeps the memset.
@@ -223,8 +226,11 @@ def overwritten_in_state(
     return False
 
 
-def dead_fill(state: SDFGState, fill: FillLibraryNode, reads: Reads | None = None) -> nodes.AccessNode | None:
-    """The access node ``fill`` writes, when the fill is dead; ``None`` otherwise."""
+def dead_fill(
+    state: SDFGState, fill: FillLibraryNode, reads: Reads | None = None
+) -> tuple[nodes.AccessNode, tuple] | None:
+    """The access node ``fill`` writes and what of it is dead: :func:`copy_leaves` of the copy that overwrites all of
+    it but a prefix or suffix of one axis, ``(-1, ())`` when all of it is; ``None`` when none of it is."""
     if any(not e.data.is_empty() for e in state.in_edges(fill)):
         return None
     out_edges = state.out_edges(fill)
@@ -233,8 +239,14 @@ def dead_fill(state: SDFGState, fill: FillLibraryNode, reads: Reads | None = Non
     zeroed = out_edges[0].dst
     sdfg = state.sdfg
     desc = sdfg.arrays[zeroed.data]
-    if not desc.transient or not isinstance(desc, data.Array) or isinstance(desc, data.View):
+    if not isinstance(desc, data.Array) or isinstance(desc, data.View):
         return None
+    if not desc.transient:
+        # The caller sees every element of an argument: only a whole overwrite kills its fill, and only in the SDFG
+        # the caller calls, where nothing outside it reads the argument in between.
+        if sdfg.parent is not None:
+            return None
+        reads = None
     subset = out_edges[0].data.subset
     if subset is None or symbolic.simplify(subset.num_elements() - desc.total_size) != 0:
         return None
@@ -243,13 +255,17 @@ def dead_fill(state: SDFGState, fill: FillLibraryNode, reads: Reads | None = Non
     others = [n for n in state.data_nodes() if n.data == zeroed.data and n is not zeroed]
     reachable = set(state.bfs_nodes(zeroed))
     for written in others:
-        if written not in reachable or not covers_every_element(state, written, desc, reads=reads):
+        if written not in reachable:
+            continue
+        whole = covers_every_element(state, written, desc, reads=reads)
+        left = (-1, ()) if whole else copy_leaves(state, written, desc)
+        if left is None:
             continue
         downstream = set(state.bfs_nodes(written))
         if all(n is written or n in downstream for n in others):
-            return zeroed
+            return zeroed, left
     if not others and overwritten_after(state, zeroed.data, desc, reads):
-        return zeroed
+        return zeroed, (-1, ())
     return None
 
 
@@ -327,8 +343,11 @@ def narrow_fill_map(state: SDFGState, entry: nodes.MapEntry, zeroed: nodes.Acces
         return
     exit_node = state.exit_node(entry)
     inner = next(iter(state.in_edges(exit_node)))
-    param = str(inner.data.subset.ranges[axis][0])
-    entry.map.range[entry.map.params.index(param)] = kept
+    # The write is ``p + c`` (:func:`covers_every_element`): ``kept`` is in array coordinates, ``p`` runs ``c`` lower.
+    index = symbolic.pystr_to_symbolic(inner.data.subset.ranges[axis][0])
+    param = next(s for s in index.free_symbols if str(s) in entry.map.params)
+    offset = symbolic.simplify(index - param)
+    entry.map.range[entry.map.params.index(str(param))] = (kept[0] - offset, kept[1] - offset, 1)
     outer = state.out_edges(exit_node)[0]
     outer.data.subset[axis] = kept
 
@@ -652,10 +671,16 @@ class DeadFillElimination(ppl.Pass):
             reads = Reads(sd)
             for state in sd.states():
                 for fill in [n for n in state.nodes() if isinstance(n, FillLibraryNode)]:
-                    zeroed = dead_fill(state, fill, reads)
-                    if zeroed is None:
+                    dead = dead_fill(state, fill, reads)
+                    if dead is None:
                         continue
-                    drop_fill(state, fill, zeroed)
+                    zeroed, (axis, kept) = dead
+                    if axis == -1:
+                        drop_fill(state, fill, zeroed)
+                    else:
+                        written = state.in_edges(zeroed)[0].data
+                        written.subset[axis] = kept
+                        written.volume = written.subset.num_elements()
                     removed += 1
                 for entry in [
                     n for n, scope in state.scope_dict().items() if isinstance(n, nodes.MapEntry) and scope is None

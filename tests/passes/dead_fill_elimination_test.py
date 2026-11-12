@@ -326,9 +326,10 @@ if __name__ == "__main__":
     test_fill_kept_when_a_read_reaches_one_element_past_the_overwrite()
 
 
-def zeros_then_prefix_copy(prefix: str) -> dace.SDFG:
-    """``sink = zeros(N + 1, 4); sink[prefix] = c; out = sink`` in one state, the zeros a map."""
-    sdfg = dace.SDFG(f"zeros_then_prefix_copy_{abs(hash(prefix))}")
+def zeros_then_prefix_copy(prefix: str, shift: int = 0) -> dace.SDFG:
+    """``sink = zeros(N + 1, 4); sink[prefix] = c; out = sink`` in one state, the zeros a map whose row parameter runs
+    ``shift`` above the row it writes."""
+    sdfg = dace.SDFG(f"zeros_then_prefix_copy_{abs(hash((prefix, shift)))}")
     sdfg.add_array("c", [N, 4], dace.float64)
     sdfg.add_array("out", [N + 1, 4], dace.float64)
     sdfg.add_transient("sink", [N + 1, 4], dace.float64)
@@ -336,10 +337,10 @@ def zeros_then_prefix_copy(prefix: str) -> dace.SDFG:
     zeroed = state.add_access("sink")
     state.add_mapped_tasklet(
         "zeros",
-        {"i": "0:N + 1", "j": "0:4"},
+        {"i": f"{shift}:N + {shift + 1}", "j": "0:4"},
         {},
         "__o = 0.0",
-        {"__o": dace.Memlet("sink[i, j]")},
+        {"__o": dace.Memlet(f"sink[i - {shift}, j]")},
         output_nodes={"sink": zeroed},
         external_edges=True,
     )
@@ -376,8 +377,131 @@ def test_zeros_a_copy_overwrites_but_its_first_row_shrink_to_that_row():
     assert np.array_equal(out, np.concatenate([np.zeros((1, 4)), c]))
 
 
+def test_zeros_a_shifted_map_shrinks_its_own_range_to_the_row_left():
+    """The zeroing map's row parameter runs one above the row it writes: the shrunk range is that row plus one."""
+    sdfg = zeros_then_prefix_copy("0:N", shift=1)
+    assert DeadFillElimination().apply_pass(sdfg, {}) == 1
+    assert zeroing_map_ranges(sdfg) == ["N + 1, 0:4"]
+    c = np.random.rand(9, 4)
+    out = np.full((10, 4), np.nan)
+    sdfg(c=c, out=out, N=9)
+    assert np.array_equal(out, np.concatenate([c, np.zeros((1, 4))]))
+
+
 def test_zeros_a_copy_leaves_a_middle_row_of_stay_whole():
     sdfg = zeros_then_prefix_copy("1:N")
     assert DeadFillElimination().apply_pass(sdfg, {}) is None
     assert zeroing_map_ranges(sdfg) == ["0:N + 1, 0:4"]
     test_interstate_read_after_the_fill_keeps_it()
+
+
+def memset_then_prefix_copy(prefix: str, source: str = "0:N") -> dace.SDFG:
+    """``sink = zeros(N + 1, 4); sink[prefix] = c[source]; out = sink`` in one state, the zeros a memset."""
+    sdfg = dace.SDFG(f"memset_then_prefix_copy_{abs(hash(prefix))}")
+    sdfg.add_array("c", [N, 4], dace.float64)
+    sdfg.add_array("out", [N + 1, 4], dace.float64)
+    sdfg.add_transient("sink", [N + 1, 4], dace.float64)
+    state = sdfg.add_state()
+    zeroed = state.add_access("sink")
+    fill = FillLibraryNode("memset_sink", value=0)
+    state.add_node(fill)
+    state.add_edge(fill, FillLibraryNode.OUTPUT_CONNECTOR_NAME, zeroed, None, dace.Memlet("sink[0:N + 1, 0:4]"))
+    c = state.add_read("c")
+    state.add_nedge(zeroed, c, dace.Memlet())
+    written = state.add_access("sink")
+    state.add_nedge(c, written, dace.Memlet(data="c", subset=f"{source}, 0:4", other_subset=f"{prefix}, 0:4"))
+    state.add_nedge(written, state.add_write("out"), dace.Memlet("sink[0:N + 1, 0:4]"))
+    return sdfg
+
+
+def filled_subsets(sdfg: dace.SDFG) -> list[str]:
+    return [
+        str(state.out_edges(n)[0].data.subset)
+        for n, state in sdfg.all_nodes_recursive()
+        if isinstance(n, FillLibraryNode)
+    ]
+
+
+def test_memset_a_copy_overwrites_but_its_last_row_shrinks_to_that_row():
+    sdfg = memset_then_prefix_copy("0:N")
+    assert DeadFillElimination().apply_pass(sdfg, {}) == 1
+    assert filled_subsets(sdfg) == ["N, 0:4"]
+    sdfg.validate()
+    c = np.random.rand(9, 4)
+    out = np.full((10, 4), np.nan)
+    sdfg(c=c, out=out, N=9)
+    assert np.array_equal(out, np.concatenate([c, np.zeros((1, 4))]))
+
+
+def test_memset_a_copy_leaves_a_middle_row_of_stays_whole():
+    sdfg = memset_then_prefix_copy("1:N", source="0:N - 1")
+    assert DeadFillElimination().apply_pass(sdfg, {}) is None
+    assert filled_subsets(sdfg) == ["0:N + 1, 0:4"]
+    c = np.random.rand(9, 4)
+    out = np.full((10, 4), np.nan)
+    sdfg(c=c, out=out, N=9)
+    assert np.array_equal(out, np.concatenate([np.zeros((1, 4)), c[:8], np.zeros((1, 4))]))
+
+
+def argument_zeroed_then_written(map_range: str = "0:N") -> dace.SDFG:
+    """``out[:] = 0; out[i] = b[i] for i in map_range`` in one state, ``out`` a program argument."""
+    sdfg = dace.SDFG(f"argument_zeroed_then_written_{abs(hash(map_range))}")
+    sdfg.add_array("b", [N], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    state = sdfg.add_state()
+    zeroed = state.add_access("out")
+    fill = FillLibraryNode("memset_out", value=0)
+    state.add_node(fill)
+    state.add_edge(fill, FillLibraryNode.OUTPUT_CONNECTOR_NAME, zeroed, None, dace.Memlet("out[0:N]"))
+    b = state.add_read("b")
+    state.add_nedge(zeroed, b, dace.Memlet())
+    state.add_mapped_tasklet(
+        "write",
+        {"i": map_range},
+        {"__b": dace.Memlet("b[i]")},
+        "__t = __b",
+        {"__t": dace.Memlet("out[i]")},
+        input_nodes={"b": b},
+        output_nodes={"out": state.add_access("out")},
+        external_edges=True,
+    )
+    return sdfg
+
+
+def test_memset_of_an_argument_overwritten_whole_is_dropped():
+    sdfg = argument_zeroed_then_written()
+    assert DeadFillElimination().apply_pass(sdfg, {}) == 1
+    assert fills(sdfg) == 0
+    sdfg.validate()
+    b = np.random.rand(17)
+    out = np.full(17, np.nan)
+    sdfg(b=b, out=out, N=17)
+    assert np.array_equal(out, b)
+
+
+def test_memset_of_an_argument_kept_where_the_overwrite_misses_elements():
+    """Nothing reads ``out[0]`` in the SDFG, but the caller does: a transient's fill would go, an argument's stays."""
+    sdfg = argument_zeroed_then_written("1:N")
+    assert DeadFillElimination().apply_pass(sdfg, {}) is None
+    assert fills(sdfg) == 1
+    b = np.random.rand(17)
+    out = np.full(17, np.nan)
+    sdfg(b=b, out=out, N=17)
+    assert out[0] == 0 and np.array_equal(out[1:], b[1:])
+
+
+def test_memset_of_an_argument_kept_inside_a_nested_sdfg():
+    inner = argument_zeroed_then_written()
+    sdfg = dace.SDFG("argument_memset_nested")
+    sdfg.add_array("b", [N], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    state = sdfg.add_state()
+    nested = state.add_nested_sdfg(inner, {"b"}, {"out"}, {"N": "N"})
+    state.add_edge(state.add_read("b"), None, nested, "b", dace.Memlet("b[0:N]"))
+    state.add_edge(nested, "out", state.add_write("out"), None, dace.Memlet("out[0:N]"))
+    assert DeadFillElimination().apply_pass(sdfg, {}) is None
+    assert fills(sdfg) == 1
+    b = np.random.rand(17)
+    out = np.full(17, np.nan)
+    sdfg(b=b, out=out, N=17)
+    assert np.array_equal(out, b)
