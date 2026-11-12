@@ -141,8 +141,60 @@ def test_a_reduction_indexed_by_a_small_axis_loops_over_it_outside_one_parallel_
     np.testing.assert_allclose(m, np.abs(a).max(axis=(1, 2)))
 
 
+def per_atom_forces(name: str, read_back: bool) -> dace.SDFG:
+    """``f[:] = 1`` then ``f[i, c] += x[i, k, c]`` over a map ``(i, k)`` around a map over ``c`` (examinimd)."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("x", [N, N, 3], dace.float64)
+    sdfg.add_array("f", [N, 3], dace.float64)
+    fill = sdfg.add_state()
+    fill.add_mapped_tasklet(
+        "fill", {"i": f"0:{N}", "c": "0:3"}, {}, "out = 1.0", {"out": dace.Memlet("f[i, c]")}, external_edges=True
+    )
+    state = sdfg.add_state_after(fill)
+    pairs, pairs_exit = state.add_map("pairs", {"i": f"0:{N}", "k": f"0:{N}"})
+    comps, comps_exit = state.add_map("comps", {"c": "0:3"})
+    inputs = {"v": None, "g": None} if read_back else {"v": None}
+    tasklet = state.add_tasklet("force", inputs, {"out": None}, "out = v + g" if read_back else "out = v")
+    state.add_memlet_path(state.add_read("x"), pairs, comps, tasklet, dst_conn="v", memlet=dace.Memlet("x[i, k, c]"))
+    if read_back:
+        state.add_memlet_path(state.add_read("f"), pairs, comps, tasklet, dst_conn="g", memlet=dace.Memlet("f[i, c]"))
+    state.add_memlet_path(
+        tasklet, comps_exit, pairs_exit, state.add_write("f"), src_conn="out",
+        memlet=dace.Memlet("f[i, c]", wcr="lambda a, b: a + b"),
+    )
+    sdfg.validate()
+    return sdfg
+
+
+def test_the_reduced_walk_accumulates_in_a_register_and_resolves_into_the_output_once():
+    sdfg = per_atom_forces("cpu_reduction_axes_register_accumulator", read_back=False)
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) == 1
+    registers = [n for n, d in sdfg.arrays.items() if d.transient and d.storage == dtypes.StorageType.Register]
+    assert len(registers) == 1, sdfg.arrays
+    state = list(sdfg.states())[1]
+    writes = [e for e in state.edges() if e.data.data == "f" and e.data.wcr is not None]
+    assert writes and all(
+        isinstance(e.src, nodes.AccessNode) and e.src.data == registers[0] or isinstance(e.src, nodes.MapExit)
+        for e in writes
+    ), "only the accumulator resolves into f"
+    sdfg.validate()
+
+    x = np.random.default_rng(20261112).random((N, N, 3))
+    f = np.zeros((N, 3))
+    sdfg(x=x, f=f)
+    np.testing.assert_allclose(f, 1.0 + x.sum(axis=1), rtol=1e-12)
+
+
+def test_an_output_the_reduced_walk_reads_keeps_accumulating_in_memory():
+    sdfg = per_atom_forces("cpu_reduction_axes_read_back", read_back=True)
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) == 1
+    assert not [n for n, d in sdfg.arrays.items() if d.transient and d.storage == dtypes.StorageType.Register]
+
+
 if __name__ == "__main__":
     test_the_reduced_axis_becomes_an_inner_sequential_loop_and_the_write_needs_no_atomic()
     test_every_indexing_axis_is_shared_out_in_one_collapsed_map()
     test_a_reduction_to_one_element_is_left_to_the_openmp_reduction_clause()
     test_a_reduction_indexed_by_a_small_axis_loops_over_it_outside_one_parallel_map()
+    test_the_reduced_walk_accumulates_in_a_register_and_resolves_into_the_output_once()
+    test_an_output_the_reduced_walk_reads_keeps_accumulating_in_memory()
