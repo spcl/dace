@@ -777,6 +777,10 @@ def _check_neighbor_conflicts(dfg, edge):
             continue
         if sibling.data.data != edge.data.data:
             continue
+        # The same elements in every iteration, owned by that iteration: the two writes meet only inside it, in the
+        # order its dataflow gives them (an inlined body that seeds a row, then accumulates into it)
+        if sibling.data.subset == edge.data.subset and _check_map_conflicts(edge.dst.map, sibling):
+            continue
         # Check if there is definitely no overlap in the propagated memlet
         sibling_outer = propagation.propagate_memlet(dfg, sibling.data, edge.dst, False)
         if subsets.intersects(outer.subset, sibling_outer.subset, facts) is symbolic.Truth.FALSE:

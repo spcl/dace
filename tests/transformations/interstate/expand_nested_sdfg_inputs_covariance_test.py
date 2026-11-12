@@ -98,11 +98,11 @@ def _canonicalize_through_lower(sdfg: dace.SDFG) -> None:
     something to widen (mirrors the task's minimal repro)."""
     seen_lower = False
     for label, unit in build_stages():
-        unit.apply_pass(sdfg, {})
         if label == "lower":
             seen_lower = True
         elif seen_lower:
             break
+        unit.apply_pass(sdfg, {})
 
 
 def _covariance_oracle(data: np.ndarray, n: int, m: int) -> np.ndarray:
