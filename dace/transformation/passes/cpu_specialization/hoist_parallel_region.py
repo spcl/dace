@@ -257,6 +257,55 @@ def expand_in_place(node: nodes.LibraryNode, state: SDFGState) -> list[nodes.Map
     return inner_maps
 
 
+def fill_as_one_map(entry: nodes.MapEntry, state: SDFGState) -> nodes.MapEntry | None:
+    """Rebuild a sequential leaf map whose whole body is one static fill as ONE worksharing map over the
+    map's positions and the fill's elements: a sequential row loop around a row memset
+    goes back to the map it came from, so the body keeps one extent and the strip-mining cuts its columns.
+
+    :returns: the new map's entry, or ``None`` if the map is not that shape.
+    """
+    exit_node = state.exit_node(entry)
+    body = [n for n in state.scope_children()[entry] if n is not exit_node]
+    outputs = state.out_edges(exit_node)
+    if len(body) != 1 or not isinstance(body[0], FillLibraryNode) or body[0].value_edge(state) is not None:
+        return None
+    if len(outputs) != 1 or not isinstance(outputs[0].dst, nodes.AccessNode):
+        return None
+    if any(not e.data.is_empty() for e in state.in_edges(entry)):
+        return None
+    fill = body[0]
+    (written,) = state.out_edges(fill)
+    region = written.data.subset
+    if not isinstance(region, subsets.Range):
+        return None
+    ranges = {
+        param: str(subsets.Range([rng])) for param, rng in zip(entry.map.params, entry.map.range.ranges, strict=True)
+    }
+    index = []
+    for dim, ((begin, _, _), size) in enumerate(zip(region.ranges, region.size(), strict=True)):
+        if size == 1:
+            index.append(str(begin))
+        else:
+            ranges[f"__fill{dim}"] = f"0:{size}"
+            index.append(f"{begin} + __fill{dim}")
+    target = outputs[0].dst
+    predecessors = [e.src for e in state.in_edges(entry)]
+    state.remove_nodes_from([entry, fill, exit_node])
+    _, new_entry, _ = state.add_mapped_tasklet(
+        f"{fill.label}_map",
+        ranges,
+        {},
+        f"__out = {fill.value}",
+        {"__out": Memlet(data=target.data, subset=", ".join(index))},
+        schedule=WORKSHARED,
+        external_edges=True,
+        output_nodes={target.data: target},
+    )
+    for source in predecessors:
+        state.add_nedge(source, new_entry, Memlet())
+    return new_entry
+
+
 def reads_by_data(sdfg: SDFG) -> dict[str, list[subsets.Subset | None]]:
     """Every read of every data container of ``sdfg`` (not of its nests), as the subset it reads over the
     maps around it; an accumulating write reads too."""
@@ -549,8 +598,9 @@ def share_out_bulk_statements(sdfg: SDFG, loop: LoopRegion) -> None:
     ``loop``'s states into a ``CPU_Multicore`` map over the elements it writes, and split the views the
     loop shares with the rest of ``sdfg`` (:func:`split_shared_views`).
 
-    A scratch plane copied whole into its map's exit is replaced by the array it is copied into
-    (:func:`forward_copies_into_exits`), which keeps every map of the body on the elements it writes. The bulk
+    A sequential leaf map holding nothing but a fill becomes one map over both (:func:`fill_as_one_map`), and
+    a scratch plane copied whole into its map's exit is replaced by the array it is copied into
+    (:func:`forward_copies_into_exits`): both keep every map of the body on the elements it writes. The bulk
     statements of a nested SDFG under a worksharing map become sequential maps
     (:func:`sequential_bulk_statements`).
 
@@ -579,7 +629,8 @@ def share_out_bulk_statements(sdfg: SDFG, loop: LoopRegion) -> None:
             for entry in expand_in_place(node, block):
                 entry.map.schedule = WORKSHARED if block.entry_node(entry) is None else dtypes.ScheduleType.Sequential
         for node in [n for n in top_level_nodes(block) if sequential_leaf_map(n, block)]:
-            node.map.schedule = WORKSHARED
+            if fill_as_one_map(node, block) is None:
+                node.map.schedule = WORKSHARED
         for entry in [n for n in top_level_nodes(block) if isinstance(n, nodes.MapEntry)]:
             if entry.map.schedule == WORKSHARED:
                 for node in block.scope_subgraph(entry).nodes():
