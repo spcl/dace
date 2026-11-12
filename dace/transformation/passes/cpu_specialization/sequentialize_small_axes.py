@@ -10,7 +10,8 @@ data, which is small by derivation. In order:
 1. **Nested parallelism.** A map (or library node) inside a parallel map of the same device schedule would open a
    team per outer iteration: sequential at any size, transitively across nested-SDFG boundaries.
 2. **A small map.** A top-level map whose own iteration count (with the sequential maps it pins) is small runs
-   sequentially; :func:`release_one_trip_maps` already took the maps of at most one iteration.
+   sequentially; :func:`release_few_trip_maps` already took the maps of at most one iteration, and those of fewer than a
+   team whose body holds a wider map.
 3. **A data segment under a long loop.** A map whose range starts and ends at values read from data (a CSR row,
    ``indptr[k]:indptr[k + 1]``), or whose extent each outer iteration reads from data (``0:cnt``), inside a
    sequential loop runs a handful of iterations per outer one: a derived ``SMALL`` extent. ilu0's elimination forked
@@ -42,6 +43,7 @@ from dace.symbolic_facts import SMALL_CONSTANT_EXTENT
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import share_out_past_leading_small_axes
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.cpu_specialization.machine import topology
 
 #: Schedules a CPU map or library node still parallelizes under. ``Default`` is included because
 #: canonicalization leaves the schedule unset: codegen infers it, and a top-level ``Default`` map
@@ -56,6 +58,7 @@ SEQUENTIAL_ON_CPU = "run sequentially on CPU -- {reason}"
 NESTED_REASON = "a parallel map encloses it, and a region opens one OpenMP team level only"
 SMALL_REASON = "its {count} iterations are small"
 ONE_TRIP_REASON = "it runs at most once, so it is a guard rather than a loop"
+FEW_TRIPS_REASON = "its {count} iterations leave threads idle, so the maps in its body share out their work instead"
 DATA_SEGMENT_REASON = (
     "its range {begin}:{end} is read from data inside a sequential loop, so every outer iteration would fork "
     "over a few elements"
@@ -275,14 +278,32 @@ def privatize_interior_transients(owner: SDFG, state: SDFGState, entry: nodes.Ma
     return True
 
 
-def release_one_trip_maps(sdfg: SDFG) -> int:
+def few_trips(count: Any, facts_of: Callable[[], symbolic.Facts]) -> bool:
+    """Whether a map of ``count`` iterations provably leaves threads of a team idle: a literal below the host's
+    physical cores (at least ``SMALL_CONSTANT_EXTENT``), or a small count (:func:`small_count`)."""
+    if not symbolic.issymbolic(count):
+        return count < max(SMALL_CONSTANT_EXTENT, topology().physical_cores)
+    return small_count(count, facts_of())
+
+
+def wider(count: Any, outer: Any, facts_of: Callable[[], symbolic.Facts]) -> bool:
+    """Whether a map of ``count`` iterations inside a map of ``outer`` gives a team more work to share out: not
+    small, and more iterations than ``outer`` when both are literals."""
+    if not symbolic.issymbolic(count):
+        return count >= SMALL_CONSTANT_EXTENT and (symbolic.issymbolic(outer) or count > outer)
+    return not small_count(count, facts_of())
+
+
+def release_few_trip_maps(sdfg: SDFG) -> int:
     """Make every top-level CPU map of at most one iteration ``Sequential``, and the maps directly in its body
     (or at the top of a nested SDFG there) ``CPU_Multicore``, so schedule inference does not pin them under it.
+    A map of fewer iterations than a team has threads (:func:`few_trips`) is released the same way when one of
+    those maps shares out more (:func:`wider`): the team goes to the inner maps.
 
     Runs BEFORE inference, while canonicalization's maps are still ``Default``: the peeled first vertical level
-    of ``cloudsc_monolith`` is such a map, and inferred under it its plane maps ran on one thread. A map whose
-    scope reads a shared transient before writing it stays under its parent's schedule
-    (:func:`privatize_interior_transients`).
+    of ``cloudsc_monolith`` is such a map, and inferred under it its plane maps ran on one thread; so did the
+    ``ngms`` maps under ``newdxx_g``'s map over 5 atoms. A map whose scope reads a shared transient before writing
+    it stays under its parent's schedule (:func:`privatize_interior_transients`).
 
     :param sdfg: the SDFG whose own states are rewritten.
     :returns: how many such maps were found.
@@ -294,15 +315,20 @@ def release_one_trip_maps(sdfg: SDFG) -> int:
         for wrapper in children[None]:
             if not isinstance(wrapper, nodes.MapEntry) or wrapper.map.schedule != dtypes.ScheduleType.Default:
                 continue
-            if not at_most_one_trip(wrapper.map.range.num_elements(), lambda state=state: resolver.facts_at(state)):
+            count = wrapper.map.range.num_elements()
+            facts_of = lambda state=state: resolver.facts_at(state)
+            one_trip = at_most_one_trip(count, facts_of)
+            if not one_trip and not few_trips(count, facts_of):
                 continue
-            note_sequential(wrapper, ONE_TRIP_REASON)
-            found += 1
             body = [(sdfg, state, n) for n in children[wrapper] if isinstance(n, nodes.MapEntry)]
             for nested in [n for n in children[wrapper] if isinstance(n, nodes.NestedSDFG) and n.sdfg is not None]:
                 for inner_state in nested.sdfg.states():
                     inner = inner_state.scope_children()[None]
                     body += [(nested.sdfg, inner_state, n) for n in inner if isinstance(n, nodes.MapEntry)]
+            if not one_trip and not any(wider(e.map.range.num_elements(), count, facts_of) for _, _, e in body):
+                continue
+            note_sequential(wrapper, ONE_TRIP_REASON if one_trip else FEW_TRIPS_REASON.format(count=count))
+            found += 1
             for owner, body_state, entry in body:
                 if entry.map.schedule == dtypes.ScheduleType.Default and privatize_interior_transients(
                     owner, body_state, entry

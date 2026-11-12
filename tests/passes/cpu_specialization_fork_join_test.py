@@ -31,7 +31,7 @@ from dace.transformation.passes.cpu_specialization import (
     SequentializeSmallAxes,
     SpecializeCpuTransfers,
 )
-from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import release_one_trip_maps
+from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import release_few_trip_maps
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -295,7 +295,7 @@ def test_one_trip_map_releases_the_maps_in_its_body():
     state.add_nedge(entry, nsdfg, dace.Memlet())
     state.add_memlet_path(nsdfg, exit_node, state.add_write("a"), src_conn="a", memlet=dace.Memlet("a[0:N]"))
     sdfg.validate()
-    assert release_one_trip_maps(sdfg) == 1
+    assert release_few_trip_maps(sdfg) == 1
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
     SequentializeSmallAxes().apply_pass(sdfg, {})
     assert schedules(sdfg) == {"peeled": dtypes.ScheduleType.Sequential, "plane_map": dtypes.ScheduleType.CPU_Multicore}
@@ -319,7 +319,7 @@ def test_map_of_at_most_one_trip_by_the_sdfg_facts_is_released():
     state.add_nedge(entry, nsdfg, dace.Memlet())
     state.add_memlet_path(nsdfg, exit_node, state.add_write("a"), src_conn="a", memlet=dace.Memlet("a[0:N]"))
     sdfg.validate()
-    assert release_one_trip_maps(sdfg) == 1
+    assert release_few_trip_maps(sdfg) == 1
     assert schedules(sdfg)["peeled"] == dtypes.ScheduleType.Sequential
 
 
@@ -358,7 +358,7 @@ def test_released_maps_get_their_own_staged_scalars():
             nsdfg, exit_node, state.add_write(name), src_conn=name, memlet=dace.Memlet(f"{name}[0:N]")
         )
     sdfg.validate()
-    assert release_one_trip_maps(sdfg) == 1
+    assert release_few_trip_maps(sdfg) == 1
     sdfg.validate()
     assert schedules(sdfg) == {
         "peeled": dtypes.ScheduleType.Sequential,
@@ -393,8 +393,75 @@ def test_a_map_reading_a_shared_scalar_first_stays_under_its_parent():
     nsdfg = state.add_nested_sdfg(inner, {}, {"a"}, symbol_mapping={"N": N})
     state.add_nedge(entry, nsdfg, dace.Memlet())
     state.add_memlet_path(nsdfg, exit_node, state.add_write("a"), src_conn="a", memlet=dace.Memlet("a[0:N]"))
-    assert release_one_trip_maps(sdfg) == 1
+    assert release_few_trip_maps(sdfg) == 1
     assert reader.map.schedule == dtypes.ScheduleType.Default
+
+
+def atoms_sdfg(name, outer, inner="0:N"):
+    """``b[k, i] = 2 * a[k, i] + 1`` in a map over the atoms ``k`` (extent ``outer``) around a map over ``i``,
+    both ``Default`` as canonicalization leaves them: ``newdxx_g``'s atom map around its ``ngms`` maps."""
+    sdfg = dace.SDFG(name)
+    for array in ("a", "b"):
+        sdfg.add_array(array, [outer, inner.split(":")[1]], dace.float64)
+    state = sdfg.add_state("atoms")
+    outer_entry, outer_exit = state.add_map("atom", {"k": f"0:{outer}"})
+    inner_entry, inner_exit = state.add_map("plane", {"i": inner})
+    tasklet = state.add_tasklet("scale", {"x"}, {"y"}, "y = 2.0 * x + 1.0")
+    state.add_memlet_path(
+        state.add_read("a"), outer_entry, inner_entry, tasklet, dst_conn="x", memlet=dace.Memlet("a[k, i]")
+    )
+    state.add_memlet_path(
+        tasklet, inner_exit, outer_exit, state.add_write("b"), src_conn="y", memlet=dace.Memlet("b[k, i]")
+    )
+    sdfg.validate()
+    return sdfg
+
+
+def specialize_atoms(sdfg):
+    """The CPU tail of ``finalize_stages`` on ``sdfg``: release, inference, the fork/join model."""
+    from dace.sdfg import infer_types
+
+    released = release_few_trip_maps(sdfg)
+    infer_types.set_default_schedule_and_storage_types(sdfg, None)
+    SequentializeSmallAxes().apply_pass(sdfg, {})
+    return released
+
+
+def test_few_atoms_give_the_team_to_the_inner_map():
+    """Five atoms around a map over ``N``: the five would leave most of a team idle, so the atom map runs
+    sequentially and the inner map is shared out (``newdxx_g``, spcl/NestForge#78: 5 of 72 cores worked)."""
+    sdfg = atoms_sdfg("few_atoms", 5)
+    assert specialize_atoms(sdfg) == 1
+    assert schedules(sdfg) == {"atom": dtypes.ScheduleType.Sequential, "plane": dtypes.ScheduleType.CPU_Multicore}
+    a = np.random.default_rng(7).random((5, 300))
+    b = np.zeros_like(a)
+    sdfg(a=a, b=b, N=300)
+    np.testing.assert_allclose(b, 2.0 * a + 1.0)
+
+
+@pytest.mark.parametrize("outer", ["M", f"{ABOVE_BREAK_EVEN}"])
+def test_many_atoms_keep_the_team(outer):
+    """A symbolic count, or a literal above any core count, may fill the team: the outer map keeps it."""
+    sdfg = atoms_sdfg(f"many_atoms_{outer}", outer)
+    assert specialize_atoms(sdfg) == 0
+    assert schedules(sdfg) == {"atom": dtypes.ScheduleType.CPU_Multicore, "plane": dtypes.ScheduleType.Sequential}
+
+
+def test_few_atoms_around_a_small_map_stay_together():
+    """Five atoms around a map of three: no inner map shares out more, so nothing is released."""
+    sdfg = atoms_sdfg("few_atoms_small_planes", 5, "0:3")
+    assert specialize_atoms(sdfg) == 0
+
+
+@pytest.mark.parametrize("cores, released", [(96, 1), (8, 0)])
+def test_a_literal_below_the_core_count_releases_its_body(monkeypatch, cores, released):
+    """80 atoms is not ``SMALL``, but fewer than 96 cores: the release follows the host's core count."""
+    from types import SimpleNamespace
+
+    from dace.transformation.passes.cpu_specialization import sequentialize_small_axes
+
+    monkeypatch.setattr(sequentialize_small_axes, "topology", lambda: SimpleNamespace(physical_cores=cores))
+    assert release_few_trip_maps(atoms_sdfg(f"atoms_on_{cores}_cores", 80)) == released
 
 
 def test_triangular_map_in_loop_stays_parallel():
