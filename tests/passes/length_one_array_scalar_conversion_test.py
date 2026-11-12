@@ -686,3 +686,49 @@ def test_a_rewritten_symbol_mapping_stays_symbolic():
     assert {str(sym) for sym in value.free_symbols} == {"rows", "cols"}, value
     assert int(value.subs({sympy.Symbol("rows"): 3, sympy.Symbol("cols"): 5})) == 15, value
     test_control_flow_only_gate_gets_a_copyin()
+
+
+def _single_element_scratch_sdfg(nested: bool) -> dace.SDFG:
+    """``tmp[0, 0] = alpha[0] * 2; beta[0] = tmp[0, 0] + 1`` through a ``(1, 1)`` transient, read in a nested SDFG if
+    ``nested``."""
+    sdfg = dace.SDFG(f"single_element_scratch_{nested}")
+    sdfg.add_array("alpha", [1], dace.float64)
+    sdfg.add_array("beta", [1], dace.float64)
+    sdfg.add_transient("tmp", [1, 1], dace.float64)
+    st = sdfg.add_state()
+    tmp = st.add_access("tmp")
+    t = st.add_tasklet("double", {"x"}, {"y"}, "y = x * 2.0")
+    st.add_edge(st.add_read("alpha"), None, t, "x", dace.Memlet("alpha[0]"))
+    st.add_edge(t, "y", tmp, None, dace.Memlet("tmp[0, 0]"))
+    if nested:
+        inner = dace.SDFG("inc")
+        inner.add_array("s", [1, 1], dace.float64)
+        inner.add_array("o", [1], dace.float64)
+        ist = inner.add_state()
+        it = ist.add_tasklet("inc", {"x"}, {"y"}, "y = x + 1.0")
+        ist.add_edge(ist.add_read("s"), None, it, "x", dace.Memlet("s[0, 0]"))
+        ist.add_edge(it, "y", ist.add_write("o"), None, dace.Memlet("o[0]"))
+        consumer = st.add_nested_sdfg(inner, {"s"}, {"o"})
+        st.add_edge(tmp, None, consumer, "s", dace.Memlet("tmp[0:1, 0:1]"))
+        st.add_edge(consumer, "o", st.add_write("beta"), None, dace.Memlet("beta[0]"))
+    else:
+        consumer = st.add_tasklet("inc", {"x"}, {"y"}, "y = x + 1.0")
+        st.add_edge(tmp, None, consumer, "x", dace.Memlet("tmp[0, 0]"))
+        st.add_edge(consumer, "y", st.add_write("beta"), None, dace.Memlet("beta[0]"))
+    return sdfg
+
+
+def test_single_element_scratch_becomes_a_scalar():
+    sdfg = _single_element_scratch_sdfg(nested=False)
+    assert ConvertLengthOneArraysToScalars(single_element=True).apply_pass(sdfg, {}) >= {"tmp"}
+    assert isinstance(sdfg.arrays["tmp"], dd.Scalar)
+    sdfg.validate()
+    assert _run(sdfg, 3.0) == 7.0
+
+
+def test_single_element_scratch_a_nested_sdfg_reads_stays_an_array():
+    sdfg = _single_element_scratch_sdfg(nested=True)
+    assert ConvertLengthOneArraysToScalars(single_element=True).apply_pass(sdfg, {}) is None
+    assert type(sdfg.arrays["tmp"]) is dd.Array
+    sdfg.validate()
+    assert _run(sdfg, 3.0) == 7.0

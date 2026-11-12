@@ -79,16 +79,15 @@ def test_canonicalize_validates_and_leaves_no_oversized_subset():
 
 
 def test_scalarized_single_element_scratch_validates():
-    """canonicalize + ``single_element`` scalarization validates.
+    """canonicalize's ``single_element`` scalarization validates and leaves nothing to scalarize.
 
     FAILS without the ``other_subset`` collapse in ``ConvertLengthOneArraysToScalars``
     with ``InvalidSDFGEdgeError: Memlet other_subset does not match node dimension
     (expected 1, got 2)`` on the ``(1, 1)`` MapFusion scratch.
     """
     sdfg = _canonicalized("single_element")
-    scalarized = ConvertLengthOneArraysToScalars(single_element=True).apply_pass(sdfg, {})
-    assert scalarized, "expected canonicalize to leave single-element scratch for scalarization"
     sdfg.validate()
+    assert ConvertLengthOneArraysToScalars(single_element=True).apply_pass(sdfg, {}) is None
 
 
 @pytest.mark.parametrize("size", [(32, 32, 32), (33, 32, 30)])
