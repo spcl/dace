@@ -546,6 +546,8 @@ class ExpandTensorTransposeCUDA(ExpandTransformation):
 class TensorTranspose(nodes.LibraryNode):
     """Implements out-of-place tensor transpositions."""
 
+    operand_subsets = "exact"
+
     implementations = {
         "pure": ExpandPure,
         "sequential": ExpandSequential,

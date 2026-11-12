@@ -322,6 +322,7 @@ class ExpandInvBlock(ExpandLapackBlock):
 
 @dace.library.node
 class Inv(dace.sdfg.nodes.LibraryNode):
+    operand_subsets = "squeeze"
     # Global properties
     implementations = {
         "pure": ExpandInvPure,

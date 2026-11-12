@@ -618,6 +618,8 @@ class ExpandHipTensorDot(ExpandGPUTensorDot):
 class TensorDot(nodes.LibraryNode):
     """Implements tensor dot-product."""
 
+    operand_subsets = "exact"
+
     implementations = {
         "pure": ExpandPure,
         "TTGT": ExpandTTGT,

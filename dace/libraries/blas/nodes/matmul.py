@@ -388,6 +388,8 @@ class MatMul(dace.sdfg.nodes.LibraryNode):
     computational operators, namely GEMM, batched matrix multiplication,
     GEMV, and DOT."""
 
+    operand_subsets = "squeeze"
+
     # Global properties
     implementations = {
         "specialize": SpecializeMatMul,

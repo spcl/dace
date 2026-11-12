@@ -791,21 +791,22 @@ class RemoveViews(ppl.Pass):
         return f"Removed {len(pass_retval)} views: {pass_retval}."
 
     @staticmethod
-    def _is_library_node_operand(state: SDFGState, vnode: nd.AccessNode) -> bool:
-        """True if ``vnode`` is a direct input or output of a library node.
-
-        Such a View provides the operand's expected (squeezed) shape, so it must
-        survive until the library node is expanded -- removing it widens the operand
-        back to the backing array's dimensionality, which a shape-sensitive expansion
-        (notably GEMM / MatMul, which needs exactly 2D operands) cannot handle.
-        """
-        for e in state.in_edges(vnode):
-            if isinstance(e.src, nd.LibraryNode):
-                return True
-        for e in state.out_edges(vnode):
-            if isinstance(e.dst, nd.LibraryNode):
-                return True
-        return False
+    def library_node_operands(state: SDFGState, vnode: nd.AccessNode, vdesc, adesc, viewed_subset) -> list | None:
+        """The library nodes ``vnode`` is a whole operand of, as ``(node, connector, dims)`` with the dimensions of
+        ``viewed_subset`` each reads in the View's place (``LibraryNode.operand_dims``); ``None`` when one of them
+        cannot, so the View gives it its operand's shape until expansion (a reshape, a unit dimension it keeps)."""
+        full = subsets.Range.from_array(vdesc)
+        operands = []
+        for e in state.all_edges(vnode):
+            node, conn = (e.src, e.src_conn) if e.dst is vnode else (e.dst, e.dst_conn)
+            if not isinstance(node, nd.LibraryNode):
+                continue
+            whole = e.data.data == vnode.data and e.data.wcr is None and e.data.subset == full
+            dims = node.operand_dims(conn, viewed_subset, adesc, vdesc) if whole else None
+            if dims is None:
+                return None
+            operands.append((node, conn, dims))
+        return operands
 
     @staticmethod
     def _is_reduce_output_slice(sdfg: SDFG, state: SDFGState, vnode: nd.AccessNode, viewed_node: nd.AccessNode) -> bool:
@@ -853,19 +854,17 @@ class RemoveViews(ppl.Pass):
                 continue
             viewed_node, view_edge, viewed_subset, is_viewed_src = info
 
-            # Do not remove a View that is a direct input/output of a library node
-            # (e.g. a GEMM / MatMul operand). The View supplies the operand's expected
-            # squeezed shape -- a 2D ``[M, N]`` slice of an N-D array. Rewriting it to
-            # the backing array re-introduces the size-1 leading dims (``[1, 1, .., M, N]``),
-            # and the library node's expansion -- which requires exactly 2D operands --
-            # then rejects it (scattering_self_energies: ``G[k, E-w, neigh] @ dH[a, b, i]``).
-            # The View is a no-op reshape that must survive until the node is expanded.
-            if self._is_library_node_operand(state, vnode) and not self._is_reduce_output_slice(
-                sdfg, state, vnode, viewed_node
-            ):
-                if _DEBUGPRINT:
-                    print(f'[{_PASS}]   "{vnode.data}": library-node operand -- skipping')
-                continue
+            vdesc = sdfg.arrays[vnode.data]
+            adesc = sdfg.arrays[viewed_node.data]
+            # A library node reads a slice in place of the View only where it says so: the View is otherwise the
+            # operand's shape until expansion (scattering_self_energies: ``G[k, E-w, neigh] @ dH[a, b, i]``).
+            operands = self.library_node_operands(state, vnode, vdesc, adesc, viewed_subset)
+            if operands is None:
+                if not self._is_reduce_output_slice(sdfg, state, vnode, viewed_node):
+                    if _DEBUGPRINT:
+                        print(f'[{_PASS}]   "{vnode.data}": library-node operand -- skipping')
+                    continue
+                operands = []
 
             # A nested SDFG's connector descriptor IS the container it is bound to (No-View). Binding it to the
             # viewed array instead would need the nested SDFG's descriptor and accesses rewritten.
@@ -873,16 +872,11 @@ class RemoveViews(ppl.Pass):
                 continue
 
             if _DEBUGPRINT:
-                vdesc = sdfg.arrays[vnode.data]
-                adesc = sdfg.arrays[viewed_node.data]
                 direction = "read" if is_viewed_src else "write"
                 print(f'[{_PASS}]   "{vnode.data}" -> "{viewed_node.data}" ({direction})')
                 print(f"[{_PASS}]     view:  {_fmt_desc(vdesc, vnode.data)}")
                 print(f"[{_PASS}]     array: {_fmt_desc(adesc, viewed_node.data)}")
                 print(f"[{_PASS}]     view edge subset: {viewed_subset}")
-
-            vdesc = sdfg.arrays[vnode.data]
-            adesc = sdfg.arrays[viewed_node.data]
 
             # Strategy 1: slice / squeeze / unsqueeze
             mapping_result = sdutil.map_view_to_array(vdesc, adesc, viewed_subset)
@@ -914,6 +908,8 @@ class RemoveViews(ppl.Pass):
                     self._rewrite_interstate_edges(sdfg, vnode.data, _rw_1)
                     self._reconnect_edges(state, vnode, view_edge, is_viewed_src)
                     state.remove_node(vnode)
+                    for node, conn, dims in operands:
+                        node.rebind_operand(conn, dims)
                     self._cleanup_isolated_viewed_node(state, viewed_node)
                     removed.add(vnode.data)
                     changed = True
@@ -950,6 +946,8 @@ class RemoveViews(ppl.Pass):
                     self._rewrite_interstate_edges(sdfg, vnode.data, _rw_1b)
                     self._reconnect_edges(state, vnode, view_edge, is_viewed_src)
                     state.remove_node(vnode)
+                    for node, conn, dims in operands:
+                        node.rebind_operand(conn, dims)
                     self._cleanup_isolated_viewed_node(state, viewed_node)
                     removed.add(vnode.data)
                     changed = True
@@ -959,6 +957,10 @@ class RemoveViews(ppl.Pass):
 
             if _DEBUGPRINT:
                 print(f"[{_PASS}]     strategy 1b: derive_mapping_from_subset returned None")
+
+            # A library node reads the subset as is: a linearized index is no operand of it
+            if operands:
+                continue
 
             # Strategy 2: dense reshape
             if self._try_linearize_removal(

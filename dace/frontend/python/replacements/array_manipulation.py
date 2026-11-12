@@ -271,20 +271,20 @@ def _transpose(
         # so validation accepts a ``(N, 1)``, and the BLAS expansions now hand a one-element
         # operand to the pure single-element tasklet instead of building an omatcopy call around a
         # scalar (``linalg/nodes/transpose._is_single_element``). Every 2D shape goes to the node.
-        acc1, memlet = operand_read(pv, sdfg, state, inpname)
-        acc2 = state.add_write(outname)
         import dace.libraries.linalg  # Avoid import loop
 
         tasklet = dace.libraries.linalg.Transpose("_Transpose_", restype)
+        acc1, memlet = operand_read(pv, sdfg, state, inpname, tasklet, "_inp")
+        acc2 = state.add_write(outname)
         state.add_node(tasklet)
         state.add_edge(acc1, None, tasklet, "_inp", memlet)
         state.add_edge(tasklet, "_out", acc2, None, Memlet.from_array(outname, arr2))
     else:  # Tensor transpose
-        read, memlet = operand_read(pv, sdfg, state, inpname, squeeze=False)
-        write = state.add_write(outname)
         from dace.libraries.linalg import TensorTranspose  # Avoid import loop
 
         tasklet = TensorTranspose("_TensorTranspose", axes or list(range(len(arr1.shape))))
+        read, memlet = operand_read(pv, sdfg, state, inpname, tasklet, "_inp_tensor")
+        write = state.add_write(outname)
         state.add_node(tasklet)
         state.add_edge(read, None, tasklet, "_inp_tensor", memlet)
         state.add_edge(tasklet, "_out_tensor", write, None, Memlet.from_array(outname, arr2))
