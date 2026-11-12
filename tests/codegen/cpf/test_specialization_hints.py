@@ -722,8 +722,9 @@ def test_a_guarded_loop_names_its_guard_on_both_arms():
 
 def test_a_map_resting_on_an_unknown_sign_is_versioned_on_it():
     """``a[i] = a[i + K] + b[i]`` is parallel after the snapshot only for ``K >= 0``. Nothing declares ``K``
-    nonnegative, so canonicalization versions the loop on the sign instead of assuming it: the parallel map runs
-    under a ``0 <= K`` branch, and the other signs keep a version of their own."""
+    nonnegative, so canonicalization versions the loop on the sign instead of assuming it: ``K < 0`` keeps a version
+    of its own, and the parallel map runs in the arm after it, whose guard facts prove ``0 <= K``, so no sequential
+    fallback is left."""
 
     @dace.program
     def shift_sym(a: dace.float64[N], b: dace.float64[N]):
@@ -744,7 +745,8 @@ def test_a_map_resting_on_an_unknown_sign_is_versioned_on_it():
         for cond, _ in region.branches
         if cond is not None
     ]
-    assert "(0 <= K)" in branches, branches
+    assert branches == ["((- K) >= 1)"], branches
+    assert not loops_of(sdfg), [loop.label for loop in loops_of(sdfg)]
 
 
 def test_a_map_resting_on_no_trap_assumes_nothing():
