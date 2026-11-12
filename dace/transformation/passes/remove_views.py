@@ -204,7 +204,7 @@ def _compute_rewritten_subset(
     return subsets.Range(new_ranges)
 
 
-class _DimGroups:
+class DimGroups:
     """A dense C-contiguous reshape as consecutive groups of dimensions: one view dimension split over several array
     dimensions, several merged into one, or one kept. Each group is linearized and delinearized on its own, so a
     symbolic reshape keeps the indices it does not touch: ``[r, c]`` of a ``(R, B*B)`` view of ``(R, B, B)`` is
@@ -215,7 +215,7 @@ class _DimGroups:
         self.groups, self.vshape, self.ashape = groups, vshape, ashape
 
     @staticmethod
-    def of(vdesc: dt.Data, adesc: dt.Data) -> "_DimGroups | None":
+    def of(vdesc: dt.Data, adesc: dt.Data) -> "DimGroups | None":
         """The groups of ``vdesc`` over ``adesc``, or None if a descriptor is not C-contiguous or no grouping exists."""
         for desc in (vdesc, adesc):
             if any(symbolic.equal(st, _product(desc.shape[d + 1 :])) is not True for d, st in enumerate(desc.strides)):
@@ -232,7 +232,7 @@ class _DimGroups:
                 return None
             groups.append((list(range(i, i + found[0])), list(range(j, j + found[1]))))
             i, j = i + found[0], j + found[1]
-        return _DimGroups(groups, vshape, ashape) if (i, j) == (len(vshape), len(ashape)) else None
+        return DimGroups(groups, vshape, ashape) if (i, j) == (len(vshape), len(ashape)) else None
 
     def indices(self, index: list, floor: Callable, mod: Callable, mul: Callable, add: Callable) -> list:
         """Array indices of the view ``index``, built with the given operators (sympy or Python AST)."""
@@ -292,6 +292,15 @@ class _DimGroups:
             return build
 
         return self.indices(index, binop(ast.FloorDiv()), binop(ast.Mod()), binop(ast.Mult()), binop(ast.Add()))
+
+
+def dim_groups(view_desc: dt.Data, array_desc: dt.Data) -> DimGroups | None:
+    """The dense reshape of ``array_desc`` that ``view_desc`` is, as groups of dimensions, or None if it is none.
+
+    Rewrites an access of the view onto the array with :meth:`DimGroups.indices` (sympy),
+    :meth:`DimGroups.subset` (a memlet subset) or :meth:`DimGroups.ast_indices` (Python tasklet code).
+    """
+    return DimGroups.of(view_desc, array_desc)
 
 
 def _product(values: list) -> Any:
@@ -434,7 +443,7 @@ class _ReshapeIndexRewriter(ast.NodeTransformer):
         vstrides: list[int],
         astrides: list[int],
         array_shape: list[int],
-        groups: "_DimGroups | None" = None,
+        groups: "DimGroups | None" = None,
     ):
         self.connector = connector
         self.groups = groups
@@ -548,7 +557,7 @@ class _InterstateSubscriptRewriter(ast.NodeTransformer):
             self.vstrides: list[int] = kwargs["vstrides"]
             self.astrides: list[int] = kwargs["astrides"]
             self.array_shape: list[int] = kwargs["array_shape"]
-            self.groups: _DimGroups | None = kwargs.get("groups")
+            self.groups: DimGroups | None = kwargs.get("groups")
         else:
             raise ValueError(f"Unknown mode: {mode!r}")
 
@@ -1160,7 +1169,7 @@ class RemoveViews(ppl.Pass):
         vstrides = _int_strides(vdesc)
         astrides = _int_strides(adesc)
         # Symbolic sizes: a dense reshape of grouped dimensions, each group rewritten on its own
-        groups = _DimGroups.of(vdesc, adesc) if None in (view_shape, array_shape, vstrides, astrides) else None
+        groups = dim_groups(vdesc, adesc) if None in (view_shape, array_shape, vstrides, astrides) else None
         if None in (view_shape, array_shape, vstrides, astrides) and groups is None:
             if _DEBUGPRINT:
                 print(f"[{_PASS}]     {strat_name}: symbolic shapes/strides -- skipping")
