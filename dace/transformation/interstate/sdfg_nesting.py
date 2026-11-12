@@ -292,7 +292,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if any(
                 not _is_view_of(nstate, neighbor, n)
                 for n in accesses
-                for neighbor in [e.src for e in data_edges(nstate, n, True)] + [e.dst for e in data_edges(nstate, n, False)]
+                for neighbor in [e.src for e in data_edges(nstate, n, True)]
+                + [e.dst for e in data_edges(nstate, n, False)]
                 if isinstance(neighbor, (nodes.AccessNode, nodes.LibraryNode))
             ):
                 continue
@@ -411,6 +412,25 @@ class InlineSDFG(transformation.SingleStateTransformation):
         rem_inpconns = dc(in_connectors)
         rem_outconns = dc(out_connectors)
         nstate: SDFGState = nested_sdfg.sdfg.nodes()[0]
+        # A carrier's library neighbor is ordered through the outer access node on its connector
+        # (``_order_library_neighbors``); one that also reaches the body through another connector (or is reached from
+        # it, for an output) would close a cycle
+        for node in self._order_carriers(nstate, in_connectors | out_connectors):
+            for reads, edges in ((True, data_edges(nstate, node, False)), (False, data_edges(nstate, node, True))):
+                if node.data not in (in_connectors if reads else out_connectors) or not any(
+                    isinstance(e.dst if reads else e.src, nodes.LibraryNode) for e in edges
+                ):
+                    continue
+                if reads:
+                    outer = next(graph.in_edges_by_connector(nested_sdfg, node.data)).src
+                    others = [e.src for e in graph.in_edges(nested_sdfg) if e.dst_conn != node.data]
+                else:
+                    outer = next(graph.out_edges_by_connector(nested_sdfg, node.data)).dst
+                    others = [e.dst for e in graph.out_edges(nested_sdfg) if e.src_conn != node.data]
+                if isinstance(outer, nodes.AccessNode):
+                    linked = descendants(graph, outer) if reads else ancestors(graph, outer)
+                    if any(other is outer or other in linked for other in others):
+                        return False
         # Verify that all connectors have a corresponding access node that is valid
         valid_inpconns = set()
         valid_outconns = set()
@@ -771,7 +791,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     name = sdfg.add_datadesc(new_name, datadesc)
                     transients[node.data] = name
 
-        self._order_by_tasklet(nstate, inputs.keys() | outputs.keys())
+        deferred_orders = self._order_by_tasklet(nstate, inputs.keys() | outputs.keys())
 
         # Collect nodes to add to top-level graph
         new_incoming_edges: dict[nodes.Node, MultiConnectorEdge] = {}
@@ -1068,6 +1088,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if parent is None and node in subgraph.nodes():
                 inlined[node] = nstate.exit_node(node) if isinstance(node, nodes.EntryNode) else node
                 inlined[inlined[node]] = inlined[node]
+        self._order_library_neighbors(state, deferred_orders)
         keep_nest_order(state, inlined, successors, predecessors)
 
         #######################################################
@@ -1082,27 +1103,76 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 state.remove_node(dnode)
 
     @staticmethod
-    def _order_by_tasklet(nstate: SDFGState, connectors: set[str]) -> None:
+    def _order_carriers(nstate: SDFGState, connectors: set[str]) -> list[nodes.AccessNode]:
+        """The connector access nodes that may become boundary nodes -- read but not written, or written but not
+        read, inside -- and carry ordering edges."""
+        return [
+            node
+            for node in nstate.data_nodes()
+            if node.data in connectors
+            and any(e.data.is_empty() for e in nstate.all_edges(node))
+            and not (data_edges(nstate, node, True) and data_edges(nstate, node, False))
+        ]
+
+    @staticmethod
+    def _order_by_tasklet(
+        nstate: SDFGState, connectors: set[str]
+    ) -> list[tuple[nodes.Tasklet, nodes.LibraryNode, str, bool]]:
         """Hand the ordering edges of each connector access node that may become a boundary node -- read but not
         written, or written but not read, inside -- to an empty tasklet standing in its place: reconnecting the
         boundary node to the outer path drops it, so the order it carried rests on a node that stays. The tasklet
-        takes every edge of the node, data edges as empty ones, so it orders exactly what the node ordered."""
-        for node in list(nstate.data_nodes()):
-            if node.data not in connectors or all(not e.data.is_empty() for e in nstate.all_edges(node)):
-                continue
-            if data_edges(nstate, node, True) and data_edges(nstate, node, False):
-                continue
+        takes every edge of the node, data edges as empty ones, so it orders exactly what the node ordered.
+
+        A library node validates its edges (a Reduce has one input) and takes no ordering edge for a data edge: each
+        such pair is returned as ``(tasklet, library node, connector, whether the library node reads the carrier)`` for
+        ``_order_library_neighbors``."""
+        deferred = []
+        for node in InlineSDFG._order_carriers(nstate, connectors):
             order = nstate.add_tasklet(f"{node.data}_order", {}, {}, "")
             for edge in list(nstate.in_edges(node)):
-                nstate.add_nedge(edge.src, order, Memlet())
+                if isinstance(edge.src, nodes.LibraryNode) and not edge.data.is_empty():
+                    deferred.append((order, edge.src, edge.src_conn, False))
+                else:
+                    nstate.add_nedge(edge.src, order, Memlet())
                 if edge.data.is_empty():
                     nstate.remove_edge(edge)
             for edge in list(nstate.out_edges(node)):
-                nstate.add_nedge(order, edge.dst, Memlet())
+                if isinstance(edge.dst, nodes.LibraryNode) and not edge.data.is_empty():
+                    deferred.append((order, edge.dst, edge.dst_conn, True))
+                else:
+                    nstate.add_nedge(order, edge.dst, Memlet())
                 if edge.data.is_empty():
                     nstate.remove_edge(edge)
             if nstate.degree(node) == 0:
                 nstate.remove_node(node)
+        return deferred
+
+    @staticmethod
+    def _order_library_neighbors(
+        state: SDFGState, deferred: list[tuple[nodes.Tasklet, nodes.LibraryNode, str, bool]]
+    ) -> None:
+        """Order each tasklet ``_order_by_tasklet`` deferred against its library node through the node on that
+        connector's data edge, now in ``state``: an access node (the outer one the carrier was reconnected to, or the
+        carrier itself) takes the ordering edge; any other node, a scope entry or exit, gets a fresh access node of the
+        edge's data between it and the library node. The library node keeps one edge per connector."""
+        for order, lib, conn, reads in deferred:
+            if lib not in state._nodes:
+                continue  # a fission moved it to another state, whose boundary orders it
+            edge = next(state.in_edges_by_connector(lib, conn) if reads else state.out_edges_by_connector(lib, conn))
+            end = edge.src if reads else edge.dst
+            if not isinstance(end, nodes.AccessNode):
+                end = state.add_access(edge.data.data)
+                state.remove_edge(edge)
+                if reads:
+                    state.add_edge(edge.src, edge.src_conn, end, None, dc(edge.data))
+                    state.add_edge(end, None, lib, conn, dc(edge.data))
+                else:
+                    state.add_edge(lib, conn, end, None, dc(edge.data))
+                    state.add_edge(end, None, edge.dst, edge.dst_conn, dc(edge.data))
+            if reads:
+                state.add_nedge(order, end, Memlet())
+            else:
+                state.add_nedge(end, order, Memlet())
 
     @staticmethod
     def _stage_connector_copies(
