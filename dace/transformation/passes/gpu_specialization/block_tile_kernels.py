@@ -556,8 +556,14 @@ def place_barriers(state: SDFGState, lane_zero: OrderedSet[nodes.Node]) -> None:
             for name, subset in accesses:
                 seen.setdefault(name, []).append((subset, zero))
         last = end
-    if read or written:
+    # A container nothing in this SDFG writes is read-only here: reading it orders nothing for later states
+    if written or (read and read.keys() & stored_in(state.sdfg)):
         state.add_edge(last, None, barrier(state), None, Memlet())
+
+
+def stored_in(sdfg: SDFG) -> set[str]:
+    """The containers some access node of ``sdfg`` is written into."""
+    return {node.data for state in sdfg.states() for node in state.data_nodes() if state.in_degree(node) > 0}
 
 
 @properties.make_properties
