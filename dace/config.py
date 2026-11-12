@@ -580,5 +580,6 @@ class Config:
         """
         return Config._data.set(*key_hierarchy, value=value)
 
-    def nondefaults(self) -> dict[str, Any]:
+    @staticmethod
+    def nondefaults() -> dict[str, Any]:
         return Config._data.nondefaults()
