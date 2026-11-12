@@ -509,7 +509,7 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
             desc = sd.arrays.get(name)
             if desc is None:
                 continue
-            if desc.total_size == 1:
+            if desc.total_size == 1 and desc.storage != dtypes.StorageType.GPU_Global:
                 desc.lifetime = dtypes.AllocationLifetime.State
                 desc.storage = dtypes.StorageType.Register(force=True)
                 continue
