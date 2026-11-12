@@ -15,7 +15,7 @@ import numpy as np
 
 from dace import SDFG, data, dtypes, subsets, symbolic
 from dace.codegen.exceptions import CodegenError
-from dace.codegen.python import CUPY_STORAGES
+from dace.codegen.python import CUPY_STORAGES, arguments
 from dace.config import Config
 from dace.memlet import Memlet
 from dace.sdfg import nodes
@@ -278,7 +278,7 @@ class Emitter:
 
     def function(self) -> str:
         sdfg = self.sdfg
-        arglist = sdfg.arglist()
+        arglist = arguments(sdfg)
         with self.block(f"def {sdfg.name}({', '.join(arglist)}):"):
             for name, desc in arglist.items():
                 if isinstance(desc, data.Scalar) and name in sdfg.arrays:

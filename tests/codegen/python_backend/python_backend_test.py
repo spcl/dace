@@ -11,6 +11,7 @@ import dace
 from dace import symbolic
 from dace.codegen.exceptions import CodegenError
 from dace.codegen.python.emit import PRELUDE, generate
+from dace.libraries.standard import Reduce
 from dace.sdfg.state import LoopRegion
 
 N = dace.symbol("N")
@@ -229,6 +230,43 @@ def test_a_gpu_map_without_tile_ops_is_refused():
 
     with python_backend(), pytest.raises(CodegenError, match="holds no tile ops"):
         sdfg.compile()
+
+
+def strided_sum_sdfg(assign_step: bool) -> dace.SDFG:
+    """``out[0] = sum(a[0:inc*(N-1)+1:inc])`` through a ``Reduce`` node, whose input memlet alone names ``inc``; with
+    ``assign_step``, a state before it assigns ``inc = 2``."""
+    sdfg = dace.SDFG("strided_sum")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
+    sdfg.add_symbol("inc", dace.int64)
+    state = sdfg.add_state()
+    if assign_step:
+        sdfg.add_edge(sdfg.add_state(is_start_block=True), state, dace.InterstateEdge(assignments={"inc": "2"}))
+    reduce = Reduce("sum", "lambda x, y: x + y", axes=[0], identity=0.0)
+    state.add_edge(state.add_read("a"), None, reduce, "_in", dace.Memlet("a[0:inc*(N-1)+1:inc]"))
+    state.add_edge(reduce, "_out", state.add_write("out"), None, dace.Memlet("out[0]"))
+    return sdfg
+
+
+def test_a_symbol_only_the_step_of_a_library_input_names_is_an_argument():
+    """``SDFG.arglist`` reads a library node's input memlet as a C++ view, by its start alone; the Python slice
+    evaluates its end and step too."""
+    sdfg = strided_sum_sdfg(assign_step=False)
+    source = function_source(sdfg)
+    with python_backend():
+        compiled = sdfg.compile()
+    a, out = np.arange(10.0), np.zeros(1)
+
+    compiled(a=a, out=out, N=4, inc=3)
+
+    assert source.startswith("def strided_sum(a, out, N, inc):")
+    assert out[0] == a[0:10:3].sum()
+
+
+def test_a_step_the_program_assigns_is_no_argument():
+    source = function_source(strided_sum_sdfg(assign_step=True))
+
+    assert source.startswith("def strided_sum(a, out, N):")
 
 
 @dace.program
@@ -466,3 +504,32 @@ def test_two_nested_sdfgs_with_one_connector_name_each_bind_their_own_arrays():
     namespace["two_doublers"](p=p, q=q, r=r, s=s)
 
     assert q.tolist() == [0.0, 2.0, 4.0, 6.0] and s.tolist() == [20.0, 22.0, 24.0, 26.0]
+
+
+if __name__ == "__main__":
+    test_loops_maps_and_branches_compute_what_numpy_does()
+    test_a_counted_loop_is_a_python_for_over_a_range()
+    test_a_write_conflict_accumulates_every_iteration()
+    test_a_while_loop_with_a_break_stops_at_the_first_hit()
+    test_a_continue_skips_the_rest_of_the_iteration()
+    test_several_return_values_come_back_as_a_tuple()
+    test_a_view_writes_through_to_the_viewed_array()
+    test_a_nested_sdfg_binds_its_row_in_place()
+    test_an_in_out_connector_of_a_nested_sdfg_binds_once()
+    test_a_rebuild_of_equal_size_runs_the_new_code()
+    test_a_cpp_tasklet_is_refused()
+    test_a_gpu_map_without_tile_ops_is_refused()
+    test_a_symbol_only_the_step_of_a_library_input_names_is_an_argument()
+    test_a_step_the_program_assigns_is_no_argument()
+    test_positional_arguments_bind_in_the_order_of_the_program_signature()
+    test_a_constant_sizes_a_transient_and_reaches_a_tasklet()
+    test_python_modulo_floors_and_c_modulo_truncates_a_negative_dividend()
+    test_a_symbolic_modulo_bound_keeps_its_rounding()
+    test_a_percent_in_interstate_code_and_in_a_tasklet_truncates_as_in_c()
+    test_the_c_modulo_of_two_integers_is_an_exact_integer()
+    test_an_infinite_constant_seeds_a_tasklet()
+    test_two_nested_sdfgs_with_one_connector_name_each_bind_their_own_arrays()
+    for condition, expected in [(-1.0, 1.0), (1.0, 6.0)]:
+        test_a_dynamic_accumulation_adds_only_on_the_path_that_writes(condition, expected)
+    for n, expected in [(9, 1.0), (2, 2.0)]:
+        test_a_transient_sized_by_an_assigned_symbol_exists_in_every_branch(n, expected)
