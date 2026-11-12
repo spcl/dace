@@ -14,6 +14,7 @@ from typing import NamedTuple
 
 from dace import SDFG, data, dtypes, symbolic
 from dace.codegen.exceptions import CodegenError
+from dace.codegen.python import CUPY_STORAGES
 from dace.codegen.python.emit import Emitter, c_modulo, expr
 from dace.frontend.operations import detect_reduction_type
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
@@ -189,6 +190,11 @@ def tile_extent(extent) -> int:
     return 1 if symbolic.has_one_marker(extent) else int(extent)
 
 
+def is_host_value(desc: data.Data) -> bool:
+    """Whether ``desc`` is a host scalar, which a kernel that reads it takes by value."""
+    return isinstance(desc, data.Scalar) and desc.storage not in CUPY_STORAGES and not is_register(desc)
+
+
 def is_register(desc: data.Data) -> bool:
     # A non-transient register is the connector of a nested SDFG that a kernel register binds (``nested``)
     return desc.storage in KERNEL_STORAGES and (desc.transient or desc.storage is dtypes.StorageType.Register)
@@ -197,13 +203,15 @@ def is_register(desc: data.Data) -> bool:
 class KernelEmitter(Emitter):
     """Writes the kernel of one tile map in a :class:`Dialect`."""
 
-    __slots__ = ("dialect", "arrays")
+    __slots__ = ("dialect", "arrays", "values")
 
     def __init__(self, sdfg: SDFG, dialect: Dialect):
         super().__init__(sdfg)
         self.dialect = dialect
         #: The global arrays the kernel takes.
         self.arrays: set[str] = set()
+        #: The host scalars the kernel reads, which it takes by value as a CUDA kernel does.
+        self.values: set[str] = set()
 
     def line(self, text: str) -> None:
         for part in text.split("\n"):
@@ -227,9 +235,14 @@ class KernelEmitter(Emitter):
         self, sdfg: SDFG, state: SDFGState, scope: dict, order: list, entry: nodes.MapEntry
     ) -> tuple[list[str], list[str]]:
         """Write the body of the kernel of the map at ``entry``; return its global arrays and its symbols."""
-        for name in (e.data.data for e in (*state.in_edges(entry), *state.out_edges(state.exit_node(entry)))):
-            if name is not None:
+        written = {e.data.data for e in state.out_edges(state.exit_node(entry))}
+        for name in ({e.data.data for e in state.in_edges(entry)} | written) - {None}:
+            if not is_host_value(sdfg.arrays[name]):
                 self.arrays.add(name)
+            elif name in written:
+                raise CodegenError(f"Python backend: a tile kernel writes the host scalar {name!r}")
+            else:
+                self.values.add(name)
         self.depth = self.dialect.body_depth
         # The registers of the map scope itself; a nested SDFG's states allocate their own
         for name in sorted({n.data for n in state.scope_subgraph(entry).data_nodes()} - self.allocated):
@@ -245,7 +258,7 @@ class KernelEmitter(Emitter):
         # A loop iterator or an interstate assignment of the host is a scope symbol, not in ``sdfg.symbols``
         loops = {r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)}
         host = set(sdfg.symbols) | set(sdfg.arglist()) | interstate_bound_names(sdfg) | loops
-        symbols = (names & host) - self.arrays - assigned
+        symbols = ((names & host) - self.arrays - assigned) | self.values
         return sorted(self.arrays), sorted(symbols)
 
     def bindings(self) -> tuple[set[str], set[str]]:
@@ -278,7 +291,7 @@ class KernelEmitter(Emitter):
 
     def read(self, sdfg, state, edge) -> str:
         name, desc = edge.data.data, sdfg.arrays[edge.data.data]
-        if is_register(desc):
+        if is_register(desc) or name in self.values:
             return name
         return self.dialect.load(name, self.element_offset(desc, edge.data.subset), None, desc.dtype)
 
@@ -313,7 +326,7 @@ class KernelEmitter(Emitter):
     def move(self, sdfg, src: str, src_subset, dst: str, dst_subset, memlet) -> None:
         """Copy ``src`` to ``dst``: a register rebinds, one global element moves by a dialect load or store."""
         src_desc, dst_desc = sdfg.arrays[src], sdfg.arrays[dst]
-        if is_register(src_desc) and is_register(dst_desc):
+        if (is_register(src_desc) or src in self.values) and is_register(dst_desc):
             self.line(f"{dst} = {src}")
         elif is_register(dst_desc):
             at = self.element_offset(src_desc, src_subset)
@@ -338,7 +351,8 @@ class KernelEmitter(Emitter):
         outputs = []
         for edge in (*state.in_edges(node), *state.out_edges(node)):
             conn = edge.dst_conn if edge.dst is node else edge.src_conn
-            if conn is None or edge.data.is_empty() or not is_register(sdfg.arrays[edge.data.data]):
+            outer = edge.data.data
+            if conn is None or edge.data.is_empty() or not (is_register(sdfg.arrays[outer]) or outer in self.values):
                 continue
             node.sdfg.arrays[conn].storage = dtypes.StorageType.Register
             if edge.src is node and conn != edge.data.data:
@@ -462,7 +476,23 @@ class TileStatement:
         return name
 
     def assign(self, conn: str, value: str) -> None:
-        name = self.outputs[conn].data.data
+        edge = self.outputs[conn]
+        name, desc = edge.data.data, self.sdfg.arrays[edge.data.data]
+        if is_register(desc):
+            self.bind(name, value)
+            return
+        # A node writing a global array stores its lanes; every lane of a lane-invariant output, which validation
+        # requires of a one-element one, stores its one value
+        if not isinstance(self.node, (TileBinop, TileUnop, TileFMA, TileITE)):
+            raise CodegenError(f"Python backend: {self.node.label!r} writes the global array {name!r} directly")
+        if edge.data.subset.num_elements() != 1:
+            at = self.offsets(name, edge.data.subset)
+        else:
+            at = self.broadcast_element(name, edge.data.subset)
+        self.write(name, at, self.dialect.cast(value, desc.dtype), accumulates(edge.data))
+
+    def bind(self, name: str, value: str) -> None:
+        """Assign the register ``name`` the value of a node."""
         self.emitter.line(f"{name} = {self.dialect.cast(value, self.sdfg.arrays[name].dtype)}")
 
     def operand(self, conn: str, kind: str, text: str | None) -> str:
@@ -575,10 +605,13 @@ class TileStatement:
         """The one element ``subset`` of ``name`` names, in every lane."""
         if is_register(self.sdfg.arrays[name]):
             return self.dialect.full(self.node.widths, name, dtype)
+        return self.dialect.load(name, self.broadcast_element(name, subset), None, self.sdfg.arrays[name].dtype)
+
+    def broadcast_element(self, name: str, subset) -> Element:
+        """The one element ``subset`` of the global array ``name`` names, addressed by every lane."""
         at = self.emitter.element_offset(self.sdfg.arrays[name], subset)
         lanes = " + ".join(f"0 * {self.dialect.lane(self.node.widths, d)}" for d in range(len(self.node.widths)))
-        at = Element([f"{at.indices[0]} + {lanes}", *at.indices[1:]], at.strides, tile=True)
-        return self.dialect.load(name, at, None, self.sdfg.arrays[name].dtype)
+        return Element([f"{at.indices[0]} + {lanes}", *at.indices[1:]], at.strides, tile=True)
 
     def gather(self) -> str:
         node = self.node

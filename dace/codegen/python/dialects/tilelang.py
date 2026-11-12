@@ -123,8 +123,7 @@ class TileLangStatement(TileStatement):
 
         return ast.unparse(Lanes().visit(ast.parse(value, mode="eval")))
 
-    def assign(self, conn: str, value: str) -> None:
-        name = self.outputs[conn].data.data
+    def bind(self, name: str, value: str) -> None:
         desc = self.sdfg.arrays[name]
         widths = list(self.node.widths)
         cast = self.dialect.cast(self.indexed(value, widths), desc.dtype)

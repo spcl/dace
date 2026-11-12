@@ -11,7 +11,10 @@ import pytest
 import dace
 from dace.codegen.exceptions import CodegenError
 from dace.libraries.tileops.dispatch import TileGroup
+from dace.libraries.tileops.kinds import TILE
+from dace.libraries.tileops.nodes import TileBinop
 from dace.libraries.tileops.nodes.tile_op import TileOp
+from dace.sdfg.validation import InvalidSDFGNodeError
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
@@ -59,6 +62,11 @@ SPELLINGS = {
         "triton": ["tl.store(y + (0 + _idx_scatter_y_0_load0) * 1, y_scatter_out, mask="],
         "cutile": ["ct.scatter(y, (0 + _idx_scatter_y_0_load0,), y_scatter_out, mask="],
         "tilelang": ["y[(0 + _idx_scatter_y_0_load0[lane0]) * 1] = y_scatter_out[lane0]"],
+    },
+    "invariant": {
+        "triton": ["tl.store(a + (0 + 0 * tl.arange(0, 512)) * 1, ", ", TritonPointer(c), t[0])"],
+        "cutile": ["ct.scatter(a, (0 + 0 * ct.arange(512, dtype=ct.int32),), ", ", c, t[0],)"],
+        "tilelang": ["a[(0 + 0 * lane0) * 1] = "],
     },
     "atomic": {
         "triton": ["tl.atomic_add(S_gpu + "],
@@ -474,3 +482,82 @@ def test_a_scalar_index_argument_reaches_a_tile_kernel_as_a_symbol(dialect: str)
         sdfg.compile()(a=cupy.asarray(a), aa=cupy.asarray(aa), ip=cupy.asarray(permutation), j=4, inc=1, out=out, N=600)
 
     assert np.isclose(out.get()[0], np.dot(a[1:600], aa[3, permutation[:599]]))
+
+
+@dace.program
+def carried_product(b: dace.float64[N], c: dace.float64[N], a: dace.float64[N]):
+    t = 0.0
+    for i in range(N):
+        s = b[i] * c[i]
+        a[i] = s + t
+        t = s
+
+
+def canonical_tile_sdfg(program) -> dace.SDFG:
+    sdfg = program.to_sdfg(simplify=True)
+    canonicalize(sdfg, target="gpu")
+    offload_to_gpu(sdfg)
+    VectorizeGPU(VectorizeConfig(widths=(4,), tile_programs=True)).apply_pass(sdfg, {})
+    return sdfg
+
+
+def global_output_binop(sdfg: dace.SDFG) -> TileBinop:
+    """The one binary tile node that writes a global array directly, not through a store."""
+    found = [
+        node
+        for node, state in sdfg.all_nodes_recursive()
+        if isinstance(node, TileBinop)
+        and any(state.sdfg.arrays[e.data.data].storage is dace.StorageType.GPU_Global for e in state.out_edges(node))
+    ]
+    assert len(found) == 1
+    return found[0]
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_a_lane_invariant_tile_node_stores_the_one_global_element_it_writes(dialect: str):
+    """The canonicalizer peels the first iteration of the carried loop into a size-one map, whose tile node adds
+    two scalars into ``a[0]``; the carry ``t`` it reads is a host scalar, which the kernel takes by value."""
+    import cupy
+
+    sdfg = canonical_tile_sdfg(carried_product)
+    global_output_binop(sdfg)
+    b, c, a = cupy.arange(1.0, 1001.0), cupy.full(1000, 2.0), cupy.zeros(1000)
+    products = 2.0 * np.arange(1.0, 1001.0)
+
+    with tile_backend(dialect):
+        compiled = sdfg.compile()
+        compiled(b=b, c=c, a=a, N=1000)
+
+    assert np.array_equal(a.get(), products + np.concatenate(([0.0], products[:-1])))
+    assert_spelled(compiled, "invariant", dialect)
+
+
+def test_a_tile_node_writing_a_tile_into_one_global_element_is_refused():
+    """The store above stores one value from every lane, which holds only for a node without a tile operand."""
+    sdfg = canonical_tile_sdfg(carried_product)
+    global_output_binop(sdfg).kind_a = TILE
+
+    with tile_backend("triton"), pytest.raises(InvalidSDFGNodeError, match="output-kind rule violated"):
+        sdfg.compile()
+
+
+if __name__ == "__main__":
+    # TileLang, which has no product reduction, runs under pytest
+    for dialect in ("triton", "cutile"):
+        test_a_vectorized_map_with_a_ragged_tail_runs_as_one_masked_kernel(dialect)
+        test_a_blocked_gemm_accumulates_a_tile_product_in_a_loop(dialect)
+        test_elementwise_tiles_and_a_row_sum_store_one_element(dialect)
+        test_reductions_and_scans_match_numpy(dialect)
+        test_a_sum_accumulated_by_every_program_adds_atomically(dialect)
+        test_two_kernels_of_one_label_stay_two_kernels(dialect)
+        test_a_row_gather_over_a_two_dim_tile_reads_every_indexed_row(dialect)
+        test_a_load_through_an_index_tile_reads_every_indexed_element(dialect)
+        test_a_store_through_an_index_tile_writes_every_indexed_element(dialect)
+        test_a_kernel_inside_a_host_loop_reads_the_loop_iterator(dialect)
+        test_a_kernel_over_an_empty_map_launches_nothing(dialect)
+        test_a_map_inside_a_kernel_keeps_block_tiles_when_a_program_runs_each_tile(dialect)
+        test_a_kernel_reduction_keeps_block_tiles_when_a_program_runs_each_tile(dialect)
+        test_an_index_a_kernel_assigns_between_states_is_read_from_its_global_array(dialect)
+        test_a_scalar_index_argument_reaches_a_tile_kernel_as_a_symbol(dialect)
+        test_a_lane_invariant_tile_node_stores_the_one_global_element_it_writes(dialect)
+    test_a_tile_node_writing_a_tile_into_one_global_element_is_refused()

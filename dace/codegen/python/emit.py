@@ -479,7 +479,8 @@ class Emitter:
         self.kernels.append(dialect.define(name, kernel, arrays, symbols, grid))
         # An empty map launches nothing; cuTile refuses a grid of zero programs
         with self.block(f"if {' and '.join(f'{size} > 0' for size in grid)}:"):
-            self.line(dialect.launch(name, grid, arrays, symbols))
+            values = [f"{s}[0]" if s in kernel.values else s for s in symbols]
+            self.line(dialect.launch(name, grid, arrays, values))
 
     def read(self, sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> str:
         """The value or view an edge brings into a connector."""
