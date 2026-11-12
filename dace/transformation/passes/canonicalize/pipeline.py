@@ -317,6 +317,8 @@ class StructuralCleanup(ppl.Pass):
             EmptyStateElimination(),
             DeadStateElimination(),
             RedundantOrderingEdgeElimination(),
+            # A View a later pass made (inlining a call, nesting a loop body) reads its array directly again
+            RemoveViews(),
             # After the state fusion above, so a copy and its readers share a state: redundant copies fold away
             ppl.Pipeline([ArrayElimination(fold_ordered_copies=True, nested=True)]),
             # A shifted copy array elimination keeps (read in several states) is read at the shifted source index

@@ -42,7 +42,10 @@ import ast
 import copy
 import functools
 import operator
+from collections.abc import Callable
 from typing import Any
+
+import sympy
 
 from dace import SDFG, Memlet, SDFGState, config, dtypes, properties, subsets, symbolic
 from dace import data as dt
@@ -163,9 +166,13 @@ def _derive_mapping_from_subset(
 
     Returns the mapping dict, or None when the data-dim counts disagree.
     """
-    array_data_dims = [d for d, s in enumerate(viewed_subset.size()) if s != 1]
+    sizes = viewed_subset.size()
+    array_data_dims = [d for d, s in enumerate(sizes) if s != 1]
     view_data_dims = [d for d, s in enumerate(view_shape) if s != 1]
     if len(view_data_dims) != len(array_data_dims):
+        return None
+    # A pair of different extents is a reshape, not a squeeze: ``(N*B, C)`` over ``(N, B*C)`` pairs no dimension
+    if any(symbolic.equal(view_shape[v], sizes[a]) is not True for v, a in zip(view_data_dims, array_data_dims)):
         return None
     return dict(zip(view_data_dims, array_data_dims))
 
@@ -195,6 +202,130 @@ def _compute_rewritten_subset(
         new_ranges[adim] = (rb + rs * vb, rb + rs * ve, rs * vs)
 
     return subsets.Range(new_ranges)
+
+
+class DimGroups:
+    """A dense C-contiguous reshape as consecutive groups of dimensions: one view dimension split over several array
+    dimensions, several merged into one, or one kept. Each group is linearized and delinearized on its own, so a
+    symbolic reshape keeps the indices it does not touch: ``[r, c]`` of a ``(R, B*B)`` view of ``(R, B, B)`` is
+    ``[r, c // B, c % B]``, and ``[i, j]`` of a ``(3*N, B)`` view of ``(N, 3, B)`` is ``[i // 3, i % 3, j]``.
+    """
+
+    def __init__(self, groups: list[tuple[list[int], list[int]]], vshape: list, ashape: list):
+        self.groups, self.vshape, self.ashape = groups, vshape, ashape
+
+    @staticmethod
+    def of(vdesc: dt.Data, adesc: dt.Data) -> "DimGroups | None":
+        """The groups of ``vdesc`` over ``adesc``, or None if a descriptor is not C-contiguous or no grouping exists."""
+        for desc in (vdesc, adesc):
+            if any(symbolic.equal(st, _product(desc.shape[d + 1 :])) is not True for d, st in enumerate(desc.strides)):
+                return None
+        vshape, ashape = list(vdesc.shape), list(adesc.shape)
+        groups, i, j = [], 0, 0
+        while i < len(vshape) and j < len(ashape):
+            # One to one, one view dimension split over several array dimensions, or several merged into one
+            sizes = [(1, 1)] + [(1, k) for k in range(2, len(ashape) - j + 1)]
+            sizes += [(k, 1) for k in range(2, len(vshape) - i + 1)]
+            same = (symbolic.equal(_product(vshape[i : i + v]), _product(ashape[j : j + a])) is True for v, a in sizes)
+            found = next((size for size, equal in zip(sizes, same) if equal), None)
+            if found is None:
+                return None
+            groups.append((list(range(i, i + found[0])), list(range(j, j + found[1]))))
+            i, j = i + found[0], j + found[1]
+        return DimGroups(groups, vshape, ashape) if (i, j) == (len(vshape), len(ashape)) else None
+
+    def indices(self, index: list, floor: Callable, mod: Callable, mul: Callable, add: Callable) -> list:
+        """Array indices of the view ``index``, built with the given operators (sympy or Python AST)."""
+        out = []
+        for vdims, adims in self.groups:
+            if len(vdims) == len(adims) == 1:
+                out.append(index[vdims[0]])
+                continue
+            flat = None
+            for v in vdims:
+                stride = _product(self.vshape[v + 1 : vdims[-1] + 1])
+                term = index[v] if symbolic.equal(stride, 1) is True else mul(index[v], stride)
+                flat = term if flat is None else add(flat, term)
+            for a in adims:
+                stride = _product(self.ashape[a + 1 : adims[-1] + 1])
+                digit = flat if symbolic.equal(stride, 1) is True else floor(flat, stride)
+                out.append(digit if a == adims[0] else mod(digit, self.ashape[a]))
+        return out
+
+    def subset(self, subset: subsets.Range) -> subsets.Range | None:
+        """``subset`` of the view on the array, or None: per group, single elements, the whole extent, a group of one
+        dimension on each side, or merged dimensions whose range is contiguous (single indices, then one unit-step
+        range, then whole extents: a row ``[r, 0:B]`` of a ``(N, B)`` view of ``(N*B,)``); any other range is not a
+        box of the array."""
+        ranges = subset.ranges
+        single = [symbolic.equal(b, e, is_length=False) is True for b, e, _ in ranges]
+        full = [
+            symbolic.equal(b, 0, is_length=False) is True and symbolic.equal(e, n - 1, is_length=False) is True
+            for (b, e, _), n in zip(ranges, self.vshape)
+        ]
+        ops = (symbolic.int_floor, sympy.Mod, operator.mul, operator.add)
+        begins = self.indices([b for b, _, _ in ranges], *ops)
+        ends = self.indices([e for _, e, _ in ranges], *ops)
+        out = []
+        for vdims, adims in self.groups:
+            ranged = [v for v in vdims if not single[v]]
+            if len(vdims) == len(adims) == 1:
+                out.append(ranges[vdims[0]])
+            elif not ranged:
+                out += [(begins[a], begins[a], 1) for a in adims]
+            elif all(full[v] for v in vdims):
+                out += [(0, self.ashape[a] - 1, 1) for a in adims]
+            elif len(adims) == 1 and ranges[ranged[0]][2] == 1 and all(full[v] for v in ranged[1:]):
+                out.append((begins[adims[0]], ends[adims[0]], 1))
+            else:
+                return None
+        # Floor division or modulo by a size only known at run time costs a division per access: keep the View
+        if not _affine([x for rng in out for x in rng[:2]]):
+            return None
+        return subsets.Range(out)
+
+    def elements_affine(self) -> bool:
+        """Whether the array indices of one view element need no division by a symbolic size (a tasklet
+        subscripting the whole view addresses single elements)."""
+        index = [symbolic.symbol(f"__dim_groups_{d}") for d in range(len(self.vshape))]
+        return _affine(self.indices(index, symbolic.int_floor, sympy.Mod, operator.mul, operator.add))
+
+    def ast_indices(self, index: list[ast.expr]) -> list[ast.expr]:
+        """``index``, Python AST of the view subscript, on the array."""
+
+        def binop(op: ast.operator) -> Callable:
+            def build(left: ast.expr, right: Any) -> ast.expr:
+                right = right if isinstance(right, ast.AST) else _InterstateSubscriptRewriter._sym_to_ast(right)
+                return ast.BinOp(left=left, op=op, right=right)
+
+            return build
+
+        return self.indices(index, binop(ast.FloorDiv()), binop(ast.Mod()), binop(ast.Mult()), binop(ast.Add()))
+
+
+def dim_groups(view_desc: dt.Data, array_desc: dt.Data) -> DimGroups | None:
+    """The dense reshape of ``array_desc`` that ``view_desc`` is, as groups of dimensions, or None if it is none.
+
+    Rewrites an access of the view onto the array with :meth:`DimGroups.indices` (sympy),
+    :meth:`DimGroups.subset` (a memlet subset) or :meth:`DimGroups.ast_indices` (Python tasklet code).
+    """
+    return DimGroups.of(view_desc, array_desc)
+
+
+def _affine(exprs: list) -> bool:
+    """Whether no expression of ``exprs`` divides (floor or modulo) by a symbolic divisor."""
+    for expr in exprs:
+        if not isinstance(expr, sympy.Basic):
+            continue
+        for atom in expr.atoms(sympy.Mod, symbolic.int_floor):
+            if atom.args[1].free_symbols:
+                return False
+    return True
+
+
+def _product(values: list) -> Any:
+    """The product of ``values`` (1 for none)."""
+    return functools.reduce(operator.mul, values, 1)
 
 
 def _int_shape(desc: dt.Data) -> list[int] | None:
@@ -326,8 +457,16 @@ class _ReshapeIndexRewriter(ast.NodeTransformer):
         inp[k]     ->  inp[k // 5, k % 5] (symbolic)
     """
 
-    def __init__(self, connector: str, vstrides: list[int], astrides: list[int], array_shape: list[int]):
+    def __init__(
+        self,
+        connector: str,
+        vstrides: list[int],
+        astrides: list[int],
+        array_shape: list[int],
+        groups: "DimGroups | None" = None,
+    ):
         self.connector = connector
+        self.groups = groups
         self.vstrides = vstrides
         self.astrides = astrides
         self.array_shape = array_shape
@@ -345,6 +484,14 @@ class _ReshapeIndexRewriter(ast.NodeTransformer):
             indices = list(node.slice.elts)
         else:
             indices = [node.slice]
+
+        if self.groups is not None:
+            if len(indices) != len(self.groups.vshape):
+                return node
+            new_indices = self.groups.ast_indices(indices)
+            new_slice = new_indices[0] if len(new_indices) == 1 else ast.Tuple(elts=new_indices, ctx=ast.Load())
+            self.changed = True
+            return ast.fix_missing_locations(ast.Subscript(value=node.value, slice=new_slice, ctx=node.ctx))
 
         if len(indices) != len(self.vstrides):
             return node
@@ -430,6 +577,7 @@ class _InterstateSubscriptRewriter(ast.NodeTransformer):
             self.vstrides: list[int] = kwargs["vstrides"]
             self.astrides: list[int] = kwargs["astrides"]
             self.array_shape: list[int] = kwargs["array_shape"]
+            self.groups: DimGroups | None = kwargs.get("groups")
         else:
             raise ValueError(f"Unknown mode: {mode!r}")
 
@@ -456,6 +604,10 @@ class _InterstateSubscriptRewriter(ast.NodeTransformer):
             if len(indices) != self.view_ndim:
                 return node
             new_indices = self._rewrite_affine(indices)
+        elif self.groups is not None:
+            if len(indices) != len(self.groups.vshape):
+                return node
+            new_indices = self.groups.ast_indices(indices)
         else:
             if len(indices) != len(self.vstrides):
                 return node
@@ -587,6 +739,23 @@ class RemoveViews(ppl.Pass):
         pipeline_results: dict[str, Any],
     ) -> set[str] | None:
         removed: set[str] = set()
+        # Every SDFG, nested ones included: later passes nest the views the ingest run could not reach
+        for graph in sdfg.all_sdfgs_recursive():
+            # Cheapest first: most SDFGs hold no view at all
+            if any(isinstance(desc, dt.View) for desc in graph.arrays.values()):
+                removed |= self._remove_views(graph)
+
+        if _DEBUGPRINT:
+            if removed:
+                print(f"[{_PASS}] === done: removed {len(removed)} views: {removed} ===")
+            else:
+                print(f"[{_PASS}] === done: nothing to remove ===")
+
+        return removed or None
+
+    def _remove_views(self, sdfg: SDFG) -> set[str]:
+        """Removes the views of ``sdfg`` (not of its nested SDFGs); the names removed."""
+        removed: set[str] = set()
 
         # Every view candidate asks three feasibility probes and three rewrites for the interstate
         # edges, and each one re-unparsed every condition AST to a string. The set of interstate
@@ -616,13 +785,7 @@ class RemoveViews(ppl.Pass):
                 if _DEBUGPRINT:
                     print(f'[{_PASS}] garbage-collected descriptor "{name}"')
 
-        if _DEBUGPRINT:
-            if removed:
-                print(f"[{_PASS}] === done: removed {len(removed)} views: {removed} ===")
-            else:
-                print(f"[{_PASS}] === done: nothing to remove ===")
-
-        return removed or None
+        return removed
 
     def report(self, pass_retval: set[str]) -> str:
         return f"Removed {len(pass_retval)} views: {pass_retval}."
@@ -1025,10 +1188,18 @@ class RemoveViews(ppl.Pass):
         array_shape = _int_shape(adesc)
         vstrides = _int_strides(vdesc)
         astrides = _int_strides(adesc)
-        if None in (view_shape, array_shape, vstrides, astrides):
+        # Symbolic sizes: a dense reshape of grouped dimensions, each group rewritten on its own
+        groups = dim_groups(vdesc, adesc) if None in (view_shape, array_shape, vstrides, astrides) else None
+        if None in (view_shape, array_shape, vstrides, astrides) and groups is None:
             if _DEBUGPRINT:
                 print(f"[{_PASS}]     {strat_name}: symbolic shapes/strides -- skipping")
             return False
+
+        def reshape(subset: subsets.Range) -> subsets.Range | None:
+            if groups is not None:
+                return groups.subset(subset)
+            return _reshape_subset(subset, vstrides, view_shape, astrides, array_shape)
+
         if vdesc.dtype != adesc.dtype:
             if _DEBUGPRINT:
                 print(f"[{_PASS}]     {strat_name}: dtype mismatch -- skipping")
@@ -1049,14 +1220,36 @@ class RemoveViews(ppl.Pass):
                         if _DEBUGPRINT:
                             print(f'[{_PASS}]     {strat_name}: non-Python tasklet "{leaf.label}" -- aborting')
                         return False
+                    # A tasklet subscripting the whole view is rewritten element by element, which must stay affine;
+                    #  one subscripting a part does so in that part's own shape, which the part must keep
+                    conn = te.dst_conn if is_viewed_src else te.src_conn
+                    part = te.data.subset if te.data.data == vnode.data else te.data.other_subset
+                    ranks = [
+                        len(n.slice.elts) if isinstance(n.slice, ast.Tuple) else 1
+                        for stmt in leaf.code.code
+                        for n in ast.walk(stmt)
+                        if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == conn
+                    ]
+                    if groups is not None and part is not None and ranks:
+                        if part == subsets.Range.from_array(vdesc):
+                            if not groups.elements_affine():
+                                return False
+                        else:
+                            new_part = groups.subset(part)
+                            before = [n for n in part.size() if n != 1]
+                            after = [n for n in new_part.size() if n != 1] if new_part is not None else None
+                            kept = after is not None and len(before) == len(after)
+                            kept = kept and all(symbolic.equal(x, y) is True for x, y in zip(before, after))
+                            if not kept or len(groups.vshape) in ranks:
+                                return False
                 m = te.data
                 if m.data == vnode.data and m.subset is not None:
-                    if _reshape_subset(m.subset, vstrides, view_shape, astrides, array_shape) is None:
+                    if reshape(m.subset) is None:
                         if _DEBUGPRINT:
                             print(f"[{_PASS}]     {strat_name}: cannot reshape subset {m.data}[{m.subset}] -- aborting")
                         return False
                 if m.data != vnode.data and m.other_subset is not None:
-                    if _reshape_subset(m.other_subset, vstrides, view_shape, astrides, array_shape) is None:
+                    if reshape(m.other_subset) is None:
                         if _DEBUGPRINT:
                             print(
                                 f"[{_PASS}]     {strat_name}: cannot reshape other_subset {m.other_subset} -- aborting"
@@ -1074,8 +1267,13 @@ class RemoveViews(ppl.Pass):
                 vstrides=vstrides,
                 astrides=astrides,
                 array_shape=array_shape,
+                groups=groups,
             )
 
+        # An interstate subscript reads single elements, like a tasklet subscripting the whole view
+        if groups is not None and not groups.elements_affine():
+            if any(_references_view(e.data, vnode.data, c) for e, c in self.interstate_edges):
+                return False
         if not self._interstate_feasible(sdfg, vnode.data, _rw_lin):
             if _DEBUGPRINT:
                 print(f"[{_PASS}]     {strat_name}: interstate edge rewrite infeasible -- aborting")
@@ -1089,14 +1287,14 @@ class RemoveViews(ppl.Pass):
                     old = f"{m.data}[{m.subset}]"
                     m.data = viewed_node.data
                     if m.subset is not None:
-                        m.subset = _reshape_subset(m.subset, vstrides, view_shape, astrides, array_shape)
+                        m.subset = reshape(m.subset)
                     else:
                         m.subset = subsets.Range.from_array(adesc)
                     if _DEBUGPRINT:
                         print(f"[{_PASS}]       memlet: {old} -> {m.data}[{m.subset}]")
                 elif m.data != vnode.data and m.other_subset is not None:
                     old_other = f"{m.other_subset}"
-                    m.other_subset = _reshape_subset(m.other_subset, vstrides, view_shape, astrides, array_shape)
+                    m.other_subset = reshape(m.other_subset)
                     if _DEBUGPRINT:
                         print(f"[{_PASS}]       memlet {m.data}: other_subset={old_other} -> {m.other_subset}")
 
@@ -1106,8 +1304,11 @@ class RemoveViews(ppl.Pass):
                 leaf = te.dst if is_viewed_src else te.src
                 conn = te.dst_conn if is_viewed_src else te.src_conn
                 if isinstance(leaf, nd.Tasklet) and conn and leaf.language == dtypes.Language.Python and leaf.code.code:
+                    # A part of the view keeps its shape (checked above): its subscripts are its own
+                    if groups is not None and te.data.subset != subsets.Range.from_array(adesc):
+                        continue
                     old_code = leaf.code.as_string
-                    rw = _ReshapeIndexRewriter(conn, vstrides, astrides, array_shape)
+                    rw = _ReshapeIndexRewriter(conn, vstrides, astrides, array_shape, groups)
                     leaf.code.code = [rw.visit(copy.deepcopy(stmt)) for stmt in leaf.code.code]
                     if _DEBUGPRINT and rw.changed:
                         print(

@@ -513,6 +513,24 @@ def test_a_failed_comparison_of_a_float_is_no_fact():
     assert symbolic.ask(le("N", "x"), SymbolResolver().facts_at(orelse.start_block)) is symbolic.Truth.UNKNOWN
 
 
+@pytest.mark.parametrize("value, known", [("N + 1", True), ("0.5 * N", False)])
+def test_an_undeclared_symbol_negates_only_when_its_assignment_types_it_integer(value, known):
+    """``z = value`` on the edge into ``if z < N`` declares ``z`` nowhere else: the else knows ``N <= z`` only when the
+    assignment infers an integer, as a float ``z`` may be a NaN."""
+    then, orelse = branches("z < N", None)
+    sdfg, conditional = then.sdfg, then.parent_graph
+    first = sdfg.add_state("first", is_start_block=True)
+    sdfg.add_edge(first, conditional, dace.InterstateEdge(assignments={"z": value}))
+    truth = symbolic.ask(le("N", "z"), SymbolResolver().facts_at(orelse.start_block))
+    assert truth is (symbolic.Truth.TRUE if known else symbolic.Truth.UNKNOWN)
+
+
+def test_a_failed_comparison_of_a_function_value_is_no_fact():
+    """``f(k)`` has no type to resolve: the else of ``f(k) < N`` knows nothing."""
+    _, orelse = branches("f(k) < N", None)
+    assert symbolic.ask(le("N", "f(k)"), SymbolResolver().facts_at(orelse.start_block)) is symbolic.Truth.UNKNOWN
+
+
 def test_a_branch_the_facts_prove_dead_knows_less_rather_than_a_contradiction():
     """``M`` is positive, so the else of ``M > 0`` never runs: its ``M <= 0`` is dropped, not a contradiction."""
     _, orelse = branches("M > 0", None)
@@ -569,3 +587,6 @@ if __name__ == "__main__":
     test_a_branch_condition_ends_where_the_branch_writes_the_container_it_reads()
     test_a_failed_comparison_of_a_float_is_no_fact()
     test_a_branch_the_facts_prove_dead_knows_less_rather_than_a_contradiction()
+    test_an_undeclared_symbol_negates_only_when_its_assignment_types_it_integer("N + 1", True)
+    test_an_undeclared_symbol_negates_only_when_its_assignment_types_it_integer("0.5 * N", False)
+    test_a_failed_comparison_of_a_function_value_is_no_fact()
