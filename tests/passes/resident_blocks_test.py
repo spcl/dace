@@ -27,7 +27,8 @@ def test_a_block_wider_than_a_multiprocessor_holds_still_gets_one_per_multiproce
 
 def test_the_visible_device_wins_over_the_defaults(monkeypatch):
     monkeypatch.setattr(rb, "query_device", lambda: DeviceLimits(228, 2048, 0))
-    assert device_limits() == DeviceLimits(228, 2048, 0)
+    with dace.config.set_temporary("compiler", "cuda", "device_multiprocessors", value=0):
+        assert device_limits() == DeviceLimits(228, 2048, 0)
 
 
 def test_a_configured_device_overrides_the_query(monkeypatch):
@@ -39,8 +40,9 @@ def test_a_configured_device_overrides_the_query(monkeypatch):
 
 def test_without_a_visible_device_or_a_configured_one_compiling_fails(monkeypatch):
     monkeypatch.setattr(rb, "query_device", lambda: None)
-    with pytest.raises(RuntimeError, match="device_multiprocessors"):
-        device_limits()
+    with dace.config.set_temporary("compiler", "cuda", "device_multiprocessors", value=0):
+        with pytest.raises(RuntimeError, match="device_multiprocessors"):
+            device_limits()
 
 
 @pytest.mark.gpu

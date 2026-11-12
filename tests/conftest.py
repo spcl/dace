@@ -389,3 +389,16 @@ def pinned_cuda_implementation(request):
         return
     with set_temporary("compiler", "cuda", "implementation", value=impl):
         yield
+
+
+@pytest.fixture(autouse=True)
+def described_gpu_target(request):
+    """Describe an MI300X-sized target GPU to tests that generate GPU code without running it, so sizing grids by the
+    device (``resident_blocks``) needs no visible GPU; ``gpu``-marked tests ask their real device."""
+    if request.node.get_closest_marker("gpu"):
+        yield
+        return
+    from dace.config import set_temporary  # Imported late: collection must not depend on importing dace.
+
+    with set_temporary("compiler", "cuda", "device_multiprocessors", value=304):
+        yield
