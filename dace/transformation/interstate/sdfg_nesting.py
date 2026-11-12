@@ -361,8 +361,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         shared_connectors = self.inlinable_shared_connectors(graph, sdfg, nested_sdfg, in_connectors & out_connectors)
 
-        # Ensure output connectors have no additional outputs (if in a scope),
-        # and ensure no two connectors are directly connected to each other
+        # Ensure an in/out connector bound to two windows is not read back after its write (if in a scope), and ensure
+        # no two connectors are directly connected to each other. An output-only connector read back keeps its path
+        # through the scope exit from its last write (see ``scope_outputs`` in ``apply``).
         if graph.entry_node(nested_sdfg) is not None:
             all_connectors = in_connectors | out_connectors
             nstate = nested_sdfg.sdfg.node(0)
@@ -370,9 +371,10 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 if isinstance(node, nodes.AccessNode):
                     if (
                         node.data in out_connectors
+                        and node.data in in_connectors
                         and node.data not in shared_connectors
                         and nstate.out_degree(node) > 0
-                        and (node.data not in in_connectors or nstate.in_degree(node) > 0)
+                        and nstate.in_degree(node) > 0
                     ):
                         return False
                     # An element input copied straight into an element output is staged in the scope
