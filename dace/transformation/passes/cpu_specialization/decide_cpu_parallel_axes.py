@@ -44,7 +44,7 @@ from typing import Any
 
 import sympy
 
-from dace import SDFG, data, dtypes, properties, symbolic
+from dace import SDFG, Memlet, data, dtypes, properties, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
 from dace.symbolic_facts import SMALL_CONSTANT_EXTENT
@@ -408,6 +408,52 @@ def share_out_indexing_axes(state: SDFGState, entry: nodes.MapEntry, indexing: s
         save=False,
     )
     entry.map.collapse = len(indexing)
+    accumulate_in_registers(state, entry)
+
+
+def accumulate_in_registers(state: SDFGState, entry: nodes.MapEntry) -> None:
+    """Accumulate every write-conflict-resolved output of the inner map ``entry`` walks its reduced axes in into a
+    ``Register`` transient seeded with the operator's identity, resolved into the output once per iteration of
+    ``entry``: every reduced iteration updates the same elements, so the sum stays in a register, not in memory
+    (examinimd's per-atom force over its neighbours). Not for an output the scope also reads."""
+    from dace.frontend.operations import detect_reduction_type  # Avoid an import cycle
+    from dace.transformation.dataflow.local_storage import OutLocalStorage
+    from dace.transformation.dataflow.map_fusion_helper import scope_accesses
+
+    sdfg, outer_exit = state.sdfg, state.exit_node(entry)
+    inner = next(e.dst for e in state.out_edges(entry) if isinstance(e.dst, nodes.MapEntry))
+    inner_exit = state.exit_node(inner)
+    read = {name for name, _ in scope_accesses(state, entry, outer_exit)[0]}
+    edges = [e for e in state.edges_between(inner_exit, outer_exit) if not e.data.is_empty()]
+    for edge in edges:
+        name = edge.data.data
+        if edge.data.wcr is None or edge.data.dynamic or None in read or name in read:
+            continue
+        # A register holds a literal number of elements: not a scatter's whole row (``out[j, idx[j, i]]``)
+        if [e.data.data for e in edges].count(name) != 1 or symbolic.issymbolic(edge.data.subset.num_elements()):
+            continue
+        identity = dtypes.reduction_identity(sdfg.arrays[name].dtype, detect_reduction_type(edge.data.wcr))
+        if identity is None:
+            continue
+        acc = OutLocalStorage.apply_to(
+            sdfg, {"array": name, "prefix": "__acc_"}, verify=False, save=False, node_a=inner_exit, node_b=outer_exit
+        )
+        shape = sdfg.arrays[acc.data].shape
+        sdfg.arrays[acc.data].storage = dtypes.StorageType.Register
+        ranges = {f"__a{d}": f"0:{size}" for d, size in enumerate(shape) if size != 1}
+        index = ", ".join(f"__a{d}" if size != 1 else "0" for d, size in enumerate(shape))
+        seeded = state.add_access(acc.data)
+        out = {"__out": Memlet(f"{acc.data}[{index}]")}
+        if ranges:
+            _, first, _ = state.add_mapped_tasklet(
+                "accumulator_init", ranges, {}, f"__out = {identity}", out, external_edges=True,
+                output_nodes={acc.data: seeded}, schedule=dtypes.ScheduleType.Sequential
+            )
+        else:
+            first = state.add_tasklet("accumulator_init", {}, {"__out"}, f"__out = {identity}")
+            state.add_edge(first, "__out", seeded, None, out["__out"])
+        state.add_nedge(entry, first, Memlet())
+        state.add_nedge(seeded, inner, Memlet())
 
 
 @properties.make_properties
