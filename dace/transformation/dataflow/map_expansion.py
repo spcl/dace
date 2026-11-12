@@ -63,11 +63,12 @@ class MapExpansion(pm.SingleStateTransformation):
 
     def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False):
         # A candidate subgraph matches the map-expansion pattern when it
-        # includes an N-dimensional map, with N greater than one.
-        return self.map_entry.map.get_param_num() > 1
+        # includes an N-dimensional map, with N greater than one, and ``split_at`` leaves dimensions on both sides.
+        params = self.map_entry.map.get_param_num()
+        return params > 1 and (self.split_at is None or 0 < self.split_at < params)
 
     def generate_new_maps(self, current_map: nodes.Map):
-        if self.split_at is not None and 0 < self.split_at < current_map.get_param_num():
+        if self.split_at is not None:
             k, ranges, tiles = self.split_at, current_map.range.ranges, current_map.range.tile_sizes
             outer = nodes.Map(current_map.label, current_map.params[:k], subsets.Range(ranges[:k]))
             inner = nodes.Map(

@@ -1,5 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+import pytest
 
 import dace
 from dace.transformation.dataflow import MapExpansion
@@ -268,6 +269,19 @@ def test_split_at_keeps_the_leading_dimensions_in_one_outer_map():
     b = np.zeros((8, 6, 4))
     sdfg(a=a, b=b)
     assert np.allclose(b, a * 2.0)
+
+
+@pytest.mark.parametrize("split_at", [0, 3])
+def test_a_split_leaving_no_dimension_on_one_side_is_refused(split_at):
+    """``split_at`` outside ``(0, 3)`` on ``(i, j, k)`` splits nothing: refused, not a full expansion instead."""
+    sdfg = dace.SDFG(f"expansion_split_at_{split_at}")
+    sdfg.add_array("a", (8, 6, 4), dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    state.add_mapped_tasklet(
+        "m", {"i": "0:8", "j": "0:6", "k": "0:4"}, {}, "o = 1.0", {"o": dace.Memlet("a[i, j, k]")}, external_edges=True
+    )
+    assert sdfg.apply_transformations(MapExpansion, options=dict(split_at=split_at)) == 0
+    assert [n.map.params for n in state.nodes() if isinstance(n, dace.nodes.MapEntry)] == [["i", "j", "k"]]
 
 
 if __name__ == "__main__":
