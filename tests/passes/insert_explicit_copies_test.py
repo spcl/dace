@@ -25,9 +25,16 @@ def _wcr_edges(sdfg):
     return [(st, e) for st in sdfg.states() for e in st.edges() if e.data.wcr is not None]
 
 
+def _is_copy(node) -> bool:
+    """A copy the pass inserted: a ``CopyLibraryNode``, or the assignment tasklet a one-element copy is."""
+    return isinstance(node, CopyLibraryNode) or (
+        isinstance(node, nodes.Tasklet) and CopyLibraryNode.INPUT_CONNECTOR_NAME in node.in_connectors
+    )
+
+
 def _count_copy_nodes(sdfg):
-    """Count CopyLibraryNode instances across all states (recursive)."""
-    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, CopyLibraryNode))
+    """Count inserted copies across all states (recursive)."""
+    return sum(1 for n, _ in sdfg.all_nodes_recursive() if _is_copy(n))
 
 
 def _count_direct_copy_edges(sdfg):
@@ -754,8 +761,8 @@ def _build_stage_out_sdfg(name: str, with_view: bool = False) -> dace.SDFG:
 
 
 def _find_libnode_and_scope(state):
-    libnodes = [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
-    assert len(libnodes) == 1, f"expected exactly one CopyLibraryNode, got {len(libnodes)}"
+    libnodes = [n for n in state.nodes() if _is_copy(n)]
+    assert len(libnodes) == 1, f"expected exactly one copy, got {len(libnodes)}"
     cn = libnodes[0]
     return cn, state.entry_node(cn)
 
@@ -1260,9 +1267,9 @@ def test_iec_lifts_single_element_wcr_staging_edge():
 
     InsertExplicitCopies().apply_pass(sdfg, {})
 
-    assert _count_copy_nodes(sdfg) == 1, "a single-element WCR stage-out must become a CopyLibraryNode"
+    assert _count_copy_nodes(sdfg) == 1, "a single-element WCR stage-out must become an explicit copy"
     cn, _ = _find_libnode_and_scope(state)
-    assert cn.implementation in (None, "Auto"), "the copy node must be left for the selector to resolve"
+    assert isinstance(cn, nodes.Tasklet), "one element on the host is the assignment the selector would pick"
     out_edges = [e for e in state.out_edges(cn) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME]
     assert out_edges[0].data.wcr is not None, "the accumulate must move onto the copy node's output"
     sdfg.validate()
@@ -1319,7 +1326,7 @@ def test_iec_keeps_the_ordering_edge_on_the_node_that_writes():
     sdfg.validate()
 
     state = next(iter(sdfg.states()))
-    writers = [e.src for e in state.in_edges(tmp_a) if isinstance(e.src, CopyLibraryNode)]
+    writers = [e.src for e in state.in_edges(tmp_a) if _is_copy(e.src)]
     assert len(writers) == 1, "the stage-in copy of tmp_A was not lifted"
     ordered_after = [e.src for e in state.in_edges(writers[0]) if e.data.is_empty()]
     assert c_write in ordered_after, "the copy that now writes tmp_A is not ordered after the write it followed"
@@ -1654,6 +1661,35 @@ def test_a_self_copy_naming_one_side_moves_nothing():
     assert np.allclose(a, 2 * np.arange(7.0))
 
 
+def test_a_one_element_copy_is_an_assignment_tasklet():
+    """One element moving on the host side is ``_cpy_out = _cpy_in``, not a copy node; the rest stays a copy node,
+    and so does a one-element copy onto the GPU."""
+    sdfg = dace.SDFG("one_element_copy")
+    sdfg.add_array("a", [8], dace.float64)
+    sdfg.add_array("b", [8], dace.float32)
+    sdfg.add_array("c", [8], dace.float64)
+    state = sdfg.add_state()
+    a = state.add_read("a")
+    state.add_nedge(a, state.add_write("b"), Memlet("a[3] -> [5]"))
+    state.add_nedge(a, state.add_write("c"), Memlet("a[0:8] -> [0:8]"))
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    (copied,) = [state.out_edges(n)[0].data.data for n in state.nodes() if isinstance(n, CopyLibraryNode)]
+    assert copied == "c"
+    (tasklet,) = [n for n in state.nodes() if isinstance(n, nodes.Tasklet)]
+    assert "_cpy_out = dace.float32(_cpy_in)" in tasklet.code.as_string
+    a_val, b_val, c_val = np.arange(8.0), np.zeros(8, np.float32), np.zeros(8)
+    sdfg(a=a_val, b=b_val, c=c_val)
+    assert b_val[5] == 3.0 and np.array_equal(c_val, a_val)
+
+    device = dace.SDFG("one_element_copy_to_gpu")
+    device.add_array("a", [8], dace.float64)
+    device.add_array("g", [8], dace.float64, storage=dace.StorageType.GPU_Global)
+    state = device.add_state()
+    state.add_nedge(state.add_read("a"), state.add_write("g"), Memlet("a[2] -> [2]"))
+    InsertExplicitCopies().apply_pass(device, {})
+    assert _count_copy_nodes(device) == 1
+
+
 if __name__ == "__main__":
     test_a_self_copy_naming_one_side_moves_nothing()
     test_a_copy_lifted_beside_a_view_named_like_its_connector_validates()
@@ -1751,3 +1787,4 @@ if __name__ == "__main__":
     ]:
         test_insert_cross_storage_transfer(sdfg_name, src_name, src_storage, dst_name, dst_storage, size)
     test_freeing_a_copy_connector_name_renames_the_nested_connector_too()
+    test_a_one_element_copy_is_an_assignment_tasklet()

@@ -8,6 +8,7 @@ from typing import Any
 from dace import data, dtypes, nodes, properties, subsets, symbolic
 from dace.libraries.standard.helper import CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
+from dace.libraries.standard.nodes.copy.node import copy_node
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutils
@@ -339,7 +340,7 @@ class InsertExplicitCopies(ppl.Pass):
                 (in_memlet if memlet.data == src_name else out_memlet).access_policy = memlet.access_policy.copy()
 
             label = f"copy_{src_name}_to_{dst_name}"
-            libnode = CopyLibraryNode(name=label)
+            libnode = copy_node(state, label, src_node, src_desc, src_subset, dst_desc, dst_subset)
             # Instrumentation providers decide a copy edge's instrumentation from the state it is in
             # (``on_copy_begin``); as a node the copy needs its own setting to stay measured.
             libnode.instrument = state.instrument
@@ -468,7 +469,9 @@ class InsertExplicitCopies(ppl.Pass):
             return False
         inner_memlet = Memlet(data=inner_node.data, subset=inner_subset)
         label = f"copy_{outer.data}_to_{inner_node.data}" if stage_in else f"copy_{inner_node.data}_to_{outer.data}"
-        libnode = CopyLibraryNode(name=label)
+        ends = [(outer_desc, outer_subset), (inner_desc, inner_subset)]
+        src, dst = ends if stage_in else ends[::-1]
+        libnode = copy_node(state, label, inner_node, *src, *dst)
         libnode.instrument = state.instrument
         state.add_node(libnode)
         if stage_in:

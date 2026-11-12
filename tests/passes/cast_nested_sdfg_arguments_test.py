@@ -52,7 +52,9 @@ def casts(sdfg: dace.SDFG) -> list[str]:
     """``source -> destination`` of every converting copy the pass inserted."""
     found = []
     for node, state in sdfg.all_nodes_recursive():
-        if isinstance(node, CopyLibraryNode):
+        if isinstance(node, CopyLibraryNode) or (
+            isinstance(node, dace.nodes.Tasklet) and CopyLibraryNode.INPUT_CONNECTOR_NAME in node.in_connectors
+        ):
             src, dst = state.in_edges(node)[0].data.data, state.out_edges(node)[0].data.data
             found.append(f"{src}->{dst}")
     return sorted(found)
