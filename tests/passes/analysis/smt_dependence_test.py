@@ -200,6 +200,16 @@ def test_a_backward_loop_is_reasoned_about_in_its_own_direction():
     assert smt_dependence.prove_disjoint_access_boxes(here, ahead, "j", 1, M - 2, 1) is False
 
 
+def test_a_backward_loop_orders_its_iterations_downward():
+    """Under a negative step the EARLIER iteration has the LARGER iterator. Iteration ``i`` reads
+    ``A[i + 1]``, which iteration ``i + 1`` wrote before it: a RAW, and never a read-ahead a
+    snapshot may break. ``A[i - 1]`` is the read-ahead there, written only by a later iteration."""
+    assert smt_dependence.classify_read_write_pair(I + 1, I, "i", N - 2, 0, -1) == "RAW"
+    assert smt_dependence.prove_read_ahead(I + 1, I, "i", N - 2, 0, -1) is not True
+    assert smt_dependence.classify_read_write_pair(I - 1, I, "i", N - 1, 1, -1) == "WAR"
+    assert smt_dependence.prove_read_ahead(I - 1, I, "i", N - 1, 1, -1) is True
+
+
 def test_an_unknown_step_direction_is_inconclusive():
     """A symbolic step could travel either way, and the wrong guess is the vacuity above -- so
     the oracle abstains instead of picking one."""
@@ -320,6 +330,7 @@ if __name__ == "__main__":
     test_a_shifted_row_pair_is_refused()
     test_neighbouring_row_bands_are_refused()
     test_a_backward_loop_is_reasoned_about_in_its_own_direction()
+    test_a_backward_loop_orders_its_iterations_downward()
     test_an_unknown_step_direction_is_inconclusive()
     test_boxes_of_different_rank_are_inconclusive()
     test_an_indirect_read_reaches_the_solver()

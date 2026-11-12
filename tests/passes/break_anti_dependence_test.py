@@ -358,6 +358,25 @@ def test_break_anti_dependence_post_normalize_negative_stride_reverse_scan():
     assert np.allclose(out, ref), f"got {out}, expected {ref}"
 
 
+def test_break_anti_dependence_refuses_a_backward_read_behind():
+    """``for i in range(N - 2, -1, -1): a[i] = a[i + 1] + b[i]`` reads what the previous iteration wrote: a
+    true RAW, whether the loop still counts down or ``NormalizeNegativeStride`` has rewritten it. Snapshotting
+    ``a[i + 1]`` as a read-ahead would read the stale original."""
+    from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
+
+    @dace.program
+    def back_rec(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(N - 2, -1, -1):
+            a[i] = a[i + 1] + b[i]
+
+    sdfg = back_rec.to_sdfg(simplify=True)
+    assert BreakAntiDependence().apply_pass(sdfg, {}) is None
+    assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) is None
+    assert NormalizeNegativeStride().apply_pass(sdfg, {}) == 1
+    assert BreakAntiDependence().apply_pass(sdfg, {}) is None
+    assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) is None
+
+
 def test_break_anti_dependence_alpha_minus_one_with_larger_offset():
     """``alpha = -1`` with carried offset of magnitude > 1: the post-NNS
     shape of ``a[i+3] = a[i] + b[i]`` iterating in reverse.
@@ -786,6 +805,7 @@ def test_an_offset_array_the_loop_rewrites_is_not_renamed():
 
 
 if __name__ == "__main__":
+    test_break_anti_dependence_refuses_a_backward_read_behind()
     test_break_anti_dependence_read_ahead_parallelizes()
     test_break_anti_dependence_read_behind_refused()
     test_break_anti_dependence_out_of_place_noop()
