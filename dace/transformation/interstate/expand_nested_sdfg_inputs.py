@@ -146,7 +146,7 @@ def viewed_window(state: SDFGState, edge: MultiConnectorEdge) -> tuple[nodes.Acc
         return None
     kept = [dim for dim, (b, e, s) in enumerate(window.ranges) if (e + 1 - b) // s != 1]
     if (
-        any(s != 1 for _, _, s in window.ranges)
+        any(rng[2] != 1 for rng in window.ranges)
         or len(kept) != len(view.shape)
         or any(symbolic.simplify(window.size()[dim] - size) != 0 for dim, size in zip(kept, view.shape))
         or any(symbolic.simplify(base.strides[dim] - stride) != 0 for dim, stride in zip(kept, view.strides))

@@ -466,7 +466,7 @@ def test_a_slice_view_feeding_a_nested_sdfg_is_bypassed_so_the_nested_sdfg_inlin
     inlined = sdfg.apply_transformations_repeated(InlineMultistateSDFG)
 
     assert widened > 0 and inlined == 1
-    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert not [pair[0] for pair in sdfg.all_nodes_recursive() if isinstance(pair[0], dace.nodes.NestedSDFG)]
     assert "row" not in {n.data for state in sdfg.states() for n in state.data_nodes()}
     sdfg.validate()
     out = np.zeros(3)
