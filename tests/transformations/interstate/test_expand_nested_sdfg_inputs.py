@@ -28,12 +28,19 @@ def _count_nsdfgs(sdfg):
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
 
 
+def _nesting_map_to_for_loop() -> MapToForLoop:
+    """``MapToForLoop`` leaving the body nests it frees nested: the shape ``ExpandNestedSDFGInputs`` widens."""
+    to_loop = MapToForLoop()
+    to_loop.inline_freed = False
+    return to_loop
+
+
 def _build_map_to_for_loop_test_sdfg():
     """Build the post-MapToForLoop NSDFG-wrapped shape that
     ``ExpandNestedSDFGInputs`` must widen."""
     sdfg = _jacobi2d_map_tile.to_sdfg(simplify=True)
     PatternMatchAndApplyRepeated([MapExpansion()]).apply_pass(sdfg, {})
-    PatternMatchAndApplyRepeated([MapToForLoop()]).apply_pass(sdfg, {})
+    PatternMatchAndApplyRepeated([_nesting_map_to_for_loop()]).apply_pass(sdfg, {})
     return sdfg
 
 
@@ -330,11 +337,9 @@ def _scatter_no_conflict_kernel(a: dace.float64[N], b: dace.float64[N], idx: dac
 def test_scatter_no_conflict_widens_and_validates():
     """Indirect store ``a[idx[i]]`` -- ExpandNestedSDFGInputs must widen
     the scatter pattern and keep the inner subscript intact."""
-    from dace.transformation.dataflow.map_for_loop import MapToForLoop
-
     sdfg = _scatter_no_conflict_kernel.to_sdfg(simplify=True)
     PatternMatchAndApplyRepeated([MapExpansion()]).apply_pass(sdfg, {})
-    PatternMatchAndApplyRepeated([MapToForLoop()]).apply_pass(sdfg, {})
+    PatternMatchAndApplyRepeated([_nesting_map_to_for_loop()]).apply_pass(sdfg, {})
     PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
     sdfg.validate()
 
@@ -342,8 +347,6 @@ def test_scatter_no_conflict_widens_and_validates():
 def test_scatter_no_conflict_numerics_via_expand_then_inline():
     """End-to-end: scatter with permutation indices (zero conflicts) --
     the post-rewrite SDFG must match an untransformed reference run."""
-    from dace.transformation.dataflow.map_for_loop import MapToForLoop
-
     n = 64
     rng = np.random.default_rng(0xBAD1DEA)
     idx = rng.permutation(n).astype(np.int32)
@@ -353,7 +356,7 @@ def test_scatter_no_conflict_numerics_via_expand_then_inline():
     _scatter_no_conflict_kernel.to_sdfg(simplify=True)(a=ref_a, b=b.copy(), idx=idx.copy(), N=n)
     tsdfg = _scatter_no_conflict_kernel.to_sdfg(simplify=True)
     PatternMatchAndApplyRepeated([MapExpansion()]).apply_pass(tsdfg, {})
-    PatternMatchAndApplyRepeated([MapToForLoop()]).apply_pass(tsdfg, {})
+    PatternMatchAndApplyRepeated([_nesting_map_to_for_loop()]).apply_pass(tsdfg, {})
     PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(tsdfg, {})
     PatternMatchAndApplyRepeated([InlineMultistateSDFG()]).apply_pass(tsdfg, {})
     tsdfg.validate()
@@ -552,7 +555,7 @@ def test_inplace_same_array_read_and_write_no_double_offset():
     un-transformed program."""
     sdfg = _inplace_tile_rmw.to_sdfg(simplify=True)
     PatternMatchAndApplyRepeated([MapExpansion()]).apply_pass(sdfg, {})
-    PatternMatchAndApplyRepeated([MapToForLoop()]).apply_pass(sdfg, {})
+    PatternMatchAndApplyRepeated([_nesting_map_to_for_loop()]).apply_pass(sdfg, {})
 
     # Sanity: at least one top-level NSDFG binds outer ``a`` on both an in- and
     # out-edge (the in-place shape this test exists to cover).

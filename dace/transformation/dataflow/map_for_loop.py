@@ -113,6 +113,13 @@ class MapToForLoop(transformation.SingleStateTransformation):
         "legacy wrapped form (e.g., when a downstream test asserts on the NSDFG).",
     )
 
+    inline_freed = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="Inline the nested SDFGs right under the map, which the loop leaves outside every scope. Off for a "
+        "caller that inlines them itself.",
+    )
+
     @staticmethod
     def annotates_memlets():
         return True
@@ -384,7 +391,8 @@ class MapToForLoop(transformation.SingleStateTransformation):
 
             written = {n.data for st in loop_region.states() for n in st.data_nodes() if st.in_degree(n) > 0}
             loop_analysis.mark_known_parallel(loop_region, written)
-        from dace.transformation.helpers import inline_freed_nested_sdfgs
+        if self.inline_freed:
+            from dace.transformation.helpers import inline_freed_nested_sdfgs
 
-        inline_freed_nested_sdfgs(sdfg, freed)
+            inline_freed_nested_sdfgs(sdfg, freed)
         return node, nstate
