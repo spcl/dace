@@ -33,7 +33,7 @@ times costs ``E * (fork + work/P)`` against ``E * work``, so ``E`` cancels (npbe
 runs sequentially: one region opens one OpenMP team level. Last, a parallel map's leading ``SMALL`` axes are shared
 out with the first larger one (``collapse(2)`` for ``(b, k, i)`` with ``b`` small), keeping the axis order
 (:func:`~dace.transformation.helpers.share_out_past_leading_small_axes`), and a map without a reduced output
-collapses its leading axes until they provably fill the team, the innermost axis of a leaf body excepted
+collapses its leading axes until they provably fill the team, its innermost axis excepted
 (:func:`collapse_leading_axes`).
 
 A copy / memset node here follows :func:`~dace.libraries.standard.helper.is_reentered_cpu_transfer`, as its
@@ -353,35 +353,33 @@ def fills_team(trips: Any, team: int, facts: symbolic.Facts) -> bool:
 def collapse_leading_axes(state: SDFGState, entry: nodes.MapEntry, resolver: SymbolResolver) -> bool:
     """Share out the leading axes of a parallel map that writes no write-conflict-resolved output together (an OpenMP
     ``collapse``) until their iterations provably fill ``ITERATIONS_PER_THREAD`` per core: an elementwise map over
-    ``(nblocks, 1024, k)`` shares out ``nblocks`` alone otherwise. The innermost axis of a leaf body stays out of the
-    collapse, in an inner ``Sequential`` map ``MarkSIMDMaps`` vectorizes; an axis whose range reads an earlier one
-    ends the collapse.
+    ``(nblocks, 1024, k)`` shares out ``nblocks`` alone otherwise. The innermost (contiguous) axis never joins the
+    collapse: it moves into an inner ``Sequential`` map, which ``MarkSIMDMaps`` vectorizes. An axis whose range reads an
+    earlier one ends the collapse.
 
     :returns: whether ``entry`` was collapsed.
     """
     from dace.transformation.dataflow import MapExpansion  # Avoid an import cycle
-    from dace.transformation.passes.mark_simd_maps import map_body_is_leaf, map_has_wcr
+    from dace.transformation.passes.mark_simd_maps import map_has_wcr
 
     params, ranges = entry.map.params, entry.map.range
-    if entry.map.collapse > 1 or len(params) < 2 or map_has_wcr(state, entry):
+    if entry.map.collapse > 1 or len(params) < 3 or map_has_wcr(state, entry):
         return False
-    limit = len(params) - 1 if map_body_is_leaf(state, entry) else len(params)
     team, facts = ITERATIONS_PER_THREAD * topology().physical_cores, resolver.facts_at(state, entry)
     sizes, depth = ranges.size(), 1
     trips = sizes[0]
-    while depth < limit and not fills_team(trips, team, facts):
+    while depth < len(params) - 1 and not fills_team(trips, team, facts):
         if set(subsets.Range([ranges[depth]]).free_symbols) & set(params[:depth]):
             break
         trips, depth = trips * sizes[depth], depth + 1
     if depth == 1:
         return False
-    if depth < len(params):
-        MapExpansion.apply_to(
-            state.sdfg,
-            map_entry=entry,
-            options={"inner_schedule": dtypes.ScheduleType.Sequential, "split_at": depth},
-            save=False,
-        )
+    MapExpansion.apply_to(
+        state.sdfg,
+        map_entry=entry,
+        options={"inner_schedule": dtypes.ScheduleType.Sequential, "split_at": depth},
+        save=False,
+    )
     entry.map.collapse = depth
     return True
 

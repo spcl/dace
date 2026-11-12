@@ -302,14 +302,11 @@ def test_a_first_axis_that_fills_the_team_is_shared_out_alone():
     assert map_nest(sdfg) == [(["b", "p", "c"], PAR)] and collapse_of(sdfg) == 1
 
 
-def test_a_map_around_a_loop_collapses_every_axis():
-    """Its body is no leaf: the inner map is the loop that vectorizes, so both outer axes are shared out."""
+def test_a_map_around_a_loop_keeps_its_innermost_axis_out_of_the_collapse():
+    """A body loop does not make the map's innermost axis free to collapse: it is still the contiguous one."""
     sdfg = block_strip_sdfg("cpu_collapse_around_loop", {"b": "0:nblocks", "p": f"0:{BLOCK}"}, {"c": "0:ncol"})
-    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) == 1
-    sdfg.validate()
-    assert map_nest(sdfg) == [(["b", "p"], PAR), (["c"], SEQ)]
-    assert collapse_of(sdfg) == 2
-    check_block_strip(sdfg)
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) is None
+    assert map_nest(sdfg) == [(["b", "p"], PAR), (["c"], SEQ)] and collapse_of(sdfg) == 1
 
 
 def test_a_reducing_or_triangular_map_is_not_collapsed():
@@ -333,5 +330,5 @@ if __name__ == "__main__":
     test_a_symbolic_block_count_is_collapsed_with_the_points_and_the_columns_stay_vectorizable()
     test_a_leaf_map_never_collapses_its_innermost_axis()
     test_a_first_axis_that_fills_the_team_is_shared_out_alone()
-    test_a_map_around_a_loop_collapses_every_axis()
+    test_a_map_around_a_loop_keeps_its_innermost_axis_out_of_the_collapse()
     test_a_reducing_or_triangular_map_is_not_collapsed()
