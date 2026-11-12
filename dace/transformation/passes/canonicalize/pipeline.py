@@ -146,7 +146,6 @@ from dace.transformation.passes.pattern_matching import (
     PatternMatchAndApply,
     PatternMatchAndApplyRepeated,
 )
-from dace.transformation.passes.privatize_scatter_reduction import PrivatizeScatterReduction
 from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.rematerialize_derived_temporaries import RematerializeDerivedTemporaries
@@ -545,20 +544,16 @@ class _ThenIfChanged(ppl.Pass):
 # ``interchange_carry_with_map``: ``Loop[jk]{Map[jl]}`` -> ``Map[jl]{Loop[jk]}``, carry per thread.
 #   CPU 4.6-5.2x, GPU 0.73-0.80x (BW-bound; short coalesced kernels win).
 # ``scatter_to_guarded_maps``: sort + duplicate guard, ~1.04x CPU / ~1.03x GPU.
-# ``privatize_scatter_reductions``: whole-buffer map WCR so CPU emits an OpenMP array-section
-#   reduction instead of atomics (azimint_hist ~200x -> ~1x vs numpy). CPU only.
 # ``normalize_loop_and_map_origin``: rebase ranges to 0 keeping the stride (``NormalizeLoopsAndMaps``
 #   folded it and lost TSVC s172's map); off on both targets.
 CPU_DEFAULTS: dict[str, Any] = {
     "interchange_carry_with_map": True,
     "scatter_to_guarded_maps": True,
-    "privatize_scatter_reductions": True,
     "normalize_loop_and_map_origin": False,
 }
 GPU_DEFAULTS: dict[str, Any] = {
     "interchange_carry_with_map": False,
     "scatter_to_guarded_maps": True,
-    "privatize_scatter_reductions": False,
     "normalize_loop_and_map_origin": False,
 }
 TARGET_DEFAULTS: dict[str, dict[str, Any]] = {"cpu": CPU_DEFAULTS, "gpu": GPU_DEFAULTS}
@@ -786,7 +781,6 @@ def ingest(target: str) -> Stages:
 
 def normalize_statements(
     lift: bool,
-    privatize_scatter_reductions: bool,
     unroll_limit: int,
     perfect_loop_nesting: bool,
     target: str,
@@ -799,8 +793,6 @@ def normalize_statements(
     # Out of phase: this matcher reads the frontend identity-construction map that lowering consumes.
     if lift:
         s += [(LIFT_SEMANTICS, LiftInv())]
-    if privatize_scatter_reductions:
-        s += [(label, PrivatizeScatterReduction())]
     s += [
         (label, PatternApplyOnceEverywhere([MoveIfIntoMap()])),
         (label, ConvertLengthOneArraysToScalars()),
@@ -1135,7 +1127,6 @@ def build_stages(
     peel_limit: int = DEFAULT_PEEL_LIMIT,
     interchange_carry_with_map: bool = True,
     scatter_to_guarded_maps: bool = True,
-    privatize_scatter_reductions: bool = True,
     normalize_loop_and_map_origin: bool = False,
     assume_parallel_guards: bool = False,
     perfect_loop_nesting: bool = True,
@@ -1153,9 +1144,7 @@ def build_stages(
     """
     lift, lift_copy = semantic_lifting and lift, semantic_lifting and lift_copy
     s = ingest(target)
-    s += normalize_statements(
-        lift, privatize_scatter_reductions, unroll_limit, perfect_loop_nesting, target, normalize_loop_and_map_origin
-    )
+    s += normalize_statements(lift, unroll_limit, perfect_loop_nesting, target, normalize_loop_and_map_origin)
     s += lift_semantics(lift, lift_copy, interchange_carry_with_map, target)
     s += rail()
     s += derive_parallelism(
@@ -1395,12 +1384,6 @@ class CanonicalizationPipeline(ppl.Pass):
         default=True,
         desc="Run ScatterToGuardedMaps in derive_parallelism to lift scatter loops with a sort-based guard.",
     )
-    privatize_scatter_reductions = properties.Property(
-        dtype=bool,
-        default=True,
-        desc="Run PrivatizeScatterReduction to surface a data-dependent scatter reduction "
-        "(azimint histogram) to an OpenMP array-section reduction clause (CPU-only; off for GPU).",
-    )
     normalize_loop_and_map_origin = properties.Property(
         dtype=bool,
         default=False,
@@ -1455,7 +1438,6 @@ class CanonicalizationPipeline(ppl.Pass):
         target: str = "cpu",
         interchange_carry_with_map: bool | None = None,
         scatter_to_guarded_maps: bool | None = None,
-        privatize_scatter_reductions: bool | None = None,
         normalize_loop_and_map_origin: bool | None = None,
         assume_parallel_guards: bool = False,
         perfect_loop_nesting: bool = True,
@@ -1480,9 +1462,6 @@ class CanonicalizationPipeline(ppl.Pass):
         )
         self.scatter_to_guarded_maps = _resolve_target_default(
             target, "scatter_to_guarded_maps", scatter_to_guarded_maps, fallback=True
-        )
-        self.privatize_scatter_reductions = _resolve_target_default(
-            target, "privatize_scatter_reductions", privatize_scatter_reductions, fallback=(target == "cpu")
         )
         self.normalize_loop_and_map_origin = _resolve_target_default(
             target, "normalize_loop_and_map_origin", normalize_loop_and_map_origin, fallback=False
@@ -1514,7 +1493,6 @@ class CanonicalizationPipeline(ppl.Pass):
             peel_limit=self.peel_limit,
             interchange_carry_with_map=self.interchange_carry_with_map,
             scatter_to_guarded_maps=self.scatter_to_guarded_maps,
-            privatize_scatter_reductions=self.privatize_scatter_reductions,
             normalize_loop_and_map_origin=self.normalize_loop_and_map_origin,
             assume_parallel_guards=self.assume_parallel_guards,
             perfect_loop_nesting=self.perfect_loop_nesting,
@@ -1619,7 +1597,6 @@ def canonicalize(
     target: str = "cpu",
     interchange_carry_with_map: bool | None = None,
     scatter_to_guarded_maps: bool | None = None,
-    privatize_scatter_reductions: bool | None = None,
     normalize_loop_and_map_origin: bool | None = None,
     assume_parallel_guards: bool = False,
     perfect_loop_nesting: bool = True,
@@ -1658,12 +1635,6 @@ def canonicalize(
                    knob args override the preset.
     :param interchange_carry_with_map: ``LoopToScan`` knob; ``None`` (default) ->
                                        per-target preset (CPU=True, GPU=False).
-    :param privatize_scatter_reductions: Surface a data-dependent scatter reduction
-                                   (``hist[bin[i]] (+)= w[i]`` -- the azimint histogram)
-                                   to an OpenMP array-section ``reduction(op:hist[0:n])``
-                                   clause so the accumulator is thread-privatised instead
-                                   of hammered with a contended atomic; ``None`` (default)
-                                   -> per-target preset (CPU=True, GPU=False).
     :param normalize_loop_and_map_origin: Rebase every Map range / ``LoopRegion`` counter to a
                                    0-based begin, keeping the stride (``NormalizeLoopAndMapOrigin``),
                                    at the end of ``normalize_statements``. ``None`` (default) ->
@@ -1715,7 +1686,6 @@ def canonicalize(
         target,
         interchange_carry_with_map,
         scatter_to_guarded_maps,
-        privatize_scatter_reductions,
         normalize_loop_and_map_origin,
         assume_parallel_guards,
         perfect_loop_nesting,
@@ -1765,7 +1735,6 @@ def canonicalize_under_authority(
     target: str,
     interchange_carry_with_map: bool | None,
     scatter_to_guarded_maps: bool | None,
-    privatize_scatter_reductions: bool | None,
     normalize_loop_and_map_origin: bool | None,
     assume_parallel_guards: bool,
     perfect_loop_nesting: bool,
@@ -1785,7 +1754,6 @@ def canonicalize_under_authority(
         target=target,
         interchange_carry_with_map=interchange_carry_with_map,
         scatter_to_guarded_maps=scatter_to_guarded_maps,
-        privatize_scatter_reductions=privatize_scatter_reductions,
         normalize_loop_and_map_origin=normalize_loop_and_map_origin,
         assume_parallel_guards=assume_parallel_guards,
         perfect_loop_nesting=perfect_loop_nesting,

@@ -19,6 +19,7 @@ from dace.libraries.standard.helper import (
     collapse_shape_and_strides,
     collapse_to_elements,
     exact_element_count,
+    transfer_runs_on_one_core,
 )
 from dace.sdfg.scope import devicelevel_block_size, is_devicelevel_gpu
 
@@ -316,9 +317,9 @@ def _make_mapped_tasklet_expansion(
         schedule = dtypes.ScheduleType.Sequential
     elif inp.storage in GPU_RESIDENT_STORAGES or out.storage in GPU_RESIDENT_STORAGES:
         schedule = dtypes.ScheduleType.GPU_Device
+    elif transfer_runs_on_one_core(node, parent_state):
+        schedule = dtypes.ScheduleType.Sequential
     else:
-        # Default, not Sequential, inside an enclosing map: SCOPEDEFAULT_SCHEDULE already resolves a
-        # map nested in a CPU_Multicore one to single-threaded.
         schedule = dtypes.ScheduleType.Default
 
     ctx.sdfg.schedule = dtypes.ScheduleType.Default

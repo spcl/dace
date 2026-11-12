@@ -1,33 +1,41 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""CPU specialization from the ``SMALL`` facts: which parallel scopes run sequentially, and how a map whose leading
-axes are ``SMALL`` is shared out.
+"""CPU specialization's one decision on parallel axes: which maps share their iterations out over the OpenMP team,
+over which of their axes, and which run sequentially.
 
-The canonical form is the maximally parallel, device-neutral one; here, with the target known, parallelism is given
-back where a region cannot pay for itself. One notion of small decides it: a ``SMALL`` symbol or a literal below
-``SMALL_CONSTANT_EXTENT`` (:func:`~dace.symbolic.is_small_extent`), plus the segment an enclosing loop reads from
-data, which is small by derivation. In order:
+Canonicalization leaves the maximally parallel, device-neutral form with every schedule unset (``Default``). This
+pass decides every CPU map's schedule, top-down, before schedule inference: the verdict for a map depends on its
+body (a few-trip map hands the team to its body maps), so it cannot be made after inference has pinned every
+nested map ``Sequential``. A map with an enclosing map runs sequentially, as inference would make it; at the top
+level, in order:
 
-1. **Nested parallelism.** A map (or library node) inside a parallel map of the same device schedule would open a
-   team per outer iteration: sequential at any size, transitively across nested-SDFG boundaries.
-2. **A small map.** A top-level map whose own iteration count (with the sequential maps it pins) is small runs
-   sequentially; :func:`release_few_trip_maps` already took the maps of at most one iteration, and those of fewer than a
-   team whose body holds a wider map.
-3. **A data segment under a long loop.** A map whose range starts and ends at values read from data (a CSR row,
+1. **A one- or few-trip map.** A map of at most one iteration is a guard rather than a loop; one of fewer
+   iterations than a team has threads (:func:`few_trips`) leaves threads idle when a map in its body shares out
+   more (:func:`wider`). Either runs sequentially and its body maps become the top-level ones: the peeled first
+   vertical level of ``cloudsc_monolith``, and ``newdxx_g``'s map over 5 atoms around its ``ngms`` maps.
+2. **A reducing map.** A map whose write-conflict-resolved outputs are indexed by some of its axes shares those
+   out, all of them (an OpenMP ``collapse``), and walks the reduced ones in an inner sequential map, so no write
+   needs an atomic (tsvc ``s176``: 7.1 s of ``omp atomic`` against numba's 1.0 s; gem's blocks and points). When
+   those axes are all ``SMALL`` and a reduced one is not, the split is inverted: the indexing axes become the outer
+   sequential loop and the reduced axes the parallel map, whose write becomes an OpenMP ``reduction`` (ICON's
+   ``max_abs_vcfl[blk]``).
+3. **A small map.** A map whose own iteration count (with the sequential maps it pins) is small
+   (:func:`small_count`) runs sequentially.
+4. **A data segment under a long loop.** A map whose range starts and ends at values read from data (a CSR row,
    ``indptr[k]:indptr[k + 1]``), or whose extent each outer iteration reads from data (``0:cnt``), inside a
    sequential loop runs a handful of iterations per outer one: a derived ``SMALL`` extent. ilu0's elimination forked
    once per row over a row of about ten: 1.5 s against numba's sequential 11 ms; amg_setup's per-row gather, 9.5 s
    against 0.55 s. A short loop does not count (a level loop of 15 trips, :func:`short_loop`): each of its trips
    reads a whole level, not a handful.
-4. **Leading ``SMALL`` axes.** A parallel map over ``(b, k, i)`` with ``b`` small shares ``b`` out together with
-   the first larger axis (``collapse(2)``), keeping the axis order
-   (:func:`~dace.transformation.helpers.share_out_past_leading_small_axes`).
 
-An enclosing loop alone is no reason: a region entered ``E`` times costs ``E * (fork + work/P)`` against
-``E * work``, so ``E`` cancels (npbench ``cavity_flow``'s 1,044,484-element pressure map).
+Every other top-level map runs in parallel. An enclosing loop alone is no reason against it: a region entered ``E``
+times costs ``E * (fork + work/P)`` against ``E * work``, so ``E`` cancels (npbench ``cavity_flow``'s
+1,044,484-element pressure map). A ``CPU_Multicore`` map inside a parallel one (a schedule set before this pass)
+runs sequentially: one region opens one OpenMP team level. Last, a parallel map's leading ``SMALL`` axes are shared
+out with the first larger one (``collapse(2)`` for ``(b, k, i)`` with ``b`` small), keeping the axis order
+(:func:`~dace.transformation.helpers.share_out_past_leading_small_axes`).
 
-Bulk transfers are decided in
-:mod:`~dace.transformation.passes.cpu_specialization.specialize_cpu_transfers`; a copy / memset node here follows
-:func:`~dace.libraries.standard.helper.is_reentered_cpu_transfer`.
+A copy / memset node here follows :func:`~dace.libraries.standard.helper.is_reentered_cpu_transfer`, as its
+implementation selection does (:func:`~dace.libraries.standard.helper.transfer_runs_on_one_core`).
 """
 
 import copy
@@ -51,6 +59,10 @@ from dace.transformation.passes.cpu_specialization.machine import topology
 #: someone else's decision and is left untouched.
 CPU_PARALLEL_SCHEDULES = (dtypes.ScheduleType.Default, dtypes.ScheduleType.CPU_Multicore)
 
+#: Schedules of a map nested in a CPU map that make it run sequentially: ``Sequential``, and ``Default``, which
+#: schedule inference resolves to ``Sequential`` under any CPU map (``dtypes.SCOPEDEFAULT_SCHEDULE``).
+SEQUENTIAL_UNDER_A_MAP = (dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential)
+
 
 #: The line a map made sequential here adds under its ``parallel`` class line, so the rendered loop -- which loses
 #: its pragma -- says why. Each rule fills in its own reason.
@@ -66,13 +78,13 @@ DATA_SEGMENT_REASON = (
 
 
 def pinned_inner_trips(entry: nodes.MapEntry, children: dict[Any, list[nodes.Node]]) -> Any:
-    """The iterations of the deepest chain of already ``Sequential`` maps in ``entry``'s body. No release can give
-    their work a region of its own (a reduction axis split off by ``SequentializeReductionAxes``), so the region
-    ``entry`` opens pays for them; the own-count rule assumes inner maps are released instead."""
+    """The iterations of the deepest chain of sequential maps in ``entry``'s body: ``Sequential`` ones (a reduced
+    axis split off) and the unscheduled ones a parallel ``entry`` makes sequential. The region ``entry`` opens pays
+    for them."""
     trips = [
         child.map.range.num_elements() * pinned_inner_trips(child, children)
         for child in children[entry]
-        if isinstance(child, nodes.MapEntry) and child.map.schedule == dtypes.ScheduleType.Sequential
+        if isinstance(child, nodes.MapEntry) and child.map.schedule in SEQUENTIAL_UNDER_A_MAP
     ]
     return trips[0] if len(trips) == 1 else 1
 
@@ -294,58 +306,118 @@ def wider(count: Any, outer: Any, facts_of: Callable[[], symbolic.Facts]) -> boo
     return not small_count(count, facts_of())
 
 
-def release_few_trip_maps(sdfg: SDFG) -> int:
-    """Make every top-level CPU map of at most one iteration ``Sequential``, and the maps directly in its body
-    (or at the top of a nested SDFG there) ``CPU_Multicore``, so schedule inference does not pin them under it.
-    A map of fewer iterations than a team has threads (:func:`few_trips`) is released the same way when one of
-    those maps shares out more (:func:`wider`): the team goes to the inner maps.
+def release_few_trips(
+    state: SDFGState, wrapper: nodes.MapEntry, children: dict[Any, list[nodes.Node]], resolver: SymbolResolver
+) -> bool:
+    """Make the unscheduled top-level map ``wrapper`` ``Sequential``, and the maps directly in its body (or at the
+    top of a nested SDFG there) ``CPU_Multicore``, when it runs at most one iteration, or fewer than a team has
+    threads (:func:`few_trips`) and one of those maps shares out more (:func:`wider`): the team goes to the inner
+    maps. A body map whose scope reads a shared transient before writing it stays unscheduled, and so sequential
+    (:func:`privatize_interior_transients`).
 
-    Runs BEFORE inference, while canonicalization's maps are still ``Default``: the peeled first vertical level
-    of ``cloudsc_monolith`` is such a map, and inferred under it its plane maps ran on one thread; so did the
-    ``ngms`` maps under ``newdxx_g``'s map over 5 atoms. A map whose scope reads a shared transient before writing
-    it stays under its parent's schedule (:func:`privatize_interior_transients`).
-
-    :param sdfg: the SDFG whose own states are rewritten.
-    :returns: how many such maps were found.
+    :returns: whether ``wrapper`` was released.
     """
-    found = 0
-    resolver = SymbolResolver()
-    for state in sdfg.states():
-        children = state.scope_children()
-        for wrapper in children[None]:
-            if not isinstance(wrapper, nodes.MapEntry) or wrapper.map.schedule != dtypes.ScheduleType.Default:
-                continue
-            count = wrapper.map.range.num_elements()
-            facts_of = lambda state=state: resolver.facts_at(state)
-            one_trip = at_most_one_trip(count, facts_of)
-            if not one_trip and not few_trips(count, facts_of):
-                continue
-            body = [(sdfg, state, n) for n in children[wrapper] if isinstance(n, nodes.MapEntry)]
-            for nested in [n for n in children[wrapper] if isinstance(n, nodes.NestedSDFG) and n.sdfg is not None]:
-                for inner_state in nested.sdfg.states():
-                    inner = inner_state.scope_children()[None]
-                    body += [(nested.sdfg, inner_state, n) for n in inner if isinstance(n, nodes.MapEntry)]
-            if not one_trip and not any(wider(e.map.range.num_elements(), count, facts_of) for _, _, e in body):
-                continue
-            note_sequential(wrapper, ONE_TRIP_REASON if one_trip else FEW_TRIPS_REASON.format(count=count))
-            found += 1
-            for owner, body_state, entry in body:
-                if entry.map.schedule == dtypes.ScheduleType.Default and privatize_interior_transients(
-                    owner, body_state, entry
-                ):
-                    entry.map.schedule = dtypes.ScheduleType.CPU_Multicore
-    return found
+    count = wrapper.map.range.num_elements()
+    facts_of = lambda: resolver.facts_at(state)
+    one_trip = at_most_one_trip(count, facts_of)
+    if not one_trip and not few_trips(count, facts_of):
+        return False
+    # Only unscheduled maps can take the team: one already ``Sequential`` (a split-off reduced axis) cannot
+    body = [(state.sdfg, state, n) for n in children[wrapper] if unscheduled_map(n)]
+    for nested in [n for n in children[wrapper] if isinstance(n, nodes.NestedSDFG) and n.sdfg is not None]:
+        for inner_state in nested.sdfg.states():
+            body += [(nested.sdfg, inner_state, n) for n in inner_state.scope_children()[None] if unscheduled_map(n)]
+    if not one_trip and not any(wider(e.map.range.num_elements(), count, facts_of) for _, _, e in body):
+        return False
+    note_sequential(wrapper, ONE_TRIP_REASON if one_trip else FEW_TRIPS_REASON.format(count=count))
+    for owner, body_state, entry in body:
+        if privatize_interior_transients(owner, body_state, entry):
+            entry.map.schedule = dtypes.ScheduleType.CPU_Multicore
+    return True
+
+
+def unscheduled_map(node: nodes.Node) -> bool:
+    """Whether ``node`` is a map entry whose schedule is not decided yet (``Default``)."""
+    return isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.Default
+
+
+def reduction_output_params(state: SDFGState, entry: nodes.MapEntry) -> set[str] | None:
+    """The parameters of ``entry`` that index its write-conflict-resolved outputs.
+
+    ``None`` when there is nothing to split: no such output, outputs indexed by DIFFERENT parameters
+    (no one order serves them all), every parameter indexes them (no axis is reduced) or none does
+    (a reduction to one element, which OpenMP's ``reduction`` clause already serves), or a data-dependent
+    scatter of rows (a dynamic write whose first dimension no parameter indexes, cp2k_trs4's
+    ``sink[x0[i0], t0, t1]``): its parallel axis is the one that scatters, which
+    :class:`~dace.transformation.passes.cpu_specialization.range_privatize_scatter_reductions.RangePrivatizeScatterReductions`
+    serves by rows.
+    """
+    params = set(entry.map.params)
+    indexing: set[str] | None = None
+    for edge in state.in_edges(state.exit_node(entry)):
+        if edge.data.is_empty() or edge.data.wcr is None:
+            continue
+        begin, end, _ = edge.data.subset.ndrange()[0]
+        if edge.data.dynamic and begin != end and not ({str(s) for s in edge.data.subset[0][0].free_symbols} & params):
+            return None
+        used = {str(symbol) for symbol in edge.data.subset.free_symbols} & params
+        if indexing is not None and used != indexing:
+            return None
+        indexing = used
+    if not indexing or indexing == params:
+        return None
+    return indexing
+
+
+def small_indexing_axes(state: SDFGState, entry: nodes.MapEntry, indexing: set[str]) -> bool:
+    """Whether every axis indexing ``entry``'s reduced outputs is SMALL and some reduced axis is not: sharing the
+    indexing axes out would leave the threads idle."""
+    facts = SymbolResolver().facts_at(state, entry)
+    small = {p: symbolic.is_small_extent(size, facts) for p, size in zip(entry.map.params, entry.map.range.size())}
+    return all(small[p] for p in indexing) and any(not small[p] for p in small if p not in indexing)
+
+
+def share_out_indexing_axes(state: SDFGState, entry: nodes.MapEntry, indexing: set[str]) -> None:
+    """Move the ``indexing`` axes of ``entry`` to the front and split the reduced ones off into an inner
+    ``Sequential`` map: ``entry`` keeps the indexing axes, collapsed. Inverted when those axes are SMALL
+    (:func:`small_indexing_axes`): ``entry`` becomes a ``Sequential`` loop over them around a ``CPU_Multicore`` map
+    over the reduced axes (module docstring, rule 2)."""
+    from dace.transformation.dataflow import MapDimShuffle, MapExpansion  # Avoid an import cycle
+
+    order = [p for p in entry.map.params if p in indexing] + [p for p in entry.map.params if p not in indexing]
+    inverted = small_indexing_axes(state, entry, indexing)
+    if order != entry.map.params:
+        MapDimShuffle.apply_to(state.sdfg, map_entry=entry, options={"parameters": order}, save=False)
+    if inverted:
+        MapExpansion.apply_to(
+            state.sdfg,
+            map_entry=entry,
+            options={"inner_schedule": dtypes.ScheduleType.Sequential, "expansion_limit": len(indexing)},
+            save=False,
+        )
+        inner = entry
+        for _ in indexing:
+            inner.map.schedule = dtypes.ScheduleType.Sequential
+            inner = next(e.dst for e in state.out_edges(inner) if isinstance(e.dst, nodes.MapEntry))
+        inner.map.schedule = dtypes.ScheduleType.CPU_Multicore
+        return
+    MapExpansion.apply_to(
+        state.sdfg,
+        map_entry=entry,
+        options={"inner_schedule": dtypes.ScheduleType.Sequential, "split_at": len(indexing)},
+        save=False,
+    )
+    entry.map.collapse = len(indexing)
 
 
 @properties.make_properties
-class SequentializeSmallAxes(ppl.Pass):
-    """Make every small or nested CPU parallel scope sequential, and share out leading ``SMALL`` axes (module
-    docstring)."""
+class DecideCpuParallelAxes(ppl.Pass):
+    """Decide the schedule of every CPU map and the axes a parallel one shares out (module docstring)."""
 
     CATEGORY: str = "Device Specialization"
 
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Nodes
+        return ppl.Modifies.Scopes
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
@@ -354,48 +426,50 @@ class SequentializeSmallAxes(ppl.Pass):
         return set()
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
-        """Sequentialize the small and nested parallel scopes, then share out leading ``SMALL`` axes.
+        """Decide every CPU map's schedule top-down, then share out leading ``SMALL`` axes.
 
-        :param sdfg: the SDFG to specialize, in place.
+        :param sdfg: the SDFG to specialize, in place, with its maps' schedules not yet inferred.
         :param _pipeline_results: unused.
-        :returns: how many scopes were pinned or split, or ``None`` if none were.
+        :returns: how many maps were released, split, pinned or collapsed, or ``None`` if none were.
         """
         self.pinned = 0
+        self.resolver = SymbolResolver()
         # One pass's worth of enclosing-loop trip-count verdicts: this pass never mutates a
         # LoopRegion's bounds, so a verdict computed under one scope stays valid for a sibling
         # transfer under the same loop.
         self.loop_cache: dict[int, bool] = {}
         self.varying_cache: dict[int, set[str]] = {}
-        self.visit_region(sdfg, False)
-        resolver = SymbolResolver()
+        self.visit_region(sdfg, False, None)
         candidates = [
             (node, state)
             for node, state in sdfg.all_nodes_recursive()
             if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.CPU_Multicore
         ]
+        resolver = SymbolResolver()
         split = sum(
             share_out_past_leading_small_axes(state, entry, resolver) is not None for entry, state in candidates
         )
         return (self.pinned + split) or None
 
-    def visit_region(self, region: ControlFlowRegion, in_parallel: bool) -> None:
+    def visit_region(self, region: ControlFlowRegion, in_parallel: bool, enclosing: dtypes.ScheduleType | None) -> None:
         """Walk ``region``'s blocks, threading whether a parallel map encloses them.
 
         :param region: the control-flow region (or nested SDFG) to walk.
         :param in_parallel: whether a device-parallel map encloses this region.
+        :param enclosing: the schedule of the innermost map enclosing this region, or ``None``.
         """
         for block in region.nodes():
             if isinstance(block, SDFGState):
-                self.visit_scope(block, block.scope_children(), None, in_parallel)
+                self.visit_scope(block, block.scope_children(), None, in_parallel, enclosing)
             elif isinstance(block, ConditionalBlock):
                 # A ConditionalBlock is NOT a ControlFlowRegion, so its branches are only reachable
                 # through ``branches``. Everything an ``if`` guards was invisible here otherwise --
                 # amg_setup puts its whole body under one, and every map inside it kept a region it
                 # could not pay for.
                 for _condition, branch in block.branches:
-                    self.visit_region(branch, in_parallel)
+                    self.visit_region(branch, in_parallel, enclosing)
             elif isinstance(block, ControlFlowRegion):
-                self.visit_region(block, in_parallel)
+                self.visit_region(block, in_parallel, enclosing)
 
     def visit_scope(
         self,
@@ -403,17 +477,24 @@ class SequentializeSmallAxes(ppl.Pass):
         children: dict[Any, list[nodes.Node]],
         entry: nodes.MapEntry | None,
         in_parallel: bool,
+        enclosing: dtypes.ScheduleType | None,
     ) -> None:
         """Decide the nodes directly inside one scope, then descend into their scopes.
 
         :param state: the state holding the scope.
-        :param children: ``state.scope_children()``, built once per state.
+        :param children: ``state.scope_children()``, built once per state and again after a map is split.
         :param entry: the scope's map entry, or ``None`` for the state's top level.
         :param in_parallel: whether a device-parallel map encloses this scope.
+        :param enclosing: the schedule of the innermost map enclosing this scope, or ``None``.
         """
-        for node in children[entry]:
+        for node in list(children[entry]):
             if isinstance(node, nodes.MapEntry):
-                self.visit_scope(state, children, node, self.decide_map(state, node, in_parallel, children))
+                body_in_parallel, reshaped = self.decide_map(state, node, in_parallel, enclosing, children)
+                if reshaped:
+                    children = state.scope_children()
+                # A map left to schedule inference leaves its body to it too
+                inner = enclosing if node.map.schedule == dtypes.ScheduleType.Default else node.map.schedule
+                self.visit_scope(state, children, node, body_in_parallel, inner)
             elif isinstance(node, nodes.LibraryNode):
                 # A node whose work per entry is the chunk an enclosing loop hands it (FindFirst) opts out of
                 # the loop half of the re-entry rule; an enclosing parallel map still serializes it.
@@ -424,12 +505,12 @@ class SequentializeSmallAxes(ppl.Pass):
                     node.schedule = dtypes.ScheduleType.Sequential
                     self.pinned += 1
             elif isinstance(node, nodes.NestedSDFG) and node.sdfg is not None:
-                self.visit_region(node.sdfg, in_parallel)
+                self.visit_region(node.sdfg, in_parallel, enclosing)
 
     def loop_serializes(self, state: SDFGState, node: nodes.LibraryNode) -> bool:
         """Whether the sequential loops around ``node`` make its own region unprofitable. A transfer counts a long
         loop that varies its size (:func:`~dace.libraries.standard.helper.is_reentered_cpu_transfer`); any other
-        node is a map over a blackbox, and a loop alone is no reason (rule 3: a data segment it reads)."""
+        node is a map over a blackbox, and a loop alone is no reason (rule 4: a data segment it reads)."""
         from dace.libraries.standard.helper import is_reentered_cpu_transfer
         from dace.libraries.standard.nodes.copy import CopyLibraryNode
         from dace.libraries.standard.nodes.fill import FillLibraryNode
@@ -444,24 +525,48 @@ class SequentializeSmallAxes(ppl.Pass):
         state: SDFGState,
         node: nodes.MapEntry,
         in_parallel: bool,
-        children: dict[Any, list[nodes.Node]] | None = None,
-    ) -> bool:
-        """Set ``node``'s schedule and report whether its body runs inside a parallel map.
+        enclosing: dtypes.ScheduleType | None,
+        children: dict[Any, list[nodes.Node]],
+    ) -> tuple[bool, bool]:
+        """Set ``node``'s schedule, splitting off the axes it reduces.
 
         :param state: the state holding ``node``.
         :param node: the map entry to decide.
         :param in_parallel: whether a device-parallel map encloses this map.
-        :param children: ``state.scope_children()``, to count the pinned inner maps the region pays for.
-        :returns: whether the map's body is enclosed by a parallel map.
+        :param enclosing: the schedule of the innermost map enclosing this one, or ``None``.
+        :param children: ``state.scope_children()``.
+        :returns: whether the map's body runs inside a parallel map, and whether the map was split (``children``
+            is then stale).
         """
-        if node.map.schedule not in CPU_PARALLEL_SCHEDULES:
-            return in_parallel
+        schedule = node.map.schedule
+        if schedule == dtypes.ScheduleType.Default and enclosing is not None:
+            # Another schedule (a GPU kernel, ``Unrolled``) leaves its inner maps to schedule inference
+            if enclosing in SEQUENTIAL_UNDER_A_MAP + CPU_PARALLEL_SCHEDULES:
+                node.map.schedule = dtypes.ScheduleType.Sequential
+            return in_parallel, False
+        if schedule not in CPU_PARALLEL_SCHEDULES:
+            return in_parallel, False
         if in_parallel:
-            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
-                note_sequential(node, NESTED_REASON)
-                self.pinned += 1
-            return True
-        count = node.map.range.num_elements() * pinned_inner_trips(node, children or state.scope_children())
+            note_sequential(node, NESTED_REASON)
+            self.pinned += 1
+            return True, False
+        # Only the root SDFG's own top-level maps: a released one hands the team to its body
+        if (
+            schedule == dtypes.ScheduleType.Default
+            and state.sdfg.parent_nsdfg_node is None
+            and release_few_trips(state, node, children, self.resolver)
+        ):
+            self.pinned += 1
+            return False, False
+        reshaped = False
+        if node.map.collapse <= 1 and (indexing := reduction_output_params(state, node)) is not None:
+            share_out_indexing_axes(state, node, indexing)
+            self.pinned += 1
+            reshaped = True
+            children = state.scope_children()
+            if node.map.schedule == dtypes.ScheduleType.Sequential:
+                return False, True
+        count = node.map.range.num_elements() * pinned_inner_trips(node, children)
         facts = SymbolResolver().facts_at(state, node)
         if small_count(count, facts):
             note_sequential(node, SMALL_REASON.format(count=count))
@@ -472,6 +577,7 @@ class SequentializeSmallAxes(ppl.Pass):
         ):
             note_sequential(node, DATA_SEGMENT_REASON.format(begin=segment[0], end=segment[1]))
         else:
-            return True
+            node.map.schedule = dtypes.ScheduleType.CPU_Multicore
+            return True, reshaped
         self.pinned += 1
-        return False
+        return False, reshaped

@@ -12,7 +12,7 @@ import dace
 from dace import dtypes
 from dace.sdfg import nodes
 from dace.symbolic import Scale
-from dace.transformation.passes.cpu_specialization.sequentialize_reduction_axes import SequentializeReductionAxes
+from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import DecideCpuParallelAxes
 
 N = 64
 
@@ -37,7 +37,7 @@ def accumulated_convolution() -> dace.SDFG:
 
 def test_the_reduced_axis_becomes_an_inner_sequential_loop_and_the_write_needs_no_atomic():
     sdfg = accumulated_convolution()
-    assert SequentializeReductionAxes().apply_pass(sdfg, {}) == 1
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) == 1
     maps = [
         (node.map.params, node.map.schedule)
         for node, _ in sdfg.all_nodes_recursive()
@@ -72,7 +72,7 @@ def test_every_indexing_axis_is_shared_out_in_one_collapsed_map():
         schedule=dtypes.ScheduleType.CPU_Multicore,
         external_edges=True,
     )
-    assert SequentializeReductionAxes().apply_pass(sdfg, {}) == 1
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) == 1
     maps = sorted(
         (node.map.params, node.map.schedule, node.map.collapse)
         for node, _ in sdfg.all_nodes_recursive()
@@ -104,7 +104,7 @@ def test_a_reduction_to_one_element_is_left_to_the_openmp_reduction_clause():
         schedule=dtypes.ScheduleType.CPU_Multicore,
         external_edges=True,
     )
-    assert SequentializeReductionAxes().apply_pass(sdfg, {}) is None
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) is None
 
 
 def test_a_reduction_indexed_by_a_small_axis_loops_over_it_outside_one_parallel_map():
@@ -124,7 +124,7 @@ def test_a_reduction_indexed_by_a_small_axis_loops_over_it_outside_one_parallel_
         schedule=dtypes.ScheduleType.CPU_Multicore,
         external_edges=True,
     )
-    assert SequentializeReductionAxes().apply_pass(sdfg, {}) == 1
+    assert DecideCpuParallelAxes().apply_pass(sdfg, {}) == 1
     maps = sorted(
         (node.map.params, node.map.schedule)
         for node, _ in sdfg.all_nodes_recursive()

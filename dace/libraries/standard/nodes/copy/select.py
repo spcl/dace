@@ -11,8 +11,8 @@ from dace.libraries.standard.helper import (
     CPU_RESIDENT_STORAGES,
     collapse_shape_and_strides,
     host_storages,
-    is_in_parallel_scope,
     is_parallel_cpu_transfer_size,
+    transfer_runs_on_one_core,
 )
 from dace.libraries.standard.nodes.copy.common import (
     _both_packed_same_layout,
@@ -109,8 +109,8 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
 
     # Host CPU-resident: same-shape/contiguous/same-layout below the parallel-transfer threshold
     # is one MemcpyCPU; otherwise falls through to a parallel MappedTasklet. The threshold only
-    # applies where the copy runs once: inside a parallel map the mapped form is sequentialized to
-    # an element loop, which is strictly worse than the single call at any size.
+    # applies where the copy runs once on a team: on one core (sequential, or re-entered by a parallel map
+    # or a long loop) the mapped form is an element loop, strictly worse than the single call at any size.
     same_shape = len(inp.shape) == len(out.shape) and not any(
         itertools.starmap(symbolic.inequal_symbols, zip(in_subset.size(), out_subset.size()))
     )
@@ -122,7 +122,7 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
         and _both_packed_same_layout(inp, out)
         and not (
             is_parallel_cpu_transfer_size(in_subset.num_elements(), parent_state.sdfg.facts())
-            and not is_in_parallel_scope(node, parent_state)
+            and not transfer_runs_on_one_core(node, parent_state)
         )
     ):
         return "MemcpyCPU"

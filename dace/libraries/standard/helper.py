@@ -8,7 +8,6 @@ from collections.abc import Callable, Sequence
 import dace
 from dace import dtypes
 from dace.sdfg import nodes
-from dace.sdfg.scope import is_in_scope
 
 # Both legacy and experimental codegens consume this exact name for stream wiring.
 CURRENT_STREAM_NAME = "__dace_current_stream"
@@ -184,19 +183,15 @@ def is_parallel_cpu_transfer_size(num_elements: dace.symbolic.SymbolicType, fact
         return True
 
 
-def is_in_parallel_scope(node: nodes.LibraryNode, parent_state: dace.SDFGState) -> bool:
-    """True when a multi-threaded map encloses this transfer, so the mapped form would open one
-    OpenMP region per entry instead of one for the whole transfer.
-
-    ``Default`` counts: an unresolved enclosing map becomes ``CPU_Multicore`` at the top level.
+def transfer_runs_on_one_core(node: nodes.LibraryNode, parent_state: dace.SDFGState) -> bool:
+    """True when a host transfer runs on one core: its schedule says so, or an enclosing parallel map or a long loop
+    that varies its size re-enters it (:func:`is_reentered_cpu_transfer`), so a parallel element map would open one
+    OpenMP region per entry. Such a transfer is one libc call when contiguous, else a sequential element map.
 
     :param node: the transfer library node.
     :param parent_state: state containing ``node``.
-    :returns: ``True`` if a parallel map scope encloses the node, at any nesting depth.
     """
-    return is_in_scope(
-        parent_state.sdfg, parent_state, node, [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Default]
-    )
+    return node.schedule == dtypes.ScheduleType.Sequential or is_reentered_cpu_transfer(node, parent_state)
 
 
 def auto_dispatch(
@@ -287,11 +282,9 @@ def is_short_loop(loop, cache: dict[int, bool] | None = None) -> bool:
     :param cache: an optional ``id(loop) -> verdict`` map a caller reuses across many nodes sharing
                  the same enclosing loops (a CPU-specialization pass visits one transfer at a time,
                  but the loop nest above it repeats). Valid only for as long as the pass that owns
-                 it runs without mutating any ``LoopRegion``'s bounds -- neither
-                 :class:`~dace.transformation.passes.cpu_specialization.specialize_cpu_transfers.SpecializeCpuTransfers`
-                 nor
-                 :class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes`
-                 does; both only set ``schedule``/``implementation`` on library and map nodes.
+                 it runs without mutating any ``LoopRegion``'s bounds --
+                 :class:`~dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes.DecideCpuParallelAxes`
+                 does not; it only sets ``schedule`` on library and map nodes.
     :returns: ``True`` only when the trip count is provably short; an unanalyzable, descending or
               symbolic-length loop answers ``False``.
     """
@@ -373,7 +366,7 @@ def transfer_size_symbols(node: nodes.LibraryNode, state: dace.SDFGState) -> set
     """The free symbols of a copy's or memset's element count; ``None`` for any other library node.
 
     A loop that re-enters a transfer of a size it does not change is the map case of
-    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes`:
+    :mod:`~dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes`:
     ``E`` entries cost ``E * (fork + work / P)`` against ``E * work``, so the entry count cancels and
     only the size decides (bicgstab's per-iteration ``N``-element memsets). A size the loop varies
     is not one size: npbench ``stockham_fft``'s ``R**i``-element copy is tiny on most of its 349,525

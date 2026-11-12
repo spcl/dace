@@ -999,7 +999,7 @@ def test_strip_mine_narrows_a_whole_fill_to_what_is_read():
 
 
 def test_strip_mine_takes_a_row_fill_loop_as_one_map():
-    """``SpecializeCpuTransfers``' shape: a sequential row loop around a row fill. It is rebuilt as one map
+    """A sequential row loop around a row fill. It is rebuilt as one map
     over rows and columns, so its column axis is cut like every other map's."""
     from dace.libraries.standard.nodes.fill import FillLibraryNode
 
@@ -1177,7 +1177,7 @@ def test_strip_mine_interchanges_an_outer_axis_whole():
 
 
 def test_strip_mine_cuts_the_columns_above_an_inner_small_axis():
-    """``a[it + 1, b, i]`` as ``SequentializeSmallAxes`` leaves it: a parallel map over the columns ``i`` around a
+    """``a[it + 1, b, i]`` as ``DecideCpuParallelAxes`` leaves it: a parallel map over the columns ``i`` around a
     sequential one over the ``SMALL`` blocks ``b``. The columns are the contiguous axis, so they are strip-mined
     into tiles; reading the inner ``b`` as the innermost axis moved them outside the carry whole, one column per
     tile and every trip of it at stride ``N`` (velocity_tendencies at one block: 13 teams over ``0:nproma``)."""

@@ -42,7 +42,7 @@ from dace.transformation.helpers import isolate_nested_sdfg, isolate_small_map_a
 from dace.transformation.interstate.map_loop_interchange import isolate_map
 from dace.transformation.passes import FuseMaps
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import small_count
+from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import small_count
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars,
     ConvertScalarsToLengthOneArrays,

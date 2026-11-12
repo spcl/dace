@@ -226,7 +226,7 @@ def test_explicit_copy_always_lifts_in_readable() -> None:
 
     The lifted copy lowers to the canonical PARALLEL element map: the maximally parallel form is
     the default on every device, and a symbolic count is assumed big. A single ``std::memcpy`` is
-    the CPU SPECIALIZATION of a ``Sequential`` contiguous transfer (``SpecializeCpuTransfers``) --
+    the CPU choice for a contiguous transfer on one core (``transfer_runs_on_one_core``) --
     this copy is top level and never re-entered, so nothing sequentializes it and no ``memcpy`` is
     emitted here. The ``memcpy``/``memset`` selection itself is pinned in
     ``tests/passes/copy_memset_parallel_selection_test.py`` and

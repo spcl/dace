@@ -8,10 +8,9 @@ in order; it is a separate stage from canonicalization and runs after it.
 
 from dace.transformation.passes.cpu_specialization.calibrate_thresholds import CalibrateCpuThresholds
 from dace.transformation.passes.cpu_specialization.chunk_anti_dependence import ChunkAntiDependence
+from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import DecideCpuParallelAxes
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
 from dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates import (
     RecomputeIntermediates,
 )
-from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import SequentializeSmallAxes
-from dace.transformation.passes.cpu_specialization.specialize_cpu_transfers import SpecializeCpuTransfers
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize

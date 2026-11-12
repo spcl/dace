@@ -258,9 +258,10 @@ def test_finalize_nested_reduction_stays_sequential():
 #: call inside the block from moving the threshold out from under the assertion.
 REDUCTION_BREAK_EVEN = 512
 
-#: Extent of the nussinov-shaped nest below. Its k-reduction runs REDUCTION_EXTENT iterations,
-#: provably under the pin above on every machine.
-REDUCTION_EXTENT = 128
+#: Extent of the nussinov-shaped nest below. Its k-reduction runs REDUCTION_EXTENT iterations, a literal below
+#: ``SMALL_CONSTANT_EXTENT``: too few to share out. At 128 the few-trip wavefront map around it hands the team to it
+#: (``DecideCpuParallelAxes`` rule 1), as ``finalize_for_target`` already did before it.
+REDUCTION_EXTENT = 32
 
 
 def test_reduction_in_sequential_loop_is_not_parallelized():
@@ -275,11 +276,11 @@ def test_reduction_in_sequential_loop_is_not_parallelized():
     region away. Checking only the end state would pass just as well if canonicalization had made
     the CPU's decision for it, which is the thing the split exists to prevent.
 
-    The extent is a CONSTANT below the break-even because that is the only input the decision reads.
-    It is rule 2 of
-    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes`,
-    which compares the map's OWN iteration count against the threshold and assumes a SYMBOLIC count
-    is big enough -- correctly so: the same nest measured 2526 ms parallel against 2744 ms
+    The extent is a CONSTANT below ``SMALL_CONSTANT_EXTENT`` because that is the only input the decision
+    reads: the few-trip wavefront map around the reduction hands the team only to a wider body map (rules 1
+    and 3 of :mod:`~dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes`, which compare
+    a map's OWN iteration count against it and assume a SYMBOLIC count
+    is big enough) -- correctly so: the same nest measured 2526 ms parallel against 2744 ms
     sequential at N=1400. Both enclosing loops carry the dependence and stay loops; neither is
     ``pinned_sequential``, that pin having been retired with ``PinNestedSequentialLoops`` -- the
     schedule below is the assertion, not the flag.
