@@ -227,6 +227,11 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
     # Set default storage/schedule types in SDFG
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
+    # Dynamic thread-block maps not lowered before code generation become thread-block maps that drive a work queue
+    from dace.transformation.passes.lower_dynamic_thread_block_maps import LowerDynamicThreadBlockMaps
+
+    LowerDynamicThreadBlockMaps().apply_pass(sdfg, {})
+
     # Give every implicit copy a node of its own, before the expansion below lowers it. An implicit
     # copy is a write no node performs, so an empty memlet ordering that write has nothing to point
     # at and the copy is free to move ahead of a write it must follow.
@@ -237,6 +242,11 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
         # The nodes just inserted carry no inferred connector types, and the expansion below reads
         # them to decide pointer vs. value. Storage defaults above already hold.
         infer_types.infer_connector_types(sdfg)
+
+    # GPU device maps nested in kernels become guarded or grid-strided parts of their kernel
+    from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
+
+    NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
 
     # Lower memlet access policies (e.g. loop-carried address cursors) to ordinary SDFG constructs on this
     # code-generation copy of the SDFG. This is a no-op unless a memlet carries a non-default policy. It must
