@@ -1955,10 +1955,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Written through a View, the edges name the View: nothing here compares them.
         if not all(sides):
             return False
-        # Plain stores only: maps accumulating into one container are each a reduction, and fused they stop being
-        # one (nbody's per-component gemv maps, a Gemv each)
-        if any(e.data.wcr is not None for side in sides for e in side):
-            return False
         first, second = ([e.data.dst_subset or e.data.subset for e in side] for side in sides)
         return all(
             a is not None and b is not None and subsets.intersects(a, b, facts) is symbolic.Truth.FALSE
