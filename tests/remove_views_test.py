@@ -1192,6 +1192,29 @@ def test_symbolic_merge_view_reads_and_writes():
     np.testing.assert_allclose(A, inp.reshape(N, 3, B))
 
 
+def test_symbolic_merged_row_is_one_range():
+    """A row ``V[i, 0:B]`` of a ``(N, B)`` view of the flat ``(N*B,)`` is the one range ``A[B*i : B*i + B]``."""
+    N, B = 4, 3
+    sdfg = dace.SDFG("symbolic_merged_row")
+    sdfg.add_array("A", [dace.symbolic.pystr_to_symbolic("N*B")], dace.float64)
+    sdfg.add_array("out", [dace.symbol("N")], dace.float64)
+    sdfg.add_view("V", [dace.symbol("N"), dace.symbol("B")], dace.float64)
+    state = sdfg.add_state()
+    a, v = state.add_access("A"), state.add_access("V")
+    state.add_edge(a, None, v, "views", Memlet("A[0:N*B]"))
+    me, mx = state.add_map("rows", {"i": "0:N"})
+    t = state.add_tasklet("sum", {"row"}, {"y"}, "y = row[0] + row[B - 1]")
+    o = state.add_write("out")
+    state.add_memlet_path(v, me, t, dst_conn="row", memlet=Memlet("V[i, 0:B]"))
+    state.add_memlet_path(t, mx, o, src_conn="y", memlet=Memlet("out[i]"))
+    assert RemoveViews().apply_pass(sdfg, {}) == {"V"}
+    sdfg.validate()
+    A = np.random.default_rng(4).random(N * B)
+    out = np.zeros(N)
+    sdfg(A=A.copy(), out=out, N=N, B=B)
+    np.testing.assert_allclose(out, A.reshape(N, B)[:, 0] + A.reshape(N, B)[:, B - 1])
+
+
 def test_symbolic_split_view_tasklet_subscript():
     """A tasklet subscripting the whole view (``x[i, j]``) is rewritten to the array's grouped indices."""
     N, B = 3, 4
@@ -1214,6 +1237,7 @@ def test_symbolic_reshape_across_groups_is_kept():
 if __name__ == "__main__":
     test_symbolic_split_view_keeps_untouched_index()
     test_symbolic_merge_view_reads_and_writes()
+    test_symbolic_merged_row_is_one_range()
     test_symbolic_split_view_tasklet_subscript()
     test_symbolic_reshape_across_groups_is_kept()
     test_view_array_array()

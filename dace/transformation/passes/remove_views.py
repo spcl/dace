@@ -253,23 +253,30 @@ class _DimGroups:
         return out
 
     def subset(self, subset: subsets.Range) -> subsets.Range | None:
-        """``subset`` of the view on the array, or None: per group, single elements, the whole extent, or a group of
-        one dimension on each side; any other range is not a box of the array."""
+        """``subset`` of the view on the array, or None: per group, single elements, the whole extent, a group of one
+        dimension on each side, or merged dimensions whose range is contiguous (single indices, then one unit-step
+        range, then whole extents: a row ``[r, 0:B]`` of a ``(N, B)`` view of ``(N*B,)``); any other range is not a
+        box of the array."""
         ranges = subset.ranges
         single = [symbolic.equal(b, e, is_length=False) is True for b, e, _ in ranges]
         full = [
             symbolic.equal(b, 0, is_length=False) is True and symbolic.equal(e, n - 1, is_length=False) is True
             for (b, e, _), n in zip(ranges, self.vshape)
         ]
-        begins = self.indices([b for b, _, _ in ranges], symbolic.int_floor, sympy.Mod, operator.mul, operator.add)
+        ops = (symbolic.int_floor, sympy.Mod, operator.mul, operator.add)
+        begins = self.indices([b for b, _, _ in ranges], *ops)
+        ends = self.indices([e for _, e, _ in ranges], *ops)
         out = []
         for vdims, adims in self.groups:
+            ranged = [v for v in vdims if not single[v]]
             if len(vdims) == len(adims) == 1:
                 out.append(ranges[vdims[0]])
-            elif all(single[v] for v in vdims):
+            elif not ranged:
                 out += [(begins[a], begins[a], 1) for a in adims]
             elif all(full[v] for v in vdims):
                 out += [(0, self.ashape[a] - 1, 1) for a in adims]
+            elif len(adims) == 1 and ranges[ranged[0]][2] == 1 and all(full[v] for v in ranged[1:]):
+                out.append((begins[adims[0]], ends[adims[0]], 1))
             else:
                 return None
         return subsets.Range(out)
@@ -1184,6 +1191,23 @@ class RemoveViews(ppl.Pass):
                         if _DEBUGPRINT:
                             print(f'[{_PASS}]     {strat_name}: non-Python tasklet "{leaf.label}" -- aborting')
                         return False
+                    # A tasklet subscripts a part of the view in that part's own shape: the part must keep it
+                    conn = te.dst_conn if is_viewed_src else te.src_conn
+                    part = te.data.subset if te.data.data == vnode.data else te.data.other_subset
+                    if groups is not None and part is not None and part != subsets.Range.from_array(vdesc):
+                        new_part = groups.subset(part)
+                        before = [n for n in part.size() if n != 1]
+                        after = [n for n in new_part.size() if n != 1] if new_part is not None else None
+                        kept = after is not None and len(before) == len(after)
+                        kept = kept and all(symbolic.equal(x, y) is True for x, y in zip(before, after))
+                        ranks = [
+                            len(n.slice.elts) if isinstance(n.slice, ast.Tuple) else 1
+                            for stmt in leaf.code.code
+                            for n in ast.walk(stmt)
+                            if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == conn
+                        ]
+                        if ranks and (not kept or len(groups.vshape) in ranks):
+                            return False
                 m = te.data
                 if m.data == vnode.data and m.subset is not None:
                     if reshape(m.subset) is None:
@@ -1242,6 +1266,9 @@ class RemoveViews(ppl.Pass):
                 leaf = te.dst if is_viewed_src else te.src
                 conn = te.dst_conn if is_viewed_src else te.src_conn
                 if isinstance(leaf, nd.Tasklet) and conn and leaf.language == dtypes.Language.Python and leaf.code.code:
+                    # A part of the view keeps its shape (checked above): its subscripts are its own
+                    if groups is not None and te.data.subset != subsets.Range.from_array(adesc):
+                        continue
                     old_code = leaf.code.as_string
                     rw = _ReshapeIndexRewriter(conn, vstrides, astrides, array_shape, groups)
                     leaf.code.code = [rw.visit(copy.deepcopy(stmt)) for stmt in leaf.code.code]
