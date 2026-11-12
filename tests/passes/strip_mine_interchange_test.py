@@ -167,6 +167,21 @@ def test_a_target_shared_by_every_tile_is_refused():
     assert not is_tiled(sdfg), "a location every tile writes must not be tiled"
 
 
+def test_a_store_two_tiles_make_on_different_trips_is_refused():
+    """``a[i + j]`` is never read back, but trip ``i`` and trip ``i + 1`` store one element from two columns: the
+    later trip's store lasts. Cut into tiles, the two columns can belong to different threads and the earlier
+    trip's store can land last."""
+
+    @dace.program
+    def overlapping_rows(a: dace.float64[2 * N], b: dace.float64[N, N]):
+        for i in range(N):
+            for j in range(N):
+                a[i + j] = b[i, j]
+
+    sdfg = finalized(overlapping_rows, "refuse_overlap")
+    assert not is_tiled(sdfg), "stores that meet across tiles must not be tiled"
+
+
 def cloudsc_covptot_numpy(ztp1, za, pap, paph, zcovptot, zcovpmax, ncldtop):
     """Plain-numpy oracle for :func:`cloudsc_covptot`, level by level.
 

@@ -939,21 +939,22 @@ def tile_local(reads: dict[str, list[list[Any]]], writes: dict[str, list[list[An
     """
     cut = {str(axis_symbol(0))}
     for name, write_list in writes.items():
-        if name not in reads:
-            continue  # written but never read back: no carry to keep inside a tile
         for write_indices in write_list:
             # Which dimensions the tile is cut along is a property of the WRITE alone, so it is
             # decided once per write rather than per read.
             cut_dims = [i for i, expr in enumerate(write_indices) if names_a_param(expr, cut)]
-            # A destination naming NO cut position is one location every tile writes -- the
-            # ``s115`` shared scalar. Tiling races on it whatever the distances are.
-            if not cut_dims:
-                return False
+            # Two tiles storing one element at different trips race on which store lasts, read back or not
             if any(
                 {str(s) for s in write_indices[dim].free_symbols if str(s).startswith(AXIS_PREFIX) or str(s) in carried}
                 != cut
                 for dim in cut_dims
             ):
+                return False
+            if name not in reads:
+                continue  # written but never read back: no carry to keep inside a tile
+            # A destination naming NO cut position is one location every tile writes -- the
+            # ``s115`` shared scalar. Tiling races on it whatever the distances are.
+            if not cut_dims:
                 return False
             for read_indices in reads[name]:
                 if len(read_indices) != len(write_indices):

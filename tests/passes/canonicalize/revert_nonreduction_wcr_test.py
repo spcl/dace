@@ -324,3 +324,60 @@ def test_the_revert_preserves_the_computed_values():
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+M = dace.symbol("M")
+
+
+@dace.program
+def accumulate_through_index(idx: dace.int64[M], a: dace.float64[M], out: dace.float64[M]):
+    for i in range(M):
+        out[idx[i]] += a[i]
+
+
+def _canonical_accumulation(fact):
+    """``accumulate_through_index`` canonicalized for the CPU, with ``fact`` assumed of ``idx`` (none if ``None``)."""
+    from dace.transformation.passes.canonicalize import canonicalize
+
+    sdfg = accumulate_through_index.to_sdfg(simplify=True)
+    if fact is not None:
+        sdfg.add_data_assumption("idx", fact)
+    canonicalize(sdfg, validate=True, target="cpu")
+    return sdfg
+
+
+def _wcr_into(sdfg, name):
+    return [
+        e
+        for sd in sdfg.all_sdfgs_recursive()
+        for s in sd.states()
+        for e in s.edges()
+        if e.data.wcr is not None and e.data.data == name
+    ]
+
+
+def test_an_accumulation_through_a_declared_permutation_is_a_plain_update():
+    """``out[idx[i]] += a[i]`` with ``idx`` a permutation: no two iterations meet on one element, so the accumulation
+    needs no atomic and reverts to the indexed update, values unchanged."""
+    sdfg = _canonical_accumulation(dace.symbolic.permutation(0, M - 1))
+    assert not _wcr_into(sdfg, "out")
+    rng = np.random.default_rng(4)
+    idx = rng.permutation(40).astype(np.int64)
+    a, out = rng.random(40), rng.random(40)
+    ref = out.copy()
+    np.add.at(ref, idx, a)
+    sdfg(idx=idx, a=a, out=out, M=40)
+    assert np.allclose(out, ref)
+
+
+@pytest.mark.parametrize(
+    "fact",
+    [
+        # Nothing known of ``idx``: two iterations may meet.
+        None,
+        # Distinct apart from a sentinel, which any number of iterations may hold.
+        dace.symbolic.permutation(0, M - 1)._replace(sentinel=-1),
+    ],
+)
+def test_an_accumulation_through_an_index_with_repeats_keeps_its_wcr(fact):
+    assert _wcr_into(_canonical_accumulation(fact), "out")

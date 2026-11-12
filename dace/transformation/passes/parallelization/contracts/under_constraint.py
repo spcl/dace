@@ -258,6 +258,10 @@ class ParallelizeUnderConstraint(ppl.Pass):
                 # Symbolic (not provably numeric) nonzero coefficient only.
                 if coeff == 0 or not required(coeff).free_symbols:
                     continue
+                # ``c != 0`` keeps ``c*i + d`` one-to-one only while ``d`` holds still: ``a[c*i + off[i]]`` and
+                # ``a[c*i + j]`` over an inner ``j`` collide at ``c == 1``.
+                if symbolic.free_symbol_names([affine[1]]).keys() & varying:
+                    return None
                 # The guard runs before the loop, so ``c`` must hold still in it; and a second subset of the array can
                 # land on this one under ``c != 0``: ``a[c*i]`` and ``a[c*i + 1]`` collide at ``c == 1``.
                 if symbolic.free_symbol_names([coeff]).keys() & varying or sum(a == arr for a, _ in writes) > 1:
