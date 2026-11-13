@@ -833,6 +833,8 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False, tile_programs: bool = Fal
     if demote_uncoalesced_level_maps(sdfg):
         # The level loops are new to the launch rule: one that can run inside its planes makes the nest one launch.
         MoveLoopIntoMapGated(target="gpu").apply_pass(sdfg, {})
+    # While schedules are Default: a loop over maps sharing their lane axes becomes one kernel with the loop inside.
+    InterchangeLoopsIntoLaneMaps(target="gpu").apply_pass(sdfg, {})
     # Before the offload decides what a kernel can own: a buffer sized per iteration by data is allocated by the host.
     BoundDataDependentExtents().apply_pass(sdfg, {})
     apply_gpu_storage(sdfg)

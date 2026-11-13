@@ -4,6 +4,7 @@
 import copy
 import dataclasses
 
+import sympy
 from sympy import diff
 
 import dace.transformation.helpers as helpers
@@ -148,8 +149,10 @@ class LaneFacts:
     lane_containers: OrderedSet
     narrow: list[tuple[gr.MultiConnectorEdge, tuple[LaneDim, ...]]]
     refusal: str | None = None
-    #: The dimension of each lane map that is the lane, when the lane is one shared axis (``lane_axis``).
-    dims: dict[nodes.MapEntry, int] = dataclasses.field(default_factory=dict)
+    #: The dimensions of each lane map that are the lane axes (``lane_axis``), in the order of the axes.
+    dims: dict[nodes.MapEntry, tuple[int, ...]] = dataclasses.field(default_factory=dict)
+    #: With ``lane_axis``, take as lanes every axis all lane maps span, not only the most common one.
+    shared: bool = False
     #: Maps without the lane axis that hold lane maps; each lane runs them whole.
     transparent: list[tuple[SDFGState, nodes.MapEntry]] = dataclasses.field(default_factory=list)
     #: Copies between containers outside the maps that move one lane's slice: ``(edge, source sig, destination sig)``.
@@ -245,19 +248,26 @@ def footprint_signature(
 
 
 def axis_footprint(subset: sbs.Range, ref: sbs.Range, invariant: OrderedSet) -> tuple[LaneDim, ...] | None:
-    """:func:`footprint_signature` for a one-axis lane ``ref``: exactly one dimension spans it, shifted by a
-    loop-invariant offset. The other dimensions stay within the lane's slice, so they may vary with the loop."""
+    """:func:`footprint_signature` for lane axes ``ref``: each axis is spanned by exactly one dimension, shifted by a
+    loop-invariant offset, and no dimension could span two axes. The other dimensions stay within the lane's slice,
+    so they may vary with the loop."""
     if subset is None:
         return None
-    (rb, re, rs) = ref[0]
     dims = []
     for d, (begin, end, step) in enumerate(subset.ndrange()):
-        if same_value(step, 1) and same_value(rs, 1) and same_value(end - begin, re - rb):
-            offset = symbolic.simplify(symbolic.pystr_to_symbolic(begin) - symbolic.pystr_to_symbolic(rb))
+        hit = [
+            j
+            for j, (rb, re, rs) in enumerate(ref)
+            if same_value(step, 1) and same_value(rs, 1) and same_value(end - begin, re - rb)
+        ]
+        if len(hit) > 1:
+            return None
+        if hit:
+            offset = symbolic.simplify(symbolic.pystr_to_symbolic(begin) - symbolic.pystr_to_symbolic(ref[hit[0]][0]))
             if not names_of(offset) <= invariant:
                 return None
-            dims.append((d, 0, offset))
-    return tuple(dims) if len(dims) == 1 else None
+            dims.append((d, hit[0], offset))
+    return tuple(dims) if sorted(j for _, j, _ in dims) == list(range(len(ref))) else None
 
 
 def copy_side(edge: gr.MultiConnectorEdge, state: SDFGState, source: bool) -> sbs.Range | None:
@@ -274,7 +284,7 @@ def view_keeps_lane(loop: LoopRegion, view: str, ref: sbs.Range, invariant: Orde
     of the container it views, unshifted: a lane's elements of the view are then that lane's of the container."""
     sdfg = loop.sdfg
     own = axis_footprint(sbs.Range.from_array(sdfg.arrays[view]), ref, invariant)
-    if own is None or not same_value(own[0][2], 0):
+    if own is None or not all(same_value(offset, 0) for _, _, offset in own):
         return False
     for state in loop.states():
         for node in state.data_nodes():
@@ -285,16 +295,16 @@ def view_keeps_lane(loop: LoopRegion, view: str, ref: sbs.Range, invariant: Orde
                 return False
             viewed = copy_side(edge, state, edge.dst is node)
             bound = axis_footprint(viewed, ref, invariant)
-            if bound is None or bound[0][0] != own[0][0] or not same_value(bound[0][2], 0):
+            if bound is None or not same_signature(bound, own):
                 return False
     return True
 
 
-def narrowed(subset: sbs.Range, sig: tuple[LaneDim, ...], lane_syms: list) -> sbs.Range:
-    """``subset`` with each lane dimension of ``sig`` pinned to its lane."""
+def narrowed(subset: sbs.Range, sig: tuple[LaneDim, ...], spans: list[tuple]) -> sbs.Range:
+    """``subset`` with each lane dimension of ``sig`` narrowed to its lane's ``(first, last)`` span."""
     dims = list(subset.ndrange())
     for d, j, offset in sig:
-        dims[d] = (lane_syms[j] + offset, lane_syms[j] + offset, 1)
+        dims[d] = (spans[j][0] + offset, spans[j][1] + offset, 1)
     return sbs.Range(dims)
 
 
@@ -584,9 +594,31 @@ def control_flow_reads_outside(loop: LoopRegion, sdfg: sd.SDFG) -> OrderedSet:
     return OrderedSet(n for n in names if n in sdfg.arrays)
 
 
-def axis_dim(entry: nodes.MapEntry, axis: tuple) -> int | None:
-    """The first dimension of ``entry``'s map spanning ``axis``, or ``None``."""
-    return next((d for d, r in enumerate(entry.map.range) if all(same_value(x, y) for x, y in zip(r, axis))), None)
+def axis_dim(entry: nodes.MapEntry, axis: tuple, taken: tuple[int, ...] = ()) -> int | None:
+    """The first dimension of ``entry``'s map spanning ``axis``, other than ``taken``, or ``None``."""
+    return next(
+        (
+            d
+            for d, r in enumerate(entry.map.range)
+            if d not in taken and all(same_value(x, y) for x, y in zip(r, axis))
+        ),
+        None,
+    )
+
+
+def share_lane_axes(facts: LaneFacts) -> None:
+    """Widen each lane map's one lane dimension to every axis all lane maps span, in the first lane map's order."""
+    first = facts.lanes[0][1]
+    for d, axis in enumerate(first.map.range):
+        if d in facts.dims[first]:
+            continue
+        found = {entry: axis_dim(entry, axis, facts.dims[entry]) for _, entry in facts.lanes}
+        if all(dim is not None for dim in found.values()):
+            for entry, dim in found.items():
+                facts.dims[entry] += (dim,)
+    order = sorted(range(len(facts.dims[first])), key=lambda j: facts.dims[first][j])
+    for _, entry in facts.lanes:
+        facts.dims[entry] = tuple(facts.dims[entry][j] for j in order)
 
 
 def gather_axis_lanes(facts: LaneFacts) -> str | None:
@@ -604,13 +636,15 @@ def gather_axis_lanes(facts: LaneFacts) -> str | None:
         d = axis_dim(entry, axis)
         if d is not None:
             facts.lanes.append((state, entry))
-            facts.dims[entry] = d
+            facts.dims[entry] = (d,)
             continue
         inner = [n for n in state.scope_children()[entry] if isinstance(n, nodes.MapEntry)]
         if not inner:
             return f"map {entry.map.label} spans {entry.map.range}, not the lane axis {axis}"
         facts.transparent.append((state, entry))
         pending.extend((state, n) for n in inner)
+    if facts.shared and facts.lanes:
+        share_lane_axes(facts)
     return None
 
 
@@ -637,7 +671,7 @@ def lane_refusal(loop: LoopRegion, sdfg: sd.SDFG, facts: LaneFacts, axis: bool =
         if reason is not None:
             return reason
     ref_state, ref_entry = facts.lanes[0]
-    lane_dims = {entry: [facts.dims[entry]] if axis else list(range(len(entry.map.range))) for _, entry in facts.lanes}
+    lane_dims = {entry: list(facts.dims[entry]) if axis else list(range(len(entry.map.range))) for _, entry in facts.lanes}
     ref = sbs.Range([ref_entry.map.range[d] for d in lane_dims[ref_entry]])
     lanes = [ref_entry.map.params[d] for d in lane_dims[ref_entry]]
     invariant = (OrderedSet(sdfg.symbols) | OrderedSet(sdfg.constants)) - assigned_symbols(loop)
@@ -736,23 +770,27 @@ def lane_refusal(loop: LoopRegion, sdfg: sd.SDFG, facts: LaneFacts, axis: bool =
     return None
 
 
-def analyze_lanes(loop: LoopRegion, sdfg: sd.SDFG, axis: bool = False) -> LaneFacts:
-    facts = LaneFacts(lane_maps(loop), OrderedSet(), [])
+def analyze_lanes(loop: LoopRegion, sdfg: sd.SDFG, axis: bool = False, shared: bool = False) -> LaneFacts:
+    facts = LaneFacts(lane_maps(loop), OrderedSet(), [], shared=shared)
     facts.refusal = lane_refusal(loop, sdfg, facts, axis)
     return facts
 
 
-def move_loop_into_lane_maps(loop: LoopRegion, sdfg: sd.SDFG, axis: bool = False) -> nodes.MapEntry:
+def move_loop_into_lane_maps(
+    loop: LoopRegion, sdfg: sd.SDFG, axis: bool = False, shared: bool = False, tile: int = 1
+) -> nodes.MapEntry:
     """Rewrite ``for(...) { body }`` into ``map(lanes) { for(...) { body' } }``, where ``body'`` runs every map of
     ``body`` on its own lane only. Each map keeps its scope, its lane dimensions narrowed to the one-iteration range
-    ``[lane, lane]``, so no memlet inside it changes. The caller has checked :func:`lane_refusal` with ``axis``.
+    ``[lane, lane]``, so no memlet inside it changes. With ``tile`` the last lane steps by ``tile`` and each lane
+    sweeps the ``tile`` positions from it: lanes that never touch each other's points never touch each other's
+    tiles. The caller has checked :func:`lane_refusal` with ``axis``.
 
     :returns: The entry of the new lane map.
     """
-    facts = analyze_lanes(loop, sdfg, axis)
+    facts = analyze_lanes(loop, sdfg, axis, shared)
     graph = loop.parent_graph
     ref_state, ref_entry = facts.lanes[0]
-    lane_dims = {entry: [facts.dims[entry]] if axis else list(range(len(entry.map.range))) for _, entry in facts.lanes}
+    lane_dims = {entry: list(facts.dims[entry]) if axis else list(range(len(entry.map.range))) for _, entry in facts.lanes}
     ref = sbs.Range([copy.deepcopy(ref_entry.map.range[d]) for d in lane_dims[ref_entry]])
     types = ref_entry.new_symbols(sdfg, ref_state, sdfg.symbols)
     taken = (
@@ -768,19 +806,24 @@ def move_loop_into_lane_maps(loop: LoopRegion, sdfg: sd.SDFG, axis: bool = False
     for lane in lane_syms:
         nsdfg.sdfg.add_symbol(lane.name, lane.dtype)
         nsdfg.symbol_mapping[lane.name] = lane
+    spans = [(lane, lane) for lane in lane_syms]
+    if tile > 1:
+        begin, end, _ = ref[-1]
+        spans[-1] = (lane_syms[-1], sympy.Min(lane_syms[-1] + tile - 1, end))
+        ref = sbs.Range(list(ref)[:-1] + [(begin, end, tile)])
     for _, entry in facts.lanes:
         ranges = list(entry.map.range.ranges)
-        for d, lane in zip(lane_dims[entry], lane_syms):
-            ranges[d] = (lane, lane, 1)
+        for d, span in zip(lane_dims[entry], spans):
+            ranges[d] = (span[0], span[1], 1)
         entry.map.range = sbs.Range(ranges)
     for edge, sig in facts.narrow:
-        edge.data.subset = narrowed(edge.data.subset, sig, lane_syms)
+        edge.data.subset = narrowed(edge.data.subset, sig, spans)
         edge.data.volume = edge.data.subset.num_elements()
     for copy_state, edge, src_sig, dst_sig in facts.copies:
         source_side = edge.data.data == edge.src.data
         src, dst = copy_side(edge, copy_state, True), copy_side(edge, copy_state, False)
-        edge.data.subset = narrowed(src if source_side else dst, src_sig if source_side else dst_sig, lane_syms)
-        edge.data.other_subset = narrowed(dst if source_side else src, dst_sig if source_side else src_sig, lane_syms)
+        edge.data.subset = narrowed(src if source_side else dst, src_sig if source_side else dst_sig, spans)
+        edge.data.other_subset = narrowed(dst if source_side else src, dst_sig if source_side else src_sig, spans)
         edge.data.volume = edge.data.subset.num_elements()
 
     # Over device maps the lane map is a host loop that launches them until the GPU specialization makes it the
@@ -804,7 +847,8 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
     With ``cfg_body`` the body may also be any control flow whose maps share one range (see :func:`lane_refusal`):
     the loop then moves into one map over that range and every map of the body runs on its own lane. With
     ``lane_axis`` the lane is the one axis the maps share, and each map keeps its other dimensions inside the
-    loop. A body of the classic one-state, one-map shape takes the classic path either way.
+    loop; with ``shared_axes`` the lanes are every axis the maps share. A body of the classic one-state, one-map
+    shape takes the classic path either way.
     """
 
     loop = transformation.PatternNode(LoopRegion)
@@ -815,6 +859,12 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
     lane_axis = properties.Property(
         dtype=bool, default=False, desc="With cfg_body, take as the lane the one axis the maps share"
     )
+    shared_axes = properties.Property(
+        dtype=bool, default=False, desc="With lane_axis, take as lanes every axis all the maps share"
+    )
+    lane_tile = properties.Property(
+        dtype=int, default=1, desc="With cfg_body, positions of the last lane axis each lane sweeps inside the loop"
+    )
 
     @classmethod
     def expressions(cls):
@@ -822,7 +872,7 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         if self.cfg_body and single_map_body(self.loop) is None:
-            return analyze_lanes(self.loop, sdfg, self.lane_axis).refusal is None
+            return analyze_lanes(self.loop, sdfg, self.lane_axis, self.shared_axes).refusal is None
 
         # If loop information cannot be determined, fail.
         start = loop_analysis.get_init_assignment(self.loop)
@@ -985,7 +1035,7 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
         if self.cfg_body and single_map_body(self.loop) is None:
-            move_loop_into_lane_maps(self.loop, sdfg, self.lane_axis)
+            move_loop_into_lane_maps(self.loop, sdfg, self.lane_axis, self.shared_axes, self.lane_tile)
             return
         body: sd.SDFGState = self.loop.nodes()[0]
         itervar = self.loop.loop_variable
