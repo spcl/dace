@@ -907,11 +907,20 @@ class MoveMapInvariantIfUp(ppl.Pass):
 
         skipped = copy.deepcopy(st)
         for ns in [skipped.node(node_id) for node_id in conditionals]:
+            # What a guard writes through an access node in the body reaches only the exit (``_equal_guards_at``)
+            results = {e.dst for e in skipped.out_edges(ns) if isinstance(e.dst, AccessNode)}
             for e in list(skipped.in_edges(ns)) + list(skipped.out_edges(ns)):
                 if e in skipped.edges():
                     skipped.remove_memlet_path(e)
             if ns in skipped.nodes():
                 skipped.remove_node(ns)
+            for node in results:
+                if node in skipped.nodes() and skipped.in_degree(node) == 0:
+                    for e in list(skipped.out_edges(node)):
+                        if e in skipped.edges():
+                            skipped.remove_memlet_path(e)
+                    if node in skipped.nodes():
+                        skipped.remove_node(node)
         if any(isinstance(n, (Tasklet, NestedSDFG)) for n in skipped.nodes()):
             wrap = ControlFlowRegion(label=f"{st.label}_branch_1")
             wrap.add_node(skipped, is_start_block=True, ensure_unique_name=True)

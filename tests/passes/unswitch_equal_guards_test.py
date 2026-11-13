@@ -210,6 +210,46 @@ def test_work_reading_a_guards_in_place_value_keeps_the_guard_in_the_map():
     assert state in sdfg.nodes()
 
 
+def test_the_arm_without_the_guard_drops_the_access_node_it_wrote():
+    """The guard writes ``b`` through an access node in the map body; the arm without it drops that node too."""
+    inner = dace.SDFG("written_guard_inner")
+    inner.add_array("y", [4], dace.float64)
+    inner.add_symbol("i", dace.int64)
+    inner.add_symbol("c", dace.int64)
+    branch = ControlFlowRegion("taken")
+    state = branch.add_state(is_start_block=True)
+    tasklet = state.add_tasklet("inc", {"q": None}, {"o": None}, "o = q + 1")
+    state.add_edge(state.add_read("y"), None, tasklet, "q", dace.Memlet("y[i]"))
+    state.add_edge(tasklet, "o", state.add_write("y"), None, dace.Memlet("y[i]"))
+    guard = ConditionalBlock("guard")
+    guard.add_branch(dace.properties.CodeBlock("c > 0"), branch)
+    inner.add_node(guard, is_start_block=True)
+
+    sdfg = dace.SDFG("written_guard")
+    for name in ("a", "b", "d"):
+        sdfg.add_array(name, [4], dace.float64)
+    sdfg.add_symbol("c", dace.int64)
+    state = sdfg.add_state(is_start_block=True)
+    entry, exit_node = state.add_map("m", {"i": "0:4"})
+    work = state.add_tasklet("work", {"q": None}, {"o": None}, "o = q * 2")
+    state.add_memlet_path(state.add_read("a"), entry, work, dst_conn="q", memlet=dace.Memlet("a[i]"))
+    state.add_memlet_path(work, exit_node, state.add_write("d"), src_conn="o", memlet=dace.Memlet("d[i]"))
+    nest = state.add_nested_sdfg(inner, {"y"}, {"y"}, symbol_mapping={"c": "c", "i": "i"})
+    state.add_memlet_path(state.add_read("b"), entry, nest, dst_conn="y", memlet=dace.Memlet("b[0:4]"))
+    written = state.add_access("b")
+    state.add_edge(nest, "y", written, None, dace.Memlet("b[0:4]"))
+    state.add_memlet_path(written, exit_node, state.add_write("b"), memlet=dace.Memlet("b[0:4]"))
+    sdfg.validate()
+
+    assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) == 1
+
+    sdfg.validate()
+    for c, want in ((1, 6.0), (0, 5.0)):
+        a, b, d = np.arange(4.0), np.full(4, 5.0), np.zeros(4)
+        sdfg(a=a, b=b, d=d, c=c)
+        assert np.array_equal(b, np.full(4, want)) and np.array_equal(d, 2 * a)
+
+
 if __name__ == "__main__":
     test_two_equal_invariant_guards_unswitch_out_of_a_loop()
     test_three_equal_invariant_guards_unswitch_out_of_a_loop()
@@ -219,3 +259,4 @@ if __name__ == "__main__":
     test_equal_invariant_guards_unswitch_out_of_a_map()
     test_guards_not_provably_equal_stay_in_the_map()
     test_work_reading_a_guards_in_place_value_keeps_the_guard_in_the_map()
+    test_the_arm_without_the_guard_drops_the_access_node_it_wrote()
