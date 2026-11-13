@@ -39,6 +39,7 @@ from typing import Any
 import dace
 from dace import properties, symbolic
 from dace.libraries.tileops.alignment import STRIDE_GUARD_PREFIX, TILE_GUARD_STATE_LABEL, TILE_MAIN_MARKER
+from dace.sdfg import tasklet_utils as tutil
 from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.nodes import MapEntry
 from dace.sdfg.state import SymbolResolver
@@ -370,12 +371,18 @@ class SplitMapForTileRemainder(ppl.Pass):
         # Emit the host-side divisibility guards recorded while splitting.
         extents, strides = {}, {}
         for owner, extent, width in self._range_checks:
-            extents.setdefault(owner, set()).add((symbolic.symstr(extent, cpp_mode=True), width))
+            texts = (symbolic.symstr(extent, cpp_mode=True), symbolic.symstr(extent, cpp_mode=False))
+            extents.setdefault(owner, set()).add((*texts, width))
         for owner, name, chunk in self._stride_checks:
             strides.setdefault(owner, set()).add((name, chunk))
         for owner in dict.fromkeys(list(extents) + list(strides)):
             guard = owner.add_state_before(owner.start_block, label=TILE_GUARD_STATE_LABEL, is_start_block=True)
-            for extent_c, width in sorted(extents.get(owner, ())):
+            for extent_c, extent, width in sorted(extents.get(owner, ())):
+                if owner.parent_nsdfg_node is None:
+                    # On the host, the shared Python ``abort()`` guard, which every backend writes
+                    condition = f"({extent}) % {width} != 0 or ({extent}) < {width}"
+                    tutil.add_abort_guard(guard, "tile_range_check", condition)
+                    continue
                 self._add_guard(
                     guard,
                     "tile_range_check",

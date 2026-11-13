@@ -731,6 +731,16 @@ def test_a_row_value_reaches_every_column_of_a_two_dim_tile(dialect: str):
     assert np.array_equal(a.get(), np.where(cond[:, None] > 0.0, src * 2.0, 0.0))
 
 
+def test_a_two_dim_tile_kernel_aborts_on_an_extent_its_tiles_do_not_divide():
+    """The even 4 x 4 tiling holds only for an extent the width divides; the host guard is the Python ``abort()``."""
+    import cupy
+
+    with tile_backend("triton"):
+        compiled = two_dim_tile_sdfg(row_guarded).compile()
+    with pytest.raises(RuntimeError, match="an assumption of the program does not hold"):
+        compiled(cond=cupy.ones(601), src=cupy.ones((601, 601)), a=cupy.zeros((601, 601)), N=601)
+
+
 if __name__ == "__main__":
     # TileLang, which has no product reduction, runs under pytest
     for dialect in ("triton", "cutile"):
@@ -759,3 +769,4 @@ if __name__ == "__main__":
     test_a_loop_bounded_by_the_tiled_param_leaves_the_map_untiled()
     test_a_scatter_combined_by_a_max_leaves_the_map_untiled()
     test_a_guard_a_read_needs_leaves_the_map_untiled()
+    test_a_two_dim_tile_kernel_aborts_on_an_extent_its_tiles_do_not_divide()
