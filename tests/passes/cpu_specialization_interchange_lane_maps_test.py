@@ -5,8 +5,10 @@ import numpy as np
 
 import dace
 from dace.sdfg.state import LoopRegion
+from dace.transformation.interstate import move_loop_into_map as mlim
 from dace.transformation.passes.cpu_specialization.interchange_loops_into_lane_maps import (
     InterchangeLoopsIntoLaneMaps,
+    cpu_lane_tile,
     iterator_indexes,
 )
 
@@ -120,7 +122,53 @@ def test_a_loop_whose_iterator_bounds_an_inner_loop_indexes_its_cells():
     assert iterator_indexes(outer)
 
 
+NI = dace.symbol("NI")
+
+
+@dace.program
+def column_steps(q: dace.float64[NI + 2, NB, NL], f: dace.float64[NI + 2, NB, NL]):
+    """Time steps over stencils along ``i`` only: the ``(b, l)`` plane columns never interact."""
+    for k in range(NK):
+        for i, b, l in dace.map[1 : NI + 2, 0:NB, 0:NL]:
+            f[i, b, l] = q[i - 1, b, l] - q[i, b, l]
+        for i, b, l in dace.map[1 : NI + 1, 0:NB, 0:NL]:
+            q[i, b, l] = q[i, b, l] + 0.25 * (f[i + 1, b, l] - f[i, b, l])
+
+
+def test_short_columns_run_every_step_inside_a_cache_tile():
+    """Six cells a column, two arrays: 128 bytes a plane point, so a tile of 256 contiguous ``l`` stays in L2 across
+    the steps; the lanes are ``(b, l)`` with ``l`` stepped by the tile."""
+    sdfg = column_steps.to_sdfg(simplify=True)
+    sdfg.specialize({"NI": 6})
+    assert cpu_lane_tile(mlim.analyze_lanes(steps_loop(sdfg), sdfg, True, True), sdfg) == 256
+    assert InterchangeLoopsIntoLaneMaps().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    (lanes,) = [n for n in sdfg.start_block.nodes() if isinstance(n, dace.nodes.MapEntry)]
+    assert str(lanes.map.range) == "0:NB, 0:NL:256"
+    rng = np.random.default_rng(2)
+    q, f = rng.random((8, 3, 300)), np.zeros((8, 3, 300))
+    ref_q, ref_f = q.copy(), f.copy()
+    for _ in range(4):
+        ref_f[1:] = ref_q[:-1] - ref_q[1:]
+        ref_q[1:-1] = ref_q[1:-1] + 0.25 * (ref_f[2:] - ref_f[1:-1])
+    sdfg(q=q, f=f, NB=3, NL=300, NK=4)
+    assert np.allclose(q, ref_q) and np.allclose(f, ref_f)
+
+
+def test_long_columns_keep_the_time_steps_outside():
+    """A column of ``NI`` cells, ``NI`` taken large: no tile fits a cache, so the steps stay outside the lanes."""
+    sdfg = column_steps.to_sdfg(simplify=True)
+    assert cpu_lane_tile(mlim.analyze_lanes(steps_loop(sdfg), sdfg, True, True), sdfg) is None
+    assert InterchangeLoopsIntoLaneMaps().apply_pass(sdfg, {}) is None
+
+
+def steps_loop(sdfg: dace.SDFG) -> LoopRegion:
+    return next(b for b in sdfg.nodes() if isinstance(b, LoopRegion))
+
+
 if __name__ == "__main__":
     test_level_loop_moves_into_one_block_map()
     test_a_time_step_loop_stays_outside()
     test_a_loop_whose_iterator_bounds_an_inner_loop_indexes_its_cells()
+    test_short_columns_run_every_step_inside_a_cache_tile()
+    test_long_columns_keep_the_time_steps_outside()

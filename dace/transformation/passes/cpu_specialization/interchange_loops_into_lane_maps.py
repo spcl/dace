@@ -17,6 +17,7 @@ innermost. Runs while schedules are still ``Default``, so inference makes the
 lane map the parallel one and every map inside it sequential.
 """
 
+import numbers
 from typing import Any
 
 from dace import SDFG, nodes, properties, symbolic
@@ -143,7 +144,8 @@ def cpu_lane_tile(facts: mlim.LaneFacts, sdfg: SDFG) -> int | None:
     working set fills at most half of one core's L2, so it stays cached from one trip to the next. ``None`` when no
     tile fits, a symbolic working set included (its symbols are taken large): the steps then stream the arrays
     either way, and moving them inside only costs the parallelism of the planes."""
-    per_point = symbolic.sympy.sympify(bytes_per_lane_point(facts, sdfg))
+    constants = {symbolic.symbol(name): value for name, value in sdfg.constants.items() if isinstance(value, numbers.Integral)}
+    per_point = symbolic.sympy.sympify(bytes_per_lane_point(facts, sdfg)).subs(constants)
     if not per_point.is_Number or per_point <= 0:
         return None
     budget = topology().l2_bytes // 2
