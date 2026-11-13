@@ -19,7 +19,8 @@ Everything outside the strided maps runs once per LANE, not once per iteration. 
 running it several times changes nothing. A tasklet that updates a shared container it also reads
 (``b[i] -= s``, lu's ``A[i, j] -= s``) would apply once per lane, so it runs on lane 0 alone, between
 two ``__syncthreads()`` every lane reaches: the first keeps lane 0 from writing what other lanes still
-read, the second publishes the write. A kernel is left alone when its body outside the strided maps
+read, the second publishes the write. A kernel is left alone when its own axes are already more contiguous than its inner maps' (its threads
+coalesce as they are), when its body outside the strided maps
 accumulates (a write-conflict-resolved memlet), holds a library node (its own lowering may need the
 block), when a strided map leaves a lane-private container other code reads afterwards (each lane
 would hold only its own share of it), or when code outside the strided maps fills a per-thread buffer of
@@ -40,6 +41,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, Sym
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.warp_tiling import WarpTiling
+from dace.transformation.passes.minimize_stride_permutation import score_indexed_strides, score_to_float
 
 #: What a block-tiled kernel's lane map is, for a CPF reader.
 BLOCK_TILE_HINT = (
@@ -82,6 +84,20 @@ def strided_maps(state: SDFGState, kernel: nodes.MapEntry) -> list[tuple[SDFGSta
         and (inner.map.range.size()[-1] < BLOCK_COLLECTIVE_THREADS) != True
         and not all(xfh.small_map_axes(inner_state, inner, resolver))
     ]
+
+
+def min_stride(state: SDFGState, entry: nodes.MapEntry) -> float:
+    """The smallest stride any parameter of ``entry``'s map indexes an array with inside its scope."""
+    edges = state.scope_subgraph(entry, include_entry=True, include_exit=True).edges()
+    scores = score_indexed_strides(edges, state.sdfg, entry.map.params)
+    return min(score_to_float(scores[p][0]) for p in entry.map.params)
+
+
+def kernel_axes_coalesce(state: SDFGState, kernel: nodes.MapEntry, strided) -> bool:
+    """Whether the kernel's own axes are strictly more contiguous than every inner map's: its threads already touch
+    adjacent elements (a column sweep over plane lanes), and a block per outer iteration would put them on a
+    strided axis instead."""
+    return min_stride(state, kernel) < min(min_stride(owner, entry) for owner, entry in strided)
 
 
 #: A container each lane of a block-tiled kernel holds its own copy of, as ``(owning SDFG, name)``.
@@ -483,6 +499,8 @@ class BlockTileKernels(ppl.Pass):
             if xfh.gpu_map_has_explicit_threadblocks(state, kernel):
                 continue
             strided = strided_maps(state, kernel)
+            if strided and kernel_axes_coalesce(state, kernel, strided):
+                continue
             fills = give_blocks_their_containers(state, kernel, strided)
             if fills_per_lane_buffer(state, kernel, strided):
                 continue
