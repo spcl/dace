@@ -797,6 +797,10 @@ class StateFusionExtended(StateFusion):
             first_output_names = {node.data for node in first_output}
             second_input_names = {node.data for node in second_input}
 
+            # If any second input appears more than once, fail
+            if len(second_input) > len(second_input_names):
+                return False
+
             # If any first output that is an input to the second state
             # appears in more than one CC, fail
             matches = first_output_names & second_input_names
@@ -863,12 +867,8 @@ class StateFusionExtended(StateFusion):
                 )
                 match_nodes: dict[nodes.AccessNode, nodes.AccessNode] = {}
                 for match in cc_matches:
-                    read, *others = [n for n in cc_second_inputs if n.data == match]
-                    instance = merged_instance(match, read)
-                    # ``fuse`` binds every source read of a container to the instance the first one takes
-                    if any(merged_instance(match, other) is not instance for other in others):
-                        return False
-                    match_nodes[instance] = read
+                    read = next(n for n in cc_second_inputs if n.data == match)
+                    match_nodes[merged_instance(match, read)] = read
 
                 # If we have potential candidates, check if there is a
                 # path from the first write to the second write (in that
@@ -1031,7 +1031,7 @@ class StateFusionExtended(StateFusion):
                         # A first-state write is ordered by the write-write checks above (an edge or a refusal), a
                         # first-state read (a step's ``vel += acc * dt`` ahead of the next ``acc``) by the recorded
                         # write-after-read edges
-                        reads = any(first_state.out_degree(n) > 0 for n in nodes_first)
+                        reads = any(is_read(first_state, n) for n in nodes_first)
                         if not self.aggressive_merges or (reads and not war_ordered(nodes_second)):
                             return False
 
@@ -1202,8 +1202,6 @@ class StateFusionExtended(StateFusion):
         # Per container, the nodes that took a first-state instance: a later second-state reader finds that instance
         # gone from the candidates and is ordered behind them instead (seeds 349, 1663)
         absorbed: dict[str, list[nodes.AccessNode]] = {}
-        # Per container, the first-state instance its first second-state source read merged with
-        bound: dict[str, nodes.AccessNode] = {}
         second_writes = {n.data for n in second_state.data_nodes() if is_written(second_state, n)}
         for node in second_mid:
             # merge only top level nodes, skip everything else
@@ -1289,10 +1287,7 @@ class StateFusionExtended(StateFusion):
                             first_state.add_nedge(m, node, memlet.Memlet())
                 continue
 
-            if node.data in bound:
-                # Every source read of one container reads its value at the state boundary: the instance the first took
-                n = bound[node.data]
-            elif len(candidates) == 0:
+            if len(candidates) == 0:
                 continue
             elif node.data in second_writes:
                 # When the second state also writes the container, the WAW check orders the first state's writers
@@ -1306,7 +1301,6 @@ class StateFusionExtended(StateFusion):
             first_state.remove_node(node)
             merged_nodes.add(n)
             absorbed.setdefault(n.data, []).append(n)
-            bound.setdefault(n.data, n)
 
         self.drop_second_state(graph, first_state, second_state)
 
