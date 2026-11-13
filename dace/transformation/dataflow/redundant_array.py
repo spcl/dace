@@ -460,6 +460,14 @@ class RedundantArray(pm.SingleStateTransformation):
             return False
         if graph.out_degree(in_array) != 1 and not sdutil.ordering_can_move(graph, in_array, None, out_array):
             return False
+        # An ordering in-edge holds in_array's producers back, and they write out_array after the removal: a producer
+        # that already runs before the edge's source cannot be put after it, so its write would overtake that read
+        guards = {graph.entry_node(e.src) or e.src for e in graph.in_edges(in_array) if not e.data.is_empty()}
+        for order in graph.in_edges(in_array):
+            if order.data.is_empty() and any(
+                g is not order.src and nx.has_path(graph.nx, g, order.src) for g in guards
+            ):
+                return False
 
         # Its writers accumulate onto the zero this access gives them, which ``out_array`` does not hold
         if in_array.setzero:
