@@ -116,8 +116,12 @@ class MapUnroll(transformation.SingleStateTransformation):
                 sdfg, verify=False, annotate=False, save=False, map_entry=node_to_unrolled[map_entry]
             )
 
-        # Removing these nodes implicitly also removes their memlets.
-        state.remove_nodes_from(subgraph)
+        # Removing these nodes implicitly also removes their memlets. An access node the map shares with a computation
+        # beside it (the subgraph holds only the map's ancestors and descendants) stays and keeps feeding that one.
+        copied = set(subgraph.nodes())
+        state.remove_nodes_from(
+            [n for n in copied if all(nbr in copied for nbr in (*state.predecessors(n), *state.successors(n)))]
+        )
 
         # Reset the cfg list if new nested SDFGs were added.
         if any(isinstance(node, nodes.NestedSDFG) for node in subgraph):

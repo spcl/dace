@@ -70,6 +70,32 @@ def test_gpu_map_declined_unless_permissive():
     assert MapUnroll.can_be_applied_to(sdfg, map_entry=entry)
 
 
+def test_an_array_the_map_shares_with_a_computation_beside_it_keeps_feeding_that_computation():
+    """``A`` feeds the unrolled map and a tasklet beside it; the tasklet still reads ``A`` once the map is unrolled."""
+    sdfg = dace.SDFG("unroll_shared_read")
+    sdfg.add_array("A", [3], dace.float64)
+    sdfg.add_array("B", [3], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
+    state = sdfg.add_state()
+    a = state.add_read("A")
+    entry, leave = state.add_map("double", {"i": "0:3"})
+    twice = state.add_tasklet("twice", {"x"}, {"y"}, "y = 2 * x")
+    state.add_memlet_path(a, entry, twice, dst_conn="x", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(twice, leave, state.add_write("B"), src_conn="y", memlet=dace.Memlet("B[i]"))
+    first = state.add_tasklet("first", {"x"}, {"y"}, "y = x")
+    state.add_edge(a, None, first, "x", dace.Memlet("A[0]"))
+    state.add_edge(first, "y", state.add_write("C"), None, dace.Memlet("C[0]"))
+
+    assert sdfg.apply_transformations(MapUnroll) == 1
+
+    sdfg.validate()
+    assert state.in_degree(first) == 1 and not any(isinstance(n, dace.sdfg.nodes.MapEntry) for n in state.nodes())
+    A, B, C = np.array([1.0, 2.0, 3.0]), np.zeros(3), np.zeros(1)
+    sdfg(A=A, B=B, C=C)
+    assert np.array_equal(B, 2 * A) and C[0] == 1.0
+
+
 if __name__ == "__main__":
     test_map_unroll()
     test_gpu_map_declined_unless_permissive()
+    test_an_array_the_map_shares_with_a_computation_beside_it_keeps_feeding_that_computation()
