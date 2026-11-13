@@ -908,8 +908,41 @@ def test_one_element_array_wcr_reduces_into_a_local_scalar():
     assert np.allclose(acc[0], 0.5 + np.dot(a, b[ip]))
 
 
+def test_two_maps_reducing_into_one_element_each_hold_their_own_local_scalar():
+    """Sibling maps of one state reducing into the same one-element section (a vector body and its remainder) each
+    declare their own local scalar in the one C scope they share."""
+    sd = dace.SDFG("wcr_one_element_two_maps")
+    sd.add_array("a", [N], dace.float64)
+    sd.add_array("acc", [1], dace.float64)
+    st = sd.add_state()
+    acc = st.add_write("acc")
+    for half, rng in (("lo", "0:N//2"), ("hi", "N//2:N")):
+        me, mx = st.add_map(half, dict(i=rng), schedule=dace.ScheduleType.CPU_Multicore)
+        t = st.add_tasklet(f"take_{half}", {"x"}, {"r"}, "r = x")
+        st.add_memlet_path(st.add_read("a"), me, t, dst_conn="x", memlet=dace.Memlet("a[i]"))
+        st.add_memlet_path(t, mx, acc, src_conn="r", memlet=dace.Memlet("acc[0]", wcr="lambda x, y: x + y"))
+    sd.openmp_array_reductions = True
+    src = _compile_and_read_src(sd)[1]
+    held_locals = re.findall(r"double (__red_\w+) = ", src)
+    assert len(held_locals) == 2 and len(set(held_locals)) == 2, held_locals
+    n = 1000
+    a = np.random.default_rng(12).standard_normal(n)
+    acc_value = np.array([0.5])
+    old = os.environ.get("OMP_NUM_THREADS")
+    os.environ["OMP_NUM_THREADS"] = "4"
+    try:
+        sd(a=a, acc=acc_value, N=n)
+    finally:
+        if old is None:
+            os.environ.pop("OMP_NUM_THREADS", None)
+        else:
+            os.environ["OMP_NUM_THREADS"] = old
+    assert np.allclose(acc_value[0], 0.5 + a.sum())
+
+
 if __name__ == "__main__":
     test_one_element_array_wcr_reduces_into_a_local_scalar()
+    test_two_maps_reducing_into_one_element_each_hold_their_own_local_scalar()
     test_view_wcr_target_emits_section_clause()
     test_array_wcr_section_covers_only_the_written_element()
     test_array_wcr_two_spans_of_one_array_share_one_clause()

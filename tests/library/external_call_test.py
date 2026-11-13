@@ -2,6 +2,7 @@
 import ctypes
 import ctypes.util
 import pathlib
+import re
 import shutil
 import subprocess
 
@@ -546,8 +547,8 @@ def test_a_kernel_cut_from_a_program_with_array_reductions_reduces_its_accumulat
 
     assert call.standalone_sdfg.openmp_array_reductions
     # the one-element accumulator reduces in a local scalar stored back to the argument
-    assert "reduction(+:__red_0__out_out)" in code
-    assert "*(_out_out) = __red_0__out_out;" in code
+    (local,) = set(re.findall(r"reduction\(\+:(__red_0_\w*_out_out)\)", code))
+    assert f"*(_out_out) = {local};" in code
     assert "omp atomic" not in code
 
 

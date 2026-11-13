@@ -3932,7 +3932,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 out.append((op_str, target, name, declare))
                 continue
             defined_type = self._dispatcher.defined_vars.get(self.ptr(name, desc, sdfg))[0]
-            var = f"__red_{sdfg.cfg_id}_{name}"
+            # one per map: sibling maps (a vector body and its remainder) reduce into the same section in one C scope
+            var = f"__red_{sdfg.cfg_id}_{state.block_id}_{state.node_id(map_entry)}_{name}"
             value = "*(%s)" % cpp.cpp_ptr_expr(sdfg, edges[0].data, defined_type, codegen=self)
             held.append((name, edges[0].data.subset, op_str, desc.dtype.ctype, value, var))
             out.append((op_str, var, name, declare))
