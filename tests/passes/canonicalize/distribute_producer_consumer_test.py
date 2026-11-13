@@ -440,6 +440,44 @@ def test_a_nested_sdfg_operand_is_not_expanded_for_a_split():
     sdfg.validate()
 
 
+def test_ordering_edge_into_a_read_does_not_refuse_the_split():
+    """An ordering edge (empty memlet) into the consumer's read of ``A`` writes nothing: the body still
+    distributes, as without the edge, and computes the same ``y``."""
+
+    @dace.program
+    def two_matvec_ordered(A: dace.float64[M, N], x: dace.float64[N], y: dace.float64[M]):
+        tmp = np.zeros([M], dtype=np.float64)
+        for i in range(M):
+            for j in range(N):
+                tmp[i] += A[i, j] * x[j]
+            for j in range(N):
+                y[i] += A[i, j] * tmp[i]
+
+    sdfg = _to_loops(two_matvec_ordered)
+    consumer = next(
+        st
+        for st in sdfg.all_control_flow_blocks(recursive=True)
+        if isinstance(st, dace.SDFGState)
+        and isinstance(st.parent_graph, LoopRegion)
+        and any(n.data == "y" for n in st.data_nodes())
+    )
+    tmp = next(n for n in consumer.data_nodes() if n.data == "tmp" and consumer.in_degree(n) == 0)
+    a = next(n for n in consumer.data_nodes() if n.data == "A")
+    consumer.add_nedge(tmp, a, dace.Memlet())
+    before = _nloops(sdfg)
+    assert DistributeProducerConsumerLoop().apply_pass(sdfg, {}) is not None
+    assert _nloops(sdfg) > before
+    assert any(e.data.is_empty() and e.dst.data == "A" for e in consumer.edges()), "the ordering edge must stay"
+
+    mm, nn = 12, 9
+    rng = np.random.default_rng(2)
+    A = rng.standard_normal((mm, nn))
+    x = rng.standard_normal((nn,))
+    got = np.zeros(mm)
+    sdfg(A=A.copy(), x=x.copy(), y=got, M=mm, N=nn)
+    assert np.allclose(got, (A @ x) * A.sum(axis=1))
+
+
 if __name__ == "__main__":
     test_atax_matvecs_distribute_and_lift()
     test_forward_aligned_producer_consumer_splits()
@@ -450,3 +488,4 @@ if __name__ == "__main__":
     print("OK")
     test_a_nested_sdfg_operand_is_not_expanded_for_a_split()
     test_only_a_container_two_groups_share_is_expanded()
+    test_ordering_edge_into_a_read_does_not_refuse_the_split()

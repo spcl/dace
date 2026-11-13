@@ -103,17 +103,15 @@ def _rw_subsets(
         for n in st.nodes():
             if not isinstance(n, nodes.AccessNode):
                 continue
-            for e in st.in_edges(n):
-                if e.data is None:
-                    continue
+            # Ordering edges (empty memlets) move no data: neither a write nor a read
+            stores = [e for e in st.in_edges(n) if not e.data.is_empty()]
+            loads = [e for e in st.out_edges(n) if not e.data.is_empty()]
+            for e in stores:
                 narrow(writes, n.data, e.data.get_dst_subset(e, st))
-            if st.out_degree(n) > 0 or st.in_degree(n) == 0:
-                for e in st.out_edges(n):
-                    if e.data is None:
-                        continue
-                    narrow(reads, n.data, e.data.get_src_subset(e, st))
-                if st.out_degree(n) == 0 and st.in_degree(n) == 0:
-                    reads.setdefault(n.data, UNALIGNED)
+            for e in loads:
+                narrow(reads, n.data, e.data.get_src_subset(e, st))
+            if not stores and not loads:
+                reads.setdefault(n.data, UNALIGNED)
     # Unaligned: the subset an interstate read uses is not analyzable here, and the forward
     # producer->consumer split is only legal when BOTH sides are provably per-iteration. Recording
     # it as unanalyzable keeps such a pair fused.
