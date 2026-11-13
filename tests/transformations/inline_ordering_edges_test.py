@@ -13,7 +13,8 @@ N = 8
 
 def ordered_inputs(name: str, copy_input: bool) -> dace.SDFG:
     """``map i: r = 0; r = r + 2 s; c = f + 1`` where empty memlets order the reads of ``s`` and ``f`` after the
-    first write of ``r`` (``r -> s``, ``r -> f -> f``). With ``copy_input`` ``f`` is instead copied into ``s``."""
+    first write of ``r`` (``r -> s``, ``r -> f -> f``). With ``copy_input`` ``f`` is instead copied into ``s``, which
+    is then written and so an output as well."""
     sdfg = dace.SDFG(name)
     for data in "SFRC":
         sdfg.add_array(data, [N], dace.float64)
@@ -42,12 +43,13 @@ def ordered_inputs(name: str, copy_input: bool) -> dace.SDFG:
 
     state = sdfg.add_state()
     entry, exit_ = state.add_map("m", {"i": f"0:{N}"})
-    node = state.add_nested_sdfg(inner, {"s": None, "f": None}, {"r": None, "c": None}, symbol_mapping={"i": "i"})
+    outputs = "rcs" if copy_input else "rc"
+    node = state.add_nested_sdfg(inner, {"s": None, "f": None}, dict.fromkeys(outputs), symbol_mapping={"i": "i"})
     for conn in "sf":
         state.add_memlet_path(
             state.add_read(conn.upper()), entry, node, dst_conn=conn, memlet=dace.Memlet(f"{conn.upper()}[i]")
         )
-    for conn in "rc":
+    for conn in outputs:
         state.add_memlet_path(
             node, exit_, state.add_write(conn.upper()), src_conn=conn, memlet=dace.Memlet(f"{conn.upper()}[i]")
         )
