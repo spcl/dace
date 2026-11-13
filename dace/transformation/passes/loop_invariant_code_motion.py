@@ -27,7 +27,14 @@ from typing import Any
 from dace import SDFG, SDFGState, data, dtypes, properties, symbolic
 from dace.optionals import required
 from dace.sdfg import InterstateEdge, nodes
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    ConditionalBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    is_read,
+    is_written,
+)
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 
@@ -365,17 +372,17 @@ def _region_rw_sets(region: Any) -> tuple[set[str], set[str]]:
     writes: set[str] = set()
     if isinstance(region, SDFGState):
         for n in region.data_nodes():
-            if write_edge_count(region, n) > 0:
+            if is_written(region, n):
                 writes.add(n.data)
-            if region.out_degree(n) > 0:
+            if is_read(region, n):
                 reads.add(n.data)
         return reads, writes
     if isinstance(region, AbstractControlFlowRegion):
         for s in region.states():
             for n in s.data_nodes():
-                if write_edge_count(s, n) > 0:
+                if is_written(s, n):
                     writes.add(n.data)
-                if s.out_degree(n) > 0:
+                if is_read(s, n):
                     reads.add(n.data)
         # A container read only on an interstate edge, a loop header or a branch condition is still read: missing
         # the first hoisted ls3df's argmax loop above the state that computes the array it scans, missing the last
@@ -432,7 +439,7 @@ def _written_data_in_region(region: ControlFlowRegion) -> set[str]:
     written: set[str] = set()
     for state in region.states():
         for n in state.data_nodes():
-            if write_edge_count(state, n) > 0:
+            if is_written(state, n):
                 written.add(n.data)
     return written
 
@@ -527,7 +534,7 @@ def _is_tasklet_invariant(
                 return False
         # The AccessNode itself must be a pure read: nothing writes it in the state (an empty-memlet ordering edge
         # is not a write).
-        if write_edge_count(state, ie.src) > 0:
+        if is_written(state, ie.src):
             return False
 
     # Output must go to a single AccessNode write, whose data is written only
@@ -648,7 +655,7 @@ def _written_access_in_state(state: SDFGState, data: str) -> nodes.AccessNode | 
     node for the same data.
     """
     for n in state.nodes():
-        if isinstance(n, nodes.AccessNode) and n.data == data and write_edge_count(state, n) > 0:
+        if isinstance(n, nodes.AccessNode) and n.data == data and is_written(state, n):
             return n
     return None
 
@@ -771,7 +778,7 @@ def hoist_map_scope(state: SDFGState, me: nodes.MapEntry, root: nodes.MapEntry) 
     # container makes its reads variant).
     variant_data: set[str] = set()
     for n in inside_nodes:
-        if isinstance(n, nodes.AccessNode) and write_edge_count(state, n) > 0:
+        if isinstance(n, nodes.AccessNode) and is_written(state, n):
             variant_data.add(n.data)
     for e in state.out_edges(mx):
         if e.data is not None and e.data.data is not None:
