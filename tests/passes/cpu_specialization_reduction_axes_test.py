@@ -194,6 +194,7 @@ def test_an_output_the_reduced_walk_reads_keeps_accumulating_in_memory():
     assert DecideCpuParallelAxes().apply_pass(sdfg, {}) == 1
     assert not [n for n, d in sdfg.arrays.items() if d.transient and d.storage == dtypes.StorageType.Register]
 
+
 def test_a_contiguous_indexing_axis_is_shared_out_in_stripes_walked_inside_the_reduced_axis():
     """rayleigh_ritz_rotation's column argmax: ``m[j] = max_i |h[i, j]|`` shares out ``j``, the contiguous axis.
     Whole, each thread walks one column down ``i`` at stride ``N``; in stripes of ``j`` it walks ``i`` outside and
