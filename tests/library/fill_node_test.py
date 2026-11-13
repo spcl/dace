@@ -449,28 +449,6 @@ def test_fill_pure_strided_map_matches_array():
     np.testing.assert_array_equal(B, expected)
 
 
-def test_fill_pure_map_runs_over_the_subsets_own_bounds():
-    """The ``pure`` map over ``B[50:100, 3]`` ranges over ``50:100``, the rows a neighbouring map over those elements
-    runs, not ``0:50``: inlined, it writes ``B[__i0, 3]`` and fuses with such a map. The unit column drops out."""
-    from dace.transformation.interstate import InlineSDFG
-
-    sdfg = make_fill_sdfg("pure", (200, 4), "50:100, 3", gpu=False, name="fill_pure_own_bounds", value=2.0)
-    sdfg.expand_library_nodes(recursive=False)
-    nested = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
-    InlineSDFG.apply_to(sdfg, nested_sdfg=nested)
-    (entry,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
-    assert entry.map.range == dace.subsets.Range.from_string("50:100")
-    (state,) = sdfg.states()
-    (written,) = [e for e in state.edges() if isinstance(e.src, dace.nodes.Tasklet)]
-    assert written.data.subset == dace.subsets.Range.from_string("__i0, 3")
-    sdfg.validate()
-    B = np.ones((200, 4))
-    sdfg(B=B)
-    want = np.ones((200, 4))
-    want[50:100, 3] = 2.0
-    np.testing.assert_array_equal(B, want)
-
-
 @contextlib.contextmanager
 def _pinned_transfer_threshold(value):
     """Pin ``compiler.cpu.parallel_transfer_min_elements`` so Auto selection is deterministic."""
@@ -746,7 +724,6 @@ if __name__ == "__main__":
     test_fill_single_gpu_shared_inside_kernel_expands_clean()
     test_fill_tasklet_rejects_gpu_storage_from_host_scope()
     test_fill_pure_strided_map_matches_array()
-    test_fill_pure_map_runs_over_the_subsets_own_bounds()
     test_fill_below_threshold_emits_a_single_call()
     test_fill_at_threshold_emits_omp_parallel_for()
     test_fill_symbolic_size_emits_omp_parallel_for()

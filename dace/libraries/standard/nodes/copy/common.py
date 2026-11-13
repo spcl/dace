@@ -18,7 +18,6 @@ from dace.libraries.standard.helper import (
     GPU_RESIDENT_STORAGES,
     collapse_shape_and_strides,
     collapse_to_elements,
-    element_map,
     exact_element_count,
     transfer_runs_on_one_core,
 )
@@ -353,10 +352,10 @@ def _make_mapped_tasklet_expansion(
         # Symbolic bounds, never a rendered string: ``sym2cpp`` spells a symbolic extent as C++
         # (``dace::math::ipow(R, K)``), and the range parser splits on ':', so the qualified name
         # comes back as four bogus tokens.
-        # The destination's own bounds, which the maps writing beside it run over
-        map_rng, index = element_map(map_params, ctx.out_subset, in_shape)
-        inputs = {inner_in: dace.memlet.Memlet(data=ctx.inp_name, subset=index)}
-        outputs = {inner_out: dace.memlet.Memlet(data=ctx.out_name, subset=subsets.Range(list(index.ranges)))}
+        map_rng = {i: (0, s - 1, 1) for i, s in zip(map_params, in_shape)}
+        access_expr = ",".join(map_params)
+        inputs = {inner_in: dace.memlet.Memlet(f"{ctx.inp_name}[{access_expr}]")}
+        outputs = {inner_out: dace.memlet.Memlet(f"{ctx.out_name}[{access_expr}]")}
     else:
         # Rank-mismatch reshape: 1-D walker over the total element count. Needs both endpoints
         # packed same major order -- mixed layouts have no shared flat order.
@@ -403,8 +402,7 @@ def _make_mapped_tasklet_expansion(
         from dace.sdfg.propagation import propagate_memlets_state
 
         innermost = list(map_rng)[-1]
-        begin, end, _ = map_rng[innermost]
-        map_rng[innermost] = (begin + symbolic.symbol("__lane"), end, lanes)
+        map_rng[innermost] = ("__lane", map_rng[innermost][1], lanes)
         state = ctx.state
         lane_entry, lane_exit = state.add_map(
             f"{node.label}_lanes", {"__lane": f"0:{lanes}"}, dtypes.ScheduleType.GPU_ThreadBlock
