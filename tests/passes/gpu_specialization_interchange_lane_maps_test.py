@@ -55,7 +55,7 @@ def test_time_steps_run_inside_one_map_over_the_plane_columns():
     assert str(lanes.map.range) == "0:NJ, 0:NK"
     loop = next(r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
     assert loop.sdfg is not sdfg
-    inner = [n for s in loop.all_states() for n in s.nodes() if isinstance(n, nodes.MapEntry)]
+    inner = [n for s in loop.states() for n in s.nodes() if isinstance(n, nodes.MapEntry)]
     assert sorted(str(e.map.range) for e in inner) == ["1:NI + 1, j_lane, k_lane", "1:NI + 2, j_lane, k_lane"]
 
     rng = np.random.default_rng(0)

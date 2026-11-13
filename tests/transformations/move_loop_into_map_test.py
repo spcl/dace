@@ -768,6 +768,42 @@ def test_an_update_ahead_of_the_map_keeps_the_loop_outside():
     assert sdfg.apply_transformations_repeated(MoveLoopIntoMap) == 0
 
 
+@dace.program
+def plane_column_sweep(q: dace.float64[I + 2, J, K], f: dace.float64[I + 2, J, K]):
+    """Steps over stencils along ``i`` only, each over its own ``i`` range: the plane columns never interact."""
+    for t in range(N):
+        for i, j, k in dace.map[1 : I + 2, 0:J, 0:K]:
+            f[i, j, k] = q[i - 1, j, k] - q[i, j, k]
+        for i, j, k in dace.map[1 : I + 1, 0:J, 0:K]:
+            q[i, j, k] = q[i, j, k] + 0.5 * (f[i + 1, j, k] - f[i, j, k])
+
+
+def test_shared_lane_axes_with_a_tile_sweep_a_tile_of_columns_per_lane():
+    """The lanes are every axis the maps share, ``(j, k)``; with ``lane_tile`` each lane steps four ``k`` and sweeps
+    them inside the loop, the last tile stopping at ``K``."""
+    sdfg = plane_column_sweep.to_sdfg(simplify=True)
+    loop = next(b for b in sdfg.nodes() if isinstance(b, LoopRegion))
+    options = {"cfg_body": True, "lane_axis": True, "shared_axes": True, "lane_tile": 4}
+    assert MoveLoopIntoMap.can_be_applied_to(sdfg, options=options, loop=loop)
+    MoveLoopIntoMap.apply_to(sdfg, options=options, loop=loop)
+    sdfg.validate()
+    (lanes,) = [n for n in sdfg.start_block.nodes() if isinstance(n, dace.nodes.MapEntry)]
+    assert str(lanes.map.range) == "0:J, 0:K:4"
+    inner = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and n is not lanes]
+    assert sorted(str(e.map.range) for e in inner) == [
+        "1:I + 1, j_lane, k_lane:Min(K - 1, k_lane + 3) + 1",
+        "1:I + 2, j_lane, k_lane:Min(K - 1, k_lane + 3) + 1",
+    ]
+    rng = np.random.default_rng(5)
+    q, f = rng.random((9, 3, 6)), np.zeros((9, 3, 6))
+    ref_q, ref_f = q.copy(), f.copy()
+    for _ in range(3):
+        ref_f[1:] = ref_q[:-1] - ref_q[1:]
+        ref_q[1:-1] = ref_q[1:-1] + 0.5 * (ref_f[2:] - ref_f[1:-1])
+    sdfg(q=q, f=f, I=7, J=3, K=6, N=3)
+    assert np.allclose(q, ref_q) and np.allclose(f, ref_f)
+
+
 if __name__ == "__main__":
     test_forward_loops_semantic_eq()
     test_backward_loops_semantic_eq()
@@ -797,6 +833,7 @@ if __name__ == "__main__":
     test_the_cpu_interchange_gate_leaves_a_branching_body_alone()
     test_loop_bound_symbols_are_declared_in_the_nested_sdfg()
     test_an_update_ahead_of_the_map_keeps_the_loop_outside()
+    test_shared_lane_axes_with_a_tile_sweep_a_tile_of_columns_per_lane()
 
 
 def window_scan(name: str, window: str) -> tuple[dace.SDFG, LoopRegion]:

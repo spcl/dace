@@ -28,6 +28,7 @@ from dace.transformation.dataflow.map_expansion import MapExpansion
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.interstate import InlineMultistateSDFG
 from dace.transformation.interstate import move_loop_into_map as mlim
+from dace.transformation.passes.cpu_specialization.machine import topology
 from dace.transformation.passes.minimize_stride_permutation import score_indexed_strides, score_to_float
 
 
@@ -110,6 +111,48 @@ def lanes_coalesce(itervar: str | None, facts: mlim.LaneFacts, sdfg: SDFG) -> bo
     costs, lanes, inner = stride_costs(itervar, facts, sdfg)
     rest = [costs[p] for p in ([itervar] if itervar else []) + inner]
     return not rest or min(costs[p] for p in lanes) <= min(rest)
+
+
+#: Bounds of the tile of the contiguous lane axis one CPU core sweeps inside a time-step loop (module docstring).
+MIN_TILE, MAX_TILE = 16, 256
+
+
+def bytes_per_lane_point(facts: mlim.LaneFacts, sdfg: SDFG) -> Any:
+    """What one lane touches per loop trip: every container the lane maps access, at its widest footprint over the
+    maps divided by their lane points, times its element size; an expression when a footprint is symbolic."""
+    entry = facts.lanes[0][1]
+    points = 1
+    for d in facts.dims[entry]:
+        begin, end, step = entry.map.range[d]
+        points *= (end - begin + 1) // step
+    widest: dict[str, Any] = {}
+    for state, lane in facts.lanes:
+        for edge in state.in_edges(lane) + state.out_edges(state.exit_node(lane)):
+            if edge.data.is_empty() or edge.data.data not in sdfg.arrays:
+                continue
+            per_point = symbolic.sympy.sympify(symbolic.simplify(edge.data.subset.num_elements() / points))
+            seen = widest.get(edge.data.data, 0)
+            numbers = per_point.is_Number and symbolic.sympy.sympify(seen).is_Number
+            widest[edge.data.data] = max(seen, per_point) if numbers else (seen if per_point.is_Number else per_point)
+    return sum(widest[name] * sdfg.arrays[name].dtype.bytes for name in widest)
+
+
+def cpu_lane_tile(facts: mlim.LaneFacts, sdfg: SDFG) -> int | None:
+    """The CPU cost model for a loop whose iterator indexes nothing (a time-step loop, module docstring): the tile of
+    the last lane axis one core sweeps inside the loop, the largest power of two in ``[MIN_TILE, MAX_TILE]`` whose
+    working set fills at most half of one core's L2, so it stays cached from one trip to the next. ``None`` when no
+    tile fits, a symbolic working set included (its symbols are taken large): the steps then stream the arrays
+    either way, and moving them inside only costs the parallelism of the planes."""
+    per_point = symbolic.sympy.sympify(bytes_per_lane_point(facts, sdfg))
+    if not per_point.is_Number or per_point <= 0:
+        return None
+    budget = topology().l2_bytes // 2
+    tile = MIN_TILE
+    if tile * per_point > budget:
+        return None
+    while tile * 2 <= MAX_TILE and tile * 2 * per_point <= budget:
+        tile *= 2
+    return tile
 
 
 def move_blocks(source: ControlFlowRegion, target: ControlFlowRegion, start: ControlFlowBlock) -> None:
@@ -195,10 +238,31 @@ class InterchangeLoopsIntoLaneMaps(ppl.Pass):
         return []
 
     def try_loop(self, loop: LoopRegion) -> bool:
-        gpu = self.target == "gpu"
-        if loop.loop_variable is None or inside_a_map(loop) or not (gpu or iterator_indexes(loop)):
+        if loop.loop_variable is None or inside_a_map(loop):
             return False
+        if self.target == "cpu" and not iterator_indexes(loop):
+            return self.interchange_tiled(loop)
         return self.interchange(loop, loop.loop_variable)
+
+    def interchange_tiled(self, loop: LoopRegion) -> bool:
+        """CPU, a time-step loop: lanes over every shared axis, a cache tile of the contiguous one each
+        (:func:`cpu_lane_tile`), when the tile is that axis and its working set stays in L2."""
+        if lane_axis_of(loop) is None:
+            return False
+        sdfg = loop.sdfg
+        lanes = mlim.analyze_lanes(loop, sdfg, True, True)
+        if lanes.refusal is not None:
+            return False
+        costs, _, _ = stride_costs(loop.loop_variable, lanes, sdfg)
+        tiled = {entry.map.params[lanes.dims[entry][-1]] for _, entry in lanes.lanes}
+        rest = [cost for name, cost in costs.items() if name not in tiled]
+        tile = cpu_lane_tile(lanes, sdfg)
+        if tile is None or (rest and min(costs[name] for name in tiled) > min(rest)):
+            return False
+        options = {"cfg_body": True, "lane_axis": True, "shared_axes": True, "lane_tile": tile}
+        mlim.MoveLoopIntoMap.apply_to(sdfg, options=options, loop=loop, verify=False)
+        propagation.propagate_memlets_sdfg(sdfg)
+        return True
 
     def try_body(self, sdfg: SDFG) -> bool:
         """GPU: the whole body of ``sdfg`` becomes one kernel over the lanes all its maps share (module docstring)."""
@@ -218,6 +282,9 @@ class InterchangeLoopsIntoLaneMaps(ppl.Pass):
         sdfg = region.sdfg
         facts = sdfg.facts()
         gpu = self.target == "gpu"
+        # On CPU the one lane is this axis: a small one cannot be shared out, so nothing below is worth probing
+        if not gpu and symbolic.is_small_extent(axis[1] - axis[0] + 1, facts):
+            return False
         lanes = mlim.analyze_lanes(region, sdfg, True, gpu)
         if lanes.refusal is not None and unfold_small_maps(region, axis, facts):
             propagation.propagate_memlets_sdfg(sdfg)
