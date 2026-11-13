@@ -541,6 +541,49 @@ def test_a_tile_node_writing_a_tile_into_one_global_element_is_refused():
         sdfg.compile()
 
 
+@dace.program
+def column_sweep(A: dace.float64[N, M], B: dace.float64[N, M]):
+    for i in dace.map[0:M]:
+        for j in range(1, N):
+            A[j, i] = A[j - 1, i] + B[j, i]
+
+
+@dace.program
+def triangular_rows(A: dace.float64[N, M], out: dace.float64[M]):
+    for i in dace.map[0:M]:
+        for j in range(i):
+            out[i] = out[i] + A[j, i]
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_a_lane_uniform_loop_runs_inside_the_tile_kernel(dialect: str):
+    """Every lane runs the sweep along ``j`` in step, carrying its own column through ``A[j - 1, i]``."""
+    import cupy
+
+    rng = np.random.default_rng(8)
+    a, b = rng.random((7, 1000)), rng.random((7, 1000))
+    device = cupy.asarray(a)
+
+    with tile_backend(dialect):
+        compiled = vectorized_gpu_sdfg(column_sweep, tile_programs=True).compile()
+        compiled(A=device, B=cupy.asarray(b), N=7, M=1000)
+
+    expected = a.copy()
+    for j in range(1, 7):
+        expected[j] = expected[j - 1] + b[j]
+    assert np.allclose(device.get(), expected)
+    assert "in range(1, N):" in kernel_source(compiled)
+
+
+def test_a_loop_bounded_by_the_tiled_param_leaves_the_map_untiled():
+    """``j < i`` gives each lane its own trip count, so the map keeps no tile node and the backend refuses it."""
+    sdfg = vectorized_gpu_sdfg(triangular_rows, tile_programs=True)
+
+    assert not any(isinstance(node, TileOp) for node, _ in sdfg.all_nodes_recursive())
+    with tile_backend("triton"), pytest.raises(CodegenError, match="holds no tile ops"):
+        sdfg.compile()
+
+
 if __name__ == "__main__":
     # TileLang, which has no product reduction, runs under pytest
     for dialect in ("triton", "cutile"):
@@ -560,4 +603,6 @@ if __name__ == "__main__":
         test_an_index_a_kernel_assigns_between_states_is_read_from_its_global_array(dialect)
         test_a_scalar_index_argument_reaches_a_tile_kernel_as_a_symbol(dialect)
         test_a_lane_invariant_tile_node_stores_the_one_global_element_it_writes(dialect)
+        test_a_lane_uniform_loop_runs_inside_the_tile_kernel(dialect)
     test_a_tile_node_writing_a_tile_into_one_global_element_is_refused()
+    test_a_loop_bounded_by_the_tiled_param_leaves_the_map_untiled()
