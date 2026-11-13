@@ -120,7 +120,27 @@ def test_a_loop_whose_iterator_bounds_an_inner_loop_indexes_its_cells():
     assert iterator_indexes(outer)
 
 
+NI = dace.symbol("NI")
+
+
+@dace.program
+def column_steps(q: dace.float64[NI + 2, NB, NL], f: dace.float64[NI + 2, NB, NL]):
+    """Time steps over stencils along ``i`` only: the ``(b, l)`` plane columns never interact."""
+    for k in range(NK):
+        for i, b, l in dace.map[1 : NI + 2, 0:NB, 0:NL]:
+            f[i, b, l] = q[i - 1, b, l] - q[i, b, l]
+        for i, b, l in dace.map[1 : NI + 1, 0:NB, 0:NL]:
+            q[i, b, l] = q[i, b, l] + 0.25 * (f[i + 1, b, l] - f[i, b, l])
+
+
+def test_stencil_time_steps_stay_outside_the_lanes():
+    """A time-step loop over stencil maps (its iterator indexes nothing) stays outside the lanes."""
+    sdfg = column_steps.to_sdfg(simplify=True)
+    assert InterchangeLoopsIntoLaneMaps().apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
     test_level_loop_moves_into_one_block_map()
     test_a_time_step_loop_stays_outside()
     test_a_loop_whose_iterator_bounds_an_inner_loop_indexes_its_cells()
+    test_stencil_time_steps_stay_outside_the_lanes()

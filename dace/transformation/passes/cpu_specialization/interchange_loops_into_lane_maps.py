@@ -10,18 +10,24 @@ physics sweep over levels ``k`` of independent blocks ``b`` runs a block at a ti
 A map without the lane axis that holds lane maps (a short species loop lifted to a map) runs whole on each lane:
 when it is small it becomes a loop first, its nest inlined, so the lane analysis sees the maps it holds.
 
-The CPU gate: the loop's iterator indexes something (a time-step loop re-applies the same statements to the same
-cells, so moving it into the lanes only grows each lane's working set: fv3_xppm 2.1 s -> 3.4 s), the lane axis is not
-small, and the loop variable strides no wider than the lane parameter, so the innermost axis of every map stays
-innermost. Runs while schedules are still ``Default``, so inference makes the
-lane map the parallel one and every map inside it sequential.
+The CPU gate: the loop's iterator indexes something, the lane axis is not small, and the loop variable strides no
+wider than the lane parameter, so the innermost axis of every map stays innermost. A time-step loop (its iterator
+indexes nothing) re-applies the same statements to the same cells: moved into whole lanes it only grows each lane's
+working set (fv3_xppm 2.1 s -> 3.4 s), so it stays outside. Runs while schedules are still ``Default``, so inference makes the lane map the parallel one and every map inside it
+sequential.
+
+The GPU gate (``target='gpu'``, before the offload): the lanes are every axis the maps share, so each thread owns a
+column and runs the whole loop over it, one launch instead of one per map and trip. The lanes must not all be small
+(they are the threads) and must hold the most contiguous axis (:func:`lanes_coalesce`): adjacent threads stay
+adjacent in memory. Before the loops, the whole body of the SDFG is tried as one region run once: CLOUDSC over
+blocks, every map over ``(nblocks, klon)``, becomes one kernel with every level loop inside.
 """
 
 from typing import Any
 
-from dace import SDFG, nodes, symbolic
+from dace import SDFG, nodes, properties, symbolic
 from dace.sdfg import propagation
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.dataflow.map_expansion import MapExpansion
@@ -40,7 +46,7 @@ def lane_axis_of(loop: LoopRegion) -> tuple | None:
     if not facts.lanes:
         return None
     entry = facts.lanes[0][1]
-    return entry.map.range[facts.dims[entry]]
+    return entry.map.range[facts.dims[entry][0]]
 
 
 def holds_maps(state: SDFGState, entry: nodes.MapEntry) -> bool:
@@ -83,18 +89,58 @@ def unfold_small_maps(loop: LoopRegion, axis: tuple, facts: symbolic.Facts) -> i
         unfolded += 1
 
 
-def loop_strides_no_wider(loop: LoopRegion, facts: mlim.LaneFacts) -> bool:
-    """Whether ``loop``'s variable is at least as contiguous as every lane parameter in the lane maps' accesses."""
-    itervar = loop.loop_variable
-    lanes = [entry.map.params[facts.dims[entry]] for state, entry in facts.lanes]
+def stride_costs(itervar: str | None, facts: mlim.LaneFacts, sdfg: SDFG) -> tuple[dict, list[str], list[str]]:
+    """Contiguity scores of the loop variable ``itervar`` and every lane map parameter, with the lane and the other
+    parameters."""
+    lanes = list(dict.fromkeys(entry.map.params[d] for owner, entry in facts.lanes for d in facts.dims[entry]))
+    inner = list(dict.fromkeys(p for owner, entry in facts.lanes for p in entry.map.params if p not in lanes))
     edges = [
         e
         for state, entry in facts.lanes
         for e in state.scope_subgraph(entry, include_entry=True, include_exit=True).edges()
     ]
-    scores = score_indexed_strides(edges, loop.sdfg, [itervar] + list(dict.fromkeys(lanes)))
-    loop_cost = (score_to_float(scores[itervar][0]), score_to_float(scores[itervar][1]))
-    return all(loop_cost <= (score_to_float(scores[p][0]), score_to_float(scores[p][1])) for p in dict.fromkeys(lanes))
+    scores = score_indexed_strides(edges, sdfg, ([itervar] if itervar else []) + lanes + inner)
+    return {p: (score_to_float(s[0]), score_to_float(s[1])) for p, s in scores.items()}, lanes, inner
+
+
+def loop_strides_no_wider(itervar: str, facts: mlim.LaneFacts, sdfg: SDFG) -> bool:
+    """Whether the loop variable ``itervar`` is at least as contiguous as every lane parameter in the lane maps'
+    accesses."""
+    costs, lanes, _ = stride_costs(itervar, facts, sdfg)
+    return all(costs[itervar] <= costs[p] for p in lanes)
+
+
+def lanes_coalesce(itervar: str | None, facts: mlim.LaneFacts, sdfg: SDFG) -> bool:
+    """Whether a lane is the most contiguous axis: the lanes become the threads, the loop over ``itervar`` and every
+    other map axis run inside each thread, so adjacent threads must stay adjacent in memory."""
+    costs, lanes, inner = stride_costs(itervar, facts, sdfg)
+    rest = [costs[p] for p in ([itervar] if itervar else []) + inner]
+    return not rest or min(costs[p] for p in lanes) <= min(rest)
+
+
+def move_blocks(source: ControlFlowRegion, target: ControlFlowRegion, start: ControlFlowBlock) -> None:
+    """Move every block of ``source`` and the edges between them into ``target``, ``start`` its start block."""
+    blocks, edges = list(source.nodes()), list(source.edges())
+    for block in blocks:
+        target.add_node(block, is_start_block=block is start)
+    for edge in edges:
+        target.add_edge(edge.src, edge.dst, edge.data)
+    for block in blocks:
+        source.remove_node(block)
+
+
+def wrap_body(sdfg: SDFG) -> ControlFlowRegion:
+    """Move the whole body of ``sdfg`` into one region, its only block."""
+    region = ControlFlowRegion(f"{sdfg.label}_body", sdfg)
+    move_blocks(sdfg, region, sdfg.start_block)
+    sdfg.add_node(region, is_start_block=True)
+    return region
+
+
+def unwrap_body(sdfg: SDFG, region: ControlFlowRegion) -> None:
+    """Undo :func:`wrap_body`."""
+    move_blocks(region, sdfg, region.start_block)
+    sdfg.remove_node(region)
 
 
 def iterator_indexes(loop: LoopRegion) -> bool:
@@ -130,11 +176,20 @@ def inside_a_map(loop: LoopRegion) -> bool:
     return False
 
 
+@properties.make_properties
 @transformation.explicit_cf_compatible
 class InterchangeLoopsIntoLaneMaps(ppl.Pass):
     """Move each sequential loop over maps sharing a lane axis into one map over that axis (module docstring)."""
 
     CATEGORY: str = "CPU Specialization"
+
+    target = properties.Property(
+        dtype=str, default="cpu", choices=["cpu", "gpu"], desc="The gate: 'gpu' takes every shared axis as a lane"
+    )
+
+    def __init__(self, target: str = "cpu") -> None:
+        super().__init__()
+        self.target = target
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -146,31 +201,63 @@ class InterchangeLoopsIntoLaneMaps(ppl.Pass):
         return []
 
     def try_loop(self, loop: LoopRegion) -> bool:
-        if loop.loop_variable is None or inside_a_map(loop) or not iterator_indexes(loop):
+        if loop.loop_variable is None or inside_a_map(loop):
             return False
-        axis = lane_axis_of(loop)
+        if self.target == "cpu" and not iterator_indexes(loop):
+            return False
+        return self.interchange(loop, loop.loop_variable)
+
+    def try_body(self, sdfg: SDFG) -> bool:
+        """GPU: the whole body of ``sdfg`` becomes one kernel over the lanes all its maps share (module docstring)."""
+        if not any(isinstance(block, AbstractControlFlowRegion) for block in sdfg.nodes()):
+            return False
+        region = wrap_body(sdfg)
+        if self.interchange(region, None):
+            return True
+        unwrap_body(sdfg, region)
+        return False
+
+    def interchange(self, region: ControlFlowRegion, itervar: str | None) -> bool:
+        """Move ``region`` (a loop over ``itervar``, or a body run once) into its lane maps if the gate approves."""
+        axis = lane_axis_of(region)
         if axis is None:
             return False
-        sdfg = loop.sdfg
+        sdfg = region.sdfg
         facts = sdfg.facts()
-        if symbolic.is_small_extent(axis[1] - axis[0] + 1, facts):
+        gpu = self.target == "gpu"
+        # On CPU the one lane is this axis: a small one cannot be shared out, so nothing below is worth probing
+        if not gpu and symbolic.is_small_extent(axis[1] - axis[0] + 1, facts):
             return False
-        lanes = mlim.analyze_lanes(loop, sdfg, True)
-        if lanes.refusal is not None and unfold_small_maps(loop, axis, facts):
+        lanes = mlim.analyze_lanes(region, sdfg, True, gpu)
+        if lanes.refusal is not None and unfold_small_maps(region, axis, facts):
             propagation.propagate_memlets_sdfg(sdfg)
-            lanes = mlim.analyze_lanes(loop, sdfg, True)
-        if lanes.refusal is not None or not loop_strides_no_wider(loop, lanes):
+            lanes = mlim.analyze_lanes(region, sdfg, True, gpu)
+        if lanes.refusal is not None or not self.pays(itervar, lanes, facts, sdfg):
             return False
-        mlim.MoveLoopIntoMap.apply_to(sdfg, options={"cfg_body": True, "lane_axis": True}, loop=loop, verify=False)
+        if isinstance(region, LoopRegion):
+            options = {"cfg_body": True, "lane_axis": True, "shared_axes": gpu}
+            mlim.MoveLoopIntoMap.apply_to(sdfg, options=options, loop=region, verify=False)
+        else:
+            mlim.move_loop_into_lane_maps(region, sdfg, True, gpu)
         propagation.propagate_memlets_sdfg(sdfg)
         return True
+
+    def pays(self, itervar: str | None, lanes: mlim.LaneFacts, facts: symbolic.Facts, sdfg: SDFG) -> bool:
+        """The target's gate (module docstring) on a legal interchange."""
+        entry = lanes.lanes[0][1]
+        extents = [entry.map.range[d][1] - entry.map.range[d][0] + 1 for d in lanes.dims[entry]]
+        if all(symbolic.is_small_extent(extent, facts) for extent in extents):
+            return False
+        if self.target == "gpu":
+            return lanes_coalesce(itervar, lanes, sdfg)
+        return loop_strides_no_wider(itervar, lanes, sdfg)
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Interchange every loop the gate approves, outermost first.
 
         :returns: The number of interchanged loops, or ``None`` if none.
         """
-        applied = 0
+        applied = 1 if self.target == "gpu" and self.try_body(sdfg) else 0
         tried: set[str] = set()
         while True:
             loop = next(
