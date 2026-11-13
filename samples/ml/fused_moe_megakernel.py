@@ -333,11 +333,14 @@ def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18, pro
                 append_to_stream(S, OUTPUT, token, 0)
 
     @dace.program
-    def dense_down(S, g, ch, h_dense, down_w, dense_rows, dense_out, token_left):
-        """BM tokens times a chunk of the dense down projection."""
+    def dense_down(S, g, ch, tile, h_dense, down_w, dense_rows, dense_out, token_left):
+        """BM tokens times a chunk of the dense down projection. The product goes through the tile in shared memory:
+        the rows it then copies to the output are whole lines, where the accumulators of the threads are scattered."""
         nr = dense_rows[g]
         r0 = g * BM
-        dense_out[r0 : r0 + nr, ch * BN : ch * BN + BN] = h_dense[r0 : r0 + nr, :] @ down_w[ch * BN : ch * BN + BN, :].T
+        tile[0:nr] = h_dense[r0 : r0 + nr, :] @ down_w[ch * BN : ch * BN + BN, :].T
+        for r, col in dace.map[0:nr, 0:BN] @ TB:
+            dense_out[r0 + r, ch * BN + col] = tile[r, col]
         for r in dace.map[0:nr] @ TB:
             if dace.atomic.add(token_left, r0 + r, -1) == 1:
                 append_to_stream(S, OUTPUT, r0 + r, 0)
@@ -544,7 +547,7 @@ def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18, pro
                     expert_acc, token_left
                 )  # fmt: skip
             elif kind == DENSE_DOWN:
-                dense_down(S, g, ch, h_dense, down_w, dense_rows, dense_out, token_left)
+                dense_down(S, g, ch, tile, h_dense, down_w, dense_rows, dense_out, token_left)
             elif kind == ROUTE:
                 route(S, g, ch, x_router, router_w, route_partial, dense_rows, route_left)
             elif kind == TOP_K:
