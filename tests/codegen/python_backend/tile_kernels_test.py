@@ -681,6 +681,22 @@ def scalar_guarded(x: dace.float64[1], a: dace.float64[N], b: dace.float64[N], c
                 c[i] = c[i] + b[i]
 
 
+@dace.program
+def row_guarded(cond: dace.float64[N], src: dace.float64[N, N], a: dace.float64[N, N]):
+    for i in range(N):
+        if cond[i] > 0.0:
+            for j in range(N):
+                a[i, j] = src[i, j] * 2.0
+
+
+def two_dim_tile_sdfg(program) -> dace.SDFG:
+    sdfg = program.to_sdfg(simplify=True)
+    canonicalize(sdfg, target="gpu")
+    offload_to_gpu(sdfg)
+    VectorizeGPU(VectorizeConfig(widths=(4, 4), tile_programs=True)).apply_pass(sdfg, {})
+    return sdfg
+
+
 @pytest.mark.parametrize("dialect", DIALECTS)
 def test_a_scalar_condition_reaches_every_lane_through_a_tile_node(dialect: str):
     """``x[0] > 0`` holds for every lane; a tile node splats it, which every dialect writes, not a C++ lane loop."""
@@ -698,6 +714,21 @@ def test_a_scalar_condition_reaches_every_lane_through_a_tile_node(dialect: str)
         isinstance(n, dace.nodes.Tasklet) and n.language is dace.Language.CPP for n, _ in sdfg.all_nodes_recursive()
     )
     assert np.array_equal(device.get(), np.where(a > b, a * 2.0, a + 1.0))
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_a_row_value_reaches_every_column_of_a_two_dim_tile(dialect: str):
+    """``cond[i]`` steps along the rows of a 4 x 512 tile and repeats along its columns."""
+    import cupy
+
+    rng = np.random.default_rng(12)
+    cond, src = rng.random(600) - 0.5, rng.random((600, 600))
+    a = cupy.zeros((600, 600))
+
+    with tile_backend(dialect):
+        two_dim_tile_sdfg(row_guarded).compile()(cond=cupy.asarray(cond), src=cupy.asarray(src), a=a, N=600)
+
+    assert np.array_equal(a.get(), np.where(cond[:, None] > 0.0, src * 2.0, 0.0))
 
 
 if __name__ == "__main__":
@@ -723,6 +754,7 @@ if __name__ == "__main__":
         test_a_scatter_add_adds_every_lane_atomically(dialect)
         test_a_compaction_stores_only_the_lanes_its_guard_keeps(dialect)
         test_a_scalar_condition_reaches_every_lane_through_a_tile_node(dialect)
+        test_a_row_value_reaches_every_column_of_a_two_dim_tile(dialect)
     test_a_tile_node_writing_a_tile_into_one_global_element_is_refused()
     test_a_loop_bounded_by_the_tiled_param_leaves_the_map_untiled()
     test_a_scatter_combined_by_a_max_leaves_the_map_untiled()

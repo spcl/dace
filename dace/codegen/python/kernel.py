@@ -586,14 +586,16 @@ class TileStatement:
         factor."""
         node, desc = self.node, self.sdfg.arrays[name]
         widths, ndim = list(node.widths), len(desc.shape)
-        tile_of = {dim: d for d, dim in enumerate(tile_dims or range(ndim - len(widths), ndim))}
+        # Several tile dims may step along one array dim (a row value replicated over the columns of a 2-D tile)
+        tile_of: dict[int, list[int]] = {}
+        for d, dim in enumerate(tile_dims or range(ndim - len(widths), ndim)):
+            tile_of.setdefault(dim, []).append(d)
         indices = []
         for dim, ((begin, _, _), offset) in enumerate(zip(subset.ndrange(), desc.offset)):
             index = expr(begin + offset)
             if dim in node.gather_dims:
                 index = f"{index} + {self.index_tile(dim)}"
-            elif dim in tile_of:
-                d = tile_of[dim]
+            for d in [] if dim in node.gather_dims else tile_of.get(dim, []):
                 lane = self.dialect.lane(widths, d)
                 factor = symbolic.pystr_to_symbolic(replicate[d]) if replicate else 1
                 if factor != 1:
