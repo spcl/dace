@@ -295,6 +295,10 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
                     continue
             if any(e.data.wcr is not None for e in producers + consumers):
                 continue
+            # A conditional write (``IT``) leaves the element as it was where it does not write: a fresh scalar has no
+            # old value to keep, and an earlier hop it follows must still publish its value.
+            if any(e.data.dynamic for n in state.data_nodes() if n.data == node.data for e in state.in_edges(n)):
+                continue
             if any(not self._is_single_element(self._array_side_subset(e, node.data)) for e in producers + consumers):
                 continue
             occurrences.append((node, producers, consumers))
