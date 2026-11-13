@@ -766,7 +766,7 @@ def recompute_fuse_for_gpu(sdfg: SDFG) -> int:
     return sdfg.apply_transformations_repeated(OTFMapFusion, validate=False, validate_all=False)
 
 
-def offload_to_gpu(sdfg: SDFG, validate: bool = False) -> None:
+def offload_to_gpu(sdfg: SDFG, validate: bool = False, tile_programs: bool = False) -> None:
     """Move a canonicalized SDFG onto the GPU, in place: recompute-fuse, device offload, block size.
 
     A SEPARATE step from :func:`finalize_for_target`, not part of canonicalization: the device move
@@ -810,7 +810,12 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False) -> None:
     concurrency is layered back in. Set on the process Config here so the subsequent codegen
     (which reads the value) emits the single-stream form.
 
+    A kernel a tile DSL writes as one program per tile (``tile_programs``) gets no CUDA thread
+    specialization: a warp tile stays a sequential map for the vectorizer to tile, not a thread block
+    with a ``__syncthreads`` barrier, and a scatter kernel's threads are not coarsened.
+
     :param validate: Validate the SDFG once at the end.
+    :param tile_programs: Whether the kernels run as tile programs.
     """
     Config.set("compiler", "cuda", "max_concurrent_streams", value=-1)
     run_structural_cleanup(sdfg)
@@ -840,10 +845,12 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False) -> None:
     # thread block before this point; and ``select_gpu_device_block_size`` skips a kernel that
     # already contains a thread-block map, so promoting after it would leave the kernel carrying
     # BOTH a declared block size and a thread-block map -- which is the conflict codegen refuses.
-    PromoteWarpTiles().apply_pass(sdfg, {})
+    if not tile_programs:
+        PromoteWarpTiles().apply_pass(sdfg, {})
     select_gpu_device_block_size(sdfg)
     # Sized by the block just chosen: a scatter kernel covers enough elements per block for its private copy
-    CoarsenScatterKernels().apply_pass(sdfg, {})
+    if not tile_programs:
+        CoarsenScatterKernels().apply_pass(sdfg, {})
     if validate:
         sdfg.validate()
 
