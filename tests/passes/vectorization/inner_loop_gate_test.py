@@ -24,7 +24,6 @@ import tests.corpus.measure_parallelization as mp
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.vectorization.utils.map_predicates import (
     is_vectorizable_map,
-    map_body_has_inner_loop,
     map_body_has_lane_varying_loop,
     map_body_has_param_dependent_loop,
     map_body_has_tiled_param_dependent_branch,
@@ -169,37 +168,73 @@ def test_conditional_over_the_tiled_param_is_refused_by_the_branch_gate():
     assert is_vectorizable_map(state, map_entry, 1) is False
 
 
+#: Per kernel, its maps after canon+vec as ``(label, schedule, step of the last dim, holds tile nodes)``, and the
+#: variables of the sequential loops that survive. adi's and deriche's sweeps carry a refused map scalar
+#: (``__no_vectorize``); lu's lane-uniform reductions inside its sweeps tile by 8 with a remainder map each.
+REAL_KERNEL_SHAPES = {
+    "adi": (
+        [
+            ("single_state_body_0_map__no_vectorize", "CPU_Multicore", 1, False),
+            ("single_state_body_map__no_vectorize", "CPU_Multicore", 1, False),
+        ],
+        ["_loop_it_0", "_loop_it_2", "_loop_it_3", "_loop_it_5", "_loop_it_6"],
+    ),
+    "deriche": (
+        [
+            ("comp_iout", "CPU_Multicore", 8, True),
+            ("comp_iout2", "CPU_Multicore", 8, True),
+            ("comp_iout2__tile_main", "CPU_Multicore", 8, True),
+            ("comp_iout__tile_main", "CPU_Multicore", 8, True),
+            ("single_state_body_0_map__no_vectorize", "CPU_Multicore", 1, False),
+            ("single_state_body_1_map__no_vectorize", "CPU_Multicore", 1, False),
+        ],
+        ["_loop_it_1", "_loop_it_3", "_loop_it_5", "_loop_it_7"],
+    ),
+    "lu": (
+        [
+            ("k_loop1", "Sequential", 8, True),
+            ("k_loop1__tile_main", "Sequential", 8, True),
+            ("k_loop2", "Sequential", 8, True),
+            ("k_loop2__tile_main", "Sequential", 8, True),
+            ("single_state_body_map", "CPU_Multicore", 1, True),
+        ],
+        ["_loop_it_0", "_loop_it_1", "_loop_it_2", "_skew_t_0"],
+    ),
+}
+
+
+def map_shapes(sdfg: dace.SDFG) -> list[tuple[str, str, object, bool]]:
+    """Every map of ``sdfg`` as ``(label, schedule, step of its last dim, whether its body holds tile nodes)``."""
+    shapes = []
+    for entry, state in sdfg.all_nodes_recursive():
+        if not isinstance(entry, dace.nodes.MapEntry):
+            continue
+        bodies = [n.sdfg for n in state.scope_subgraph(entry).nodes() if isinstance(n, dace.nodes.NestedSDFG)]
+        tiled = any(isinstance(n, TILE_NODE_TYPES) for body in bodies for n, _ in body.all_nodes_recursive())
+        shapes.append((entry.map.label, entry.map.schedule.name, entry.map.range[-1][2], tiled))
+    return sorted(shapes)
+
+
 @pytest.mark.parametrize("name", ["adi", "deriche", "lu"])
-def test_real_kernels_are_refused_and_correct(name):
-    """End-to-end: the three polybench kernels this gate catches stay scalar and value-correct."""
+def test_real_kernels_tile_exactly_their_lane_uniform_maps_and_stay_correct(name):
+    """End-to-end on the polybench kernels whose maps run sequential sweeps: the maps after canon+vec are exactly
+    the expected ones (a sweep's map refused and scalar, a lane-uniform map tiled with its remainder), every sweep
+    stays a loop, and every kernel stays value-correct."""
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 
     base, checker = mp.CORPORA["poly"][1](name)
     sd = copy.deepcopy(base)
     mp.apply_config(sd, "canon+vec", mp.cpu_params(4))
 
-    # The refusal itself, not just its numbers: a carried sweep that came back tiled would still
-    # be value-correct on THIS input while W lanes shared one counter and one carry. Scoped to the
-    # sweeps -- deriche's non-recurrent maps DO tile, and 22 tile ops there are the pass working.
-    tiled_sweeps = []
-    for sub in sd.all_sdfgs_recursive():
-        for state in sub.states():
-            for entry in state.nodes():
-                if not (isinstance(entry, dace.nodes.MapEntry) and map_body_has_inner_loop(state, entry)):
-                    continue
-                inside = state.all_nodes_between(entry, state.exit_node(entry)) or set()
-                tiled_sweeps += [n for n in inside if isinstance(n, TILE_NODE_TYPES)]
-    assert not tiled_sweeps, (
-        f"{name}: the gate let {len(tiled_sweeps)} tile op(s) into a map whose body still "
-        f"sweeps sequentially: {sorted({type(n).__name__ for n in tiled_sweeps})}"
+    maps, loops = REAL_KERNEL_SHAPES[name]
+    assert map_shapes(sd) == maps
+    assert (
+        sorted(r.loop_variable for r in sd.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
+        == loops
     )
-    assert any(isinstance(b, LoopRegion) for b, _ in sd.all_nodes_recursive()), (
-        f"{name}: the carried sweep this gate exists to protect was flattened into dataflow"
-    )
-
     fin = finalize_for_target(copy.deepcopy(sd), "cpu")
     fin.name = f"{name}_inner_loop_gate_test"
-    assert bool(checker(fin)), f"{name} must be value-correct after the refusal"
+    assert bool(checker(fin)), f"{name} must be value-correct"
 
 
 if __name__ == "__main__":
@@ -211,4 +246,4 @@ if __name__ == "__main__":
     test_conditional_body_is_still_allowed()
     test_conditional_over_the_tiled_param_is_refused_by_the_branch_gate()
     for name in ("adi", "deriche", "lu"):
-        test_real_kernels_are_refused_and_correct(name)
+        test_real_kernels_tile_exactly_their_lane_uniform_maps_and_stay_correct(name)

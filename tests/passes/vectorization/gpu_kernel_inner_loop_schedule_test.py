@@ -40,10 +40,21 @@ def vectorized_kernel():
 
 
 def test_a_loop_inside_a_kernel_stays_a_loop():
+    """The kernel's lanes run the ``j`` loop in step, so the kernel tiles by 2 into a mask-free interior and its
+    remainder, both ``GPU_Device`` maps over ``i``; no map is made of the loop, which stays one loop in each."""
     sdfg, kernel = vectorized_kernel()
-    inner = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and n is not kernel]
-    assert not inner, [(n.map.label, n.map.schedule) for n in inner]
-    assert any(isinstance(r, LoopRegion) for r in sdfg.all_control_flow_regions(recursive=True))
+    label = kernel.map.label.removesuffix("__tile_main")
+    maps = [
+        (n.map.label.removeprefix(label), n.map.params, str(n.map.range), n.map.schedule)
+        for n, state in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry)
+    ]
+    assert sorted(maps) == [
+        ("", ["i"], "2*int_floor(N, 2):N:2", dace.ScheduleType.GPU_Device),
+        ("__tile_main", ["i"], "0:2*int_floor(N, 2):2", dace.ScheduleType.GPU_Device),
+    ], maps
+    loops = [r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+    assert loops == ["j", "j"], loops
     sdfg.generate_code()
 
 
@@ -56,3 +67,8 @@ def test_a_vectorized_kernel_with_an_inner_loop_computes_the_values():
     b = cupy.zeros((64, 37))
     sdfg(a=cupy.asarray(a), b=b, N=64, M=37)
     assert np.allclose(b.get(), 2.0 * a)
+
+
+if __name__ == "__main__":
+    test_a_loop_inside_a_kernel_stays_a_loop()
+    test_a_vectorized_kernel_with_an_inner_loop_computes_the_values()
