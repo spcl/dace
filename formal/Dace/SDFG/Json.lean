@@ -8,7 +8,7 @@ import Dace.SDFG.Semantics.Basic
 
 Reads the JSON produced by `dace.serialize` (`SDFG.save`) into the `Dace`
 syntax.  Only semantic fields are read; everything else is ignored.  Memlets
-are normalized to source/destination subsets (`Core/Memlet`), and a copy
+are normalized to source/destination subsets (`Model/Memlet`), and a copy
 whose other side has no subset gets the full range of that container
 (`Decisions.md#D9`).  Empty memlets become dependency edges
 (`Decisions.md#D27`).  Structure members are flattened into the descriptor
@@ -415,7 +415,7 @@ def inlineFacts (types : List (Sym × Dtype)) (strs : List String) :
 /-- The facts of `attributes.symbol_repo` (`symbol_repo.py`, `SymbolRepo.to_json`)
 and the declared parameter types.  Only `params` is read: the scale facts
 (`small`, `MUCH_LT`), `runtime_assumptions` and the facts of inner scopes are
-ignored (`Core/Facts`, `Decisions.md#D60`).  As in `symbol_facts`, integer
+ignored (`Sym/Facts`, `Decisions.md#D60`).  As in `symbol_facts`, integer
 symbols are those of an integer type other than `bool`, and an unsigned type
 is a `NONNEGATIVE` fact of its own. -/
 def symbolRepo (j : Json) : P (Constraints × List (Sym × Dtype)) := do

@@ -1,7 +1,7 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Dace
 
-/-! Verdicts of the static race check `raceFree?` (`Dace.Equiv.RaceFree`)
+/-! Verdicts of the static race check `raceFree?` (`Dace.Check.RaceFree`)
 over the corpus.  Run with `lake env lean tests/RaceFreeCorpus.lean`
 from `formal/` after generating the corpus (`scripts/dump_corpus.py`).
 

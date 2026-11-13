@@ -1,5 +1,5 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import Dace.Core.Merge
+import Dace.Model.Log
 import Dace.SDFG.WF
 
 /-!

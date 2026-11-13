@@ -1,6 +1,6 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Dace.SDFG.Semantics.Leaf
-import Dace.Core.MergeLemmas
+import Dace.Model.LogAlgebra
 
 /-!
 # SDFG semantics: the execution relations

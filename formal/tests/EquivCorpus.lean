@@ -1,7 +1,7 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Dace
 
-/-! The verified SDFG / schedule-tree pair checker (`Dace.Equiv.CorrCheck`)
+/-! The verified SDFG / schedule-tree pair checker (`Dace.Check.TreePair.Checker`)
 over the corpus.  Run with `lake env lean tests/EquivCorpus.lean` from
 `formal/` after generating the corpus (`scripts/dump_corpus.py`).
 

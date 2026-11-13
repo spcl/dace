@@ -1,7 +1,7 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Dace
 
-/-! Sanity checks of the refinement notion (`Dace/Equiv/Equiv.lean`,
+/-! Sanity checks of the refinement notion (`Dace/Equiv/Refines.lean`,
 `Decisions.md#D64`) on abstract programs, and of the observable interface
 (`Decisions.md#D63`) on the corpus.  Run with `lake env lean tests/EquivTest.lean`
 from `formal/`; it fails if an `example` does not check or a corpus

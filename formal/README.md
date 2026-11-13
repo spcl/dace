@@ -3,8 +3,14 @@
 This directory holds a Lean 4 formalization of DaCe's intermediate
 representations:
 
-- `Dace/Core`: shared data model (symbolic expressions, subsets, data
-  descriptors, memlets, memory, access logs and their parallel merge, tasklets).
+The folders of `Dace/` follow the structure of the proofs; each depends only
+on the ones before it.
+
+- `Dace/Sym`: symbolic expressions, their parser, symbol facts, and verified
+  integer arithmetic (polynomial normal form, certificates, certificate search).
+- `Dace/Model`: what a program manipulates (subsets and their verified
+  decision procedures, data descriptors, memlets, memory, WCR operators,
+  access logs and the algebra of their parallel merge, tasklets).
 - `Dace/SDFG`: syntax, well-formedness, semantics, interpreter and JSON import
   of stateful dataflow multigraphs.
 - `Dace/STree`: the same for schedule trees (`Syntax` with DaCe's
@@ -12,29 +18,44 @@ representations:
   relational `Semantics`, the executable `Interp` and its `Soundness`
   proof); `tests/ImportStreeCorpus.lean` imports the
   corpus trees, checks them and compares the pretty-printer with DaCe.
-- `Dace/Equiv`: observational equivalence, refinement and congruence, and
-  verified checks (`lake exe dace-equiv`): `dace-equiv racefree <sdfg.json>...`
+- `Dace/Equiv`: what "the same program" means (observables, refinement and
+  equivalence, matching of outcomes).
+- `Dace/Runs`: theorems about every execution. `Log`: what a run does to
+  memory and its log (logs are write-only, footprinted actions, frame,
+  coherence, where races arise). `Footprint`: static footprints. `Order`:
+  node order does not matter on race-free states, determinism. `Invariance`:
+  renaming, relabeling and less-initialized memory do not matter.
+- `Dace/Rules`: rewrite rules proven to refine (replacing a block, a map
+  body or a state, relabeling nodes, region rules, renaming containers).
+- `Dace/Check`: verified checkers (`RaceFree`, the SDFG / schedule-tree pair
+  checker `TreePair`, the SDFG–SDFG checker `SdfgPair`).
+
+The statements about programs are written in terms of `Sym/Expr`, `Model`,
+the `Syntax`, `WF` and `Semantics` files of the two IRs, and `Equiv`;
+everything from `Runs` on is proof.
+
+- Results (`lake exe dace-equiv`): `dace-equiv racefree <sdfg.json>...`
   runs the static race check `raceFree?`, proven sound (`raceFree?_sound`);
   `tests/RaceFreeCorpus.lean` pins its corpus verdicts. Congruence:
   replacing a control-flow block (`Congr.block`) or the body of a map
   (`Congr.scopeBody`, `Congr.mapBody`; decidable side condition
   `sameOutside?`, exercised on every corpus map by
   `tests/ScopeBodyCheck.lean`) by one whose runs it matches refines the SDFG.
-  Determinism (`Equiv/Det`): on the fragment `seqPure?` with convex map
+  Determinism (`Runs/Order/Det`): on the fragment `seqPure?` with convex map
   scopes (`scopesOk?`), one normal run of a state makes every run normal
   with the same memory, whatever topological orders the scopes take
   (`StateExec.det`).  Control flow is deterministic (several true interstate
-  edges are undefined behavior), so this lifts to programs (`Equiv/DetProg`):
+  edges are undefined behavior), so this lifts to programs (`Runs/Order/DetProg`):
   for a lawful WCR semantics, a program passing `SDFG.det?` (every state in
   the fragment) with a normal outcome has no other outcome, in particular no
   race (`SDFG.Exec.det`, `SDFG.Exec.no_err`); `tests/DetCheck.lean` checks
   the hypotheses on the corpus.
-  SDFG / schedule-tree pairs (`Equiv/Corr*`, `lake exe dace-equiv stree
+  SDFG / schedule-tree pairs (`Check/TreePair/*`, `lake exe dace-equiv stree
   <sdfg.json> <stree.json>`): the checker `Corr.corr?` is proven sound
   (`Corr.corr?_exec`: every run of the tree matches a run of the SDFG, with
   observationally equal final memory, or the SDFG may be undefined;
   `Corr.corr?_refines`: `Refines t g` for a supported SDFG).
-  Structured control flow (`Equiv/CorrCtl`): chains of blocks joined by
+  Structured control flow (`Check/TreePair/Control`): chains of blocks joined by
   unconditional edges whose assignments become `AssignNode`s, a single
   conditional out-edge (an `IfScope` holding the edge's assignments and the
   rest of the chain, `RegCorr.condStep`), loop regions, conditional blocks
@@ -48,18 +69,18 @@ representations:
   not certified yet.
   States need no fragment beyond the absence of views inside scope bodies:
   every sequential run is coherent (its memory is its log applied,
-  `SDFG/Coherence.lean`), streams and references included; a state's views
+  `Runs/Log/Coherence.lean`), streams and references included; a state's views
   are the tree's `ViewNode`s at the head of its segment (`ViewsCorr`).
   Nested SDFGs (`SegCorr.nestedMap`): a map scope whose body is one nested
   SDFG matches the tree's inlined inner region; the per-call transients are
-  related to the tree's names by renaming (`SDFG/Sim.lean`, the simulation
+  related to the tree's names by renaming (`Runs/Invariance/Sim.lean`, the simulation
   theorem `SDFGExec.sim` over a name permutation, `Corr.flatCtx`).
   Connectors may name their containers differently from the outer edges:
-  the tree body is renamed to the connector names (`STree/Rename.lean`,
+  the tree body is renamed to the connector names (`Runs/Invariance/TreeRename.lean`,
   `STree.ListExec.ren`, `Corr.connPerm`).  The inner top region may hold
   any structured control flow without a `break`/`continue` leaving it
   (`Region.escapes`); returns end the call, and the tree's gotos to the label
-  its returns were rebound to are matched as returns (`STree/Retarget.lean`,
+  its returns were rebound to are matched as returns (`Runs/Invariance/Retarget.lean`,
   `STree.ListExec.unlabel`, `Corr.innerCheck`).  A nested SDFG outside map scopes
   (`SegCorr.nested`) matches its inlined region in the sibling list when the
   call allocates no transients and the inlined tree nodes are dataflow nodes
@@ -77,21 +98,21 @@ representations:
   one set from a code node fails in both IRs (`unsupported`, D55).  Tree
   memlets may omit a subset that the SDFG gives as the full range (`SubCorr`).
   `tests/EquivCorpus.lean` prints the corpus verdicts.
-  SDFG–SDFG equivalence (`Equiv/SdfgCorr`, `lake exe dace-equiv sdfg
+  SDFG–SDFG equivalence (`Check/SdfgPair`, `lake exe dace-equiv sdfg
   <a.sdfg.json> <b.sdfg.json>`): an untrusted search proposes rule
   applications, a verified replay applies them and compares the result with
   the second SDFG (`SDFG.beq`, sound); `checkBy_sound`: the SDFGs are
   equivalent when the first is supported.  Rules: node renumbering of a state
-  (`Congr.relabelState`, from `SDFG/Relabel.lean`: every state-level relation
+  (`Congr.relabelState`, from `Runs/Invariance/Relabel.lean`: every state-level relation
   is invariant under a permutation of node ids); state replacement
-  (`Congr.replaceState`, from `Equiv/StateLocal.lean`: two states that agree
+  (`Congr.replaceState`, from `Rules/StateLocal.lean`: two states that agree
   on their nodes, adjacent edges, components and view bindings, decided by
   `stateSame?`, run with the same outcomes; covers node-list reordering);
   block renumbering of a region (`Congr.relabelBlocks`, from
-  `Equiv/RegionRules.lean`, which also provides region-level congruence,
+  `Rules/Region.lean`, which also provides region-level congruence,
   `Congr.regionEquiv`); inserting or removing an empty state after a block
   (`Congr.insertEmpty`, `Congr.removeEmpty`); swapping two container names
-  (`Congr.swapNames`, from `SDFG/Rename.lean` and `Equiv/RenameRule.lean`:
+  (`Congr.swapNames`, from `Runs/Invariance/Rename.lean` and `Rules/RenameContainers.lean`:
   renaming containers that no expression, shape or consumed stream reads and
   that are neither observable nor defined at the start, D69).
   `tests/SdfgCorrCorpus.lean` certifies a renumbered, a reordered, a

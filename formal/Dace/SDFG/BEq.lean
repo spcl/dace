@@ -9,7 +9,7 @@ import Dace.SDFG.Syntax
 which have no decidable equality.  `SDFG.beq` is a structural equality test
 that is **sound** (`SDFG.beq_sound`: `beq a b = true → a = b`); it answers
 `false` on equal constants holding floats, so it is not complete.  The
-SDFG–SDFG checker (`Dace.Equiv.SdfgCorr`) uses it for the final comparison.
+SDFG–SDFG checker (`Dace.Check.SdfgPair`) uses it for the final comparison.
 -/
 
 set_option autoImplicit false

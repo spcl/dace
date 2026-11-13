@@ -1,6 +1,6 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import Dace.Core.Interp
-import Dace.Core.Facts
+import Dace.Model.Interp
+import Dace.Sym.Facts
 
 /-!
 # SDFG syntax
@@ -174,7 +174,7 @@ structure SDFG where
   constants : List (Name × DataDesc × Option Val) := []
   argNames : List Name := []
   top : Region
-  /-- Facts about the symbols (`symbol_repo.params`, `Core/Facts`). -/
+  /-- Facts about the symbols (`symbol_repo.params`, `Sym/Facts`). -/
   facts : Constraints := {}
 
 end

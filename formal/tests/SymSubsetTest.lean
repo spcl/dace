@@ -1,7 +1,7 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Dace
 
-/-! Checks for the subset procedures (`Core/SymSubset`): signs, disjointness,
+/-! Checks for the subset procedures (`Model/SubsetCheck`): signs, disjointness,
 inclusion and disjointness of distinct map iterations.  Run with
 `lake env lean tests/SymSubsetTest.lean`; every `#guard` must pass. -/
 

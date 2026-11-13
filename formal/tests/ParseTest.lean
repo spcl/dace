@@ -1,7 +1,7 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Dace
 
-/-! Round-trip and evaluation checks for `Dace.Core.Parse`.  Run with
+/-! Round-trip and evaluation checks for `Dace.Sym.Parse`.  Run with
 `lake env lean tests/ParseTest.lean`; every `#guard` must pass. -/
 
 open Dace

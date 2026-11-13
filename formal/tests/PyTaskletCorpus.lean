@@ -3,7 +3,7 @@ import Dace
 
 /-! Load every `.sdfg.json` of the corpus, collect all Python tasklets (across
 nested SDFGs and loop/conditional regions), and check that the executable
-statement parser (`Dace.Core.PyTasklet`) accepts each one.  Run with
+statement parser (`Dace.Model.PyTasklet`) accepts each one.  Run with
 `lake env lean tests/PyTaskletCorpus.lean` from `formal/`. -/
 
 open Dace

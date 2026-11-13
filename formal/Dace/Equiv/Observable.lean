@@ -1,7 +1,7 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Dace.SDFG.Semantics
 import Dace.STree.Semantics
-import Dace.Core.Facts
+import Dace.Sym.Facts
 
 /-!
 # Programs and their observables
@@ -11,7 +11,7 @@ equivalence is concerned (`Decisions.md#D63`, `#D64`):
 
 * `Prog`: an execution relation `Interp → Valuation → Mem → Res Mem → Prop`
   (`SDFG.Exec`, `STree.Exec`), the observable containers (`interface`) and
-  the symbol facts the program may assume (`facts`, `Core/Facts`);
+  the symbol facts the program may assume (`facts`, `Sym/Facts`);
 * `Prog.Pre`: the initial configurations an equivalence claim is about: a
   lawful interpretation (`Interp.Lawful`, `Decisions.md#D24`), a valuation
   satisfying the facts, and no alias bound in the initial memory (arguments
@@ -69,7 +69,7 @@ structure Prog where
   exec : Interp → Valuation → Mem → Res Mem → Prop
   /-- The observable containers (`interfaceOf`). -/
   interface : List Name
-  /-- Facts about the symbols (`Core/Facts`) that every claim may assume. -/
+  /-- Facts about the symbols (`Sym/Facts`) that every claim may assume. -/
   facts : Constraints := {}
 
 /-- The initial configurations an equivalence claim quantifies over: a lawful
@@ -102,7 +102,7 @@ def STree.prog (t : STree) : Prog where
 /-- Two final memories are observationally equal on `iface` when every
 location of an observable container holds the same value and the same queue
 contents.  All locations of the container are compared (not only the points
-of its shape): memory is linear (`Dace.Core.Memory`) and an access through a
+of its shape): memory is linear (`Dace.Model.Memory`) and an access through a
 wrong offset stays within the container's name. -/
 def obsEq (iface : List Name) (m m' : Mem) : Prop :=
   ∀ l : Loc, l.name ∈ iface → m.cells l = m'.cells l ∧ m.queues l = m'.queues l

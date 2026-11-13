@@ -32,13 +32,13 @@ Divergence is the absence of any derivation.
 * **Dataflow denotes logs.**  Within a state, every sequential execution (a
   component, a map iteration, a consume task, a nested invocation) works on
   a local memory view and produces a `Log` of its reads, writes, WCR
-  contributions, alias bindings and queue effects (`Dace.Core.Merge`).  The
+  contributions, alias bindings and queue effects (`Dace.Model.Log`).  The
   logs of parallel executions are merged commutatively onto the pre-scope
   memory by `merge`; a conflict is the error `race`.  Map schedules are
   inert (`#D3`), components of a state run in parallel (`#D4`).
 * **Memory is linear.**  Containers are addressed by linear element offsets
   through their strides (`Ctx.loc`); views, references and nested-SDFG
-  connectors are aliases resolved on every access (`Dace.Core.Memory`), so
+  connectors are aliases resolved on every access (`Dace.Model.Memory`), so
   codegen's pointer arithmetic is reproduced exactly.
 * **Total over syntax.**  Situations well-formedness excludes yield
   `malformed` outcomes rather than missing cases.

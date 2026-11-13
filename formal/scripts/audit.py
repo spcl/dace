@@ -9,8 +9,8 @@ reports:
 * declarations unreachable from the roots: the executables, the theorems checked in
   ``tests/Headlines.lean`` and the definitions the other ``tests/*.lean`` files mention;
 * theorems with identical statements;
-* theorems whose statement mentions no constant of the library (candidates for ``Core/ListLemmas.lean``
-  or for a Mathlib lemma);
+* theorems whose statement mentions no constant of the library (candidates for a shared file of
+  list lemmas or for a Mathlib lemma);
 * lines, theorems and definitions per module.
 
 Run from ``formal/`` after ``lake build``.  Exits with status 1 if ``--strict`` is given and anything is

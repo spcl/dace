@@ -1,75 +1,89 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Dace.Prelude
-import Dace.Core.Expr
-import Dace.Core.Subset
-import Dace.Core.Parse
-import Dace.Core.Data
-import Dace.Core.Memlet
-import Dace.Core.Memory
-import Dace.Core.Wcr
-import Dace.Core.Merge
-import Dace.Core.MergeLemmas
-import Dace.Core.Tasklet
-import Dace.Core.Interp
-import Dace.Core.PyTasklet
-import Dace.Core.Facts
-import Dace.Core.SymArith
-import Dace.Core.SymCert
-import Dace.Core.SymSearch
-import Dace.Core.SymSubset
+-- Symbolic expressions and verified integer arithmetic
+import Dace.Sym.Expr
+import Dace.Sym.Facts
+import Dace.Sym.Parse
+import Dace.Sym.Poly
+import Dace.Sym.Cert
+import Dace.Sym.Search
+-- What a program manipulates
+import Dace.Model.Subset
+import Dace.Model.Data
+import Dace.Model.Memlet
+import Dace.Model.Memory
+import Dace.Model.Tasklet
+import Dace.Model.SubsetCheck
+import Dace.Model.Wcr
+import Dace.Model.Interp
+import Dace.Model.Log
+import Dace.Model.LogAlgebra
+import Dace.Model.PyTasklet
+-- SDFGs
 import Dace.SDFG.Syntax
+import Dace.SDFG.BEq
 import Dace.SDFG.Scope
 import Dace.SDFG.ScopeSpec
 import Dace.SDFG.WF
+import Dace.SDFG.Semantics.Basic
+import Dace.SDFG.Json
+import Dace.SDFG.Semantics.Leaf
+import Dace.SDFG.Semantics.Exec
 import Dace.SDFG.Semantics
 import Dace.SDFG.Interp
+import Dace.SDFG.Names
 import Dace.SDFG.Soundness
-import Dace.SDFG.Json
+-- Schedule trees
 import Dace.STree.Syntax
-import Dace.STree.Json
 import Dace.STree.WF
+import Dace.STree.Json
 import Dace.STree.Semantics.Basic
 import Dace.STree.Semantics.Leaf
 import Dace.STree.Semantics.Exec
 import Dace.STree.Semantics
 import Dace.STree.Interp
 import Dace.STree.Soundness
-import Dace.STree.Rename
-import Dace.STree.Retarget
+-- Refinement and equivalence
 import Dace.Equiv.Observable
-import Dace.Equiv.Equiv
-import Dace.Equiv.Frag
-import Dace.SDFG.LogShift
-import Dace.STree.LogShift
-import Dace.SDFG.Footprint
-import Dace.Equiv.Footprint
-import Dace.Equiv.Congr
-import Dace.SDFG.Footprinted
-import Dace.SDFG.Frame
-import Dace.SDFG.Coherence
-import Dace.Equiv.Order
-import Dace.SDFG.Clean
-import Dace.SDFG.Names
-import Dace.SDFG.Sim
-import Dace.Equiv.RaceFree
-import Dace.Equiv.ScopeBody
-import Dace.Equiv.Det
-import Dace.Equiv.DetProg
-import Dace.Equiv.CorrLeaf
-import Dace.Equiv.CorrMatch
-import Dace.Equiv.EvalCongr
-import Dace.Equiv.Corr
-import Dace.Equiv.CorrCtl
-import Dace.Equiv.NamesCheck
-import Dace.Equiv.CorrCheck
-import Dace.SDFG.Relabel
-import Dace.SDFG.BEq
-import Dace.Equiv.Relabel
-import Dace.Equiv.StateLocal
-import Dace.Equiv.RegionRules
-import Dace.SDFG.Rename
-import Dace.Equiv.RenameRule
-import Dace.Equiv.SdfgCorr
+import Dace.Equiv.Refines
+import Dace.Equiv.Matched
+-- Runs: memory and logs
+import Dace.Runs.Log.Clean
+import Dace.Runs.Log.WriteOnly
+import Dace.Runs.Log.Footprinted
+import Dace.Runs.Log.WriteOnlyTree
+import Dace.Runs.Log.Frame
+import Dace.Runs.Log.Coherence
+-- Runs: static footprints
+import Dace.Runs.Footprint.Static
+import Dace.Runs.Footprint.Iter
+-- Runs: order independence and determinism
+import Dace.Runs.Order.Order
+import Dace.Runs.Order.Det
+import Dace.Runs.Order.DetProg
+-- Runs: renaming, relabeling, simulation
+import Dace.Runs.Invariance.Retarget
+import Dace.Runs.Invariance.EvalCongr
+import Dace.Runs.Invariance.Sim
+import Dace.Runs.Invariance.Relabel
+import Dace.Runs.Invariance.TreeRename
+import Dace.Runs.Invariance.Rename
+-- Rewrite rules
+import Dace.Rules.Block
+import Dace.Rules.RelabelNodes
+import Dace.Rules.ScopeBody
+import Dace.Rules.Region
+import Dace.Rules.StateLocal
+import Dace.Rules.RenameContainers
+-- Verified checkers
+import Dace.Check.TreePair.Names
+import Dace.Check.RaceFree
+import Dace.Check.TreePair.Leaf
+import Dace.Check.TreePair.Segment
+import Dace.Check.TreePair.State
+import Dace.Check.TreePair.Control
+import Dace.Check.TreePair.Checker
+import Dace.Check.SdfgPair
 
 /-!
 # DaCe formal semantics

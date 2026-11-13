@@ -1,8 +1,8 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Dace
 
-/-! Checks for the polynomial normal form (`Core/SymArith`), certificate
-checking and search (`Core/SymCert`, `Core/SymSearch`).  Run with
+/-! Checks for the polynomial normal form (`Sym/Poly`), certificate
+checking and search (`Sym/Cert`, `Sym/Search`).  Run with
 `lake env lean tests/SymArithTest.lean`; every `#guard` must pass. -/
 
 open Dace

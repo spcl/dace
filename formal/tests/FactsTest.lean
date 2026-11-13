@@ -1,7 +1,7 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Dace
 
-/-! Import of the symbol repository (`attributes.symbol_repo`, `Core/Facts`)
+/-! Import of the symbol repository (`attributes.symbol_repo`, `Sym/Facts`)
 and use of the facts as query hypotheses.  Run with
 `lake env lean tests/FactsTest.lean`; every `#guard` must pass. -/
 

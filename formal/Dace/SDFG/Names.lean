@@ -23,7 +23,7 @@ control-flow expressions.  This file collects them:
 private-transient count, `Decisions.md#D39`) is among them.  The
 endpoint lemmas (`State.srcEndpoint_names`, …) show the names the structural
 functions return come from the state.  Used by the partial-agreement
-simulation (`Dace.SDFG.Sim`).
+simulation (`Dace.Runs.Invariance.Sim`).
 -/
 
 set_option autoImplicit false

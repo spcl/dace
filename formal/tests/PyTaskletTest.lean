@@ -1,7 +1,7 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Dace
 
-/-! Unit tests for the executable Python-tasklet subset (`Dace.Core.PyTasklet`).
+/-! Unit tests for the executable Python-tasklet subset (`Dace.Model.PyTasklet`).
 Run with `lake env lean tests/PyTaskletTest.lean`; every `#guard` must pass. -/
 
 open Dace

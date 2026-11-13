@@ -12,20 +12,20 @@ lake exe dace-equiv stree <sdfg.json> <stree.json>
 lake exe dace-equiv sdfg <a.sdfg.json> <b.sdfg.json>
 ```
 
-`sdfg` runs the SDFG–SDFG checker (`Dace.Equiv.SdfgCorr`): it searches for
+`sdfg` runs the SDFG–SDFG checker (`Dace.Check.SdfgPair`): it searches for
 rule applications turning `a` into `b`, replays them through the proven
 rules and compares the result with `b`.  It prints `EQUIVALENT` (theorem
 `Dace.checkBy_sound`: `b` is equivalent to `a` when `a` is supported, exit
 `0`) or `UNKNOWN: <reason>` (exit `1`).
 
-`stree` runs the pair checker `Corr.corr?` (`Dace.Equiv.CorrCheck`) on an
+`stree` runs the pair checker `Corr.corr?` (`Dace.Check.TreePair.Checker`) on an
 SDFG and its schedule tree and prints `REFINES` (every run of the tree is a
 run of the SDFG, or the SDFG may end in undefined behavior: theorem
 `Dace.Corr.corr?_exec`; `Refines t g` for a supported SDFG:
 `Dace.Corr.corr?_refines`, exit `0`) or `UNKNOWN: <reason>` (outside the
 checker's fragment, exit `1`).
 
-`racefree` runs the static race check `raceFree?` (`Dace.Equiv.RaceFree`),
+`racefree` runs the static race check `raceFree?` (`Dace.Check.RaceFree`),
 whose `true` answer is proven to imply `RaceFree` (`raceFree?_sound`), and
 prints one line per file: `RACE-FREE <file>` or `UNKNOWN <file>` (the check
 is incomplete: `UNKNOWN` is not a race).  Exit code `0` if every file is
