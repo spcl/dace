@@ -1769,6 +1769,24 @@ def _unordered_access(
     return memlet in accesses and any(id(a) not in ordered_before for a in accesses[memlet])
 
 
+def _consume_stream_bindings(children: list[tn.ScheduleTreeNode], index: int) -> list[tn.DynScopeCopyNode]:
+    """
+    Returns the dynamic scope inputs that bind the consumed stream of the consume scope at ``children[index]``, i.e.,
+    the ``IN_stream`` copies among the dynamic scope inputs immediately preceding it.
+
+    :param children: The children of the scope that contains the consume scope.
+    :param index: The index of the consume scope in ``children``.
+    :return: The stream bindings of the consume scope (empty if the stream is not given as a dynamic scope input).
+    """
+    bindings = []
+    j = index - 1
+    while j >= 0 and isinstance(children[j], tn.DynScopeCopyNode):
+        if children[j].target == "IN_stream":
+            bindings.append(children[j])
+        j -= 1
+    return bindings
+
+
 def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope, views: dict[str, Memlet] | None = None):
     """
     Helper function that inserts boundaries after unmet memory dependencies.
@@ -1821,6 +1839,15 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope, view
                 for parent in writes[inp]:
                     node_parents.add(id(parent))
                     node_parents.update(parents[id(parent)])
+
+        # The binding of a consumed stream is the consume entry's own pop of that stream, which precedes every
+        # iteration of the scope. Pushes from the body back to the consumed stream (work lists) are ordered with it
+        # by the queue, so the binding is ordered before the scope. Accesses to the stream by other nodes are still
+        # checked.
+        if isinstance(n, tn.ConsumeScope):
+            for binding in _consume_stream_bindings(scope.children, i):
+                node_parents.add(id(binding))
+                node_parents.update(parents[id(binding)])
 
         if isinstance(n, tn.AssignNode):
             # Inter-state assignment nodes with reads necessitate a state transition if they were written to.

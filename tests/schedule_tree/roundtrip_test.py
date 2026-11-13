@@ -11,6 +11,7 @@ import dace
 from dace import library
 from dace.properties import CodeBlock
 from dace.sdfg import dealias
+from dace.sdfg.analysis.schedule_tree import sdfg_to_tree
 from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion, NamedRegion, ReturnBlock
@@ -516,7 +517,7 @@ def test_conditional_edge_exit():
     _write_tasklet(second, "out = 2", {}, "A[1]")
     sdfg.add_edge(first, second, dace.InterstateEdge("N > 0"))
 
-    _roundtrip_and_compare(sdfg, tn.StateIfScope, dict(A=np.zeros(2), N=1), dict(A=np.zeros(2), N=0))
+    _roundtrip_and_compare(sdfg, tn.IfScope, dict(A=np.zeros(2), N=1), dict(A=np.zeros(2), N=0))
 
 
 def _nested_return_sdfg(in_map: bool, in_loop: bool) -> dace.SDFG:
@@ -1269,6 +1270,110 @@ def test_roundtrip_empty_memlet_boundaries(name: str):
     )
 
 
+def _put_tasklet(state: dace.SDFGState, container: str, index: str, value: int) -> None:
+    """
+    Adds a tasklet that writes the constant ``value`` to ``container[index]``.
+    """
+    tasklet = state.add_tasklet("put", {}, {"a"}, f"a = {value}")
+    state.add_edge(tasklet, "a", state.add_write(container), None, dace.Memlet(f"{container}[{index}]"))
+
+
+def test_general_block_sink_states_do_not_fall_through():
+    """
+    A terminal state in a general block ends the block instead of falling through to the next label.
+    """
+    sdfg = dace.SDFG("gblock_sink_states")
+    sdfg.add_symbol("N", dace.int32)
+    sdfg.add_array("A", [1], dace.float64)
+    start = sdfg.add_state("start", is_start_block=True)
+    one = sdfg.add_state("one")
+    two = sdfg.add_state("two")
+    _put_tasklet(one, "A", "0", 1)
+    _put_tasklet(two, "A", "0", 2)
+    sdfg.add_edge(start, one, dace.InterstateEdge("N > 0"))
+    sdfg.add_edge(start, two, dace.InterstateEdge("N <= 0"))
+
+    stree = sdfg.as_schedule_tree()
+    gblock = stree.children[0]
+    assert isinstance(gblock, tn.GBlock)
+    end_label = gblock.children[-1]
+    assert isinstance(end_label, tn.StateLabel) and end_label.name not in ("start", "one", "two")
+    # Every block but the last one ends with a jump to the end label
+    assert sum(isinstance(c, tn.GotoNode) and c.target == end_label.name for c in gblock.children) == 2
+
+    _roundtrip_and_compare(
+        sdfg, tn.GBlock, dict(A=np.zeros(1), N=4), dict(A=np.zeros(1), N=-1), dict(A=np.zeros(1), N=0)
+    )
+
+
+def test_conditional_edge_assignments_are_inside_the_condition():
+    """
+    The assignments of a conditional interstate edge apply only if the edge is taken (conversion before any splitting
+    of edges), in both unstructured and structured control flow.
+    """
+    sdfg = dace.SDFG("edge_assignments")
+    sdfg.add_symbol("i", dace.int32)
+    sdfg.add_symbol("N", dace.int32)
+    src = sdfg.add_state("src", is_start_block=True)
+    dst = sdfg.add_state("dst")
+    edge = sdfg.add_edge(src, dst, dace.InterstateEdge("i < N", {"i": "i + 1"}))
+
+    nodes = sdfg_to_tree._isedge_schedule_tree(edge)
+    assert len(nodes) == 1 and isinstance(nodes[0], tn.StateIfScope)
+    assert [type(n) for n in nodes[0].children] == [tn.AssignNode, tn.GotoNode]
+    assert nodes[0].children[1].target == "dst"
+
+    # Unconditional edges assign and jump inline
+    uncond = sdfg.add_edge(dst, src, dace.InterstateEdge(assignments={"i": "0"}))
+    assert [type(n) for n in sdfg_to_tree._isedge_schedule_tree(uncond)] == [tn.AssignNode, tn.GotoNode]
+
+    # In a linear chain, the assignments move into a conditional that wraps the rest of the chain
+    chain = dace.SDFG("edge_assignments_chain")
+    chain.add_symbol("i", dace.int32)
+    chain.add_symbol("N", dace.int32)
+    chain.add_array("A", [1], dace.float64)
+    first = chain.add_state("first", is_start_block=True)
+    second = chain.add_state("second")
+    _put_tasklet(second, "A", "0", 1)
+    chain.add_edge(first, second, dace.InterstateEdge("i < N", {"i": "i + 1"}))
+    children = sdfg_to_tree.as_schedule_tree(chain, toplevel=False).children
+    if_scope = next(c for c in children if type(c) is tn.IfScope)
+    assert isinstance(if_scope.children[0], tn.AssignNode)
+    assert any(isinstance(n, tn.TaskletNode) for n in if_scope.children)
+
+
+def test_conditional_single_edge_ends_only_the_enclosing_region():
+    """
+    A state in a loop body whose only out-edge is conditional ends the iteration, not the program, if the condition
+    does not hold.
+    """
+    sdfg = dace.SDFG("loop_conditional_edge")
+    sdfg.add_symbol("N", dace.int32)
+    N = dace.symbol("N")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_array("done", [1], dace.float64)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    first = loop.add_state("first", is_start_block=True)
+    second = loop.add_state("second")
+    _put_tasklet(first, "A", "i", 1)
+    _put_tasklet(second, "B", "i", 1)
+    loop.add_edge(first, second, dace.InterstateEdge("i % 2 == 0"))
+    after = sdfg.add_state("after")
+    _put_tasklet(after, "done", "0", 1)
+    sdfg.add_edge(loop, after, dace.InterstateEdge())
+
+    stree = sdfg.as_schedule_tree()
+    assert not any(isinstance(n, tn.GotoNode) and n.target is None for n in stree.preorder_traversal())
+
+    args = dict(A=np.zeros(6), B=np.zeros(6), done=np.zeros(1), N=6)
+    expected = {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in args.items()}
+    sdfg.compile()(**expected)
+    assert np.allclose(expected["A"], 1) and np.allclose(expected["B"], [1, 0, 1, 0, 1, 0]) and expected["done"][0] == 1
+    _roundtrip_and_compare(sdfg, tn.IfScope, args)
+
+
 if __name__ == "__main__":
     test_implicit_inline_and_constants()
     test_name_propagation()
@@ -1319,3 +1424,6 @@ if __name__ == "__main__":
     test_sdfg_metadata()
     for name in _EMPTY_MEMLET_ROUNDTRIPS:
         test_roundtrip_empty_memlet_boundaries(name)
+    test_general_block_sink_states_do_not_fall_through()
+    test_conditional_edge_assignments_are_inside_the_condition()
+    test_conditional_single_edge_ends_only_the_enclosing_region()

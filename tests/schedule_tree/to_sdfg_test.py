@@ -349,11 +349,9 @@ def test_state_boundaries_state_transition() -> None:
             "N": dace.symbol("N"),
         },
         children=[
-            tn.AssignNode("irrelevant", CodeBlock("N + 1"), dace.InterstateEdge(assignments=dict(irrelevant="N + 1"))),
+            tn.AssignNode("irrelevant", CodeBlock("N + 1")),
             tn.TaskletNode(nodes.Tasklet("bla", {}, {"out"}, "out = 2"), {}, {"out": dace.Memlet("A[1]")}),
-            tn.AssignNode(
-                "relevant", CodeBlock("A[1] + 2"), dace.InterstateEdge(assignments=dict(relevant="A[1] + 2"))
-            ),
+            tn.AssignNode("relevant", CodeBlock("A[1] + 2")),
         ],
     )
 
@@ -492,7 +490,7 @@ def _boundary_tree_assignment() -> tn.ScheduleTreeRoot:
         symbols={"k": dace.int64},
         children=[
             _tasklet_node("out = 5", {}, {"out": "A[0]"}),
-            tn.AssignNode("k", CodeBlock("A[0]"), dace.InterstateEdge(assignments={"k": "A[0]"})),
+            tn.AssignNode("k", CodeBlock("A[0]")),
             _tasklet_node("out = 1", {}, {"out": "A[0]"}),
             _tasklet_node("out = k", {}, {"out": "A[k]"}),
         ],
@@ -1494,8 +1492,8 @@ def test_edge_assignment_read_after_write() -> None:
         name="tester",
         containers={},
         children=[
-            tn.AssignNode("my_condition", CodeBlock("True"), dace.InterstateEdge()),
-            tn.AssignNode("condition", CodeBlock("my_condition"), dace.InterstateEdge()),
+            tn.AssignNode("my_condition", CodeBlock("True")),
+            tn.AssignNode("condition", CodeBlock("my_condition")),
             tn.StateBoundaryNode(),
         ],
     )
@@ -1513,7 +1511,7 @@ def test_assign_nodes_force_state_transition() -> None:
             "A": data.Array(dace.float64, [20]),
         },
         children=[
-            tn.AssignNode("mySymbol", CodeBlock("1"), dace.InterstateEdge()),
+            tn.AssignNode("mySymbol", CodeBlock("1")),
             tn.TaskletNode(nodes.Tasklet("bla", {}, {"out"}, "out = mySymbol"), {}, {"out": dace.Memlet("A[1]")}),
         ],
     )
@@ -1529,8 +1527,8 @@ def test_assign_nodes_multiple_force_one_transition() -> None:
             "A": data.Array(dace.float64, [20]),
         },
         children=[
-            tn.AssignNode("mySymbol", CodeBlock("1"), dace.InterstateEdge()),
-            tn.AssignNode("myOtherSymbol", CodeBlock("2"), dace.InterstateEdge()),
+            tn.AssignNode("mySymbol", CodeBlock("1")),
+            tn.AssignNode("myOtherSymbol", CodeBlock("2")),
             tn.TaskletNode(
                 nodes.Tasklet("bla", {}, {"out"}, "out = mySymbol + myOtherSymbol"), {}, {"out": dace.Memlet("A[1]")}
             ),
@@ -1553,7 +1551,7 @@ def test_assign_nodes_avoid_duplicate_boundaries() -> None:
             "A": data.Array(dace.float64, [20]),
         },
         children=[
-            tn.AssignNode("mySymbol", CodeBlock("1"), dace.InterstateEdge()),
+            tn.AssignNode("mySymbol", CodeBlock("1")),
             tn.StateBoundaryNode(),
             tn.TaskletNode(
                 nodes.Tasklet("bla", {}, {"out"}, "out = mySymbol + myOtherSymbol"), {}, {"out": dace.Memlet("A[1]")}
@@ -1958,12 +1956,12 @@ def test_gblock_goto_loop() -> None:
             tn.GBlock(
                 children=[
                     tn.StateLabel(state="start"),
-                    tn.AssignNode("i", CodeBlock("0"), dace.InterstateEdge(assignments={"i": "0"})),
+                    tn.AssignNode("i", CodeBlock("0")),
                     tn.GotoNode(target="check"),
                     tn.StateLabel(state="check"),
                     tn.StateIfScope(condition=CodeBlock("i >= 5"), children=[tn.GotoNode(target="done")]),
                     _write_node("i", "A[i]"),
-                    tn.AssignNode("i", CodeBlock("i + 1"), dace.InterstateEdge(assignments={"i": "i + 1"})),
+                    tn.AssignNode("i", CodeBlock("i + 1")),
                     tn.GotoNode(target="check"),
                     tn.StateLabel(state="done"),
                     _write_node("1", "B[0]"),
@@ -2080,7 +2078,7 @@ def test_state_boundaries_read_modify_write() -> None:
 @pytest.mark.parametrize("scope", ("if", "elif", "else", "loop"))
 def test_trailing_assignment_in_body(scope: str) -> None:
     # Assignments at the end of a body are performed in that body, even without a state boundary after them
-    assign = tn.AssignNode("k", CodeBlock("k + 10"), dace.InterstateEdge(assignments={"k": "k + 10"}))
+    assign = tn.AssignNode("k", CodeBlock("k + 10"))
     if scope == "loop":
         body = [tn.ForScope(loop=LoopRegion("loop", "i < 3", "i", "i = 0", "i = i + 1"), children=[assign])]
     else:
@@ -2097,7 +2095,7 @@ def test_trailing_assignment_in_body(scope: str) -> None:
         containers={"A": data.Array(dace.float64, [1])},
         symbols={"i": dace.int64, "k": dace.int64, "n": dace.int64},
         children=[
-            tn.AssignNode("k", CodeBlock("0"), dace.InterstateEdge(assignments={"k": "0"})),
+            tn.AssignNode("k", CodeBlock("0")),
             tn.StateBoundaryNode(),
             *body,
             tn.StateBoundaryNode(True),

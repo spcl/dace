@@ -194,3 +194,12 @@ _all_tests/
 # Ignore downloaded ONNX models
 /*.onnx
 /*.bin
+
+# Lean (formal/)
+**/.lake/
+# Generated differential-testing corpus (dump_corpus.py + difftest.py --record)
+formal/tests/corpus/
+*.olean
+*.ilean
+*.olean.hash
+*.trace

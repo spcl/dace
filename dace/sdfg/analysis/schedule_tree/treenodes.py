@@ -1,4 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import ast
+import copy
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Optional
@@ -10,7 +12,7 @@ from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.memlet_utils import MemletSet
 from dace.sdfg.propagation import propagate_subset
-from dace.sdfg.sdfg import SDFG, InterstateEdge, memlets_in_ast
+from dace.sdfg.sdfg import SDFG, memlets_in_ast
 from dace.sdfg.state import ControlFlowBlock, LoopRegion, SDFGState
 
 if TYPE_CHECKING:
@@ -22,6 +24,47 @@ INDENTATION = "  "
 
 class UnsupportedScopeException(Exception):
     pass
+
+
+def _widen_scope_locals(memlet: Memlet, arr: data.Data, current_locals: set[str]) -> Memlet:
+    """
+    Widen the dimensions of a memlet's subset that mention a scope-local symbol to the full array extent.
+
+    When a scope does not provide a propagation range (e.g., a ``while`` loop, an ``if`` branch, or a ``for`` loop
+    with an underivable range), a memlet that reads or writes through a symbol defined inside the scope cannot be
+    projected onto an outer iteration space. Such dimensions are instead over-approximated by the whole array extent
+    and the memlet is marked as a dynamic access of unknown (``0``) volume. Dimensions that do not mention any local
+    are kept verbatim. If the memlet mentions no local at all, it is returned unchanged.
+
+    :param memlet: The memlet to widen.
+    :param arr: The array descriptor of the memlet's data container (used for its extents).
+    :param current_locals: The set of symbol names considered local to the scope.
+    :return: The (possibly widened) memlet.
+    """
+    local_names = set(map(str, current_locals))
+    subset = memlet.subset
+    if not local_names or not isinstance(subset, subsets.Range):
+        return memlet
+
+    entire = subsets.Range.from_array(arr)
+    new_ranges = []
+    widened = False
+    for dim, full in zip(subset.ranges, entire.ranges):
+        if set(map(str, subsets.Range([dim]).free_symbols)) & local_names:
+            new_ranges.append(full)
+            widened = True
+        else:
+            new_ranges.append(dim)
+
+    if not widened:
+        return memlet
+
+    new_memlet = copy.copy(memlet)
+    new_memlet.subset = subsets.Range(new_ranges)
+    new_memlet.other_subset = None
+    new_memlet.dynamic = True
+    new_memlet.volume = 0
+    return new_memlet
 
 
 @dataclass
@@ -112,10 +155,13 @@ class ScheduleTreeScope(ScheduleTreeNode):
         disallow_propagation: set[str],
         **kwargs,
     ) -> MemletSet:
+        # A view binding defines an alias but moves no data, so a scope does not write the views it defines
+        # (their reads and writes are reported by the nodes using the view, resolved to the viewed container by
+        # consumers such as the state-boundary analysis).
         gather = (
             (lambda n, root: n.input_memlets(root, **kwargs))
             if inputs
-            else (lambda n, root: n.output_memlets(root, **kwargs))
+            else (lambda n, root: MemletSet() if type(n) is ViewNode else n.output_memlets(root, **kwargs))
         )
 
         # Fast path, no propagation necessary
@@ -162,10 +208,11 @@ class ScheduleTreeScope(ScheduleTreeNode):
                 current_locals.add(c.target)
 
             internal_memlets: MemletSet = gather(c, root)
-            if propagate:
-                for memlet in internal_memlets:
-                    if memlet in previously_written:
-                        continue
+            for memlet in internal_memlets:
+                if inputs and memlet in previously_written:
+                    continue
+                if propagate:
+                    # A propagation range is available: project the memlet onto it.
                     result.add(
                         propagate_subset(
                             [memlet],
@@ -176,6 +223,10 @@ class ScheduleTreeScope(ScheduleTreeNode):
                             use_dst=not inputs,
                         )
                     )
+                else:
+                    # No propagation range: keep memlets verbatim, but over-approximate any dimension that
+                    # mentions a scope-local symbol (which is not derivable outside of this scope).
+                    result.add(_widen_scope_locals(memlet, root.containers[memlet.data], current_locals))
 
             if inputs:
                 # register writes to keep track of read-after-write
@@ -444,14 +495,14 @@ class AssignNode(ScheduleTreeNode):
 
     name: str
     value: CodeBlock
-    edge: InterstateEdge
 
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + f"assign {self.name} = {self.value.as_string}"
 
     def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
         root = root if root is not None else self.get_root()
-        return MemletSet(self.edge.get_read_memlets(root.containers, include_scalars=True))
+        # The reads of ``InterstateEdge(assignments={name: value})``: subscripts and scalars in the right-hand side
+        return MemletSet(memlets_in_ast(ast.parse(self.value.as_string), root.containers, include_scalars=True))
 
     def output_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
         return MemletSet()
@@ -471,6 +522,37 @@ class LoopScope(ControlFlowScope):
         super().__init__(children=children, parent=parent)
 
         self.loop = loop
+
+    def _body_locals(self) -> set[str]:
+        """
+        Compute the set of symbols that are (re)assigned anywhere in this loop's body.
+
+        These symbols change from one iteration to the next, so a memlet that uses them cannot be propagated through
+        the loop's iteration space and must be treated as local for the whole body (not only for the children that
+        syntactically follow the assignment). Only ``AssignNode`` targets are collected; ``DynScopeCopyNode`` targets
+        remain local only to the dataflow scope that immediately follows them (see ``tree_to_sdfg``), and nested
+        scopes with their own iteration variables handle those themselves.
+
+        :return: The set of symbol names assigned within the loop body.
+        """
+        return {node.name for node in self.preorder_traversal() if isinstance(node, AssignNode)}
+
+    def _unpropagated_locals(self, disallow_propagation: set[str] | None) -> set[str]:
+        """
+        Compute the additional locals for a loop whose body is not propagated through an iteration range.
+
+        This covers ``while`` and ``do-while`` loops: there is no range to project through, so the loop variable
+        (which changes every iteration) is a local, as is every symbol assigned in the body. These are combined with
+        the locals inherited from the enclosing scope.
+
+        :param disallow_propagation: Additional locals coming from the enclosing scope.
+        :return: The set of symbol names to treat as locals for the whole body.
+        """
+        disallow = set(disallow_propagation) if disallow_propagation else set()
+        disallow |= self._body_locals()
+        if self.loop.loop_variable is not None:
+            disallow.add(self.loop.loop_variable)
+        return disallow
 
     def as_string(self, indent: int = 0):
         loop = self.loop
@@ -525,14 +607,12 @@ class ForScope(LoopScope):
         result = MemletSet()
         result.update(self.loop.get_meta_read_memlets(arrays=root.containers))
 
-        # If loop range is well-formed, use it in propagation
-        range = _loop_range(self.loop)
-        if range is not None:
-            propagate = {self.loop.loop_variable: range}
-        else:
-            propagate = None
-
-        result.update(super().input_memlets(root, propagate=propagate, **kwargs))
+        propagate, disallow_propagation = self._loop_propagation(disallow_propagation)
+        result.update(
+            super().input_memlets(
+                root, keep_locals=keep_locals, propagate=propagate, disallow_propagation=disallow_propagation, **kwargs
+            )
+        )
         return result
 
     def output_memlets(
@@ -543,6 +623,26 @@ class ForScope(LoopScope):
         disallow_propagation: set[str] | None = None,
         **kwargs,
     ) -> MemletSet:
+        propagate, disallow_propagation = self._loop_propagation(disallow_propagation)
+        return super().output_memlets(
+            root, keep_locals=keep_locals, propagate=propagate, disallow_propagation=disallow_propagation, **kwargs
+        )
+
+    def _loop_propagation(
+        self, disallow_propagation: set[str] | None
+    ) -> tuple[dict[str, subsets.Range] | None, set[str]]:
+        """
+        Determine the propagation range and the additional locals for this for-loop's body.
+
+        If the loop range is well-formed, the loop variable is propagated over it. Otherwise there is no range to
+        propagate through, and the loop variable (which changes every iteration) is treated as a local. In both cases
+        every symbol assigned in the body is a local for the whole body.
+
+        :param disallow_propagation: Additional locals coming from the enclosing scope.
+        :return: A ``(propagate, disallow_propagation)`` pair to forward to the base scope.
+        """
+        disallow = set(disallow_propagation) if disallow_propagation else set()
+        disallow |= self._body_locals()
 
         # If loop range is well-formed, use it in propagation
         range = _loop_range(self.loop)
@@ -550,8 +650,10 @@ class ForScope(LoopScope):
             propagate = {self.loop.loop_variable: range}
         else:
             propagate = None
+            if self.loop.loop_variable is not None:
+                disallow.add(self.loop.loop_variable)
 
-        return super().output_memlets(root, propagate=propagate, **kwargs)
+        return propagate, disallow
 
 
 @dataclass
@@ -580,8 +682,30 @@ class WhileScope(LoopScope):
 
         result = MemletSet()
         result.update(self.loop.get_meta_read_memlets(arrays=root.containers))
-        result.update(super().input_memlets(root, **kwargs))
+        result.update(
+            super().input_memlets(
+                root,
+                keep_locals=keep_locals,
+                disallow_propagation=self._unpropagated_locals(disallow_propagation),
+                **kwargs,
+            )
+        )
         return result
+
+    def output_memlets(
+        self,
+        root: ScheduleTreeRoot | None = None,
+        keep_locals: bool = False,
+        propagate: dict[str, subsets.Range] | None = None,
+        disallow_propagation: set[str] | None = None,
+        **kwargs,
+    ) -> MemletSet:
+        return super().output_memlets(
+            root,
+            keep_locals=keep_locals,
+            disallow_propagation=self._unpropagated_locals(disallow_propagation),
+            **kwargs,
+        )
 
 
 @dataclass
@@ -610,8 +734,30 @@ class DoWhileScope(LoopScope):
 
         result = MemletSet()
         result.update(self.loop.get_meta_read_memlets(arrays=root.containers))
-        result.update(super().input_memlets(root, **kwargs))
+        result.update(
+            super().input_memlets(
+                root,
+                keep_locals=keep_locals,
+                disallow_propagation=self._unpropagated_locals(disallow_propagation),
+                **kwargs,
+            )
+        )
         return result
+
+    def output_memlets(
+        self,
+        root: ScheduleTreeRoot | None = None,
+        keep_locals: bool = False,
+        propagate: dict[str, subsets.Range] | None = None,
+        disallow_propagation: set[str] | None = None,
+        **kwargs,
+    ) -> MemletSet:
+        return super().output_memlets(
+            root,
+            keep_locals=keep_locals,
+            disallow_propagation=self._unpropagated_locals(disallow_propagation),
+            **kwargs,
+        )
 
 
 @dataclass
@@ -644,7 +790,11 @@ class IfScope(ControlFlowScope):
         root = root if root is not None else self.get_root()
         result = MemletSet()
         result.update(memlets_in_ast(self.condition.code[0], root.containers, include_scalars=True))
-        result.update(super().input_memlets(root, **kwargs))
+        result.update(
+            super().input_memlets(
+                root, keep_locals=keep_locals, propagate=propagate, disallow_propagation=disallow_propagation, **kwargs
+            )
+        )
         return result
 
 
@@ -726,7 +876,11 @@ class ElifScope(ControlFlowScope):
         root = root if root is not None else self.get_root()
         result = MemletSet()
         result.update(memlets_in_ast(self.condition.code[0], root.containers, include_scalars=True))
-        result.update(super().input_memlets(root, **kwargs))
+        result.update(
+            super().input_memlets(
+                root, keep_locals=keep_locals, propagate=propagate, disallow_propagation=disallow_propagation, **kwargs
+            )
+        )
         return result
 
 
@@ -775,7 +929,13 @@ class MapScope(DataflowScope):
         disallow_propagation: set[str] | None = None,
         **kwargs,
     ) -> MemletSet:
-        return super().input_memlets(root, propagate=dict(zip(self.node.map.params, self.node.map.range)), **kwargs)
+        return super().input_memlets(
+            root,
+            keep_locals=keep_locals,
+            propagate=dict(zip(self.node.map.params, self.node.map.range)),
+            disallow_propagation=disallow_propagation,
+            **kwargs,
+        )
 
     def output_memlets(
         self,
@@ -785,7 +945,13 @@ class MapScope(DataflowScope):
         disallow_propagation: set[str] | None = None,
         **kwargs,
     ) -> MemletSet:
-        return super().output_memlets(root, propagate=dict(zip(self.node.map.params, self.node.map.range)), **kwargs)
+        return super().output_memlets(
+            root,
+            keep_locals=keep_locals,
+            propagate=dict(zip(self.node.map.params, self.node.map.range)),
+            disallow_propagation=disallow_propagation,
+            **kwargs,
+        )
 
 
 @dataclass
@@ -842,22 +1008,31 @@ class LibraryCall(ScheduleTreeNode):
     out_memlets: dict[str, Memlet] | MemletSet
 
     def as_string(self, indent: int = 0):
+        # Set entries are sorted, since set iteration order is not deterministic
         if isinstance(self.in_memlets, set):
-            in_memlets = ", ".join(f"{v}" for v in self.in_memlets)
+            in_memlets = ", ".join(sorted(f"{v}" for v in self.in_memlets))
         else:
             in_memlets = ", ".join(f"{v}" for v in self.in_memlets.values())
         if isinstance(self.out_memlets, set):
-            out_memlets = ", ".join(f"{v}" for v in self.out_memlets)
+            out_memlets = ", ".join(sorted(f"{v}" for v in self.out_memlets))
         else:
             out_memlets = ", ".join(f"{v}" for v in self.out_memlets.values())
         libname = type(self.node).__name__
-        # Get the properties of the library node without its superclasses
-        own_properties = ", ".join(
-            f"{k}={getattr(self.node, k)}"
+        own_properties = ", ".join(f"{k}={v}" for k, v in self.own_properties())
+        return indent * INDENTATION + f"{out_memlets} = library {libname}[{own_properties}]({in_memlets})"
+
+    def own_properties(self) -> list[tuple[str, str]]:
+        """
+        Returns the properties of the library node without those of its superclasses (``Node``, ``CodeNode``,
+        ``LibraryNode``), as printed by :meth:`as_string`.
+
+        :return: ``(name, str(value))`` pairs in declaration order.
+        """
+        return [
+            (k, str(getattr(self.node, k)))
             for k, v in self.node.__properties__.items()
             if v.owner not in {nodes.Node, nodes.CodeNode, nodes.LibraryNode}
-        )
-        return indent * INDENTATION + f"{out_memlets} = library {libname}[{own_properties}]({in_memlets})"
+        ]
 
     def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
         if isinstance(self.in_memlets, set):
@@ -911,7 +1086,15 @@ class DynScopeCopyNode(ScheduleTreeNode):
         return indent * INDENTATION + f"{self.target} = dscopy {self.memlet.data}[{self.memlet.subset}]"
 
     def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
-        return MemletSet({self.memlet})
+        memlet = self.memlet
+        if memlet.subset is None:
+            # Whole-container access (e.g., a stream): give it an explicit subset so that it can participate in
+            # memlet-set unions and coverage checks (a ``None`` subset cannot).
+            root = root if root is not None else self.get_root()
+            desc = root.containers.get(memlet.data)
+            if desc is not None:
+                memlet = Memlet.from_array(memlet.data, desc)
+        return MemletSet({memlet})
 
     def output_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
         return MemletSet()

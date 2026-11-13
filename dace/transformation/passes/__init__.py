@@ -1,11 +1,13 @@
 from .analysis import StateReachability, AccessSets, FindAccessStates
 from .array_elimination import ArrayElimination
+from .canonicalize import CanonicalizationPipeline
 from .consolidate_edges import ConsolidateEdges
 from .constant_propagation import ConstantPropagation
 from .dead_dataflow_elimination import DeadDataflowElimination
 from .dead_state_elimination import DeadStateElimination
 from .full_map_fusion import FullMapFusion
 from .fusion_inline import FuseStates, InlineSDFGs
+from .hoist_shared_transients import HoistSharedTransients
 from .loop_local_memory_reduction import LoopLocalMemoryReduction
 from .memlet_access_policies import AssignLoopCursors
 from .memlet_access_policy_lowering import LowerMemletAccessPolicies
