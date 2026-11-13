@@ -17,36 +17,36 @@ NB, NL, NV = (dace.symbol(name) for name in ("NB", "NL", "NV"))
 
 
 @dace.program
-def column_sweep(q: dace.float64[NI + 2, NJ, NK], f: dace.float64[NI + 2, NJ, NK]):
-    """fv3_xppm's shape: a time-step loop over stencils along ``i`` only, each over its own ``i`` range."""
+def column_sweep(q: dace.float64[NI + 2, NJ, NK], f: dace.float64[NI + 2, NJ, NK], w: dace.float64[T]):
+    """A loop over stencils along ``i`` only, each over its own ``i`` range, each step with its own weight."""
     for t in range(T):
         for i, j, k in dace.map[1 : NI + 2, 0:NJ, 0:NK]:
             f[i, j, k] = q[i - 1, j, k] - q[i, j, k]
         for i, j, k in dace.map[1 : NI + 1, 0:NJ, 0:NK]:
-            q[i, j, k] = q[i, j, k] + 0.5 * (f[i + 1, j, k] - f[i, j, k])
+            q[i, j, k] = q[i, j, k] + w[t] * (f[i + 1, j, k] - f[i, j, k])
 
 
-def column_sweep_reference(q: np.ndarray, f: np.ndarray, steps: int) -> None:
-    for _ in range(steps):
+def column_sweep_reference(q: np.ndarray, f: np.ndarray, w: np.ndarray) -> None:
+    for weight in w:
         f[1:] = q[:-1] - q[1:]
-        q[1:-1] = q[1:-1] + 0.5 * (f[2:] - f[1:-1])
+        q[1:-1] = q[1:-1] + weight * (f[2:] - f[1:-1])
 
 
 @dace.program
-def row_sweep(q: dace.float64[NJ, NI + 2], f: dace.float64[NJ, NI + 2]):
+def row_sweep(q: dace.float64[NJ, NI + 2], f: dace.float64[NJ, NI + 2], w: dace.float64[T]):
     """The same stencil with ``i`` the contiguous axis: the threads must stay on ``i``."""
     for t in range(T):
         for j, i in dace.map[0:NJ, 1 : NI + 2]:
             f[j, i] = q[j, i - 1] - q[j, i]
         for j, i in dace.map[0:NJ, 1 : NI + 1]:
-            q[j, i] = q[j, i] + 0.5 * (f[j, i + 1] - f[j, i])
+            q[j, i] = q[j, i] + w[t] * (f[j, i + 1] - f[j, i])
 
 
 def top_maps(sdfg: dace.SDFG) -> list[nodes.MapEntry]:
     return [n for n in sdfg.start_block.nodes() if isinstance(n, nodes.MapEntry)] if len(sdfg.nodes()) == 1 else []
 
 
-def test_time_steps_run_inside_one_map_over_the_plane_columns():
+def test_weighted_steps_run_inside_one_map_over_the_plane_columns():
     sdfg = column_sweep.to_sdfg(simplify=True)
     assert InterchangeLoopsIntoLaneMaps(target="gpu").apply_pass(sdfg, {}) == 1
     sdfg.validate()
@@ -61,8 +61,9 @@ def test_time_steps_run_inside_one_map_over_the_plane_columns():
     rng = np.random.default_rng(0)
     q, f = rng.random((10, 5, 6)), np.zeros((10, 5, 6))
     ref_q, ref_f = q.copy(), f.copy()
-    column_sweep_reference(ref_q, ref_f, 3)
-    sdfg(q=q, f=f, NI=8, NJ=5, NK=6, T=3)
+    w = np.array([0.5, 0.25, 0.125])
+    column_sweep_reference(ref_q, ref_f, w)
+    sdfg(q=q, f=f, w=w, NI=8, NJ=5, NK=6, T=3)
     assert np.allclose(q, ref_q) and np.allclose(f, ref_f)
 
 
@@ -83,6 +84,23 @@ def test_offloaded_sweep_is_one_kernel():
 def test_contiguous_stencil_axis_keeps_the_loop_outside():
     """The lanes would be ``j`` alone and ``i``, the contiguous axis, a serial walk in each thread: declined."""
     sdfg = row_sweep.to_sdfg(simplify=True)
+    assert InterchangeLoopsIntoLaneMaps(target="gpu").apply_pass(sdfg, {}) is None
+    assert any(isinstance(b, LoopRegion) for b in sdfg.nodes())
+
+
+@dace.program
+def time_steps(q: dace.float64[NI + 2, NJ, NK], f: dace.float64[NI + 2, NJ, NK]):
+    """fv3_xppm's shape: a time-step loop, its iterator indexing nothing, over stencils along ``i``."""
+    for t in range(T):
+        for i, j, k in dace.map[1 : NI + 2, 0:NJ, 0:NK]:
+            f[i, j, k] = q[i - 1, j, k] - q[i, j, k]
+        for i, j, k in dace.map[1 : NI + 1, 0:NJ, 0:NK]:
+            q[i, j, k] = q[i, j, k] + 0.5 * (f[i + 1, j, k] - f[i, j, k])
+
+
+def test_time_steps_stay_outside_the_kernel():
+    """Each thread would re-run every step over its column, its working set growing with the steps: declined."""
+    sdfg = time_steps.to_sdfg(simplify=True)
     assert InterchangeLoopsIntoLaneMaps(target="gpu").apply_pass(sdfg, {}) is None
     assert any(isinstance(b, LoopRegion) for b in sdfg.nodes())
 
@@ -159,9 +177,10 @@ def test_small_plane_keeps_the_loop_outside():
 
 
 if __name__ == "__main__":
-    test_time_steps_run_inside_one_map_over_the_plane_columns()
+    test_weighted_steps_run_inside_one_map_over_the_plane_columns()
     test_offloaded_sweep_is_one_kernel()
     test_contiguous_stencil_axis_keeps_the_loop_outside()
+    test_time_steps_stay_outside_the_kernel()
     test_blocked_body_is_one_map_over_blocks_and_columns()
     test_blocked_body_numerics()
     test_small_plane_keeps_the_loop_outside()

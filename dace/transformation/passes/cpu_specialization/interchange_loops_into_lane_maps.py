@@ -10,11 +10,13 @@ physics sweep over levels ``k`` of independent blocks ``b`` runs a block at a ti
 A map without the lane axis that holds lane maps (a short species loop lifted to a map) runs whole on each lane:
 when it is small it becomes a loop first, its nest inlined, so the lane analysis sees the maps it holds.
 
-The CPU gate: the loop's iterator indexes something, the lane axis is not small, and the loop variable strides no
-wider than the lane parameter, so the innermost axis of every map stays innermost. A time-step loop (its iterator
-indexes nothing) re-applies the same statements to the same cells: moved into whole lanes it only grows each lane's
-working set (fv3_xppm 2.1 s -> 3.4 s), so it stays outside. Runs while schedules are still ``Default``, so inference makes the lane map the parallel one and every map inside it
-sequential.
+On both targets the loop's iterator must index something. A time-step loop (its iterator indexes nothing) re-applies
+the same statements to the same cells: moved into whole lanes it only grows each lane's working set (fv3_xppm on CPU
+2.1 s -> 3.4 s, on GPU 273 ms -> 366 ms), so it stays outside.
+
+The CPU gate: the lane axis is not small, and the loop variable strides no wider than the lane parameter, so the
+innermost axis of every map stays innermost. Runs while schedules are still ``Default``, so inference makes the lane
+map the parallel one and every map inside it sequential.
 
 The GPU gate (``target='gpu'``, before the offload): the lanes are every axis the maps share, so each thread owns a
 column and runs the whole loop over it, one launch instead of one per map and trip. The lanes must not all be small
@@ -203,7 +205,7 @@ class InterchangeLoopsIntoLaneMaps(ppl.Pass):
     def try_loop(self, loop: LoopRegion) -> bool:
         if loop.loop_variable is None or inside_a_map(loop):
             return False
-        if self.target == "cpu" and not iterator_indexes(loop):
+        if not iterator_indexes(loop):
             return False
         return self.interchange(loop, loop.loop_variable)
 
