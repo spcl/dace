@@ -129,7 +129,13 @@ def test_fill_inside_a_parallel_map_stays_a_library_call():
     fill = FillLibraryNode("fill_row", value=0)
     state.add_node(fill)
     state.add_nedge(entry, fill, dace.Memlet())
-    state.add_memlet_path(fill, exit_node, state.add_write("b"), src_conn="_fill_out", memlet=dace.Memlet("b[i, 0:8]"))
+    state.add_memlet_path(
+        fill,
+        exit_node,
+        state.add_write("b"),
+        src_conn=FillLibraryNode.OUTPUT_CONNECTOR_NAME,
+        memlet=dace.Memlet("b[i, 0:8]"),
+    )
     sdfg.validate()
     assert ExpandFillCopy().apply_pass(sdfg, {}) is None
     assert count(sdfg, FillLibraryNode) == 1
