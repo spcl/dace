@@ -506,6 +506,29 @@ def test_two_nested_sdfgs_with_one_connector_name_each_bind_their_own_arrays():
     assert q.tolist() == [0.0, 2.0, 4.0, 6.0] and s.tolist() == [20.0, 22.0, 24.0, 26.0]
 
 
+def square_root_guarded_sdfg() -> dace.SDFG:
+    """``out[0] = 1`` where ``sqrt(N) < 3``, a condition SymPy prints with its own ``sqrt``."""
+    sdfg = dace.SDFG("square_root_guarded")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("out", [1], dace.float64)
+    start, write, end = sdfg.add_state(is_start_block=True), sdfg.add_state(), sdfg.add_state()
+    sdfg.add_edge(start, write, dace.InterstateEdge("sqrt(N) < 3"))
+    sdfg.add_edge(start, end, dace.InterstateEdge("sqrt(N) >= 3"))
+    sdfg.add_edge(write, end, dace.InterstateEdge())
+    tasklet = write.add_tasklet("one", {}, {"o"}, "o = 1.0")
+    write.add_edge(tasklet, "o", write.add_write("out"), None, dace.Memlet("out[0]"))
+    return sdfg
+
+
+@pytest.mark.parametrize("n, expected", [(4, 1.0), (16, 0.0)])
+def test_an_interstate_condition_calls_the_square_root_sympy_prints(n: int, expected: float):
+    out = np.zeros(1)
+    with python_backend():
+        square_root_guarded_sdfg().compile()(out=out, N=n)
+
+    assert out[0] == expected
+
+
 if __name__ == "__main__":
     test_loops_maps_and_branches_compute_what_numpy_does()
     test_a_counted_loop_is_a_python_for_over_a_range()
@@ -533,3 +556,5 @@ if __name__ == "__main__":
         test_a_dynamic_accumulation_adds_only_on_the_path_that_writes(condition, expected)
     for n, expected in [(9, 1.0), (2, 2.0)]:
         test_a_transient_sized_by_an_assigned_symbol_exists_in_every_branch(n, expected)
+    for n, expected in [(4, 1.0), (16, 0.0)]:
+        test_an_interstate_condition_calls_the_square_root_sympy_prints(n, expected)

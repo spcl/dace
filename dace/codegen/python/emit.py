@@ -71,6 +71,7 @@ Mod = PyMod = FtnModulo = py_mod
 
 
 Min, Max, Abs = min, max, abs
+sqrt, exp, log, sin, cos, tan = np.sqrt, np.exp, np.log, np.sin, np.cos, np.tan
 inf, nan = math.inf, math.nan
 
 
