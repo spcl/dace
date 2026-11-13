@@ -6,7 +6,7 @@ import sympy as sp
 
 import dace.autodiff.utils as ad_utils
 from dace import data as dt
-from dace import dtypes, symbolic
+from dace import dtypes, subsets, symbolic
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException
@@ -479,6 +479,19 @@ def connect_stored_data_to_target(
 
             # Change the memlet data to read from the stored data and not the original data
             memlet_data.data = replicated_source_node.data
+
+            # A nested SDFG connector that is the whole forward container (see
+            # ``dace.sdfg.dealias.integrate_nested_sdfg``) is indexed inside in that container's coordinates: it takes
+            # the stored iteration's whole container, not the window it reads, which would offset its indices again
+            forward_desc = forward_node.desc(bwd_generator.sdfg)
+            if (
+                isinstance(child_node, nodes.NestedSDFG)
+                and not isinstance(forward_desc, dt.View)
+                and tuple(child_node.sdfg.arrays[child_node_in_connector].shape) == tuple(forward_desc.shape)
+            ):
+                kept = memlet_data.subset.ndrange()[: len(memlet_data.subset) - len(forward_desc.shape)]
+                memlet_data.subset = subsets.Range(kept + [(0, s - 1, 1) for s in forward_desc.shape])
+                memlet_data.volume = memlet_data.subset.num_elements()
 
             # Add the final connection to the source node
             backward_state.add_edge(replicated_source_node, None, child_node, child_node_in_connector, memlet_data)

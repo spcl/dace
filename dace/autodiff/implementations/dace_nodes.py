@@ -21,12 +21,37 @@ from dace import dtypes
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException, BackwardResult
-from dace.data import Reference, Structure
+from dace.data import Reference, Structure, View
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFGState
+from dace.sdfg import utils as sdutil
 
 if TYPE_CHECKING:
     from dace.autodiff.backward_pass_generator import BackwardPassGenerator
+
+
+def rebind_view(forward: dace.SDFG, backward: dace.SDFG, name: str) -> str:
+    """Make every read of the View ``name`` in ``backward`` view the same data, through the same memlet, as it does in
+    ``forward``.
+
+    :returns: The name of the viewed data, which ``backward`` then takes as an input.
+    """
+    edge, origin = next(
+        (sdutil.get_view_edge(state, n), sdutil.get_view_node(state, n))
+        for state in forward.states()
+        for n in state.data_nodes()
+        if n.data == name
+    )
+    if isinstance(forward.arrays[origin.data], View):
+        raise AutoDiffException(f"View '{name}' views another View '{origin.data}', which is not yet supported")
+    backward.arrays[name] = copy.deepcopy(forward.arrays[name])
+    if origin.data not in backward.arrays:
+        backward.add_datadesc(origin.data, copy.deepcopy(forward.arrays[origin.data]))
+    for state in backward.states():
+        for read in [n for n in state.data_nodes() if n.data == name and state.in_degree(n) == 0]:
+            read.add_in_connector("views", force=True)
+            state.add_edge(state.add_read(origin.data), None, read, "views", copy.deepcopy(edge.data))
+    return origin.data
 
 
 class DaceNodeBackwardImplementations:
@@ -68,6 +93,17 @@ class DaceNodeBackwardImplementations:
         # loop through the arrays that we need from the forward pass
         for name, desc in sorted(backward_input_arrays.items()):
             # if the name is not already passed to the reverse SDFG node ...
+            if (
+                name not in required_gradients
+                and name not in node.in_connectors
+                and isinstance(node.sdfg.arrays[name], View)
+            ):
+                # A View (an inlined expansion's reshape of a sliced operand) holds no value of its own: the backward
+                # SDFG views the same data, which is handed to it in the View's place
+                name = rebind_view(node.sdfg, reverse_nsdfg, name)
+            if name in inputs:
+                # Already handed over, as the data another View views
+                continue
             if name not in required_gradients and name not in node.in_connectors:
                 # ... this array needs to be forwarded out of the forward SDFG (i.e. it is an intermediate value)
                 # 1) add it to the current SDFG, and to self.bwd_engine.backward_input_arrays
