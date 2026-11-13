@@ -73,6 +73,7 @@ from dace.transformation.passes.cpu_specialization.recompute_oversized_intermedi
 from dace.transformation.passes.cpu_specialization.sequentialize_reduction_axes import SequentializeReductionAxes
 from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import SequentializeSmallAxes
 from dace.transformation.passes.cpu_specialization.specialize_cpu_transfers import SpecializeCpuTransfers
+from dace.transformation.passes.cpu_specialization.split_invariant_map_nests import SplitInvariantMapNests
 from dace.transformation.passes.specialize_small_gemms import SpecializeSmallGemms
 
 
@@ -95,6 +96,8 @@ def cpu_specialize(sdfg: SDFG, validate: bool = False) -> SDFG:
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
     hoist_invariant_guards(sdfg, require_full_hoist=False)
+    # The canonical form keeps map nests whole; here an outer map with enough trips feeds the team alone.
+    SplitInvariantMapNests().apply_pass(sdfg, {})
     ChunkAntiDependence().apply_pass(sdfg, {})
     RecomputeIntermediates().apply_pass(sdfg, {})
     SequentializeReductionAxes().apply_pass(sdfg, {})

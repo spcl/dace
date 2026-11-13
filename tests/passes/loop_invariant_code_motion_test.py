@@ -16,6 +16,7 @@ from dace import memlet as mm
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.transformation.passes.cpu_specialization.split_invariant_map_nests import SplitInvariantMapNests
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
 
 N = dace.symbol("N")
@@ -1426,6 +1427,156 @@ def test_an_assignment_the_loop_condition_reads_stays_in_the_loop():
     assert a[0] == 1.0
 
 
+def test_an_ordering_edge_into_an_input_is_not_a_write():
+    """State fusion orders two reads of an input scalar with an empty-memlet edge; that edge writes nothing, so
+    the tasklet reading the scalar is still invariant (channel_flow's ``dx * dy`` stayed in its while loop)."""
+    sdfg = dace.SDFG("licm_ordering_edge")
+    sdfg.add_scalar("a", dace.float64)
+    sdfg.add_array("outp", [N], dace.float64)
+    sdfg.add_transient("t", [1], dace.float64)
+    loop = _build_loop(sdfg, "i", "N")
+    body = loop.add_state("body", is_start_block=True)
+    first = body.add_read("a")
+    second = body.add_access("a")
+    body.add_nedge(first, second, mm.Memlet())
+    tw = body.add_tasklet("twice", {"x"}, {"y"}, "y = 2.0 * x")
+    tnode = body.add_access("t")
+    body.add_edge(second, None, tw, "x", mm.Memlet("a"))
+    body.add_edge(tw, "y", tnode, None, mm.Memlet("t[0]"))
+    cpy = body.add_tasklet("cpy", {"ti"}, {"o"}, "o = ti")
+    body.add_edge(tnode, None, cpy, "ti", mm.Memlet("t[0]"))
+    body.add_edge(cpy, "o", body.add_write("outp"), None, mm.Memlet("outp[i]"))
+    sdfg.validate()
+
+    assert LoopInvariantCodeMotion().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert "twice" not in {t.label for t in _state_tasklets(body)}
+
+    def py_ref(a, outp, N):
+        for i in range(N):
+            outp[i] = 2.0 * a
+
+    _run_and_check(sdfg, py_ref, a=np.float64(1.25), outp=np.zeros(5), N=5)
+
+
+def nested_map_with_inner_invariant(outer: str, invariant_in: str):
+    """``map i { map j { t = a[i] (or c[0]) * 2; out[i, j] = t + b[j] } }``: ``t`` is invariant in ``j`` only, or in
+    the whole nest when it reads ``c[0]``."""
+    sdfg = dace.SDFG(f"licm_nest_{invariant_in}_{outer.replace(':', '_')}")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [K], dace.float64)
+    sdfg.add_array("c", [1], dace.float64)
+    sdfg.add_array("outp", [N, K], dace.float64)
+    sdfg.add_scalar("t", dace.float64, transient=True)
+    state = sdfg.add_state("st", is_start_block=True)
+    mi, xi = state.add_map("mi", {"i": outer})
+    mj, xj = state.add_map("mj", {"j": "0:K"})
+    src, subset = ("a", "a[i]") if invariant_in == "j" else ("c", "c[0]")
+    tw = state.add_tasklet("twice", {"x"}, {"y"}, "y = 2.0 * x")
+    tnode = state.add_access("t")
+    add = state.add_tasklet("add", {"ti", "bj"}, {"o"}, "o = ti + bj")
+    state.add_memlet_path(state.add_read(src), mi, mj, tw, dst_conn="x", memlet=mm.Memlet(subset))
+    state.add_edge(tw, "y", tnode, None, mm.Memlet("t"))
+    state.add_edge(tnode, None, add, "ti", mm.Memlet("t"))
+    state.add_memlet_path(state.add_read("b"), mi, mj, add, dst_conn="bj", memlet=mm.Memlet("b[j]"))
+    state.add_memlet_path(add, xj, xi, state.add_write("outp"), src_conn="o", memlet=mm.Memlet("outp[i, j]"))
+    sdfg.validate()
+    return sdfg, state, mi, mj
+
+
+def nest_reference(a, b, c, outp, N, K):
+    for i in range(N):
+        for j in range(K):
+            outp[i, j] = 2.0 * a[i] + b[j]
+
+
+def run_nest(sdfg, reference=nest_reference):
+    n, k = 6, 5
+    _run_and_check(sdfg, reference, a=np.arange(n, dtype=np.float64), b=np.arange(k, dtype=np.float64) + 0.5,
+                   c=np.array([3.0]), outp=np.zeros((n, k)), N=n, K=k)  # fmt: skip
+
+
+def test_a_tasklet_invariant_in_the_inner_map_only_keeps_the_nest_whole():
+    """Canonical LICM never lands a tasklet between ``map i`` and ``map j``: the nest stays one 2-D kernel on GPU."""
+    sdfg, state, mi, mj = nested_map_with_inner_invariant("0:N", "j")
+    assert LoopInvariantCodeMotion().apply_pass(sdfg, {}) is None
+    sdfg.validate()
+    twice = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet) and n.label == "twice")
+    assert state.scope_dict()[twice] is mj
+    assert state.scope_dict()[mj] is mi
+    run_nest(sdfg)
+
+
+def test_a_tasklet_invariant_in_the_whole_nest_leaves_both_maps():
+    sdfg, state, mi, mj = nested_map_with_inner_invariant("0:N", "nest")
+    assert LoopInvariantCodeMotion().apply_pass(sdfg, {}) == 2
+    sdfg.validate()
+    twice = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet) and n.label.startswith("twice"))
+    assert state.scope_dict()[twice] is None
+    assert state.scope_dict()[mj] is mi
+
+    def reference(a, b, c, outp, N, K):
+        for i in range(N):
+            for j in range(K):
+                outp[i, j] = 2.0 * c[0] + b[j]
+
+    run_nest(sdfg, reference)
+
+
+def test_the_cpu_specialization_splits_a_nest_whose_outer_map_feeds_the_team():
+    """On CPU ``map i`` alone opens the OpenMP team, so with enough ``i`` trips ``t`` is computed once per ``i``."""
+    sdfg, state, mi, mj = nested_map_with_inner_invariant("0:N", "j")
+    mi.map.schedule = dace.ScheduleType.CPU_Multicore
+    assert SplitInvariantMapNests().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    twice = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet) and n.label.startswith("twice"))
+    assert state.scope_dict()[twice] is mi
+    run_nest(sdfg)
+
+
+def test_the_cpu_specialization_keeps_a_nest_whose_outer_map_has_few_trips():
+    """Two ``i`` trips leave most threads idle: the nest stays whole so the team can share out ``(i, j)``."""
+    sdfg, state, mi, mj = nested_map_with_inner_invariant("0:2", "j")
+    mi.map.schedule = dace.ScheduleType.CPU_Multicore
+    assert SplitInvariantMapNests().apply_pass(sdfg, {}) is None
+    twice = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet) and n.label == "twice")
+    assert state.scope_dict()[twice] is mj
+
+
+def test_an_ordering_edge_into_an_invariant_tasklet_does_not_pin_it():
+    """An empty-memlet edge from an array the loop writes orders the tasklet after that write; its value does not
+    depend on it, so the tasklet is still hoisted and the edge stays behind (channel_flow's ``rho * dx`` after ``u``)."""
+    sdfg = dace.SDFG("licm_ordering_into_tasklet")
+    sdfg.add_scalar("a", dace.float64)
+    sdfg.add_array("outp", [N], dace.float64)
+    sdfg.add_transient("t", [1], dace.float64)
+    loop = _build_loop(sdfg, "i", "N")
+    body = loop.add_state("body", is_start_block=True)
+    fill = body.add_tasklet("fill", {}, {"o"}, "o = 1.0")
+    written = body.add_write("outp")
+    body.add_edge(fill, "o", written, None, mm.Memlet("outp[i]"))
+    tw = body.add_tasklet("twice", {"x"}, {"y"}, "y = 2.0 * x")
+    body.add_nedge(written, tw, mm.Memlet())
+    tnode = body.add_access("t")
+    body.add_edge(body.add_read("a"), None, tw, "x", mm.Memlet("a"))
+    body.add_edge(tw, "y", tnode, None, mm.Memlet("t[0]"))
+    add = body.add_tasklet("add", {"ti", "oi"}, {"o"}, "o = ti + oi")
+    body.add_edge(tnode, None, add, "ti", mm.Memlet("t[0]"))
+    body.add_edge(written, None, add, "oi", mm.Memlet("outp[i]"))
+    body.add_edge(add, "o", body.add_write("outp"), None, mm.Memlet("outp[i]"))
+    sdfg.validate()
+
+    assert LoopInvariantCodeMotion().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert "twice" not in {t.label for t in _state_tasklets(body)}
+
+    def py_ref(a, outp, N):
+        for i in range(N):
+            outp[i] = 2.0 * a + 1.0
+
+    _run_and_check(sdfg, py_ref, a=np.float64(0.75), outp=np.zeros(5), N=5)
+
+
 if __name__ == "__main__":
     test_pure_tasklet_hoisted_from_loop_region()
     test_invariant_load_without_inloop_writer_is_hoisted()
@@ -1461,3 +1612,9 @@ if __name__ == "__main__":
     test_a_guarded_read_not_provably_in_bounds_stays()
     test_an_assignment_the_loop_condition_reads_stays_in_the_loop()
     test_a_data_indexed_row_accumulation_canonicalizes_correctly()
+    test_an_ordering_edge_into_an_input_is_not_a_write()
+    test_a_tasklet_invariant_in_the_inner_map_only_keeps_the_nest_whole()
+    test_a_tasklet_invariant_in_the_whole_nest_leaves_both_maps()
+    test_the_cpu_specialization_splits_a_nest_whose_outer_map_feeds_the_team()
+    test_the_cpu_specialization_keeps_a_nest_whose_outer_map_has_few_trips()
+    test_an_ordering_edge_into_an_invariant_tasklet_does_not_pin_it()

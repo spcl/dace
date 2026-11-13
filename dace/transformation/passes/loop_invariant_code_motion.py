@@ -71,12 +71,26 @@ class LoopInvariantCodeMotion(ppl.Pass):
                     for me in map_entries:
                         if me not in state.nodes():  # may have been removed
                             continue
-                        made += _hoist_map_scope(state, me)
+                        made += hoist_map_scope(state, me, self.variant_root(state, me))
 
             total += made
             if made == 0:
                 break
         return total or None
+
+    def may_split_nest(self, state: SDFGState, inner: nodes.MapEntry) -> bool:
+        """Whether a tasklet invariant in ``inner`` alone may land between ``inner`` and its enclosing map. Never
+        in the canonical form: that would break a perfect map nest a GPU runs as one multi-dimensional kernel.
+        A target specialization overrides this (CPU, where the enclosing map alone can feed every thread)."""
+        return False
+
+    def variant_root(self, state: SDFGState, me: nodes.MapEntry) -> nodes.MapEntry:
+        """The map whose scope decides invariance for a hoist out of ``me``: ``me`` itself when a split nest is
+        allowed, else the outermost map around it, so a hoisted tasklet leaves the whole nest or stays."""
+        root = me
+        while not self.may_split_nest(state, root) and isinstance(state.entry_node(root), nodes.MapEntry):
+            root = state.entry_node(root)
+        return root
 
 
 # Depth helpers (innermost-first ordering)
@@ -351,7 +365,7 @@ def _region_rw_sets(region: Any) -> tuple[set[str], set[str]]:
     writes: set[str] = set()
     if isinstance(region, SDFGState):
         for n in region.data_nodes():
-            if region.in_degree(n) > 0:
+            if write_edge_count(region, n) > 0:
                 writes.add(n.data)
             if region.out_degree(n) > 0:
                 reads.add(n.data)
@@ -359,7 +373,7 @@ def _region_rw_sets(region: Any) -> tuple[set[str], set[str]]:
     if isinstance(region, AbstractControlFlowRegion):
         for s in region.states():
             for n in s.data_nodes():
-                if s.in_degree(n) > 0:
+                if write_edge_count(s, n) > 0:
                     writes.add(n.data)
                 if s.out_degree(n) > 0:
                     reads.add(n.data)
@@ -418,7 +432,7 @@ def _written_data_in_region(region: ControlFlowRegion) -> set[str]:
     written: set[str] = set()
     for state in region.states():
         for n in state.data_nodes():
-            if state.in_degree(n) > 0:
+            if write_edge_count(state, n) > 0:
                 written.add(n.data)
     return written
 
@@ -499,8 +513,11 @@ def _is_tasklet_invariant(
     in_edges = list(state.in_edges(tasklet))
 
     # Every in-edge must come from an AccessNode reading non-variant data,
-    # with a subset whose free symbols do not touch variant_syms.
+    # with a subset whose free symbols do not touch variant_syms. An empty-memlet ordering edge carries no value: a
+    # tasklet whose inputs are invariant computes the same value wherever it is ordered.
     for ie in in_edges:
+        if ie.data.is_empty():
+            continue
         if not isinstance(ie.src, nodes.AccessNode):
             return False
         if ie.src.data in variant_data:
@@ -508,8 +525,9 @@ def _is_tasklet_invariant(
         if ie.data is not None and ie.data.subset is not None:
             if _subset_uses_any(ie.data.subset, variant_syms):
                 return False
-        # The AccessNode itself must be a pure read — no in-edges inside the state.
-        if state.in_degree(ie.src) > 0:
+        # The AccessNode itself must be a pure read: nothing writes it in the state (an empty-memlet ordering edge
+        # is not a write).
+        if write_edge_count(state, ie.src) > 0:
             return False
 
     # Output must go to a single AccessNode write, whose data is written only
@@ -630,7 +648,7 @@ def _written_access_in_state(state: SDFGState, data: str) -> nodes.AccessNode | 
     node for the same data.
     """
     for n in state.nodes():
-        if isinstance(n, nodes.AccessNode) and n.data == data and state.in_degree(n) > 0:
+        if isinstance(n, nodes.AccessNode) and n.data == data and write_edge_count(state, n) > 0:
             return n
     return None
 
@@ -664,8 +682,10 @@ def _hoist_tasklet_to_preheader(
     # channel_flow hoists a split-tasklet chain ``__t0_split_N`` piecemeal, the
     # producer landing in the preheader on an earlier LICM pass than the
     # consumer).
+    # Ordering edges stay behind: the hoisted value is computed before the loop.
+    value_edges = [ie for ie in in_edges if not ie.data.is_empty()]
     new_reads: dict[str, nodes.AccessNode] = {}
-    for ie in in_edges:
+    for ie in value_edges:
         d = ie.src.data
         if d not in new_reads:
             existing = _written_access_in_state(preheader, d)
@@ -685,7 +705,7 @@ def _hoist_tasklet_to_preheader(
     for c, t in tasklet.out_connectors.items():
         new_tasklet.out_connectors[c] = t
 
-    for ie in in_edges:
+    for ie in value_edges:
         preheader.add_edge(
             new_reads[ie.src.data],
             None,
@@ -725,13 +745,19 @@ def _hoist_tasklet_to_preheader(
 # Map scope path
 
 
-def _hoist_map_scope(state: SDFGState, me: nodes.MapEntry) -> int:
-    """Hoist invariant tasklets out of a Map scope to the enclosing state."""
+def hoist_map_scope(state: SDFGState, me: nodes.MapEntry, root: nodes.MapEntry) -> int:
+    """Hoist invariant tasklets out of a Map scope to its enclosing scope. Invariance is judged against ``root``'s
+    scope (``me`` or a map around it): the params of every map from ``me`` up to ``root`` and the data written in
+    ``root``'s scope are variant."""
     sdfg: SDFG = state.sdfg
     variant_syms: set[str] = set(me.map.params)
+    scope = me
+    while scope is not root:
+        scope = state.entry_node(scope)
+        variant_syms |= set(scope.map.params)
 
-    mx = state.exit_node(me)
-    inside_nodes = state.all_nodes_between(me, required(mx))
+    mx = state.exit_node(root)
+    inside_nodes = state.all_nodes_between(root, required(mx))
     if inside_nodes is None:
         return 0
 
@@ -745,7 +771,7 @@ def _hoist_map_scope(state: SDFGState, me: nodes.MapEntry) -> int:
     # container makes its reads variant).
     variant_data: set[str] = set()
     for n in inside_nodes:
-        if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0:
+        if isinstance(n, nodes.AccessNode) and write_edge_count(state, n) > 0:
             variant_data.add(n.data)
     for e in state.out_edges(mx):
         if e.data is not None and e.data.data is not None:
@@ -824,9 +850,11 @@ def _is_map_tasklet_invariant(
         if not outer:
             return False
         outer_edge = outer[0]
-        if not isinstance(outer_edge.src, nodes.AccessNode):
+        # From an access node outside ``me``, or through the map around it (a nested map).
+        if not isinstance(outer_edge.src, (nodes.AccessNode, nodes.MapEntry)):
             return False
-        if outer_edge.src.data in variant_data:
+        source = state.memlet_path(outer_edge)[0].src
+        if not isinstance(source, nodes.AccessNode) or source.data in variant_data:
             return False
 
     # Output must go to a single AccessNode inside the scope, and that
@@ -840,7 +868,13 @@ def _is_map_tasklet_invariant(
     if oe.data is not None and oe.data.subset is not None:
         if _subset_uses_any(oe.data.subset, variant_syms):
             return False
-    writers = sum(1 for n in state.data_nodes() if n.data == oe.dst.data and state.in_degree(n) > 0)
+    # A copy routed into a nested scope through its map entry reads the value; it is not another writer.
+    writers = sum(
+        1
+        for n in state.data_nodes()
+        if n.data == oe.dst.data
+        and any(not e.data.is_empty() and not isinstance(e.src, nodes.EntryNode) for e in state.in_edges(n))
+    )
     if writers != 1:
         return False
 
@@ -878,6 +912,8 @@ def _hoist_tasklet_out_of_map(
     # the map scope).
 
     # Create new outer read nodes for each distinct upstream data container.
+    # An input from outside the map nest gets a fresh read; one through an enclosing map keeps that map's connector,
+    # which places the hoisted tasklet in the enclosing scope.
     outer_reads: dict[str, nodes.AccessNode] = {}
     for ie in in_edges:
         outer_conn = _matching_outer_conn(ie.src_conn)
@@ -887,10 +923,10 @@ def _hoist_tasklet_out_of_map(
         if not outer_edges:
             return False
         src_access = outer_edges[0].src
-        if not isinstance(src_access, nodes.AccessNode):
-            return False
-        if src_access.data not in outer_reads:
+        if isinstance(src_access, nodes.AccessNode) and src_access.data not in outer_reads:
             outer_reads[src_access.data] = state.add_access(src_access.data)
+        elif not isinstance(src_access, (nodes.AccessNode, nodes.MapEntry)):
+            return False
 
     # Clone the tasklet outside the scope.
     new_tasklet = state.add_tasklet(
@@ -917,6 +953,9 @@ def _hoist_tasklet_out_of_map(
         # movement into the whole map (e.g. ``c[0:LEN_1D]``); feeding that
         # whole-array subset to the scalar-copy tasklet produced a malformed
         # pointer-to-scalar assignment (``_out = _in`` with ``_in`` a pointer).
+        if isinstance(src_access, nodes.MapEntry):
+            state.add_edge(src_access, outer_edge.src_conn, new_tasklet, ie.dst_conn, copy.deepcopy(ie.data))
+            continue
         state.add_edge(
             outer_reads[src_access.data],
             None,
