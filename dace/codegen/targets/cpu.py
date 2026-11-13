@@ -4513,7 +4513,8 @@ class CPUCodeGen(TargetCodeGenerator):
             # reduce is what makes reductions in parallel maps fast. The covered targets are pushed
             # onto ``_omp_reduction_scope_stack`` so the downstream ``write_and_resolve_expr`` skips
             # the now-redundant ``reduce_atomic``.
-            if omp_reductions and not range_private:
+            # Under a team (``omp for``) a held local would be thread-private, which ``reduction`` rejects
+            if omp_reductions and not range_private and not in_persistent:
                 omp_reductions, held_reductions = self.one_element_reductions(sdfg, state_dfg, node, omp_reductions)
             if omp_reductions:
                 declares = []
