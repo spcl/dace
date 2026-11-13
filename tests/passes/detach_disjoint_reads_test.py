@@ -173,6 +173,55 @@ def test_a_writer_outside_any_map_keeps_the_reader():
     assert not detach(state, written, entry, sdfg.facts())
 
 
+def ordered_slices(conflict: bool) -> dace.SDFG:
+    """:func:`slices` with ``t[:, 1]`` read, plus an ordering edge into the write between the maps from a copy of ``u``
+    into ``v``; with ``conflict`` the second map also writes ``u``, which the copy has to read first."""
+    sdfg = slices(read=1)
+    sdfg.add_array("u", [N], dace.float64)
+    sdfg.add_array("v", [N], dace.float64)
+    state = sdfg.start_block
+    between = next(n for n in state.data_nodes() if state.in_degree(n) and state.out_degree(n))
+    copied = state.add_access("v")
+    state.add_nedge(state.add_read("u"), copied, dace.Memlet("u[0:6] -> [0:6]"))
+    state.add_nedge(copied, between, dace.Memlet())
+    if conflict:
+        second = max((n for n in state.nodes() if isinstance(n, nodes.MapEntry)), key=lambda m: m.map.label)
+        store = next(n for n in state.scope_children()[second] if isinstance(n, nodes.Tasklet))
+        store.add_out_connector("c")
+        store.code.as_string = "b = a + 1\nc = a"
+        state.add_memlet_path(
+            store, state.exit_node(second), state.add_write("u"), src_conn="c", memlet=dace.Memlet("u[i]")
+        )
+    sdfg.validate()
+    return sdfg
+
+
+def test_an_ordering_edge_into_the_write_does_not_keep_the_reader():
+    """The ordering edge into ``t`` writes nothing, and what it orders shares nothing with the second map."""
+    sdfg = ordered_slices(conflict=False)
+
+    assert DetachDisjointReads().apply_pass(sdfg, {}) == 1
+
+    sdfg.validate()
+    assert not maps_are_ordered(sdfg)
+    start = np.arange(4.0 * N).reshape(N, 4)
+    reference = start.copy()
+    reference[:, 2] = reference[:, 0] + 1
+    reference[:, 3] = reference[:, 1] + 1
+    u, v = np.arange(1.0 * N), np.zeros(N)
+    sdfg(t=start, u=u, v=v)
+    assert np.array_equal(start, reference) and np.array_equal(v, np.arange(1.0 * N))
+
+
+def test_an_ordering_edge_into_the_write_keeps_the_order_it_gives():
+    """The second map overwrites ``u``, which the copy ordered ahead of ``t`` must read first: no detach."""
+    sdfg = ordered_slices(conflict=True)
+
+    assert DetachDisjointReads().apply_pass(sdfg, {}) is None
+
+    assert maps_are_ordered(sdfg)
+
+
 if __name__ == "__main__":
     test_a_read_a_write_misses_detaches_and_computes_the_same()
     test_a_read_of_the_write_keeps_the_order()
@@ -183,3 +232,5 @@ if __name__ == "__main__":
     test_a_copy_memlet_naming_its_destination_still_reads_the_source()
     test_a_write_a_detach_moved_in_need_not_come_from_a_map()
     test_a_writer_outside_any_map_keeps_the_reader()
+    test_an_ordering_edge_into_the_write_does_not_keep_the_reader()
+    test_an_ordering_edge_into_the_write_keeps_the_order_it_gives()

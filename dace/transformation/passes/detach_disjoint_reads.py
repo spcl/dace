@@ -6,7 +6,7 @@ from typing import Any
 
 from dace import data, properties, subsets, symbolic
 from dace.sdfg import SDFG, nodes
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import SDFGState, is_read, is_written
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
@@ -43,8 +43,8 @@ class DetachDisjointReads(ppl.Pass):
 
 def detach_in_state(state: SDFGState, facts: symbolic.Facts) -> int:
     """Detach every map of ``state`` that qualifies."""
-    candidates = [n for n in state.data_nodes() if state.in_degree(n) and state.out_degree(n)]
-    candidates = [n for n in candidates if all(isinstance(e.src, nodes.MapExit) for e in state.in_edges(n))]
+    candidates = [n for n in state.data_nodes() if is_written(state, n) and is_read(state, n)]
+    candidates = [n for n in candidates if all(isinstance(e.src, nodes.MapExit) for e in data_in_edges(state, n))]
     if not candidates:
         return 0
     detached = 0
@@ -55,6 +55,10 @@ def detach_in_state(state: SDFGState, facts: symbolic.Facts) -> int:
         while any(detach(state, node, reader, facts) for reader in state.successors(node)):
             detached += 1
     return detached
+
+
+def data_in_edges(state: SDFGState, node: nodes.AccessNode) -> list[Any]:
+    return [e for e in state.in_edges(node) if not e.data.is_empty()]
 
 
 def stored(state: SDFGState, writes: Iterable[Any]) -> list[subsets.Subset]:
@@ -77,7 +81,8 @@ def detach(state: SDFGState, node: nodes.AccessNode, reader: nodes.Node, facts: 
     if not isinstance(reader, nodes.MapEntry):
         return False
     name = node.data
-    writes = state.in_edges(node)
+    # An ordering edge into ``node`` writes nothing; the order it gave is weighed by :func:`lost_order_is_free`
+    writes = data_in_edges(state, node)
     # What an earlier detach of this node moved in from its target need not come from a map
     if not all(isinstance(e.src, nodes.MapExit) for e in writes):
         return False
