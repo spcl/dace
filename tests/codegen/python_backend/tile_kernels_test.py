@@ -10,6 +10,7 @@ import pytest
 
 import dace
 from dace.codegen.exceptions import CodegenError
+from dace.libraries.standard.nodes.reduce import Reduce
 from dace.libraries.tileops.dispatch import TileGroup
 from dace.libraries.tileops.kinds import TILE
 from dace.libraries.tileops.nodes import TileBinop
@@ -741,6 +742,64 @@ def test_a_two_dim_tile_kernel_aborts_on_an_extent_its_tiles_do_not_divide():
         compiled(cond=cupy.ones(601), src=cupy.ones((601, 601)), a=cupy.zeros((601, 601)), N=601)
 
 
+S, E = dace.symbol("S"), dace.symbol("E")
+
+
+@dace.program
+def segment_sums(row_ptr: dace.int64[S + 1], val: dace.float64[E], w: dace.float64[E], out: dace.float64[S]):
+    for s in range(S):
+        acc = 0.0
+        for e in range(row_ptr[s], row_ptr[s + 1]):
+            acc = acc + val[e] * w[e]
+        out[s] = acc
+
+
+def segment_sums_sdfg(tile_programs: bool) -> dace.SDFG:
+    sdfg = segment_sums.to_sdfg(simplify=True)
+    canonicalize(sdfg, target="gpu", nonnegative_symbols=["S", "E"])
+    offload_to_gpu(sdfg, tile_programs=tile_programs)
+    VectorizeGPU(VectorizeConfig(widths=(4,), tile_programs=tile_programs)).apply_pass(sdfg, {})
+    return sdfg
+
+
+@pytest.mark.parametrize(
+    "dialect",
+    [
+        DIALECTS[0],
+        pytest.param(
+            "cutile",
+            marks=[
+                pytest.mark.cutile,
+                # A loaded bound is int64 and a literal one int32; cuTile's ``for`` takes one type for all three
+                pytest.mark.xfail(reason="cuTile loop bounds of two integer types", strict=True),
+            ],
+        ),
+        DIALECTS[2],
+    ],
+)
+def test_a_reduction_nested_in_a_kernel_folds_its_tiles_into_the_accumulator(dialect: str):
+    """Each program sums a segment of its own extent: every tile adds its ``sum`` into the carried ``acc``."""
+    import cupy
+
+    row_ptr = np.array([0, 3, 3, 1203, 2000])
+    val, w = np.random.default_rng(13).random((2, 2000))
+    out = cupy.zeros(4)
+
+    with tile_backend(dialect):
+        compiled = segment_sums_sdfg(tile_programs=True).compile()
+        compiled(row_ptr=cupy.asarray(row_ptr), val=cupy.asarray(val), w=cupy.asarray(w), out=out, S=4, E=2000)
+
+    assert np.allclose(out.get(), [(val * w)[b:e].sum() for b, e in zip(row_ptr[:-1], row_ptr[1:])])
+    assert not any(isinstance(n, Reduce) for n, _ in compiled.sdfg.all_nodes_recursive())
+
+
+def test_a_thread_lowered_kernel_keeps_the_nested_reduction_a_reduce_node():
+    """Without tile programs the nested reduction is still lifted to a buffer and a ``Reduce``."""
+    sdfg = segment_sums_sdfg(tile_programs=False)
+
+    assert any(isinstance(n, Reduce) for n, _ in sdfg.all_nodes_recursive())
+
+
 if __name__ == "__main__":
     # TileLang, which has no product reduction, runs under pytest
     for dialect in ("triton", "cutile"):
@@ -770,3 +829,5 @@ if __name__ == "__main__":
     test_a_scatter_combined_by_a_max_leaves_the_map_untiled()
     test_a_guard_a_read_needs_leaves_the_map_untiled()
     test_a_two_dim_tile_kernel_aborts_on_an_extent_its_tiles_do_not_divide()
+    test_a_reduction_nested_in_a_kernel_folds_its_tiles_into_the_accumulator("triton")
+    test_a_thread_lowered_kernel_keeps_the_nested_reduction_a_reduce_node()

@@ -1028,6 +1028,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         self._expand_tile_nodes = expand_tile_nodes
         self._validate = validate
         self._validate_all = validate_all
+        self._tile_programs = config.tile_programs
         self._assume_even = assume_even
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
@@ -1142,9 +1143,12 @@ class VectorizeMultiDim(ppl.Pipeline):
         # in place to a product buffer + WCR-free ``Reduce``, so no in-NSDFG WCR survives.
         from dace.transformation.passes.vectorization.lift_map_reduction import LiftMapReductionToReduce
 
-        LiftMapReductionToReduce(
-            vectorized=reduce_vectorized, pure_wcr_only=True, nested_only=True, wcr_free_output=True
-        ).apply_pass(sdfg, {})
+        # A tile program folds a reduction nested in its kernel in registers (``TileReduce`` into the carried
+        # accumulator); it cannot hold a buffer the size of the reduced range with a ``Reduce`` over it.
+        if not self._tile_programs:
+            LiftMapReductionToReduce(
+                vectorized=reduce_vectorized, pure_wcr_only=True, nested_only=True, wcr_free_output=True
+            ).apply_pass(sdfg, {})
         # Canonicalization already parallelized every loop that can be (never re-parallelize here);
         # a loop left in a body keeps that body un-tiled.
         # Canonical form keeps an in-body reduction as a WCR edge; the tile emitters need it as an

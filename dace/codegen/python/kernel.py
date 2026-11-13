@@ -298,8 +298,9 @@ class KernelEmitter(Emitter):
     def write(self, sdfg, edge) -> None:
         name, desc = edge.data.data, sdfg.arrays[edge.data.data]
         if is_register(desc):
-            value = edge.src_conn if edge.data.wcr is None else f"({edge.data.wcr})({name}, {edge.src_conn})"
-            self.line(f"{name} = {value}")
+            value = edge.src_conn if edge.data.wcr is None else combined(edge.data.wcr, name, edge.src_conn)
+            # At the register's own type: a DSL fixes a loop-carried value's type at its first assignment
+            self.line(f"{name} = {self.dialect.cast(value, desc.dtype)}")
             return
         store = self.dialect.atomic_add if accumulates(edge.data) else self.dialect.store
         self.line(store(name, self.element_offset(desc, edge.data.subset), edge.src_conn, None))
@@ -327,7 +328,8 @@ class KernelEmitter(Emitter):
         """Copy ``src`` to ``dst``: a register rebinds, one global element moves by a dialect load or store."""
         src_desc, dst_desc = sdfg.arrays[src], sdfg.arrays[dst]
         if (is_register(src_desc) or src in self.values) and is_register(dst_desc):
-            self.line(f"{dst} = {src}")
+            # A copy out of a sequential map in the kernel that resolves a conflict folds into its target
+            self.line(f"{dst} = {src}" if memlet.wcr is None else f"{dst} = {combined(memlet.wcr, dst, src)}")
         elif is_register(dst_desc):
             at = self.element_offset(src_desc, src_subset)
             self.line(f"{dst} = {self.dialect.load(src, at, None, src_desc.dtype)}")
@@ -360,6 +362,20 @@ class KernelEmitter(Emitter):
         super().nested(sdfg, state, node)
         for outer, conn in outputs:
             self.line(f"{outer} = {conn}")
+
+
+def combined(wcr: str, current: str, value: str) -> str:
+    """The body of the conflict resolution ``wcr`` over ``current`` and ``value``: a DSL kernel calls no lambda."""
+    function = ast.parse(wcr, mode="eval").body
+    if not isinstance(function, ast.Lambda) or len(function.args.args) != 2:
+        raise CodegenError(f"Python backend: a tile kernel resolves a conflict by a two-argument lambda, not {wcr}")
+    names = {function.args.args[0].arg: current, function.args.args[1].arg: value}
+
+    class Bind(ast.NodeTransformer):
+        def visit_Name(self, node: ast.Name) -> ast.AST:
+            return ast.Name(id=names.get(node.id, node.id), ctx=node.ctx)
+
+    return f"({ast.unparse(Bind().visit(function.body))})"
 
 
 def accumulates(memlet) -> bool:
@@ -409,6 +425,9 @@ class KernelAccesses(ast.NodeTransformer):
     def visit_Assign(self, node: ast.Assign) -> ast.AST:
         node.value = self.visit(node.value)
         found = self.container(node.targets[0]) if len(node.targets) == 1 else None
+        if found is not None and is_register(found[1]) and isinstance(node.value, ast.Constant):
+            # A literal takes the register's type: a DSL fixes a loop-carried value's type at its first assignment
+            node.value = ast.parse(self.dialect.cast(ast.unparse(node.value), found[1].dtype), mode="eval").body
         if found is None or is_register(found[1]):
             node.targets = [self.visit(target) for target in node.targets]
             return node
