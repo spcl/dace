@@ -1089,9 +1089,12 @@ class SnitchCodeGen(TargetCodeGenerator):
 
         return ssr_configs
 
-    def write_and_resolve_expr(self, sdfg, memlet, nc, outname, inname, indices=None, dtype=None):
+    def write_and_resolve_expr(self, sdfg, memlet, nc, outname, inname, indices=None, dtype=None, acq_rel=False):
         """
         Emits a conflict resolution call from a memlet.
+
+        :param acq_rel: Whether the program reads the old value of the update, which makes an atomic update
+                        acquire-release (see ``dace::wcr_acq_rel``).
         """
         from dace.frontend import operations
 
@@ -1128,14 +1131,19 @@ class SnitchCodeGen(TargetCodeGenerator):
         # Special call for detected reduction types
         if redtype != dtypes.ReductionType.Custom:
             credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1 :]
+            if acq_rel:
+                return f"dace::wcr_acq_rel<>::fixed<{credtype}, {dtype.ctype}>({ptr}, {inname})"
             return f"dace::wcr_fixed<{credtype}, {dtype.ctype}>::reduce{atomic}({ptr}, {inname})"
 
         # General reduction
         custom_reduction = cpp.unparse_cr(sdfg, memlet.wcr, dtype)
-        return (
-            f"const auto __dace__reduction_lambda = {custom_reduction};\ndace::wcr_custom<{dtype.ctype}>::reduce{atomic}<decltype(__dace__reduction_lambda)>("
+        update = (
+            f"dace::wcr_custom<{dtype.ctype}>::reduce{atomic}<decltype(__dace__reduction_lambda)>("
             f"__dace__reduction_lambda, {ptr}, {inname})"
         )
+        if acq_rel:
+            update = f"dace::wcr_acq_rel<>::fenced([&] {{ return {update}; }})"
+        return f"const auto __dace__reduction_lambda = {custom_reduction};\n{update}"
 
     @staticmethod
     def gen_code_snitch(sdfg):

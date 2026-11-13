@@ -755,6 +755,32 @@ def test_advanced_replace_nested_sdfg_symbol_mapping():
     sdfg.validate()
 
 
+def test_no_fusion_into_consume_scope():
+    """A map that pushes into a stream is not fused into the consume scope that pops from it."""
+
+    @dace.program
+    def map_then_consume(A: dace.int32[10], B: dace.int32[10]):
+        S = dace.define_stream(dace.int32, 10)
+        for i in dace.map[0:10]:
+            with dace.tasklet:
+                a << A[i]
+                s >> S
+                s = a
+
+        @dace.consume(S, 2)
+        def process(v, p):
+            out >> B(-1)[:]
+            out[v] = v + 1
+
+    sdfg = map_then_consume.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations(OTFMapFusion) == 0
+
+    A = np.arange(10, dtype=np.int32)
+    B = np.zeros(10, dtype=np.int32)
+    sdfg(A=A, B=B)
+    assert np.array_equal(B, A + 1)
+
+
 if __name__ == "__main__":
     # Solver
     test_solve()
@@ -791,3 +817,6 @@ if __name__ == "__main__":
 
     # Symbol replacement
     test_advanced_replace_nested_sdfg_symbol_mapping()
+
+    # Non-map scopes
+    test_no_fusion_into_consume_scope()

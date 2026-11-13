@@ -11,7 +11,7 @@ from typing import Any, Optional
 import networkx as nx
 
 import dace.sdfg.nodes
-from dace import config, dtypes
+from dace import config, dtypes, symbolic
 from dace import data as dt
 from dace import memlet as mm
 from dace import subsets as sbs
@@ -1364,16 +1364,9 @@ def weakly_connected_component(dfg, node_in_component: Node) -> StateSubgraphVie
         if node in seen:
             continue
         seen.add(node)
+        # Follow edges in both directions, so that, e.g., the other inputs of a successor are included
         to_search.extend(dfg.successors(node))
-    to_search = [node_in_component]
-    seen.remove(node_in_component)
-    while to_search:
-        node = to_search.pop()
-        if node in seen:
-            continue
-        seen.add(node)
-        for succ in dfg.predecessors(node):
-            to_search.append(succ)
+        to_search.extend(dfg.predecessors(node))
     subgraph = StateSubgraphView(dfg, seen)
     return subgraph
 
@@ -1861,6 +1854,28 @@ def distributed_compile(sdfg: SDFG | None, comm, *, validate: bool = True) -> cs
         raise DistributedCompilationError(f"Loading the compiled SDFG failed on other ranks:\n{details}")
 
     return func
+
+
+def data_bound_symbols(sdfg: SDFG) -> set[str]:
+    """
+    Returns the symbols of ``sdfg`` that the enclosing SDFGs bind to data, through the symbol mapping of its nested SDFG
+    node (e.g., ``{'N': N_scalar}`` for a scalar container ``N_scalar``). Inlining ``sdfg`` replaces such a symbol by
+    its binding, so a value that reads one depends on data, and a subset or tasklet that names one would then name the
+    container.
+
+    :param sdfg: The SDFG to inspect.
+    :return: The names of the data-bound symbols of ``sdfg``. Empty for a top-level SDFG.
+    """
+    node = sdfg.parent_nsdfg_node
+    parent = sdfg.parent_sdfg
+    if node is None or parent is None:
+        return set()
+    outer = parent.arrays.keys() | data_bound_symbols(parent)
+    return {
+        sym
+        for sym, value in node.symbol_mapping.items()
+        if (symbolic.free_symbols_and_functions(value) | set(symbolic.arrays(value))) & outer
+    }
 
 
 def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> set[SDFGState]:

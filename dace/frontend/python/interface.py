@@ -11,6 +11,7 @@ from typing import (
     overload,
 )
 
+import numpy
 from typing_extensions import Self
 
 from dace import dtypes
@@ -269,12 +270,32 @@ class map(metaclass=MapMetaclass):
     an integer set (Python range) for which its contents are run
     concurrently. Written in Python as a loop with the following
     syntax: `for i, j in dace.map[1:20, 0:N]:`.
+
+    As a decorator, ``@dace.map(_[0:M, 0:N])`` on ``def body(i, j)`` is a map whose body is a tasklet, with memlets as
+    in ``with dace.tasklet`` (``@dace.mapscope`` takes statements instead). The ranges are slices: ``_`` is any object
+    whose subscript returns them, such as ``numpy.s_`` outside of programs.
     """
 
-    pass
+    def __init__(self, *ranges: slice | tuple[slice, ...]):
+        self.ranges = ranges[0] if len(ranges) == 1 else ranges
+
+    def __call__(self, body: Callable[..., None]) -> None:
+        """Runs the tasklet for every point of the ranges, one after the other."""
+        tasklet = tasklet_runner.TaskletFunction(body)
+        for point in ndloop.ndrange(self.ranges):
+            tasklet(*(point if isinstance(point, tuple) else (point,)))
 
 
-class consume:
+class mapscope(map):
+    """A map scope whose body is a program (statements, maps, tasklets): ``@dace.mapscope(_[0:M, 0:N])`` on
+    ``def body(i, j)``. Outside of programs, the body runs for every point of the ranges, one after the other."""
+
+    def __call__(self, body: Callable[..., None]) -> None:
+        for point in ndloop.ndrange(self.ranges):
+            body(*(point if isinstance(point, tuple) else (point,)))
+
+
+class consume(Generic[T]):
     def __init__(self, stream: deque[T], processing_elements: int = 1, condition: Callable[[], bool] | None = None):
         """
         Consume is a scope, like ``Map``, that creates parallel execution.
@@ -283,22 +304,59 @@ class consume:
         of processing elements, who will try to pop elements from the input
         stream until a given quiescence condition is reached.
 
+        Without a condition, consumption ends when nothing is queued and no
+        task is running (a running task may still push). A condition is a stop
+        condition: each processing element stops as soon as it holds and keeps
+        waiting for elements otherwise. Data the condition reads may be written
+        by other processing elements at the same time; that read is relaxed (it
+        may see an older value) and only decides when an element stops.
+
+        In a program, ``for element, pe in dace.consume(S, num_pes): body`` is the same consume scope as a function
+        decorated with ``@dace.consumescope(S, num_pes)``; ``S.append(value)`` pushes. Outside of programs, the
+        elements are processed one after the other, by the processing elements in turn.
+
         :param stream: The stream to pop from.
         :param processing_elements: The number of processing elements to use.
         :param condition: A custom condition for stopping to consume. If None,
-                          loops until ``stream`` is empty.
+                          consumes until ``stream`` is empty and no task runs.
         """
         self.stream = stream
         self.pes = processing_elements  # Ignored in Python mode
-        self.condition = condition or (lambda: len(stream) > 0)
+        self.condition = condition
 
-    def __iter__(self) -> Generator[T, None, None]:
+    def __iter__(self) -> Generator[tuple[T, int], None, None]:
         """
-        Consume stream (pop elements) until condition is met, or until the
-        stream is empty, if no condition is given.
+        Consume stream (pop elements) until it is empty or the condition holds.
+        Nothing else pushes while the loop runs in Python, so an empty stream
+        stays empty, with or without a condition.
+
+        :return: Pairs of an element and the index of the processing element
+                 that processes it.
         """
-        while self.condition():
-            yield self.stream.pop()
+        pe = 0
+        while len(self.stream) > 0 and (self.condition is None or not self.condition()):
+            yield self.stream.pop(), pe
+            pe = (pe + 1) % self.pes
+
+    def __call__(self, body: Callable[[T, int], None]) -> None:
+        """
+        The decorator form: ``@dace.consume(S, num_pes)`` on ``def body(element, pe)`` is a consume scope whose body
+        is a tasklet, with memlets as in ``with dace.tasklet`` (``@dace.consumescope`` takes statements instead).
+        Outside of programs, runs the tasklet for every element, as the loop does.
+        """
+        tasklet = tasklet_runner.TaskletFunction(body)
+        for element, pe in self:
+            tasklet(element, pe)
+
+
+class consumescope(consume[T]):
+    """A consume scope whose body is a program (statements, maps, tasklets): ``@dace.consumescope(S, num_pes)`` on
+    ``def body(element, pe)``, the same scope as ``for element, pe in dace.consume(S, num_pes)``. Outside of programs,
+    the body runs for every element, as the loop does."""
+
+    def __call__(self, body: Callable[[T, int], None]) -> None:
+        for element, pe in self:
+            body(element, pe)
 
 
 class TaskletMetaclass(type):
@@ -484,6 +542,80 @@ def ai(description: str, *inputs, **kwargs):
         "dace.ai can only be called inside a DaCe program. To describe a node in an "
         "SDFG built with the SDFG API, add a dace.libraries.ai.AINode to a state."
     )
+
+
+class atomic:
+    """Atomic updates of one element of an array, which return the element's old value (as ``numba.cuda.atomic``).
+
+    In a program, ``old = dace.atomic.add(array, index, value)`` is a write-conflict resolution whose old value is read:
+    its memory ordering is acquire-release, so the processing element that sees a counter reach its last value also
+    sees what the others wrote before they updated it. Updates that the target has an atomic instruction for use it;
+    others (such as ``prod`` on GPUs) are compare-and-swap loops. ``dace.atomic.custom`` updates with any function of
+    the old and the new value. Outside of programs, the updates are plain Python.
+
+    Every function takes the array to update, the index of the element (an integer or a tuple of integers) and the
+    value to update it with, and returns the old value of the element.
+    """
+
+    @staticmethod
+    def add(array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Adds ``value`` to ``array[index]``; returns the old value."""
+        return atomic.custom(lambda a, b: a + b, array, index, value)
+
+    @staticmethod
+    def sub(array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Subtracts ``value`` from ``array[index]``; returns the old value."""
+        return atomic.custom(lambda a, b: a - b, array, index, value)
+
+    @staticmethod
+    def prod(array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Multiplies ``array[index]`` by ``value``; returns the old value."""
+        return atomic.custom(lambda a, b: a * b, array, index, value)
+
+    @staticmethod
+    def min(array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Sets ``array[index]`` to the minimum of it and ``value``; returns the old value."""
+        return atomic.custom(lambda a, b: b if b < a else a, array, index, value)
+
+    @staticmethod
+    def max(array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Sets ``array[index]`` to the maximum of it and ``value``; returns the old value."""
+        return atomic.custom(lambda a, b: b if b > a else a, array, index, value)
+
+    @staticmethod
+    def and_(array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Sets ``array[index]`` to its bitwise AND with ``value``; returns the old value."""
+        return atomic.custom(lambda a, b: a & b, array, index, value)
+
+    @staticmethod
+    def or_(array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Sets ``array[index]`` to its bitwise OR with ``value``; returns the old value."""
+        return atomic.custom(lambda a, b: a | b, array, index, value)
+
+    @staticmethod
+    def xor(array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Sets ``array[index]`` to its bitwise XOR with ``value``; returns the old value."""
+        return atomic.custom(lambda a, b: a ^ b, array, index, value)
+
+    @staticmethod
+    def exch(array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Sets ``array[index]`` to ``value``; returns the old value."""
+        return atomic.custom(lambda a, b: b, array, index, value)
+
+    @staticmethod
+    def custom(op: Callable[[Any, Any], Any], array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Sets ``array[index]`` to ``op(array[index], value)``.
+
+        :param op: The update, a function of the old and the new value (a lambda in programs). It should be
+                   associative and commutative, as the order of concurrent updates is arbitrary.
+        :param array: The array to update.
+        :param index: The index of the element: an integer or a tuple of integers.
+        :param value: The value to combine with the element.
+        :return: The old value of ``array[index]``.
+        """
+        old = array[index]
+        array[index] = op(old, value)
+        return old
 
 
 class named:

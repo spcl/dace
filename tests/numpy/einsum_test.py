@@ -221,6 +221,22 @@ def test_lift_einsum_reduce_partial():
     assert np.allclose(B, np.einsum("ijk->ik", A))
 
 
+def test_lift_einsum_no_map_index():
+    """A map body that accesses only constant indices is a scalar operation, not an einsum."""
+    from dace.transformation.dataflow import LiftEinsum
+
+    @dace.program
+    def tester(A: dace.float64[1], B: dace.float64[1]):
+        for _ in dace.map[0:1]:
+            with dace.tasklet:
+                a << A[0]
+                b >> B[0]
+                b = a
+
+    sdfg = tester.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations(LiftEinsum) == 0
+
+
 def test_lift_einsum_outerproduct():
     from dace.libraries.blas.nodes.einsum import Einsum
     from dace.transformation.dataflow import LiftEinsum
@@ -344,6 +360,7 @@ if __name__ == "__main__":
     test_lift_einsum_mttkrp()
     test_lift_einsum_reduce()
     test_lift_einsum_reduce_partial()
+    test_lift_einsum_no_map_index()
     test_lift_einsum_outerproduct()
     test_lift_einsum_beta()
     test_lift_einsum_alpha_beta(False)

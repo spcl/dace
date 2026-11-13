@@ -1692,7 +1692,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 (stream_name, stream_elem, PE_tuple, condition, chunksize) = self._parse_consume_inputs(node)
                 params = [PE_tuple, (stream_elem, self.sdfg.arrays[stream_name].dtype)]
                 map_inputs = {}
-                map_symbols = set()
+                # Processing elements run at once: an augmented assignment is a write-conflict resolution unless it
+                # addresses what only its processing element writes
+                map_symbols = {PE_tuple[0]}
                 entry, exit = state.add_consume(
                     node.name, PE_tuple, condition, chunksize=chunksize, debuginfo=self.current_lineinfo
                 )
@@ -1732,7 +1734,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 syms_to_remove.add(stream_elem)
                 for sym in syms_to_remove:
                     del internal_node.symbol_mapping[sym]
-                    del sdfg.symbols[sym]
+                    if sym != stream_elem or not dec.endswith("scope"):  # A scope body keeps the element symbol
+                        del sdfg.symbols[sym]
 
             # Connect internal node with scope/access nodes
             self._add_dependencies(state, internal_node, entry, exit, inputs, outputs, map_inputs)
@@ -1751,8 +1754,12 @@ class ProgramVisitor(ExtNodeVisitor):
         internal_memlet = dace.Memlet.simple(ntrans, subsets.Range.from_indices([0]))
         external_memlet = dace.Memlet.simple(stream_name, subsets.Range.from_indices([0]), num_accesses=-1)
 
-        # Inject to internal tasklet
-        if not dec.endswith("scope"):
+        # A scope body uses the element as a symbol: define it from the element on entry
+        if dec.endswith("scope"):
+            sdfg.add_state_before(
+                sdfg.start_block, f"read_{stream_elem}", is_start_block=True, assignments={stream_elem: f"{ntrans}[0]"}
+            )
+        else:  # Inject to internal tasklet
             injected_node_count = 0
             for s in sdfg.states():
                 for n in s.nodes():
@@ -3994,8 +4001,9 @@ class ProgramVisitor(ExtNodeVisitor):
     def _parse_function_arg(self, arg: ast.AST):
         # Obtain a string representation
         result = self.visit(arg)
-        if isinstance(result, (list, tuple)):
-            if len(result) == 1 and isinstance(result[0], (str, slice)):
+        if isinstance(result, (list, tuple)) and len(result) == 1:
+            # The value of an expression (e.g., a constant that ``i % 1`` folds to), not a list or tuple argument
+            if isinstance(result[0], (str, slice)) or not isinstance(arg, (ast.List, ast.Tuple)):
                 return result[0]
         return result
 
@@ -4223,7 +4231,12 @@ class ProgramVisitor(ExtNodeVisitor):
         required_args = dtypes.deduplicate(required_args)
         gargs = {a[0] for a in args}
         for rarg in required_args:
-            if rarg not in gargs and rarg in self.sdfg.symbols:
+            if rarg in gargs:
+                continue
+            if rarg not in self.sdfg.symbols and rarg in symbols and rarg in sdfg.symbols:
+                # A free symbol of the callee only (e.g., a global symbol): one of the caller too
+                self.sdfg.add_symbol(rarg, sdfg.symbols[rarg])
+            if rarg in self.sdfg.symbols:
                 args.append((rarg, rarg))
 
         # Argument checks
@@ -5511,7 +5524,61 @@ class ProgramVisitor(ExtNodeVisitor):
         Scalar data are promoted to symbols.
         """
 
+        def _symbolic_operands(node: ast.AST) -> bool:
+            """Whether ``node`` is integer arithmetic on scalars, symbols and constants."""
+            if isinstance(node, ast.BinOp):
+                return (
+                    isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv, ast.Mod))
+                    and _symbolic_operands(node.left)
+                    and _symbolic_operands(node.right)
+                )
+            if isinstance(node, ast.UnaryOp):
+                return isinstance(node.op, (ast.USub, ast.UAdd)) and _symbolic_operands(node.operand)
+            if isinstance(node, ast.Constant):
+                return isinstance(node.value, int) and not isinstance(node.value, bool)
+            if isinstance(node, ast.Name):
+                if node.id in self.sdfg.arrays:
+                    desc = self.sdfg.arrays[node.id]
+                    return isinstance(desc, data.Scalar) and desc.dtype in dtypes.INTEGER_TYPES
+                return True  # A symbol, or a map or loop parameter
+            return False
+
+        def _symbolic(node: ast.AST) -> sympy.Basic | int:
+            """The symbolic value of an expression that ``_symbolic_operands`` accepts, promoting its scalars."""
+            if isinstance(node, ast.Constant):
+                return node.value
+            if isinstance(node, ast.Name):
+                if node.id in self.sdfg.arrays:
+                    return _promote(node)
+                value = self.visit(node)
+                if isinstance(value, str):
+                    dtype = self.sdfg.symbols.get(value, dtypes.int64)
+                    value = symbolic.symbol(value, dtype=dtype)
+                return value
+            if isinstance(node, ast.UnaryOp):
+                operand = _symbolic(node.operand)
+                return -operand if isinstance(node.op, ast.USub) else operand
+            left, right = _symbolic(node.left), _symbolic(node.right)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.FloorDiv):
+                return symbolic.int_floor(left, right)
+            return sympy.Mod(left, right)
+
         def _promote(node: ast.AST) -> Any | str | symbolic.symbol:
+            # Arithmetic on scalars stays symbolic in each scalar, so that related bounds (e.g., ``r0`` and
+            # ``r0 + 16``) share their symbols and the size of the slice is known
+            if (
+                isinstance(node, (ast.BinOp, ast.UnaryOp))
+                and _symbolic_operands(node)
+                and any(isinstance(n, ast.Name) and n.id in self.sdfg.arrays for n in ast.walk(node))
+            ):
+                return _symbolic(node)
+
             node_str = astutils.unparse(node)
             sym = None
             if node_str in self.indirections:
@@ -5529,8 +5596,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     if not sym:
                         sym = self.promoted_scalars.get(scalar)
                     if not sym:
-                        # A name that already means something else here would shadow it
-                        symname = f"__sym_{scalar}"
+                        # A name that already means something else here would shadow it. A scalar of an enclosing
+                        # scope (an input) gets a name of this SDFG: the enclosing scope may promote the same scalar
+                        # on other paths, and memlets that leave this SDFG must not mistake one for the other.
+                        symname = f"__sym_{scalar}" if desc.transient else f"__sym_{scalar}_{self.sdfg.label}"
                         if symname in self.sdfg.symbols:
                             symname = utils.find_new_name(
                                 symname, set(self.sdfg.symbols.keys()) | set(self.sdfg.arrays.keys())

@@ -185,12 +185,13 @@ def _consume_pe_header(num_pes: str, pe_type: dace.typeclass) -> str:
     exit.add_in_connector("IN_V")
     exit.add_out_connector("OUT_V")
     code = sdfg.generate_code()[0].clean_code
-    return next(line.strip() for line in code.splitlines() if "dace::Consume" in line)
+    return next(line.strip() for line in code.splitlines() if "for (" in line and " p" in line)
 
 
 def test_consume_pe_index_declares_inferred_type():
-    assert "[&](int p," in _consume_pe_header("4", dace.int32)
-    assert "[&](int64_t p," in _consume_pe_header("P", dace.int64)
+    """A consume scope is a map over its processing elements, whose index has the type of the count."""
+    assert _consume_pe_header("4", dace.int32).startswith("for (int p = 0;")
+    assert _consume_pe_header("P", dace.int64).startswith("for (int64_t p = 0;")
 
 
 if __name__ == "__main__":
