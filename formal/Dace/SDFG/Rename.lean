@@ -2255,14 +2255,14 @@ theorem regionAt {rg : Region} {cst : CSt} {bid : BlockId} {r : Res (Ctl × CSt)
   | .assignErr (ie := ie) hb hx he ha, hr => by
     obtain ⟨r', hx', hres⟩ := blockExec hx (hr.block σ hb)
     cases Res.er_ok_inv hres
-    have hie : ie ∈ rg.edges := trueEdges_mem_edges he ie (List.mem_singleton_self _)
+    have hie : ie ∈ rg.edges := trueEdges_cons_mem he
     refine ⟨_, .assignErr (by rw [Region.block?_ren, hb]; rfl) hx' (by rw [h.trueEdges (hr.edges σ)]; exact he)
       (by rw [h.applyAssigns _ fun a ha' x hx => hr.edges σ ie hie x (by
         simp only [IEdge.exprNamesR, List.mem_append, List.mem_flatMap]; exact .inr ⟨a, ha', hx⟩)]; exact ha), rfl⟩
   | .step (ie := ie) hb hx he ha hn, hr => by
     obtain ⟨r', hx', hres⟩ := blockExec hx (hr.block σ hb)
     cases Res.er_ok_inv hres
-    have hie : ie ∈ rg.edges := trueEdges_mem_edges he ie (List.mem_singleton_self _)
+    have hie : ie ∈ rg.edges := trueEdges_cons_mem he
     obtain ⟨r₂, hn', hr₂⟩ := regionAt hn hr
     refine ⟨_, .step (by rw [Region.block?_ren, hb]; rfl) hx' (by rw [h.trueEdges (hr.edges σ)]; exact he)
       (by rw [h.applyAssigns _ fun a ha' x hx => hr.edges σ ie hie x (by

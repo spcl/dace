@@ -3244,4 +3244,39 @@ theorem allocate_left {π : Equiv.Perm Name} {P : Name → Prop} {L : Name → P
     exact ih (hm.allocCells_left _ (hL t List.mem_cons_self)) (fun t' ht' => hs t' (List.mem_cons_of_mem _ ht'))
       fun t' ht' => hL t' (List.mem_cons_of_mem _ ht')
 
+/-! ## Program start and observation -/
+
+namespace Corr
+
+/-- Renaming fresh names of a start memory without aliases is an exact
+simulation. -/
+theorem startMem_sim {g : SDFG} {π : Equiv.Perm Name} (hf : ∀ x, π x ≠ x → g.keepAtStart x = false) {m₀ : Mem}
+    (hna : ∀ n, m₀.aliases n = none) :
+    Mem.Sim π (fun _ => True) (fun _ => False) (g.startMem m₀) (g.startMem m₀) := by
+  have hkeep : ∀ l : Loc, π l.name ≠ l.name → g.keepAtStart l.name = false ∧ g.keepAtStart (π l.name) = false :=
+    fun l hx => ⟨hf _ hx, hf _ fun h => hx (π.injective h)⟩
+  have hfix : ∀ l : Loc, π l.name = l.name → l.ren π = l := by
+    intro l h; cases l; simp only [Loc.ren, Loc.mk.injEq, and_true]; exact h
+  refine ⟨fun n _ => ?_, fun n b _ hb => ?_, fun l _ => .inr ?_, fun l _ => ?_⟩
+  · simp [SDFG.startMem, Mem.restrict, hna]
+  · simp [SDFG.startMem, Mem.restrict, hna] at hb
+  · by_cases hx : π l.name = l.name
+    · rw [hfix l hx]
+    · simp only [SDFG.startMem, Mem.restrict, Loc.ren_name, (hkeep l hx).1, (hkeep l hx).2]; rfl
+  · by_cases hx : π l.name = l.name
+    · rw [hfix l hx]
+    · simp only [SDFG.startMem, Mem.restrict, Loc.ren_name, (hkeep l hx).1, (hkeep l hx).2]; rfl
+
+/-- An exact renaming fixing the interface is observationally equal there. -/
+theorem obsEq_of_sim {iface : List Name} {π : Equiv.Perm Name} (hfix : ∀ x ∈ iface, π x = x) {m₂ m₁ : Mem}
+    (h : Mem.Sim π (fun _ => True) (fun _ => False) m₂ m₁) : obsEq iface m₁ m₂ := by
+  intro l hl
+  have hl' : l.ren π = l := by
+    cases l; simp only [Loc.ren, Loc.mk.injEq, and_true]; exact hfix _ hl
+  rcases h.cells l trivial with ⟨hF, -⟩ | hc
+  · exact hF.elim
+  · exact ⟨by rw [← hc, hl'], by rw [← h.queues l trivial, hl']⟩
+
+end Corr
+
 end Dace
