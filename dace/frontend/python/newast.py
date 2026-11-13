@@ -1592,9 +1592,13 @@ class ProgramVisitor(ExtNodeVisitor):
                         nested_outputs[root] = (s, Memlet.from_array(root, nested_sdfg.arrays[root]), [])
                     if s.out_degree(n) > 0 and root not in nested_inputs:
                         nested_inputs[root] = (s, Memlet.from_array(root, nested_sdfg.arrays[root]), [])
+            # A scalar that only an inter-state edge reads (e.g., to promote it to a symbol) is an input too: dropped,
+            # its name would be left free and mapped to the enclosing scalar as a symbol, which reads no container
             for e in nested_sdfg.all_interstate_edges():
-                for memlet in e.data.get_read_memlets(nested_sdfg.arrays):
-                    root = memlet.data.split(".")[0]
+                for memlet in e.data.get_read_memlets(nested_sdfg.arrays, include_scalars=True):
+                    root = _container_root(memlet.data)
+                    if root is None or nested_sdfg.arrays[root].transient:  # The nested SDFG's own
+                        continue
                     if root not in nested_inputs:
                         nested_inputs[root] = (e.dst, Memlet.from_array(root, nested_sdfg.arrays[root]), [])
 
