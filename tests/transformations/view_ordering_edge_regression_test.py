@@ -10,7 +10,14 @@ import dace
 from dace import Memlet, data
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation.dataflow import MapFission, RedundantArrayCopying, RedundantArrayCopyingIn, RemoveSliceView
+from dace.transformation.dataflow import (
+    MapFission,
+    RedundantArray,
+    RedundantArrayCopying,
+    RedundantArrayCopyingIn,
+    RedundantSecondArray,
+    RemoveSliceView,
+)
 
 
 def count_empty_edges(state: dace.SDFGState) -> int:
@@ -243,6 +250,63 @@ def test_redundant_array_race_guard_skips_ordering_edges() -> None:
         sdfg = partial_view_write_redundant_array_race_guard_skips_ordering_edges.to_sdfg(simplify=True)
     offenders = [str(w.message) for w in caught if "validate_subsets failed" in str(w.message)]
     assert not offenders, offenders
+    sdfg.validate()
+
+
+def test_redundant_array_hands_an_ordering_edge_on_without_the_copys_wcr() -> None:
+    """Removing ``A`` in ``P -> A -WCR-> B`` re-attaches ``C``'s ordering edge into ``A`` to ``B``; it stays empty and
+    takes no WCR, which work-depth analysis read as an accumulated write with no subset (NestForge, durbin after
+    expanding its fills)."""
+    sdfg = dace.SDFG("ordering_into_an_accumulated_copy")
+    sdfg.add_array("B", [1], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
+    sdfg.add_transient("P", [1], dace.float64)
+    sdfg.add_transient("A", [1], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    tasklet = state.add_tasklet("t", {}, {"o": None}, "o = 2.0")
+    p, a, b, c = (state.add_access(name) for name in "PABC")
+    state.add_edge(tasklet, "o", p, None, Memlet("P[0]"))
+    state.add_edge(p, None, a, None, Memlet("A[0]"))
+    state.add_edge(p, None, c, None, Memlet("C[0]"))
+    state.add_edge(c, None, a, None, Memlet())  # C is stored before A is written
+    state.add_edge(a, None, b, None, Memlet("B[0]", wcr="lambda x, y: x + y"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(RedundantArray, validate=False) == 1
+
+    (ordering,) = [e for e in state.edges() if e.data.is_empty()]
+    assert ordering.src is c and ordering.dst.data == "B"
+    assert ordering.data.wcr is None
+    sdfg.validate()
+    out_b, out_c = np.array([1.0]), np.zeros(1)
+    sdfg(B=out_b, C=out_c)
+    assert out_b[0] == 3.0 and out_c[0] == 2.0
+
+
+def test_redundant_second_array_hands_an_ordering_edge_on_without_the_copys_wcr() -> None:
+    """Removing ``T`` in ``A -WCR-> T -> D`` re-sources ``T``'s ordering edge to ``A``; it stays empty and takes no WCR
+    (NestForge, durbin after expanding its fills: work-depth analysis then failed on it)."""
+    sdfg = dace.SDFG("ordering_out_of_an_accumulated_copy")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
+    sdfg.add_array("D", [1], dace.float64)
+    sdfg.add_transient("T", [1], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    first = state.add_tasklet("t", {}, {"o": None}, "o = 2.0")
+    second = state.add_tasklet("t2", {}, {"o": None}, "o = 5.0")
+    a, t, d, c = (state.add_access(name) for name in "ATDC")
+    state.add_edge(first, "o", a, None, Memlet("A[0]"))
+    state.add_edge(a, None, t, None, Memlet("T[0]", wcr="lambda x, y: x + y"))
+    state.add_edge(t, None, d, None, Memlet("D[0]"))
+    state.add_edge(t, None, second, None, Memlet())  # C is stored after T is written
+    state.add_edge(second, "o", c, None, Memlet("C[0]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(RedundantSecondArray, validate=False) == 1
+
+    (ordering,) = [e for e in state.edges() if e.data.is_empty()]
+    assert ordering.src is a and ordering.dst is second
+    assert ordering.data.wcr is None
     sdfg.validate()
 
 
