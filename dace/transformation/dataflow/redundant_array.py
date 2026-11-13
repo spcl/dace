@@ -1016,7 +1016,7 @@ class RedundantArray(pm.SingleStateTransformation):
                 whole, _ = pop_dims(whole, a_dims_to_pop)
             whole_image = compose_and_push_back(bset, whole, b_dims_to_pop, popped)
 
-        # 2. Iterate over the e2 edges and traverse the memlet tree
+        # 2. Iterate over the e2 edges and traverse the memlet tree; an ordering edge writes nothing, so it takes no WCR
         for e2 in graph.in_edges(in_array):
             if e2.data.is_empty():
                 guards = [g for g in write_guards if g is not e2.src and not nx.has_path(graph.nx, g, e2.src)]
@@ -1071,8 +1071,9 @@ class RedundantArray(pm.SingleStateTransformation):
 
             # 2-c. Remove edge and add new one
             graph.remove_edge(e2)
-            e2.data.wcr = wcr
-            e2.data.wcr_nonatomic = wcr_nonatomic
+            if not e2.data.is_empty():
+                e2.data.wcr = wcr
+                e2.data.wcr_nonatomic = wcr_nonatomic
             graph.add_edge(e2.src, e2.src_conn, out_array, e2.dst_conn, e2.data)
 
             # 2-d. Fix strides in nested SDFGs
@@ -1503,7 +1504,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             e1._dst_conn = "views"
             return out_array
 
-        # 2. Iterate over the e2 edges and traverse the memlet tree
+        # 2. Iterate over the e2 edges and traverse the memlet tree; an ordering edge writes nothing, so it takes no WCR
         for e2 in graph.out_edges(out_array):
             path = graph.memlet_tree(e2)
             wcr = e1.data.wcr
@@ -1553,8 +1554,9 @@ class RedundantSecondArray(pm.SingleStateTransformation):
 
             # 2-c. Remove edge and add new one
             graph.remove_edge(e2)
-            e2.data.wcr = wcr
-            e2.data.wcr_nonatomic = wcr_nonatomic
+            if not e2.data.is_empty():
+                e2.data.wcr = wcr
+                e2.data.wcr_nonatomic = wcr_nonatomic
             graph.add_edge(in_array, e2.src_conn, e2.dst, e2.dst_conn, e2.data)
 
             # 2-d. Fix strides in nested SDFGs
@@ -1947,7 +1949,7 @@ class RedundantReadSlice(pm.SingleStateTransformation):
         nviewed_dims = [i for i in range(len(in_desc.shape) - 1, -1, -1) if i not in sliced_dims]
         aset, popped = pop_dims(a_subset, nviewed_dims)
 
-        # Iterate over the e2 edges and traverse the memlet tree
+        # Iterate over the e2 edges and traverse the memlet tree; an ordering edge writes nothing, so it takes no WCR
         for e2 in graph.out_edges(out_array):
             path = graph.memlet_tree(e2)
             wcr = e1.data.wcr
@@ -1983,8 +1985,9 @@ class RedundantReadSlice(pm.SingleStateTransformation):
 
             # Remove edge and add new one
             graph.remove_edge(e2)
-            e2.data.wcr = wcr
-            e2.data.wcr_nonatomic = wcr_nonatomic
+            if not e2.data.is_empty():
+                e2.data.wcr = wcr
+                e2.data.wcr_nonatomic = wcr_nonatomic
             graph.add_edge(in_array, e2.src_conn, e2.dst, e2.dst_conn, e2.data)
 
         # Finally, remove out_array node
@@ -2102,7 +2105,7 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
         nviewed_dims = [i for i in range(len(out_desc.shape) - 1, -1, -1) if i not in sliced_dims]
         aset, popped = pop_dims(a_subset, nviewed_dims)
 
-        # Iterate over the e2 edges and traverse the memlet tree
+        # Iterate over the e2 edges and traverse the memlet tree; an ordering edge writes nothing, so it takes no WCR
         for e2 in graph.in_edges(in_array):
             path = graph.memlet_tree(e2)
             wcr = e1.data.wcr
@@ -2134,8 +2137,9 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
 
             # Remove edge and add new one
             graph.remove_edge(e2)
-            e2.data.wcr = wcr
-            e2.data.wcr_nonatomic = wcr_nonatomic
+            if not e2.data.is_empty():
+                e2.data.wcr = wcr
+                e2.data.wcr_nonatomic = wcr_nonatomic
             graph.add_edge(e2.src, e2.src_conn, out_array, e2.dst_conn, e2.data)
 
         # Finally, remove in_array node

@@ -572,6 +572,52 @@ def test_a_private_scalar_statement_runs_on_every_thread_without_a_barrier():
     assert np.allclose(a, 64 * 3.0)
 
 
+def test_a_one_element_reduction_in_the_team_reduces_into_the_shared_section():
+    """``acc[0] += x[i]`` in the team is an ``omp for`` reducing into the caller's ``acc[0:1]``: a local scalar held
+    for it would be declared inside the region, private to each thread, and GCC rejects reducing into it (pagerank's
+    ``sum(rank)`` after ``expand-library``)."""
+    sdfg = dace.SDFG("team_one_element_reduction")
+    sdfg.add_array("x", [N], dace.float64)
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("acc", [1], dace.float64)
+    outer = loop_region(sdfg, "outer", "N")
+    seed = outer.add_state("seed", is_start_block=True)
+    t = seed.add_tasklet("zero", {}, {"__o": None}, "__o = 0.0")
+    seed.add_edge(t, "__o", seed.add_write("acc"), None, dace.Memlet("acc[0]"))
+    total = outer.add_state("total")
+    total.add_mapped_tasklet(
+        "sum",
+        {"i": "0:N"},
+        {"__x": dace.Memlet("x[i]")},
+        "__o = __x",
+        {"__o": dace.Memlet("acc[0]", wcr="lambda p, q: p + q")},
+        schedule=dtypes.ScheduleType.CPU_Multicore,
+        external_edges=True,
+    )
+    body = outer.add_state("body")
+    body.add_mapped_tasklet(
+        "add",
+        {"i": "0:N"},
+        {"__a": dace.Memlet("a[i]"), "__s": dace.Memlet("acc[0]")},
+        "__o = __a + __s",
+        {"__o": dace.Memlet("a[i]")},
+        schedule=dtypes.ScheduleType.CPU_Multicore,
+        external_edges=True,
+    )
+    outer.add_edge(seed, total, dace.InterstateEdge())
+    outer.add_edge(total, body, dace.InterstateEdge())
+    sdfg.openmp_array_reductions = True
+    sdfg.validate()
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    assert teams(sdfg) == 1
+    code = sdfg.generate_code()[0].clean_code
+    assert re.search(r"#pragma omp for\b.*reduction\(\+:acc\[0:1\]\)", code), code
+    assert "__red_" not in code, "a held local scalar inside the team is thread-private"
+    x, a = np.arange(1.0, 65.0), np.zeros(64)
+    sdfg(x=x, a=a, acc=np.zeros(1), N=64)
+    assert np.allclose(a, 64 * x.sum())
+
+
 def test_scalar_recurrence_in_an_inner_loop_is_not_worth_a_team():
     """``seidel_2d``'s shape: a worksharing map per outer trip, and an inner loop of scalar statements. In a
     team each statement becomes a one-iteration ``omp for`` -- a barrier per element of the inner loop
@@ -1462,6 +1508,7 @@ if __name__ == "__main__":
     test_a_fill_expanding_to_a_map_nest_shares_out_only_its_outer_map()
     test_a_loop_over_small_maps_only_gets_no_team()
     test_top_level_nested_sdfg_in_the_loop_is_refused()
+    test_a_one_element_reduction_in_the_team_reduces_into_the_shared_section()
     test_scalar_recurrence_in_an_inner_loop_is_not_worth_a_team()
     test_loop_local_transient_crossing_two_map_scopes_stays_outside_the_nest()
     test_bulk_copy_between_access_nodes_in_the_loop_is_shared_out_as_a_worksharing_map()
