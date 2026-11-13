@@ -9,7 +9,7 @@ from dace import memlet, properties, sdfg, subsets, symbolic
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowRegion, SDFGState, SymbolResolver
+from dace.sdfg.state import ControlFlowRegion, SDFGState, SymbolResolver, is_read, is_written
 from dace.sdfg.validation import InvalidSDFGEdgeError
 from dace.symbolic import Truth
 from dace.transformation import transformation
@@ -452,10 +452,10 @@ class StateFusionExtended(StateFusion):
             # (crc16's ``c_0``, written in the size-1 kernel the offload wraps around host code and copied to
             # the host after it).
             top_writes = {
-                n.data for n in first_state.data_nodes() if first_scope[n] is None and first_state.in_degree(n) > 0
+                n.data for n in first_state.data_nodes() if first_scope[n] is None and is_written(first_state, n)
             }
             scoped_writes = {
-                n.data for n in first_state.data_nodes() if first_scope[n] is not None and first_state.in_degree(n) > 0
+                n.data for n in first_state.data_nodes() if first_scope[n] is not None and is_written(first_state, n)
             }
             if (scoped_writes - top_writes) & {n.data for n in second_state.data_nodes()}:
                 return False
@@ -468,7 +468,7 @@ class StateFusionExtended(StateFusion):
                 return False
             first_top = {n.data for n in first_state.data_nodes() if first_scope[n] is None}
             first_scoped_reads = {
-                n.data for n in first_state.data_nodes() if first_scope[n] is not None and first_state.out_degree(n) > 0
+                n.data for n in first_state.data_nodes() if first_scope[n] is not None and is_read(first_state, n)
             }
             if (first_scoped_reads - first_top) & {
                 n.data
@@ -477,7 +477,7 @@ class StateFusionExtended(StateFusion):
             }:
                 return False
             second_writes = {
-                n.data for n in second_state.data_nodes() if second_scope[n] is None and second_state.in_degree(n) > 0
+                n.data for n in second_state.data_nodes() if second_scope[n] is None and is_written(second_state, n)
             }
             for dname in second_writes:
                 desc = sdfg.arrays.get(dname)
@@ -487,7 +487,7 @@ class StateFusionExtended(StateFusion):
                     continue
                 if not self.aggressive_merges or not producers_disjoint(first_state, first_scope, dname, sdfg.facts()):
                     return False
-                if not any(second_state.out_degree(n) > 0 for n in second_state.data_nodes() if n.data == dname):
+                if not any(is_read(second_state, n) for n in second_state.data_nodes() if n.data == dname):
                     continue
                 # A read in the second state binds to one node, which has to come after every producer: the producers
                 # that are sinks of the first state become one node, and every other producer already reaches one
@@ -1204,7 +1204,7 @@ class StateFusionExtended(StateFusion):
         absorbed: dict[str, list[nodes.AccessNode]] = {}
         # Per container, the first-state instance its first second-state source read merged with
         bound: dict[str, nodes.AccessNode] = {}
-        second_writes = {n.data for n in second_state.data_nodes() if second_state.in_degree(n) > 0}
+        second_writes = {n.data for n in second_state.data_nodes() if is_written(second_state, n)}
         for node in second_mid:
             # merge only top level nodes, skip everything else
             if node not in top2:
@@ -1239,7 +1239,7 @@ class StateFusionExtended(StateFusion):
                 )
                 took = False
                 for cand in candidates:
-                    if node_waw_flagged and first_state.in_degree(cand) > 0:
+                    if node_waw_flagged and is_written(first_state, cand):
                         continue
                     if StateFusionExtended.memlets_intersect(
                         first_state, [cand], False, second_state, [node], True, facts
@@ -1264,7 +1264,7 @@ class StateFusionExtended(StateFusion):
                     # An unmerged read of a container the second state rewrites stays behind the first-state writers
                     # that rewrite overlaps: the WAW check counted on the merge to order them
                     rewrites = [
-                        n for n in second_state.data_nodes() if n.data == node.data and second_state.in_degree(n)
+                        n for n in second_state.data_nodes() if n.data == node.data and is_written(second_state, n)
                     ]
                     # A source in its own state stopped being a source through an ordering edge alone, and so missed the
                     # merge with the last instance not ahead of it, which the check counted on
@@ -1276,7 +1276,7 @@ class StateFusionExtended(StateFusion):
                     writers = [
                         c
                         for c in candidates
-                        if first_state.in_degree(c) > 0
+                        if is_written(first_state, c)
                         and (
                             c is counted
                             or StateFusionExtended.memlets_intersect(
