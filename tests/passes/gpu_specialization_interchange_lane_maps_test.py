@@ -5,7 +5,7 @@ inside one kernel over every axis the kernels share."""
 import numpy as np
 
 import dace
-from dace import dtypes, nodes
+from dace import dtypes, nodes, symbolic
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.cpu_specialization.interchange_loops_into_lane_maps import (
@@ -145,9 +145,19 @@ def test_blocked_body_numerics():
     assert np.allclose(out, q.sum(axis=1))
 
 
+def test_small_plane_keeps_the_loop_outside():
+    """Columns over two ``SMALL`` axes are a handful of threads: each launch of the plain loop spreads ``i`` across
+    the device instead, so the loop stays outside."""
+    sdfg = column_sweep.to_sdfg(simplify=True)
+    for name in ("NJ", "NK"):
+        sdfg.set_symbol_scale(name, symbolic.Scale.SMALL)
+    assert InterchangeLoopsIntoLaneMaps(target="gpu").apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
     test_time_steps_run_inside_one_map_over_the_plane_columns()
     test_offloaded_sweep_is_one_kernel()
     test_contiguous_stencil_axis_keeps_the_loop_outside()
     test_blocked_body_is_one_map_over_blocks_and_columns()
     test_blocked_body_numerics()
+    test_small_plane_keeps_the_loop_outside()

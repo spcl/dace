@@ -249,8 +249,6 @@ class InterchangeLoopsIntoLaneMaps(ppl.Pass):
     def interchange_tiled(self, loop: LoopRegion) -> bool:
         """CPU, a time-step loop: lanes over every shared axis, a cache tile of the contiguous one each
         (:func:`cpu_lane_tile`), when the tile is that axis and its working set stays in L2."""
-        if lane_axis_of(loop) is None:
-            return False
         sdfg = loop.sdfg
         lanes = mlim.analyze_lanes(loop, sdfg, True, True)
         if lanes.refusal is not None:
