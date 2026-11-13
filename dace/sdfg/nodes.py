@@ -956,6 +956,23 @@ class NestedSDFG(CodeNode):
             missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
             if missing_symbols:
                 raise ValueError(f"Missing symbols on nested SDFG: {missing_symbols}")
+            # A symbol stays constant in its scope and a data container does not, so a mapped value may not read one.
+            # A scalar is passed through a connector and assigned to a symbol on an inter-state edge instead.
+            containers_read = sorted(
+                {
+                    str(s)
+                    for value in self.symbol_mapping.values()
+                    if dace.symbolic.issymbolic(value)
+                    for s in value.free_symbols
+                    if str(s) in sdfg.arrays
+                }
+            )
+            if containers_read:
+                raise ValueError(
+                    f"The symbol mapping of nested SDFG {self.label} ({dict(self.symbol_mapping)}) reads data "
+                    f"containers {containers_read}. Pass them through connectors and assign them to symbols on an "
+                    "inter-state edge of the nested SDFG."
+                )
             # A mapped symbol is given its value by the node, but its type by the nested SDFG
             undeclared_symbols = sorted(s for s in symbols if s not in self.sdfg.symbols)
             if undeclared_symbols:
