@@ -357,6 +357,32 @@ def test_aggressive_fusion_orders_a_write_write_past_a_shared_value():
     assert np.array_equal(_run(sdfg, "fused", A=np.zeros(K))["A"], ref["A"])
 
 
+def test_aggressive_fusion_orders_only_the_first_writer_the_overwrite_overlaps():
+    """The first state writes ``A[k]`` and ``A[0]`` through two access nodes; the second writes ``A[k + 1]``.
+    Only ``A[0]`` may overlap it, so only that writer is ordered before the overwrite (channel_flow's boundary columns
+    beside the interior)."""
+    sdfg = SDFG("aggressive_waw_disjoint_writer")
+    sdfg.add_symbol("k", dtypes.typeclass(int))
+    sdfg.add_array("A", [K + 2], dtypes.typeclass(float))
+    sdfg.add_array("X", [K + 2], dtypes.typeclass(float))
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state_after(first, "second")
+    disjoint = first.add_write("A")
+    first.add_edge(first.add_tasklet("w1", {}, {"o": None}, "o = 1.0"), "o", disjoint, None, Memlet("A[k]"))
+    overlapping = first.add_write("A")
+    first.add_edge(first.add_tasklet("w2", {}, {"o": None}, "o = 2.0"), "o", overlapping, None, Memlet("A[0]"))
+    overwrite = second.add_tasklet("w3", {"i": None}, {"o": None}, "o = i + 3.0")
+    second.add_edge(second.add_read("X"), None, overwrite, "i", Memlet("X[k]"))
+    second.add_edge(overwrite, "o", second.add_write("A"), None, Memlet("A[k + 1]"))
+    ref = _run(sdfg, "ref", A=np.zeros(K + 2), X=np.arange(K + 2, dtype=np.float64))
+    sdfg.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
+    assert sdfg.number_of_nodes() == 1
+    fused = sdfg.nodes()[0]
+    assert nx.has_path(fused._nx, overlapping, overwrite)
+    assert not nx.has_path(fused._nx, disjoint, overwrite)
+    assert np.array_equal(_run(sdfg, "fused", A=np.zeros(K + 2), X=np.arange(K + 2, dtype=np.float64))["A"], ref["A"])
+
+
 def test_a_read_a_disjoint_merge_would_order_stays_before_the_overwrite():
     """The first state reads ``T`` into ``X[0]``; the second overwrites ``T`` from ``X[1]``, which never merges."""
     sdfg = SDFG("disjoint_merge_war")
@@ -2238,6 +2264,7 @@ def test_a_node_only_an_ordering_edge_enters_is_no_writer():
 
 
 if __name__ == "__main__":
+    test_aggressive_fusion_orders_only_the_first_writer_the_overwrite_overlaps()
     test_a_node_only_an_ordering_edge_enters_is_no_writer()
     test_a_read_of_a_container_the_next_state_rewrites_fuses_with_the_read_first()
     test_a_read_disjoint_from_the_writer_never_exempts_a_later_rewrite()

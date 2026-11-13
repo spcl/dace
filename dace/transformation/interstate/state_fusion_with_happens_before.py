@@ -38,6 +38,18 @@ def producers_disjoint(state: SDFGState, scope: dict, name: str, facts) -> bool:
     return all(subsets.intersects(a, b, facts) is Truth.FALSE for i, a in enumerate(written) for b in written[i + 1 :])
 
 
+def overlapping_writers(
+    first_state: SDFGState, writers: list[nodes.AccessNode], second_state: SDFGState, rewrites: list, facts
+) -> list[nodes.AccessNode]:
+    """The first-state ``writers`` whose writes may overlap the second-state ``rewrites``: only those need ordering
+    before them, a disjoint writer stays free to fuse with what the second state runs."""
+    return [
+        n
+        for n in writers
+        if StateFusionExtended.memlets_intersect(first_state, [n], False, second_state, rewrites, False, facts)
+    ]
+
+
 def state_node_order(state: SDFGState) -> dict[nodes.Node, int]:
     """Position of every node of ``state`` in ``state.nodes()`` -- the key ``in_state_order`` sorts by."""
     return {node: i for i, node in enumerate(state.nodes())}
@@ -870,8 +882,10 @@ class StateFusionExtended(StateFusion):
                     ):
                         if not self.aggressive_merges:
                             return False
-                        # Last writer (second) wins: the first writers go before the second's, past the match nodes
-                        self.connections_to_make.append(("read_before", nodes_first, nodes_second))
+                        # Last writer (second) wins: the first writers it overlaps go before the second's, past the
+                        # match nodes
+                        overlapping = overlapping_writers(first_state, nodes_first, second_state, nodes_second, facts)
+                        self.connections_to_make.append(("read_before", overlapping, nodes_second))
                         continue
                     # A WAR edge onto a match keeps it from merging, and that order with it: an overlap needs its own edge
                     if any(
@@ -969,10 +983,10 @@ class StateFusionExtended(StateFusion):
                             # and add a happens-before edge first-write -> second-write so a
                             # later reorder cannot flip the last writer.
                             if d in fused_cc.first_outputs:
-                                nodes_first = first_output_by_data.get(d, [])
-                                if StateFusionExtended.memlets_intersect(
-                                    first_state, nodes_first, False, second_state, nodes_second, False, facts
-                                ):
+                                nodes_first = overlapping_writers(
+                                    first_state, first_output_by_data.get(d, []), second_state, nodes_second, facts
+                                )
+                                if nodes_first:
                                     self.connections_to_make.append(("waw", nodes_first, nodes_second))
                     # End of data race check
 
