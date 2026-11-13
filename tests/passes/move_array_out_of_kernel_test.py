@@ -703,7 +703,7 @@ def test_a_tasklet_body_naming_a_buffer_of_a_nest_without_slicing_maps_gains_the
     assert lift(sdfg) == 1
 
     assert len(body.arrays["order"].shape) == 2, body.arrays["order"].shape
-    assert pick.code.as_string == "__out = __in * order[i, 1]", pick.code.as_string
+    assert ast.unparse(ast.parse(pick.code.as_string)) == "__out = __in * order[i, 1]", pick.code.as_string
     sdfg.validate()
     sdfg.generate_code()
 
