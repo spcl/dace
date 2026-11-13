@@ -669,6 +669,37 @@ def test_a_guard_a_read_needs_leaves_the_map_untiled():
     assert not any(isinstance(node, TileOp) for node, _ in sdfg.all_nodes_recursive())
 
 
+@dace.program
+def scalar_guarded(x: dace.float64[1], a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    for i in range(N):
+        if a[i] > b[i]:
+            c[i] = a[i] * 2.0
+        else:
+            if x[0] > 0.0:
+                c[i] = a[i] + 1.0
+            else:
+                c[i] = c[i] + b[i]
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_a_scalar_condition_reaches_every_lane_through_a_tile_node(dialect: str):
+    """``x[0] > 0`` holds for every lane; a tile node splats it, which every dialect writes, not a C++ lane loop."""
+    import cupy
+
+    sdfg = canonical_tile_sdfg(scalar_guarded)
+    rng = np.random.default_rng(11)
+    a, b, c = rng.random(1000), rng.random(1000), rng.random(1000)
+    device = cupy.asarray(c)
+
+    with tile_backend(dialect):
+        sdfg.compile()(x=cupy.asarray([1.0]), a=cupy.asarray(a), b=cupy.asarray(b), c=device, N=1000)
+
+    assert not any(
+        isinstance(n, dace.nodes.Tasklet) and n.language is dace.Language.CPP for n, _ in sdfg.all_nodes_recursive()
+    )
+    assert np.array_equal(device.get(), np.where(a > b, a * 2.0, a + 1.0))
+
+
 if __name__ == "__main__":
     # TileLang, which has no product reduction, runs under pytest
     for dialect in ("triton", "cutile"):
@@ -691,6 +722,7 @@ if __name__ == "__main__":
         test_a_lane_uniform_loop_runs_inside_the_tile_kernel(dialect)
         test_a_scatter_add_adds_every_lane_atomically(dialect)
         test_a_compaction_stores_only_the_lanes_its_guard_keeps(dialect)
+        test_a_scalar_condition_reaches_every_lane_through_a_tile_node(dialect)
     test_a_tile_node_writing_a_tile_into_one_global_element_is_refused()
     test_a_loop_bounded_by_the_tiled_param_leaves_the_map_untiled()
     test_a_scatter_combined_by_a_max_leaves_the_map_untiled()

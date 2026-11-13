@@ -1625,11 +1625,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
     def _broadcast_scalar_to_tile(
         self, inner_state: SDFGState, src_edge: MultiConnectorEdge[Memlet], dtype: dtypes.typeclass
     ) -> str:
-        # Mint a FULL-TILE transient with element type ``dtype`` and emit a tasklet that reads the Scalar / length-1
-        # source via ``src_edge`` and writes the value to every lane.
-        import dace.dtypes as dtypes
-        from dace.memlet import Memlet
-
+        # Mint a FULL-TILE transient with element type ``dtype`` and splat the Scalar / length-1 source ``src_edge``
+        # reads into every lane through a tile node, which every tile backend lowers.
         sdfg = inner_state.sdfg
         widths = tuple(int(w) for w in self.body_widths)
         arr_name, _ = sdfg.add_array(
@@ -1640,21 +1637,18 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             storage=dtypes.StorageType.Register,
             find_new_name=True,
         )
-        # No C-style cast: a single-element source is a by-value ``T _in``, a multi-element one a
-        # pointer ``T* _in``; the destination tile's element type drives the conversion.
-        src_ref = "_in" if required(src_edge.data.subset).num_elements() == 1 else "_in[0]"
-        tasklet = inner_state.add_tasklet(
-            name=f"bcast_to_tile_{arr_name}",
-            inputs={"_in"},
-            outputs={"_out"},
-            code=lane_loop_code(widths, src_ref),
-            language=dtypes.Language.CPP,
-        )
-        # Wire from the source AN (reuse, not a fresh access) and to a fresh broadcast AN.
-        inner_state.add_edge(src_edge.src, src_edge.src_conn, tasklet, "_in", dace.Memlet.from_memlet(src_edge.data))
         out_an = inner_state.add_access(arr_name)
-        out_subset = ", ".join(f"0:{w}" for w in widths)
-        inner_state.add_edge(tasklet, "_out", out_an, None, Memlet(f"{arr_name}[{out_subset}]"))
+        splat_scalar_to_tile(
+            inner_state,
+            f"bcast_to_tile_{arr_name}",
+            src_edge.src,
+            src_edge.src_conn,
+            src_edge.data,
+            out_an,
+            None,
+            arr_name,
+            widths,
+        )
         return arr_name
 
     def _materialise_symbol_to_tile(

@@ -519,8 +519,11 @@ class TileStatement:
             value, out = f"{self.dialect['fma']}({values['_a']}, {values['_b']}, {values['_c']})", "_o"
         else:
             value, out = f"{self.dialect['where']}({values['_mask']}, {values['_t']}, {values['_e']})", "_o"
-        # A lane-invariant output is one value every active lane agrees on; masked lanes only consume it
-        if isinstance(self.sdfg.arrays[self.outputs[out].data.data], data.Scalar):
+        # A lane-invariant output is one value every active lane agrees on; masked lanes only consume it. A one-element
+        # register holds that value, which a later broadcast splats over the lanes
+        desc = self.sdfg.arrays[self.outputs[out].data.data]
+        invariant = all(o.kind != TILE for o in node.operands())
+        if isinstance(desc, data.Scalar) or (invariant and is_register(desc) and desc.total_size == 1):
             return out, value
         if all(o.kind != TILE for o in node.operands()):
             value = self.dialect.full(node.widths, value, self.sdfg.arrays[self.outputs[out].data.data].dtype)
