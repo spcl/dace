@@ -152,11 +152,9 @@ def in_place(state: SDFGState, found: CopyBack) -> bool:
     target = found.copy.dst
     subset = found.copy.data.get_dst_subset(found.copy, state)
     entry = state.entry_node(found.map_exit)
-    writes = [
-        e
-        for e in state.in_edges(found.map_exit)
-        if e.dst_conn == "IN_" + state.in_edges(found.transient)[0].src_conn[4:]
-    ]
+    # The transient's one value edge names the map-exit connector; an ordering edge beside it names none.
+    (value,) = [e for e in state.in_edges(found.transient) if not e.data.is_empty()]
+    writes = [e for e in state.in_edges(found.map_exit) if e.dst_conn == "IN_" + value.src_conn[4:]]
     if len(writes) != 1 or writes[0].data.is_empty() or writes[0].data.wcr is not None:
         return False
     write = writes[0].data.get_dst_subset(writes[0], state)
