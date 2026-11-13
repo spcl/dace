@@ -213,6 +213,9 @@ class InterchangeLoopsIntoLaneMaps(ppl.Pass):
         """GPU: the whole body of ``sdfg`` becomes one kernel over the lanes all its maps share (module docstring)."""
         if not any(isinstance(block, AbstractControlFlowRegion) for block in sdfg.nodes()):
             return False
+        # The body would take its time-step loops into the lanes too
+        if any(isinstance(r, LoopRegion) and not iterator_indexes(r) for r in sdfg.all_control_flow_regions()):
+            return False
         region = wrap_body(sdfg)
         if self.interchange(region, None):
             return True
