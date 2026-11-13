@@ -625,6 +625,50 @@ def test_a_scatter_combined_by_a_max_leaves_the_map_untiled():
     assert not any(isinstance(node, TileOp) for node, _ in sdfg.all_nodes_recursive())
 
 
+@dace.program
+def compact_positive(src: dace.float64[N], weight: dace.float64[N], packed: dace.float64[N], count: dace.int64[1]):
+    n = 0
+    for i in range(N):
+        if src[i] > 0.0:
+            packed[n] = src[i] * weight[i]
+            n = n + 1
+    count[0] = n
+
+
+@dace.program
+def guarded_gather(a: dace.float64[N], idx: dace.int64[N], out: dace.float64[N]):
+    for i in dace.map[0:N]:
+        if idx[i] >= 0:
+            out[i] = a[idx[i]]
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_a_compaction_stores_only_the_lanes_its_guard_keeps(dialect: str):
+    """The guard keeps ``packed[rank[i]]`` in range, so it stays on the store as a mask: a rejected lane, whose rank is
+    the next kept lane's slot, writes nothing."""
+    import cupy
+
+    rng = np.random.default_rng(10)
+    src, weight = rng.random(1000) - 0.5, rng.random(1000)
+    packed, count = cupy.zeros(1000), cupy.zeros(1, np.int64)
+    kept = src > 0.0
+
+    with tile_backend(dialect):
+        compiled = canonical_tile_sdfg(compact_positive).compile()
+        compiled(src=cupy.asarray(src), weight=cupy.asarray(weight), packed=packed, count=count, N=1000)
+
+    assert count.get()[0] == kept.sum()
+    assert np.array_equal(packed.get()[: kept.sum()], (src * weight)[kept])
+    assert "_cond_expr" in kernel_source(compiled)
+
+
+def test_a_guard_a_read_needs_leaves_the_map_untiled():
+    """``a[idx[i]]`` is in range only where ``idx[i] >= 0``: a mask on the store would not keep the read in range."""
+    sdfg = vectorized_gpu_sdfg(guarded_gather, tile_programs=True)
+
+    assert not any(isinstance(node, TileOp) for node, _ in sdfg.all_nodes_recursive())
+
+
 if __name__ == "__main__":
     # TileLang, which has no product reduction, runs under pytest
     for dialect in ("triton", "cutile"):
@@ -646,6 +690,8 @@ if __name__ == "__main__":
         test_a_lane_invariant_tile_node_stores_the_one_global_element_it_writes(dialect)
         test_a_lane_uniform_loop_runs_inside_the_tile_kernel(dialect)
         test_a_scatter_add_adds_every_lane_atomically(dialect)
+        test_a_compaction_stores_only_the_lanes_its_guard_keeps(dialect)
     test_a_tile_node_writing_a_tile_into_one_global_element_is_refused()
     test_a_loop_bounded_by_the_tiled_param_leaves_the_map_untiled()
     test_a_scatter_combined_by_a_max_leaves_the_map_untiled()
+    test_a_guard_a_read_needs_leaves_the_map_untiled()

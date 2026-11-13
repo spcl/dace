@@ -181,7 +181,7 @@ def iteration_symbol_ranges(
     return ranges
 
 
-def arm_accesses_are_in_range_unguarded(cb: ConditionalBlock) -> bool:
+def arm_accesses_are_in_range_unguarded(cb: ConditionalBlock, reads_only: bool = False) -> bool:
     """Whether every access in every arm stays in bounds with the guard removed.
 
     If-conversion makes both arms unconditional, so it's sound only when arm accesses never
@@ -197,6 +197,7 @@ def arm_accesses_are_in_range_unguarded(cb: ConditionalBlock) -> bool:
     nothing. A single-arm block has no such exemption -- its accesses run only under the guard.
 
     :param cb: the candidate conditional block.
+    :param reads_only: Prove the reads alone, for a lowering that keeps the guard on the writes.
     :returns: ``True`` only if every arm access is provably in range without the guard.
     """
     ranges = iteration_symbol_ranges(cb)
@@ -227,7 +228,11 @@ def arm_accesses_are_in_range_unguarded(cb: ConditionalBlock) -> bool:
         for state in body.states():
             for edge in state.edges():
                 memlet = edge.data
-                if memlet is None or memlet.data is None:
+                if (
+                    memlet is None
+                    or memlet.data is None
+                    or (reads_only and isinstance(edge.dst, dace.nodes.AccessNode))
+                ):
                     continue
                 if (memlet.data, str(memlet.subset)) in common:
                     continue  # the taken branch performs this access in the scalar form too
