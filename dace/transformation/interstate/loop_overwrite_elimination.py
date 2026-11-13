@@ -3,6 +3,8 @@
 
 import copy
 
+import sympy
+
 from dace import nodes, symbolic
 from dace import sdfg as sd
 from dace.sdfg import utils as sdutil
@@ -55,6 +57,10 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
         end = loop_analysis.get_loop_end(self.loop)
         stride = loop_analysis.get_loop_stride(self.loop)
         if start is None or end is None or stride is None:
+            return False
+        # Keeping the last iteration runs the body once, so the loop must provably run at least once.
+        runs = (end - start) * stride >= 0
+        if not (runs is True or runs is sympy.true):
             return False
 
         # Check if any continue, break, or return statements are present in the loop.
