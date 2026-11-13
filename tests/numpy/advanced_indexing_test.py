@@ -13,6 +13,13 @@ from dace.frontend.python.common import DaceSyntaxError
 N = dace.symbol("N")
 M = dace.symbol("M")
 
+# The nanobind interface requires numpy arrays for array arguments; unlike the
+# ctypes marshaller it does not coerce a Python list to an array (that would tax
+# the common fast path). The tests below pass a Python list for an array
+# parameter, so they are ctypes-only.
+# ctypes-pinned here: nanobind requires numpy arrays for array arguments (no list coercion).
+# (The shared `ctypes_interface` fixture lives in tests/conftest.py.)
+
 
 def test_flat():
 
@@ -134,6 +141,7 @@ def test_multiple_newaxis():
     assert np.allclose(A[np.newaxis, :, np.newaxis, np.newaxis, :, np.newaxis, :, np.newaxis], res)
 
 
+@pytest.mark.usefixtures("ctypes_interface")
 def test_index_intarr_1d():
 
     @dace.program
@@ -264,6 +272,7 @@ def test_index_boolarr_inline():
     assert np.allclose(regression, A)
 
 
+@pytest.mark.usefixtures("ctypes_interface")
 def test_out_index_intarr():
 
     @dace.program
@@ -279,6 +288,7 @@ def test_out_index_intarr():
     assert np.allclose(A, ref)
 
 
+@pytest.mark.usefixtures("ctypes_interface")
 def test_out_index_intarr_bcast():
 
     @dace.program
@@ -295,6 +305,7 @@ def test_out_index_intarr_bcast():
     assert np.allclose(A, ref)
 
 
+@pytest.mark.usefixtures("ctypes_interface")
 def test_out_index_intarr_aug():
 
     @dace.program
@@ -310,6 +321,7 @@ def test_out_index_intarr_aug():
     assert np.allclose(A, ref)
 
 
+@pytest.mark.usefixtures("ctypes_interface")
 def test_out_index_intarr_aug_bcast():
 
     @dace.program
@@ -326,6 +338,7 @@ def test_out_index_intarr_aug_bcast():
     assert np.allclose(A, ref)
 
 
+@pytest.mark.usefixtures("ctypes_interface")
 def test_out_index_intarr_multidim():
 
     @dace.program
@@ -341,6 +354,7 @@ def test_out_index_intarr_multidim():
     assert np.allclose(A, ref)
 
 
+@pytest.mark.usefixtures("ctypes_interface")
 def test_out_index_intarr_multidim_range():
 
     @dace.program
