@@ -10,11 +10,19 @@ physics sweep over levels ``k`` of independent blocks ``b`` runs a block at a ti
 A map without the lane axis that holds lane maps (a short species loop lifted to a map) runs whole on each lane:
 when it is small it becomes a loop first, its nest inlined, so the lane analysis sees the maps it holds.
 
-The CPU gate: the loop's iterator indexes something (a time-step loop re-applies the same statements to the same
-cells, so moving it into the lanes only grows each lane's working set: fv3_xppm 2.1 s -> 3.4 s), the lane axis is not
-small, and the loop variable strides no wider than the lane parameter, so the innermost axis of every map stays
-innermost. Runs while schedules are still ``Default``, so inference makes the
-lane map the parallel one and every map inside it sequential.
+The CPU gate: the loop's iterator indexes something, the lane axis is not small, and the loop variable strides no
+wider than the lane parameter, so the innermost axis of every map stays innermost. A time-step loop (its iterator
+indexes nothing) re-applies the same statements to the same cells: moved into whole lanes it only grows each lane's
+working set (fv3_xppm 2.1 s -> 3.4 s). It moves only into cache tiles (:func:`cpu_lane_tile`): the lanes are every
+axis the maps share, the contiguous one stepped by a tile whose working set stays in L2 from one step to the next.
+Runs while schedules are still ``Default``, so inference makes the lane map the parallel one and every map inside it
+sequential.
+
+The GPU gate (``target='gpu'``, before the offload): the lanes are every axis the maps share, so each thread owns a
+column and runs the whole loop over it, one launch instead of one per map and trip. The lanes must not all be small
+(they are the threads) and must hold the most contiguous axis (:func:`lanes_coalesce`): adjacent threads stay
+adjacent in memory. Before the loops, the whole body of the SDFG is tried as one region run once: CLOUDSC over
+blocks, every map over ``(nblocks, klon)``, becomes one kernel with every level loop inside.
 """
 
 import numbers

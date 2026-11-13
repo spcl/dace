@@ -673,7 +673,9 @@ def lane_refusal(loop: LoopRegion, sdfg: sd.SDFG, facts: LaneFacts, axis: bool =
     ref_state, ref_entry = facts.lanes[0]
     lane_dims = {entry: list(facts.dims[entry]) if axis else list(range(len(entry.map.range))) for _, entry in facts.lanes}
     ref = sbs.Range([ref_entry.map.range[d] for d in lane_dims[ref_entry]])
-    lanes = [ref_entry.map.params[d] for d in lane_dims[ref_entry]]
+    # Fresh names: a map's own dimensions stay inside it, and may carry another map's lane parameter name
+    taken = OrderedSet(p for _, entry in facts.lanes for p in entry.map.params)
+    lanes = [find_new_name(f"__lane{j}", taken) for j in range(len(lane_dims[ref_entry]))]
     invariant = (OrderedSet(sdfg.symbols) | OrderedSet(sdfg.constants)) - assigned_symbols(loop)
     renames = {}
     for state, entry in facts.lanes:
@@ -681,9 +683,6 @@ def lane_refusal(loop: LoopRegion, sdfg: sd.SDFG, facts: LaneFacts, axis: bool =
         if len(own) != len(ref) or not all(same_value(x, y) for r, q in zip(own, ref) for x, y in zip(r, q)):
             return f"map {entry.map.label} spans {entry.map.range}, not {ref}"
         renames[entry] = {entry.map.params[d]: lane for d, lane in zip(lane_dims[entry], lanes)}
-        # A map's own dimensions stay inside it: its parameters must not take a lane's name
-        if (OrderedSet(entry.map.params) - OrderedSet(renames[entry])) & OrderedSet(lanes):
-            return f"map {entry.map.label} reuses a lane name for its own dimension"
         if any(not c.startswith("IN_") for c in entry.in_connectors):
             return f"map {entry.map.label} has a dynamic range"
     if all(same_value(b, e) for b, e, _ in ref):

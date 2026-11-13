@@ -825,6 +825,9 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False, tile_programs: bool = Fal
     recompute_fuse_for_gpu(sdfg)
     # Before the offload reads a map around a small GEMM as a host loop of vendor calls.
     SpecializeSmallGemms(dtypes.DeviceType.GPU).apply_pass(sdfg, {})
+    # While schedules are Default, and before the species maps unroll into nests the lane analysis does not enter:
+    # a loop (or the whole body) over maps sharing their lane axes becomes one kernel with the loop inside.
+    InterchangeLoopsIntoLaneMaps(target="gpu").apply_pass(sdfg, {})
     # Before the offload makes a map over a handful of species the kernel: the planes in its body are the kernels.
     from dace.transformation.passes.unroll_small_maps import UnrollSmallMaps
 
@@ -833,8 +836,6 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False, tile_programs: bool = Fal
     if demote_uncoalesced_level_maps(sdfg):
         # The level loops are new to the launch rule: one that can run inside its planes makes the nest one launch.
         MoveLoopIntoMapGated(target="gpu").apply_pass(sdfg, {})
-    # While schedules are Default: a loop over maps sharing their lane axes becomes one kernel with the loop inside.
-    InterchangeLoopsIntoLaneMaps(target="gpu").apply_pass(sdfg, {})
     # Before the offload decides what a kernel can own: a buffer sized per iteration by data is allocated by the host.
     BoundDataDependentExtents().apply_pass(sdfg, {})
     apply_gpu_storage(sdfg)
