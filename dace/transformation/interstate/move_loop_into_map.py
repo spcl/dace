@@ -27,6 +27,7 @@ from dace.sdfg.state import (
     LoopRegion,
     SDFGState,
     SymbolResolver,
+    is_written,
 )
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
@@ -985,7 +986,7 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
         # one may be read at any positions (its propagated subset can be a union such as ``Min(0, i):Max(i, N)``).
         mparams = set(map_entry.map.params)
         data_dependency = dict()
-        written = {n.data for n in subgraph.nodes() if isinstance(n, nodes.AccessNode) and body.in_degree(n) > 0}
+        written = {n.data for n in subgraph.nodes() if isinstance(n, nodes.AccessNode) and is_written(body, n)}
         written |= {e.data.data for e in body.out_edges(body.exit_node(map_entry)) if e.data.data}
         for e in body.edges():
             if e.src in subgraph.nodes() and e.dst in subgraph.nodes():
