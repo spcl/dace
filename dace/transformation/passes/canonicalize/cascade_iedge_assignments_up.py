@@ -64,7 +64,7 @@ from dace import SDFG, data
 from dace.frontend.python import astutils
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState, is_written
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis.loop_analysis import loop_header_names
@@ -152,7 +152,7 @@ def _region_writes(region: ControlFlowRegion) -> tuple[dict[str, None], dict[str
             asyms[str(inner.loop_variable)] = None
     for st in region.states():
         for n in st.nodes():
-            if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
+            if isinstance(n, nodes.AccessNode) and is_written(st, n):
                 wdata[n.data] = None
     return asyms, wdata
 
@@ -171,7 +171,7 @@ def build_region_index(region: ControlFlowRegion) -> tuple[dict[str, list[str]],
             by_key.setdefault(lhs, []).append(str(rhs_value))
     for st in region.states():
         for n in st.nodes():
-            if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
+            if isinstance(n, nodes.AccessNode) and is_written(st, n):
                 written[n.data] = None
     return by_key, written
 
@@ -286,7 +286,7 @@ def _block_writes(block: ControlFlowBlock) -> tuple[dict[str, None], dict[str, N
     wdata: dict[str, None] = {}
     if isinstance(block, SDFGState):
         for n in block.nodes():
-            if isinstance(n, nodes.AccessNode) and block.in_degree(n) > 0:
+            if isinstance(n, nodes.AccessNode) and is_written(block, n):
                 wdata[n.data] = None
     return asyms, wdata
 

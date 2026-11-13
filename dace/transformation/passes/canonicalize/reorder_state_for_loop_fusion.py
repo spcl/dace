@@ -69,6 +69,7 @@ from dace.sdfg.state import (
     LoopRegion,
     ReturnBlock,
     SDFGState,
+    is_written,
 )
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -164,7 +165,7 @@ class ReorderStateForLoopFusion(ppl.Pass):
         states = [block] if isinstance(block, SDFGState) else block.states()
         for s in states:
             for an in s.data_nodes():
-                if s.in_degree(an):
+                if is_written(s, an):
                     writes.add(an.data)
                 if s.out_degree(an):
                     reads.add(an.data)

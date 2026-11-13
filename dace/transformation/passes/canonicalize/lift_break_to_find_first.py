@@ -54,6 +54,7 @@ from dace.sdfg.state import (
     LoopRegion,
     ReturnBlock,
     SDFGState,
+    is_written,
 )
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -137,7 +138,7 @@ def written_data(blocks: list[ControlFlowBlock]) -> set[str]:
         )
         for state in states:
             for node in state.data_nodes():
-                if state.in_degree(node) > 0:
+                if is_written(state, node):
                     written.add(node.data)
     return written
 

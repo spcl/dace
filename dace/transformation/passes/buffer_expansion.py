@@ -37,7 +37,7 @@ from typing import Any
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import memoize_facts
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import LoopRegion, SDFGState, is_written
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.scalar_fission import (
     AccessIndex,
@@ -274,7 +274,7 @@ class BufferExpansion(ppl.Pass):
         }
         written: dict[str, set[SDFGState]] = {}
         for name in reindexable:
-            states = {st for st in index.states(name) if any(st.in_degree(n) for n in index.nodes(st, name))}
+            states = {st for st in index.states(name) if any(is_written(st, n) for n in index.nodes(st, name))}
             if states:
                 written[name] = states
         return written

@@ -9,6 +9,7 @@ from dace.config import Config
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.state import is_written
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.transient_reuse import BufferSharing, StateOrder, sharing_storages
 from dace.transformation.transformation import explicit_cf_compatible
@@ -247,7 +248,7 @@ class Coalescing:
             if any(n is not transient and n not in before for n in mine):
                 return False
             # The copy is the container's only write here: another one is ordered against the copy, not the producers.
-            if any(n is not other and n.data == other.data and state.in_degree(n) > 0 for n in state.data_nodes()):
+            if any(n is not other and n.data == other.data and is_written(state, n) for n in state.data_nodes()):
                 return False
         elif any(not e.data.is_empty() for n in mine for e in state.in_edges(n) if e is not copy.into):
             return False

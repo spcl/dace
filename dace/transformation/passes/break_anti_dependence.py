@@ -64,7 +64,7 @@ from dace.sdfg import SDFG, nodes
 from dace.sdfg import tasklet_utils as tutil
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.narrowing import as_basic, as_expr
-from dace.sdfg.state import LoopRegion, SymbolResolver
+from dace.sdfg.state import LoopRegion, SymbolResolver, is_written
 from dace.transformation import pass_pipeline as ppl
 
 
@@ -1197,7 +1197,7 @@ class BreakAntiDependence(ppl.Pass):
         internal_syms = self._loop_internal_symbols(loop)
         written = sorted(
             dict.fromkeys(
-                n.data for n in state.data_nodes() if state.in_degree(n) > 0 and not sdfg.arrays[n.data].transient
+                n.data for n in state.data_nodes() if is_written(state, n) and not sdfg.arrays[n.data].transient
             )
         )
         plans = []
@@ -1393,7 +1393,7 @@ class BreakAntiDependence(ppl.Pass):
         written, read, both = [], [], False
         for state in loop.states():
             nodes_of = [n for n in state.data_nodes() if n.data == name]
-            if any(state.in_degree(n) > 0 for n in nodes_of):
+            if any(is_written(state, n) for n in nodes_of):
                 written.append(state)
             if any(state.out_degree(n) > 0 for n in nodes_of):
                 read.append(state)

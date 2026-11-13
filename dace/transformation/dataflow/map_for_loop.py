@@ -9,7 +9,7 @@ from dace.data import Scalar, View
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import LoopRegion, is_written
 from dace.transformation import transformation
 
 
@@ -379,6 +379,6 @@ class MapToForLoop(transformation.SingleStateTransformation):
         if parallel:
             from dace.transformation.passes.analysis import loop_analysis  # Avoid import loop
 
-            written = {n.data for st in loop_region.states() for n in st.data_nodes() if st.in_degree(n) > 0}
+            written = {n.data for st in loop_region.states() for n in st.data_nodes() if is_written(st, n)}
             loop_analysis.mark_known_parallel(loop_region, written)
         return node, nstate

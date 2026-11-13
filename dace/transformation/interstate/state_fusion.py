@@ -12,7 +12,7 @@ from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import Edge
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, SDFGState, SymbolResolver
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, SDFGState, SymbolResolver, is_written
 from dace.symbolic import Truth
 from dace.transformation import transformation
 
@@ -192,7 +192,7 @@ def assignments_move_before(block: ControlFlowBlock, edge: Edge, in_edges: list[
         # Fail if assignments have free symbols that are updated in the
         # first state
         if freesyms and any(
-            n.data in freesyms for n in block.nodes() if isinstance(n, nodes.AccessNode) and block.in_degree(n) > 0
+            n.data in freesyms for n in block.nodes() if isinstance(n, nodes.AccessNode) and is_written(block, n)
         ):
             return False
         # Fail if symbol is used in the dataflow of that state. Last of the four: the

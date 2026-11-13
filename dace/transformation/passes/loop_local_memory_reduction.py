@@ -8,7 +8,7 @@ from dace import properties, symbolic
 from dace import sdfg as sd
 from dace.data import Scalar
 from dace.ordered import OrderedSet
-from dace.sdfg.state import LoopRegion, SymbolResolver
+from dace.sdfg.state import LoopRegion, SymbolResolver, is_written
 from dace.subsets import Range
 from dace.symbolic import issymbolic, pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
@@ -448,7 +448,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
             for an in st.data_nodes():
                 if an.data != array_name:
                     continue
-                if st.in_degree(an) > 0:
+                if is_written(st, an):
                     write_locations.append((st, an))
                 if st.out_degree(an) > 0:
                     read_locations.append((st, an))

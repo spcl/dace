@@ -46,6 +46,7 @@ from dace.sdfg.state import (
     LoopRegion,
     ReturnBlock,
     SDFGState,
+    is_written,
 )
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.split_statements import value_edges
@@ -665,7 +666,7 @@ class StateValues:
 def written_arrays(block: ControlFlowBlock) -> dict[str, None]:
     """Every container any state inside ``block`` writes."""
     states = [block] if isinstance(block, SDFGState) else block.states()
-    return dict.fromkeys(n.data for st in states for n in st.data_nodes() if st.in_degree(n) > 0)
+    return dict.fromkeys(n.data for st in states for n in st.data_nodes() if is_written(st, n))
 
 
 def summarize(sdfg: SDFG, loop: LoopRegion) -> Summary:

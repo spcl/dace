@@ -38,7 +38,7 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_expr
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import LoopRegion, SDFGState, is_written
 from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
@@ -315,7 +315,7 @@ def steps_alike(loop: LoopRegion, states: list[SDFGState], lane_syms: dict[str, 
     """Whether no body edge decides, and each assignment but a lane symbol's holds the same value however often it runs:
     the re-rolled body runs ``m`` times as often, and only the lanes account for that."""
     varying = {sym for edge in loop.edges() for sym in edge.data.assignments}
-    varying |= {n.data for st in states for n in st.data_nodes() if st.in_degree(n) > 0}
+    varying |= {n.data for st in states for n in st.data_nodes() if is_written(st, n)}
     for edge in loop.edges():
         if not edge.data.is_unconditional():
             return False
@@ -1141,9 +1141,7 @@ class RerollUnrolledLoops(ppl.Pass):
             for sym, rhs in edge.data.assignments.items()
             if sym in sym_offset
         }
-        written = {
-            n.data for st in states for n in st.data_nodes() if st.in_degree(n) > 0 and n.desc(st.sdfg).transient
-        }
+        written = {n.data for st in states for n in st.data_nodes() if is_written(st, n) and n.desc(st.sdfg).transient}
         sigs = [
             lane_signature(loop, states, d, private[d], edges[d], aliases, sym_offset, gathers, written, ids)
             for d in private

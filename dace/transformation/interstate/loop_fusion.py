@@ -49,6 +49,7 @@ from dace.sdfg.state import (
     LoopRegion,
     SDFGState,
     SymbolResolver,
+    is_written,
 )
 from dace.transformation import helpers, transformation
 from dace.transformation.passes.analysis import loop_analysis
@@ -500,10 +501,7 @@ class LoopFusion(transformation.MultiStateTransformation):
         return any(
             isinstance(region, ConditionalBlock)
             and any(
-                state.in_degree(node) > 0
-                for state in region.states()
-                for node in state.data_nodes()
-                if node.data == arr
+                is_written(state, node) for state in region.states() for node in state.data_nodes() if node.data == arr
             )
             for region in loop.all_control_flow_blocks()
         )

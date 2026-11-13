@@ -181,7 +181,15 @@ from dace.libraries.standard.nodes.reduce import Reduce
 from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_expr, as_range, coeff_of, simplified
-from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import (
+    BreakBlock,
+    ConditionalBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    SDFGState,
+    is_written,
+)
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
@@ -1341,7 +1349,7 @@ class ArgMaxLift(ppl.Pass):
         assign_tasklet -> carrier_AN`` writing ``carrier = arr[gather_base +
         gather_coeff*loop_var]`` -- the SAME element the comparison gathered."""
         # Single write AccessNode for the carrier.
-        carrier_writes = [n for n in state.data_nodes() if n.data == carrier and state.in_degree(n) > 0]
+        carrier_writes = [n for n in state.data_nodes() if n.data == carrier and is_written(state, n)]
         if len(carrier_writes) != 1:
             return False
         carrier_an = carrier_writes[0]

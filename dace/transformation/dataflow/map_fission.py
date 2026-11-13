@@ -15,7 +15,7 @@ from dace.sdfg import graph as gr
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.propagation import propagate_memlets_state, propagate_subset
-from dace.sdfg.state import ConditionalBlock, LoopRegion, SymbolResolver
+from dace.sdfg.state import ConditionalBlock, LoopRegion, SymbolResolver, is_written
 from dace.symbolic import int_floor, pystr_to_symbolic
 from dace.transformation import helpers, transformation
 
@@ -648,7 +648,7 @@ class MapFission(transformation.SingleStateTransformation):
         :returns: ``False`` if a conditional in ``body`` reads a blocked name.
         """
         blocked = set(blocked) | {name for edge in body.all_interstate_edges() for name in edge.data.assignments}
-        blocked |= {node.data for state in body.states() for node in state.data_nodes() if state.in_degree(node) > 0}
+        blocked |= {node.data for state in body.states() for node in state.data_nodes() if is_written(state, node)}
         for block in body.all_control_flow_blocks():
             if isinstance(block, ConditionalBlock) and any(
                 {str(sym) for sym in cond.get_free_symbols()} & blocked for cond, region in block.branches if cond

@@ -47,7 +47,7 @@ from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.sdfg.state import ConditionalBlock, LoopRegion, is_read
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
@@ -286,7 +286,7 @@ def descriptor_access_summary(sdfg: SDFG) -> tuple[set[str], set[str], set[str]]
         for node in state.nodes():
             if not isinstance(node, nodes.AccessNode):
                 continue
-            if state.out_degree(node) > 0:
+            if is_read(state, node):
                 read.add(node.data)
             in_edges = state.in_edges(node)
             if any(not e.data.is_empty() for e in in_edges):

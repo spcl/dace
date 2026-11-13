@@ -38,6 +38,7 @@ from dace.sdfg.state import (
     LoopRegion,
     SDFGState,
     SymbolResolver,
+    is_written,
 )
 from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
 from dace.transformation.passes.analysis.smt_dependence import z3
@@ -93,7 +94,7 @@ def write_edges(block: ControlFlowBlock | SDFG, name: str) -> list[tuple[SDFGSta
 
 
 def writes(block: ControlFlowBlock, name: str) -> bool:
-    return any(dn.data == name and st.in_degree(dn) > 0 for st in states_of(block) for dn in st.data_nodes())
+    return any(dn.data == name and is_written(st, dn) for st in states_of(block) for dn in st.data_nodes())
 
 
 def assigns(block: ControlFlowBlock, name: str) -> bool:
@@ -843,7 +844,7 @@ def resolved_range(loop: LoopRegion) -> tuple[Any, Any, Any] | None:
                     values[name] = value
             changed |= set(edge.data.assignments)
         if block is not loop:
-            changed |= {dn.data for st in states_of(block) for dn in st.data_nodes() if st.in_degree(dn) > 0}
+            changed |= {dn.data for st in states_of(block) for dn in st.data_nodes() if is_written(st, dn)}
             if not isinstance(block, SDFGState):
                 changed |= set(assigned_in(block))
     start, end, step = bounds

@@ -76,6 +76,7 @@ from dace.sdfg.state import (
     LoopRegion,
     SDFGState,
     SymbolResolver,
+    is_written,
 )
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -707,7 +708,7 @@ def _clamp_carrier_reads(block: ControlFlowBlock, sdfg: SDFG, facts: symbolic.Fa
     if not isinstance(block, SDFGState):
         return
     written = {
-        node.data for node in block.data_nodes() if block.in_degree(node) > 0 and not sdfg.arrays[node.data].transient
+        node.data for node in block.data_nodes() if is_written(block, node) and not sdfg.arrays[node.data].transient
     }
     for edge in block.edges():
         src = edge.src
@@ -915,7 +916,7 @@ def _merge_state_into(s1: SDFGState, s2: SDFGState):
     endpoints, and ``s2`` is left empty (the caller removes it from the parent CFG).
     """
     # data -> s1's write-side AccessNode (the one with incoming edges).
-    s1_writes = {n.data: n for n in s1.data_nodes() if s1.in_degree(n) > 0}
+    s1_writes = {n.data: n for n in s1.data_nodes() if is_written(s1, n)}
     # Snapshot before mutating: s2's nodes and edges, plus the per-node classification.
     s2_nodes = list(s2.nodes())
     s2_edges = list(s2.edges())
@@ -2294,7 +2295,7 @@ def _find_scalar_carry_candidates(state: SDFGState, sdfg: SDFG) -> list[str]:
         if not is_scalar:
             continue
         candidates.add(n.data)
-        if state.in_degree(n) > 0:
+        if is_written(state, n):
             writes.add(n.data)
         if state.out_degree(n) > 0:
             reads.add(n.data)
@@ -2605,7 +2606,7 @@ def _resolve_per_iter_gather(state: SDFGState, edge, sdfg: SDFG, loop_var: str):
             return None
         # A transient the body only reads is as good a source as an argument
         read_only = state.in_degree(cur) == 0 and not any(
-            dn.data == cur.data and state.in_degree(dn) > 0 for dn in state.data_nodes()
+            dn.data == cur.data and is_written(state, dn) for dn in state.data_nodes()
         )
         if not desc.transient or (read_only and _classify_subset(last_edge.data.subset, loop_var)[0] is not None):
             # Reached the non-transient source. The array-level gather subset
@@ -2756,7 +2757,7 @@ def _find_carried_arrays(state: SDFGState, sdfg: SDFG, loop_var: str) -> list[st
             continue
         if n.data not in arrays_with_carrier_subset:
             continue
-        if state.in_degree(n) > 0:
+        if is_written(state, n):
             writes.add(n.data)
         if state.out_degree(n) > 0:
             reads.add(n.data)

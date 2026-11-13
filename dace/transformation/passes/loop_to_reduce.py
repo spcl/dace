@@ -27,7 +27,7 @@ from dace.ordered import OrderedSet
 from dace.sdfg import graph as gr
 from dace.sdfg.propagation import propagate_subset
 from dace.sdfg.sdfg import forget_all_facts, memoize_facts
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SymbolResolver
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SymbolResolver, is_written
 from dace.symbolic import AND, OR, Subscript, bitwise_and, bitwise_or
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -1218,7 +1218,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
         # copy) from a loop-invariant scalar that merely happens to be scalar-equivalent to the
         # write target -- e.g. scaled scatter ``out_slice = arr[jl, jk] * zq`` (``zq = 1/ptsphy``
         # hoisted out), NOT a reduction.
-        carried = {an.data for st in loop.states() for an in st.data_nodes() if st.in_degree(an) > 0}
+        carried = {an.data for st in loop.states() for an in st.data_nodes() if is_written(st, an)}
         accum_ok = False
         array, arr_subset = None, None
         carried_accum, carried_sub, carried_conn, array_conn = None, None, None, None
@@ -1285,7 +1285,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
         allowed = {accum} | ({carried_accum} if carried_accum is not None else set())
         for st in loop.states():
             for an in st.data_nodes():
-                if st.in_degree(an) == 0:
+                if not is_written(st, an):
                     continue
                 if an.data in allowed:
                     # Another write of the accumulator ends the fold (``acc = acc + a[i]; acc = b``)

@@ -23,6 +23,7 @@ from dace.sdfg.state import (
     LoopRegion,
     ReturnBlock,
     SDFGState,
+    is_written,
 )
 
 if TYPE_CHECKING:
@@ -273,7 +274,7 @@ def written_names(region: ControlFlowRegion) -> set[str]:
     for edge in region.all_interstate_edges():
         written.update(edge.data.assignments)
     for state in region.states():
-        written.update(node.data for node in state.data_nodes() if state.in_degree(node) > 0)
+        written.update(node.data for node in state.data_nodes() if is_written(state, node))
     return written
 
 
@@ -352,7 +353,7 @@ def range_holds(loop: LoopRegion, bounds: tuple, sdfg: "dace.SDFG", facts: symbo
     if any(sdfg.arrays[name].dtype not in dtypes.INTEGER_TYPES for name in containers):
         return False
     if containers and any(
-        dn.data in containers and st.in_degree(dn) > 0 for st in loop.states() for dn in st.data_nodes()
+        dn.data in containers and is_written(st, dn) for st in loop.states() for dn in st.data_nodes()
     ):
         return False
     if interstate_bound_names(loop, loop) & (reads | {iterator}):

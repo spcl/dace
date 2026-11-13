@@ -32,7 +32,7 @@ from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg import tasklet_utils as tutil
 from dace.sdfg.narrowing import as_expr
-from dace.sdfg.state import ControlFlowBlock, LoopRegion
+from dace.sdfg.state import ControlFlowBlock, LoopRegion, is_written
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -149,7 +149,7 @@ def scatter_index_is_provably_injective(sdfg: SDFG, idx_name: str) -> bool:
     if not desc.transient:
         return False
 
-    writers = [(st, n) for st in sdfg.states() for n in st.data_nodes() if n.data == idx_name and st.in_degree(n) > 0]
+    writers = [(st, n) for st in sdfg.states() for n in st.data_nodes() if n.data == idx_name and is_written(st, n)]
     if len(writers) != 1:  # multiple / partial / no writers -> cannot prove full-domain coverage
         return False
     state, node = writers[0]
@@ -315,7 +315,7 @@ def _find_definition_states(sdfg: SDFG, idx_name: str) -> set[SDFGState]:
         st
         for sd in sdfg.all_sdfgs_recursive()
         for st in sd.states()
-        if any(n.data == idx_name and st.in_degree(n) > 0 for n in st.data_nodes())
+        if any(n.data == idx_name and is_written(st, n) for n in st.data_nodes())
     }
 
 

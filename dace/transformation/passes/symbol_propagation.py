@@ -21,6 +21,7 @@ from dace.sdfg.state import (
     ControlFlowBlock,
     ControlFlowRegion,
     LoopRegion,
+    is_written,
 )
 from dace.symbolic import SymbolicType, equalize_symbols_across, pystr_to_symbolic, serialization_symbol_dtypes
 from dace.transformation import pass_pipeline as ppl
@@ -75,7 +76,7 @@ def opaque_scalar_names(sdfg: SDFG) -> set[str]:
     opaque: set[str] = set()
     for state in sdfg.states():
         for n in state.data_nodes():
-            if state.in_degree(n) == 0:
+            if not is_written(state, n):
                 continue
             desc = sdfg.arrays.get(n.data)
             if isinstance(desc, dt.Scalar):

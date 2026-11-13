@@ -18,7 +18,7 @@ from dace.sdfg import sdfg as sdfg_module
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg.replace import replace_in_codeblock
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import LoopRegion, is_read, is_written
 from dace.transformation import helpers, transformation
 from dace.utils import find_new_name
 
@@ -109,7 +109,7 @@ def keep_nest_order(
 def accessed(state: SDFGState, node: nodes.Node) -> tuple[set[str], set[str]]:
     """The containers ``node`` reads and writes through its edges."""
     if isinstance(node, nodes.AccessNode):
-        return ({node.data} if state.out_degree(node) else set()), ({node.data} if state.in_degree(node) else set())
+        return ({node.data} if is_read(state, node) else set()), ({node.data} if is_written(state, node) else set())
     reads = {e.data.data for e in state.in_edges(node) if e.data.data is not None}
     writes = {e.data.data for e in state.out_edges(node) if e.data.data is not None}
     return reads, writes

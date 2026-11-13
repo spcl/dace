@@ -19,7 +19,7 @@ from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_expr
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState, is_written
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
@@ -212,7 +212,7 @@ def _per_iter_bridges(state: SDFGState, loop_var: str | None, sdfg: SDFG) -> lis
     nodes of every non-transient container ``state`` accesses only per iteration. Reads the graph only."""
     if loop_var is None:
         return []
-    written = OrderedSet(n.data for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0)
+    written = OrderedSet(n.data for n in state.nodes() if isinstance(n, nodes.AccessNode) and is_written(state, n))
     bridges = []
     for data in written:
         desc = sdfg.arrays.get(data)
@@ -380,7 +380,7 @@ def _independent_groups(
     order = {n: i for i, n in enumerate(state.nodes())}
     # Hoisted: fixed per loop, was re-parsed for every subset pair of the four-deep nest below.
     loop_bounds = _loop_bounds(loop) if loop is not None and smt_dependence.has_z3() else None
-    written = OrderedSet(n.data for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0)
+    written = OrderedSet(n.data for n in state.nodes() if isinstance(n, nodes.AccessNode) and is_written(state, n))
     is_input = OrderedSet(
         n
         for n in state.nodes()
@@ -428,9 +428,7 @@ def _independent_groups(
             )
         if per_iter_non_transient:
             write_nodes = [
-                n
-                for n in state.nodes()
-                if isinstance(n, nodes.AccessNode) and n.data == data and state.in_degree(n) > 0
+                n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == data and is_written(state, n)
             ]
             reps = []
             for n in write_nodes:
@@ -626,7 +624,7 @@ def _block_rw(block: ControlFlowBlock) -> tuple[set[str], set[str]]:
     for st in states:
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode):
-                if st.in_degree(n) > 0:
+                if is_written(st, n):
                     writes.add(n.data)
                 if st.out_degree(n) > 0 or st.in_degree(n) == 0:
                     reads.add(n.data)

@@ -18,7 +18,7 @@ import sympy
 
 from dace import SDFG, symbolic
 from dace.properties import CodeBlock
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState, is_written
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -192,7 +192,7 @@ def start_edge(loop: LoopRegion, name: str):
         block = edge.src
         if not isinstance(block, SDFGState):
             return None  # a region before the loop may assign the name inside it
-        changed.update(node.data for node in block.data_nodes() if block.in_degree(node) > 0)
+        changed.update(node.data for node in block.data_nodes() if is_written(block, node))
 
 
 def exit_value(cond, name: str, start, step: int):

@@ -28,7 +28,7 @@ from typing import Any
 
 from dace import SDFG, data, properties, subsets, symbolic
 from dace.sdfg import nodes
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, SDFGState
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, SDFGState, is_written
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.canonicalize.fold_scalar_read_copies import control_flow_reads
@@ -41,7 +41,7 @@ def _writes(block: ControlFlowBlock, name: str) -> bool:
         if isinstance(block, SDFGState)
         else [b for b in block.all_control_flow_blocks() if isinstance(b, SDFGState)]
     )
-    return any(st.in_degree(n) > 0 for st in states for n in st.data_nodes() if n.data == name)
+    return any(is_written(st, n) for st in states for n in st.data_nodes() if n.data == name)
 
 
 @properties.make_properties
@@ -113,7 +113,7 @@ class ForwardOffsetCopies(ppl.Pass):
         if any(x != y for x, y in zip(src_subset.size(), dst_subset.size())):
             return None
         uses = accesses[dst.data]
-        if any(n is not dst and st.in_degree(n) > 0 for st, n in uses) or state.in_degree(dst) != 1:
+        if any(n is not dst and is_written(st, n) for st, n in uses) or state.in_degree(dst) != 1:
             return None
         region: ControlFlowRegion = state.parent_graph
         readers = [st for st, n in uses if n is not dst]
@@ -225,4 +225,4 @@ def _offset_rebound(
 
 def _writes_besides(state: SDFGState, name: str, edge) -> bool:
     """Whether ``state`` writes ``name`` anywhere (the copy only reads it)."""
-    return any(state.in_degree(n) > 0 for n in state.data_nodes() if n.data == name)
+    return any(is_written(state, n) for n in state.data_nodes() if n.data == name)

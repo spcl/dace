@@ -34,6 +34,7 @@ from dace.sdfg.state import (
     ReturnBlock,
     SDFGState,
     SymbolResolver,
+    is_written,
 )
 from dace.sdfg.utils import require_structured_control_flow
 from dace.transformation import pass_pipeline as ppl
@@ -537,7 +538,7 @@ class OffloadToAccelerator(ppl.Pass):
             for node in state.data_nodes():
                 if node.data not in sdfg.arrays:
                     continue
-                if state.in_degree(node) > 0:
+                if is_written(state, node):
                     written.add(node.data)
                 for edge in state.all_edges(node):
                     other = edge.dst if edge.src is node else edge.src
@@ -1685,7 +1686,7 @@ class OffloadToAccelerator(ppl.Pass):
         written: OrderedSet[str] = OrderedSet()
         for state in sdfg.states():
             for node in state.data_nodes():
-                if state.in_degree(node) > 0:
+                if is_written(state, node):
                     written.add(node.data)
         return written
 
@@ -2299,7 +2300,7 @@ class OffloadToAccelerator(ppl.Pass):
         written |= self.written_arrays(sdfg)
         # Per loop, the containers written in it; taken before any copy state is added.
         loop_writes = {
-            loop: {node.data for state in loop.states() for node in state.data_nodes() if state.in_degree(node)}
+            loop: {node.data for state in loop.states() for node in state.data_nodes() if is_written(state, node)}
             for loop in sdfg.all_control_flow_regions()
             if isinstance(loop, LoopRegion)
         }
@@ -2495,7 +2496,7 @@ class OffloadToAccelerator(ppl.Pass):
 
         def after(state: SDFGState, equal: set, record: bool = False) -> set:
             if copies[state] is None:
-                written = OrderedSet(node.data for node in state.data_nodes() if state.in_degree(node) > 0)
+                written = OrderedSet(node.data for node in state.data_nodes() if is_written(state, node))
                 if written & aliased:
                     written |= aliased
                 return {both for both in equal if both.isdisjoint(written)}

@@ -62,7 +62,7 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_expr
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, is_written
 from dace.subsets import Subset
 from dace.transformation.passes.analysis.loop_analysis import (
     get_init_assignment,
@@ -175,14 +175,14 @@ def _accumulates_across_outer(
                     subset = e.data.get_dst_subset(e, st)
                     if subset is not None and iv not in {str(f) for f in subset.free_symbols}:
                         updated.add(n.data)
-                if st.in_degree(n) > 0:
+                if is_written(st, n):
                     written.add(n.data)
     return bool(exposed & updated)
 
 
 def _carries_statement_data(inner: LoopRegion, pre: list[SDFGState], post: list[SDFGState]) -> bool:
     """Whether ``inner``'s body both reads and writes a container a ``pre`` / ``post`` statement writes."""
-    stmt_written = {n.data for st in pre + post for n in st.data_nodes() if st.in_degree(n) > 0}
+    stmt_written = {n.data for st in pre + post for n in st.data_nodes() if is_written(st, n)}
     read, written = set(), set()
     for st in inner.states():
         for n in st.data_nodes():
@@ -255,7 +255,7 @@ def _match(sdfg: SDFG) -> tuple[LoopRegion, LoopRegion, list[SDFGState], list[SD
             continue
         # The inner header runs before any sifted statement, so it must not read what ``pre`` produces; the guards
         # read it in every iteration, so the body must not write it either.
-        pre_written = {n.data for st in pre for n in st.data_nodes() if st.in_degree(n) > 0}
+        pre_written = {n.data for st in pre for n in st.data_nodes() if is_written(st, n)}
         if loop_header_names(inner) & (pre_written | sifted_lhs.keys() | body_written.keys()):
             continue
         return outer, inner, pre, post

@@ -13,7 +13,7 @@ from dace.ordered import OrderedSet
 from dace.sdfg import graph
 from dace.sdfg import utils as sdutils
 from dace.sdfg.narrowing import as_expr, as_map_entry
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import LoopRegion, is_written
 from dace.transformation import helpers, transformation
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
@@ -676,7 +676,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             # result. The original map kept the order via node tiebreak; the libnode
             # does not. Leave such a path as a map (still correct, just not lifted).
             if any(
-                other.data == dst_access_node.data and other is not dst_access_node and state.in_degree(other) > 0
+                other.data == dst_access_node.data and other is not dst_access_node and is_written(state, other)
                 for other in state.data_nodes()
             ):
                 if verbose:

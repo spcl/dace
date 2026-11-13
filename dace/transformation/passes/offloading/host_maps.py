@@ -12,7 +12,7 @@ import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace import symbolic
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, nodes
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver, is_written
 from dace.transformation.passes.offloading.taskloop import is_computation, sdfg_only_launches
 
 #: What a caller may pass as ``host_maps``:
@@ -316,7 +316,7 @@ def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
             continue
         host = host_code_containers(sdfg, loop)
         assigned = {lhs for edge in loop.all_interstate_edges(recursive=True) for lhs in edge.data.assignments}
-        written = {node.data for state in loop.states() for node in state.data_nodes() if state.in_degree(node) > 0}
+        written = {node.data for state in loop.states() for node in state.data_nodes() if is_written(state, node)}
         candidates: OrderedSet = OrderedSet()
         device_loop = False
         for state in loop.states():

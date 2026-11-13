@@ -35,6 +35,7 @@ from dace.sdfg.state import (
     LoopRegion,
     ReturnBlock,
     SymbolResolver,
+    is_written,
 )
 from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation import helpers
@@ -896,7 +897,7 @@ def read_before_written(
         if names is None:
             states = block.all_control_flow_blocks() if isinstance(block, AbstractControlFlowRegion) else [block]
             names = {
-                dn.data for st in states if isinstance(st, SDFGState) for dn in st.data_nodes() if st.in_degree(dn) > 0
+                dn.data for st in states if isinstance(st, SDFGState) for dn in st.data_nodes() if is_written(st, dn)
             }
             if isinstance(block, AbstractControlFlowRegion):
                 names |= {name for edge in block.all_interstate_edges() for name in edge.data.assignments}

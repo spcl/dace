@@ -14,7 +14,7 @@ from dace.ordered import OrderedSet
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.propagation import propagate_memlets_state
-from dace.sdfg.state import SymbolResolver
+from dace.sdfg.state import SymbolResolver, is_written
 from dace.transformation import transformation
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
 
@@ -182,7 +182,7 @@ def read_only_outward(sdfg: SDFG, name: str) -> bool:
     container it names in each enclosing SDFG: a fact on its contents then holds in every call of ``sdfg``."""
     cur = sdfg
     while True:
-        if any(dn.data == name and st.in_degree(dn) > 0 for st in cur.states() for dn in st.data_nodes()):
+        if any(dn.data == name and is_written(st, dn) for st in cur.states() for dn in st.data_nodes()):
             return False
         node, state = cur.parent_nsdfg_node, cur.parent
         if node is None or state is None:

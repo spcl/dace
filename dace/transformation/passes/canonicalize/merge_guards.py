@@ -19,7 +19,7 @@ from typing import Any
 
 from dace import SDFG, InterstateEdge, symbolic
 from dace.properties import CodeBlock
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, rehome_claimed_block
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, is_written, rehome_claimed_block
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
@@ -41,7 +41,7 @@ def changed_by(block: ConditionalBlock) -> set[str]:
         if isinstance(region, LoopRegion) and region.loop_variable:
             changed.add(region.loop_variable)
     for state in block.states():
-        changed |= {node.data for node in state.data_nodes() if state.in_degree(node) > 0}
+        changed |= {node.data for node in state.data_nodes() if is_written(state, node)}
     return changed
 
 

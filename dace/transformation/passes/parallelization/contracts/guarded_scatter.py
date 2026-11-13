@@ -57,7 +57,15 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_expr
 from dace.sdfg.sdfg import memoize_facts
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SymbolResolver
+from dace.sdfg.state import (
+    ConditionalBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    SymbolResolver,
+    is_read,
+    is_written,
+)
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.interstate.loop_to_map import Refusal, stores_may_meet
@@ -581,7 +589,7 @@ def _scatter_idx_targets_for_loop(
     slots: dict[str, str] = {}
     for state in region.states():
         for node in state.data_nodes():
-            if state.in_degree(node) == 0:
+            if not is_written(state, node):
                 continue
             desc = sdfg.arrays.get(node.data)
             if desc is None:
@@ -591,7 +599,7 @@ def _scatter_idx_targets_for_loop(
                 # (nfa_frontier's ``enabled[s]``); only one the loop writes for later is a scatter target
                 if outside is None:
                     outside = used_outside(sdfg, region)
-                    read = {n.data for st in region.states() for n in st.data_nodes() if st.out_degree(n) > 0} | {
+                    read = {n.data for st in region.states() for n in st.data_nodes() if is_read(st, n)} | {
                         m.data for e in region.all_interstate_edges() for m in e.data.get_read_memlets(sdfg.arrays)
                     }
                 if node.data not in outside or node.data in read:
@@ -1268,7 +1276,7 @@ def _collect_indirect_bindings(region: LoopRegion, sdfg: SDFG) -> dict[str, tupl
     # A scalar the body fills from ``arr[f(loop_var)]`` binds like the symbol it was demoted from.
     for state in region.states():
         for node in state.data_nodes():
-            if node.data not in bindings and state.in_degree(node) > 0:
+            if node.data not in bindings and is_written(state, node):
                 resolved = resolve_staged_scalar_source(node.data, region, sdfg)
                 if resolved is not None:
                     bindings[node.data] = resolved

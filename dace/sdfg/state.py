@@ -3421,7 +3421,7 @@ class SymbolResolver:
 
             regional = isinstance(block, AbstractControlFlowRegion)
             states = list(block.states()) if regional else [block] if isinstance(block, SDFGState) else []
-            found = frozenset(dn.data for st in states for dn in st.data_nodes() if st.in_degree(dn) > 0)
+            found = frozenset(dn.data for st in states for dn in st.data_nodes() if is_written(st, dn))
             if regional:
                 found |= interstate_bound_names(block)
             self._changes[block] = found
@@ -3746,6 +3746,16 @@ def binds_names(block: ControlFlowBlock) -> bool:
     return True
 
 
+def is_written(state: SDFGState, node: nd.Node) -> bool:
+    """Whether a value-carrying edge enters ``node``: an empty memlet only orders, it writes nothing."""
+    return any(not e.data.is_empty() for e in state.in_edges(node))
+
+
+def is_read(state: SDFGState, node: nd.Node) -> bool:
+    """Whether a value-carrying edge leaves ``node``: an empty memlet only orders, it reads nothing."""
+    return any(not e.data.is_empty() for e in state.out_edges(node))
+
+
 def block_writes(block: ControlFlowBlock, name: str) -> bool:
     """Whether a state in ``block`` writes container ``name``."""
     states = (
@@ -3753,7 +3763,7 @@ def block_writes(block: ControlFlowBlock, name: str) -> bool:
         if isinstance(block, SDFGState)
         else [b for b in block.all_control_flow_blocks() if isinstance(b, SDFGState)]
     )
-    return any(dn.data == name and st.in_degree(dn) > 0 for st in states for dn in st.data_nodes())
+    return any(dn.data == name and is_written(st, dn) for st in states for dn in st.data_nodes())
 
 
 def reaches_entry_unwritten(block: ControlFlowBlock, name: str) -> bool:

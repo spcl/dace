@@ -802,6 +802,38 @@ def test_a_read_of_a_written_node_is_not_overwritten_out_of_order():
     assert sdfg.apply_transformations_repeated([StateFusion], validate=False) == 0
 
 
+def test_an_ordering_edge_into_a_read_does_not_block_moving_assignments():
+    """``k = sc`` moves onto the edge into the first state, which only reads ``sc``: the ordering edge
+    into that read writes nothing, so the two states still fuse and ``k`` keeps the value of ``sc``."""
+    sdfg = dace.SDFG("fuse_behind_ordering")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    sdfg.add_array("C", [4], dace.float64)
+    sdfg.add_scalar("sc", dace.int32)
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    s1 = sdfg.add_state("s1")
+    s2 = sdfg.add_state("s2")
+    sdfg.add_edge(s0, s1, dace.InterstateEdge())
+    sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={"k": "sc"}))
+    a = s1.add_write("A")
+    s1.add_edge(s1.add_tasklet("w", {}, {"o"}, "o = 1.0"), "o", a, None, dace.Memlet("A[0]"))
+    sc = s1.add_read("sc")
+    s1.add_nedge(a, sc, dace.Memlet())
+    reader = s1.add_tasklet("r", {"i"}, {"o"}, "o = i")
+    s1.add_edge(sc, None, reader, "i", dace.Memlet("sc[0]"))
+    s1.add_edge(reader, "o", s1.add_write("B"), None, dace.Memlet("B[0]"))
+    s2.add_edge(s2.add_tasklet("v", {}, {"o"}, "o = 5.0"), "o", s2.add_write("C"), None, dace.Memlet("C[k]"))
+
+    assert StateFusion.can_be_applied_to(sdfg, first_state=s1, second_state=s2)
+    StateFusion.apply_to(sdfg, first_state=s1, second_state=s2)
+    assert len(list(sdfg.states())) == 2
+    assert sdfg.in_edges(s1)[0].data.assignments == {"k": "sc"}
+
+    a_val, b_val, c_val = np.zeros(4), np.zeros(4), np.zeros(4)
+    sdfg(A=a_val, B=b_val, C=c_val, sc=2)
+    assert a_val[0] == 1.0 and b_val[0] == 2.0 and c_val[2] == 5.0
+
+
 if __name__ == "__main__":
     test_state_fusion_leaves_a_derivable_region_entry_implicit()
     test_state_fusion_pins_the_region_entry_the_region_cannot_derive()
@@ -834,3 +866,4 @@ if __name__ == "__main__":
     test_a_write_ordered_only_through_the_instance_a_read_skips_keeps_the_states(StateFusionExtended)
     test_a_read_kept_apart_by_an_ordering_edge_stays_behind_the_writer_it_would_have_merged_with()
     test_a_read_of_a_written_node_is_not_overwritten_out_of_order()
+    test_an_ordering_edge_into_a_read_does_not_block_moving_assignments()

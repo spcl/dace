@@ -97,7 +97,15 @@ from typing import Any
 from dace import SDFG, properties
 from dace.config import Config
 from dace.sdfg import nodes
-from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    SDFGState,
+    is_read,
+    is_written,
+)
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
@@ -301,9 +309,10 @@ def accessed_names(block: ControlFlowBlock) -> tuple[set[str], set[str]]:
     reads = set(_interstate_reads(block))
     for state in [block] if isinstance(block, SDFGState) else block.states():
         for node in state.data_nodes():
-            if state.in_degree(node) > 0:
+            written = is_written(state, node)
+            if written:
                 writes.add(node.data)
-            if state.out_degree(node) > 0 or state.in_degree(node) == 0:
+            if is_read(state, node) or not written:
                 reads.add(node.data)
     return writes, reads
 
