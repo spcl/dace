@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from dace import SDFG, SDFGState, data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -97,19 +98,35 @@ def declare(node: nodes.NestedSDFG, parent: SDFG, names) -> None:
             node.symbol_mapping[name] = symbolic.pystr_to_symbolic(name)
 
 
+def write_and_copy(
+    state: SDFGState, transient: nodes.AccessNode
+) -> tuple[MultiConnectorEdge, MultiConnectorEdge] | None:
+    """The one write into ``transient`` and the one copy out of it; ordering edges (empty memlets) carry no data."""
+    writes = [e for e in state.in_edges(transient) if not e.data.is_empty()]
+    copies = [e for e in state.out_edges(transient) if not e.data.is_empty()]
+    return (writes[0], copies[0]) if len(writes) == 1 and len(copies) == 1 else None
+
+
+def ordering_moves(state: SDFGState, found: CopyBack) -> bool:
+    """Whether what ran before the transient can run before the map writing the target, and what waited for the
+    transient can wait for the target, without a cycle."""
+    entry = state.entry_node(found.map_exit)
+    return sdutil.ordering_can_move(state, found.transient, entry, found.copy.dst)
+
+
 def copy_back(state: SDFGState, sdfg: SDFG, transient: nodes.AccessNode, uses: Counter[str]) -> CopyBack | None:
     """The copy-back ``transient`` closes, or ``None``. ``uses``: access nodes per container in ``sdfg``."""
     desc = sdfg.arrays[transient.data]
-    if not desc.transient or isinstance(desc, data.View) or state.in_degree(transient) != 1:
+    if not desc.transient or isinstance(desc, data.View):
         return None
-    if state.out_degree(transient) != 1:
+    edges = write_and_copy(state, transient)
+    if edges is None:
         return None
-    (write,), (copy,) = state.in_edges(transient), state.out_edges(transient)
+    write, copy = edges
     map_exit, target = write.src, copy.dst
     if not isinstance(map_exit, nodes.MapExit) or not isinstance(target, nodes.AccessNode):
         return None
-    # An empty edge out of the map only orders the transient after it: no write to fold
-    if write.data.is_empty() or write.src_conn is None or not write.src_conn.startswith("OUT_"):
+    if write.src_conn is None or not write.src_conn.startswith("OUT_"):
         return None
     if target.data == transient.data or isinstance(sdfg.arrays[target.data], data.View) or copy.data.wcr is not None:
         return None
@@ -171,6 +188,7 @@ def in_place(state: SDFGState, found: CopyBack) -> bool:
 def eliminate(state: SDFGState, sdfg: SDFG, found: CopyBack, uses: Counter[str]) -> None:
     target, copy = found.copy.dst, found.copy
     subset = copy.data.get_dst_subset(copy, state)
+    sdutil.move_ordering(state, found.transient, state.entry_node(found.map_exit), target)
     (outer,) = state.in_edges(found.transient)
     (inner,) = [e for e in state.in_edges(found.map_exit) if e.dst_conn == "IN_" + outer.src_conn[4:]]
     write = inner.data.get_dst_subset(inner, state)
@@ -212,7 +230,7 @@ class EliminateCopyBack(ppl.Pass):
                     if transient not in state.nodes():
                         continue
                     found = copy_back(state, sd, transient, uses)
-                    if found is not None and in_place(state, found):
+                    if found is not None and in_place(state, found) and ordering_moves(state, found):
                         eliminate(state, sd, found, uses)
                         count += 1
         return count or None

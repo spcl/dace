@@ -11,7 +11,7 @@ from dace import memlet as mm
 from dace.graphlib import NetworkXError, NodeNotFound
 from dace.sdfg import SDFG, SDFGState, dealias, graph, nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import SymbolResolver
+from dace.sdfg.state import SymbolResolver, is_written
 from dace.transformation import helpers
 from dace.transformation import transformation as pm
 
@@ -454,8 +454,11 @@ class RedundantArray(pm.SingleStateTransformation):
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
 
-        # Ensure out degree is one (only one target, which is out_array)
-        if graph.out_degree(in_array) != 1:
+        # Ensure out degree is one (only one target, which is out_array); ordering edges move to out_array
+        copies = [e for e in graph.out_edges(in_array) if not e.data.is_empty()]
+        if len(copies) != 1 or copies[0].dst is not out_array:
+            return False
+        if graph.out_degree(in_array) != 1 and not sdutil.ordering_can_move(graph, in_array, None, out_array):
             return False
 
         # Its writers accumulate onto the zero this access gives them, which ``out_array`` does not hold
@@ -862,6 +865,9 @@ class RedundantArray(pm.SingleStateTransformation):
     def apply(self, graph, sdfg):
         in_array = self.in_array
         out_array = self.out_array
+        if graph.out_degree(in_array) != 1:
+            # What waited for ``in_array`` waits for ``out_array``, which its writers now write
+            sdutil.move_ordering(graph, in_array, None, out_array)
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
 
@@ -2490,7 +2496,7 @@ class RedundantMapReadCopy(pm.SingleStateTransformation):
         kept = staged_dims(source, desc.shape)
         if kept is None:
             return None
-        if any(n.data == root.data and graph.in_degree(n) > 0 for n in graph.data_nodes()):
+        if any(n.data == root.data and is_written(graph, n) for n in graph.data_nodes()):
             return None
         for out_edge in graph.out_edges(node):
             for leaf in graph.memlet_tree(out_edge).leaves():

@@ -825,6 +825,31 @@ def reanchor_stranded_ordering(state: SDFGState, outer: Node, anchor: Node, is_i
     return True
 
 
+def ordering_can_move(state: SDFGState, old: Node, first: Node | None, last: Node) -> bool:
+    """Whether :func:`move_ordering` can hand ``old``'s ordering edges to ``first`` and ``last`` without a cycle.
+
+    ``None`` for ``first`` refuses any ordering edge into ``old``.
+    """
+    for e in state.in_edges(old):
+        if e.data.is_empty() and (first is None or nx.has_path(state._nx, first, e.src)):
+            return False
+    return not any(nx.has_path(state._nx, e.dst, last) for e in state.out_edges(old) if e.data.is_empty())
+
+
+def move_ordering(state: SDFGState, old: Node, first: Node | None, last: Node) -> None:
+    """Re-attach the ordering (empty-memlet) edges of ``old``, which is about to go: what ran before ``old`` now runs
+    before ``first``, the earliest node taking its place, and what waited for ``old`` waits for ``last``, the latest.
+
+    An ordering edge is a happens-before; dropping it with ``old`` would let the nodes it held apart run in either
+    order. Check :func:`ordering_can_move` first.
+    """
+    for e in [e for e in state.all_edges(old) if e.data.is_empty()]:
+        src, dst = (last, e.dst) if e.src is old else (e.src, first)
+        state.remove_edge(e)
+        if src is not dst and not state.edges_between(src, dst):
+            state.add_nedge(src, dst, dace.Memlet())
+
+
 def reanchor_stranded_read(state: SDFGState, outer: Node, anchor: Node) -> bool:
     """Move ``outer``'s ordering edges to ``anchor`` when the fold took ``outer``'s only read.
 

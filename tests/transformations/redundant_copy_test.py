@@ -952,6 +952,33 @@ def test_a_converting_copy_after_an_exact_store_folds():
     assert np.array_equal(out, (a * 2.5).astype(np.int64))
 
 
+def test_an_ordering_edge_out_of_the_copied_array_moves_to_its_target():
+    """``T`` only feeds the copy into ``B``; an ordering edge out of it makes ``later`` wait, so it waits for ``B``."""
+    sdfg = dace.SDFG("redundant_behind_ordering")
+    sdfg.add_array("B", [4], dace.float64)
+    sdfg.add_array("C", [4], dace.float64)
+    sdfg.add_transient("T", [4], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("m", {"i": "0:4"})
+    tasklet = state.add_tasklet("w", {}, {"o"}, "o = i + 1.0")
+    state.add_nedge(entry, tasklet, dace.Memlet())
+    tmp = state.add_access("T")
+    state.add_memlet_path(tasklet, exit_, tmp, src_conn="o", memlet=dace.Memlet("T[i]"))
+    b = state.add_write("B")
+    state.add_nedge(tmp, b, dace.Memlet("T[0:4] -> [0:4]"))
+    later = state.add_tasklet("later", {}, {"o"}, "o = 7.0")
+    state.add_nedge(tmp, later, dace.Memlet())
+    state.add_edge(later, "o", state.add_write("C"), None, dace.Memlet("C[0]"))
+
+    assert sdfg.apply_transformations(RedundantArray) == 1
+    assert "T" not in sdfg.arrays
+    assert state.edges_between(b, later), "later must still wait for the values T carried"
+
+    b_val, c_val = np.zeros(4), np.zeros(4)
+    sdfg(B=b_val, C=c_val)
+    assert np.array_equal(b_val, np.arange(4.0) + 1) and c_val[0] == 7.0
+
+
 if __name__ == "__main__":
     test_reshaping_with_redundant_arrays()
     test_a_converting_copy_after_an_exact_store_folds()
@@ -985,3 +1012,4 @@ if __name__ == "__main__":
     test_a_map_reading_the_element_it_writes_updates_in_place(update_from_the_left, False)
     test_a_copy_that_converts_the_element_type_is_kept(True)
     test_a_copy_that_converts_the_element_type_is_kept(False)
+    test_an_ordering_edge_out_of_the_copied_array_moves_to_its_target()

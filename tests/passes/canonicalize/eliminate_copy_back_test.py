@@ -204,6 +204,40 @@ def test_folding_a_nested_writer_onto_a_wider_array_restates_the_connector():
     assert np.array_equal(got, expected)
 
 
+def test_ordering_edges_of_the_transient_move_to_the_map_and_the_target():
+    """``D``, ordered ahead of the transient, stays ahead of the map writing ``A``; ``later``, ordered behind it,
+    waits for ``A``."""
+    sdfg = dace.SDFG("copy_back_behind_ordering")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("C", [4], dace.float64)
+    sdfg.add_array("D", [1], dace.float64)
+    sdfg.add_transient("T", [4], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("m", {"i": "0:4"})
+    tasklet = state.add_tasklet("dbl", {"a"}, {"o"}, "o = 2 * a")
+    state.add_memlet_path(state.add_read("A"), entry, tasklet, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    tmp = state.add_access("T")
+    state.add_memlet_path(tasklet, exit_, tmp, src_conn="o", memlet=dace.Memlet("T[i]"))
+    target = state.add_write("A")
+    state.add_nedge(tmp, target, dace.Memlet("T[0:4] -> [0:4]"))
+    first = state.add_tasklet("first", {"c"}, {"o"}, "o = c")
+    state.add_edge(state.add_read("C"), None, first, "c", dace.Memlet("C[0]"))
+    d = state.add_write("D")
+    state.add_edge(first, "o", d, None, dace.Memlet("D[0]"))
+    state.add_nedge(d, tmp, dace.Memlet())
+    later = state.add_tasklet("later", {}, {"o"}, "o = 7.0")
+    state.add_nedge(tmp, later, dace.Memlet())
+    state.add_edge(later, "o", state.add_write("C"), None, dace.Memlet("C[1]"))
+
+    assert EliminateCopyBack().apply_pass(sdfg, {}) == 1
+    assert "T" not in sdfg.arrays
+    assert state.edges_between(d, entry) and state.edges_between(target, later)
+
+    a, c, d_val = np.arange(4.0), np.full(4, 3.0), np.zeros(1)
+    sdfg(A=a, C=c, D=d_val)
+    assert np.array_equal(a, 2 * np.arange(4.0)) and d_val[0] == 3.0 and c[1] == 7.0
+
+
 if __name__ == "__main__":
     test_a_slice_update_writes_its_target_in_place()
     test_a_read_of_the_neighbouring_element_keeps_the_copy_back()
@@ -214,3 +248,4 @@ if __name__ == "__main__":
     test_a_sibling_read_of_the_written_element_keeps_the_copy_back()
     test_a_stepped_copy_back_stays()
     test_folding_a_nested_writer_onto_a_wider_array_restates_the_connector()
+    test_ordering_edges_of_the_transient_move_to_the_map_and_the_target()
