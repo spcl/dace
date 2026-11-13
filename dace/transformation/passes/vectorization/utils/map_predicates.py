@@ -368,6 +368,38 @@ def is_tile_eligible(state: SDFGState, map_entry: dace.nodes.MapEntry, K: int | 
     return True
 
 
+def data_assigned_symbols(sdfg: dace.SDFG) -> set[str]:
+    """The symbols an interstate edge of ``sdfg`` assigns from a container (``ip_index = ip[i]``)."""
+    found = set()
+    for edge in sdfg.all_interstate_edges():
+        for name, value in edge.data.assignments.items():
+            if dace.symbolic.symbols_in_code(str(value)) & sdfg.arrays.keys():
+                found.add(name)
+    return found
+
+
+def is_scatter_add(state: SDFGState, edge) -> bool:
+    """Whether the WCR ``edge`` adds into elements a data-dependent index names (``a[idx[i]] += v``), which a tile
+    store adds lane by lane atomically. Followed from a map exit or a nested SDFG to the inner writes it collects."""
+    from dace.frontend.operations import detect_reduction_type
+
+    if edge.data.wcr is None or detect_reduction_type(edge.data.wcr) is not dace.dtypes.ReductionType.Sum:
+        return False
+    source = state.memlet_path(edge)[0] if isinstance(edge.src, dace.nodes.MapExit) else edge
+    if not isinstance(source.src, dace.nodes.NestedSDFG):
+        indexed = {str(s) for s in required(source.data.get_dst_subset(source, state)).free_symbols}
+        return bool(indexed & data_assigned_symbols(state.sdfg))
+    inner = source.src.sdfg
+    assigned = data_assigned_symbols(inner)
+    for inner_state in inner.states():
+        for write in inner_state.edges():
+            if isinstance(write.dst, dace.nodes.AccessNode) and write.dst.data == source.src_conn and write.data.wcr:
+                indexed = {str(s) for s in required(write.data.get_dst_subset(write, inner_state)).free_symbols}
+                if indexed & assigned:
+                    return True
+    return False
+
+
 def reduction_index_symbols(edge) -> set[str]:
     """The symbols indexing the element a WCR ``edge`` into a map exit accumulates into.
 
@@ -410,7 +442,8 @@ def tiled_param_count(state: SDFGState, map_entry: dace.nodes.MapEntry, K: int) 
         return K
     reduced = set()
     for e in state.in_edges(state.exit_node(map_entry)):
-        if e.data.wcr is not None:
+        # A scatter-add stores every lane, atomically, so its index does not keep a param untiled
+        if e.data.wcr is not None and not is_scatter_add(state, e):
             reduced |= reduction_index_symbols(e)
     params = map_entry.map.params
     count = 0

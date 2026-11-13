@@ -42,6 +42,7 @@ from dace.transformation.passes.vectorization.utils.broadcast import is_scalar_o
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
 from dace.transformation.passes.vectorization.utils.map_predicates import (
     check_tile_widths,
+    is_scatter_add,
     lane_widths,
     map_tile_widths,
     tile_body_nsdfgs,
@@ -376,6 +377,7 @@ def stage_tile_store(
     gather_dims: tuple[int, ...] = (),
     idx_sources: dict[int, AccessNode] | None = None,
     mask_an: AccessNode | None = None,
+    wcr: str | None = None,
 ) -> tuple[str, MaskedCopyLibraryNode | TileScatter]:
     """Stage a tile-shaped WRITE to ``an`` through a fresh ``(widths,)`` Array transient.
 
@@ -391,6 +393,7 @@ def stage_tile_store(
     :param dst_dims: Destination-array dim permutation; default innermost ``K`` dims.
     :param gather_dims: Sorted tuple of scattering tile dims (empty for structured full-tile-window case).
     :param idx_sources: ``{d: AccessNode}`` for each ``d in gather_dims``. Required when ``gather_dims`` non-empty.
+    :param wcr: The sum a scatter-add combines its lanes with, which the scatter applies atomically.
     :returns: ``(bridge_name, store_node)`` -- staged transient name + the store node.
     :raises ValueError: When ``gather_dims`` non-empty and ``set(gather_dims) != set(idx_sources)``.
     """
@@ -421,6 +424,7 @@ def stage_tile_store(
             dst_dims=dst_dims,
             gather_dims=gather_dims,
             has_mask=has_mask_wired,
+            wcr=wcr,
         )
     state.add_node(store)
     src_subset_str = ", ".join(f"0:{w}" for w in widths)
@@ -437,6 +441,7 @@ def stage_tile_store(
     written = _libnode_boundary_memlet(dst_subset)
     # Lanes addressed through index tiles touch only the elements they name, not the whole subset
     written.dynamic = written.dynamic or bool(gather_dims)
+    written.wcr = wcr
     state.add_edge(store, store.OUTPUT_CONNECTOR_NAME, an, None, written)
     return bridge_name, store
 
@@ -822,6 +827,7 @@ class InsertTileLoadStore(ppl.Pass):
                 gather_dims=scatter_source_dims,
                 idx_sources=idx_sources_w,
                 mask_an=self._mask_an(inner_state, mask_name),
+                wcr=w_edges[0].data.wcr if is_scatter_add(inner_state, w_edges[0]) else None,
             )
             self._rewire_producers_to_bridge(inner_state, an, bridge_name, w_edges, lane_widths(self.widths, iter_vars))
             return 1
@@ -1455,6 +1461,14 @@ class InsertTileLoadStore(ppl.Pass):
             if isinstance(old_edge.dst, TILE_TRANSFER_NODES) and old_edge.dst_conn == old_edge.dst.INPUT_CONNECTOR_NAME:
                 continue
             bridge_an = shared_bridge_an or inner_state.add_access(bridge_name)
+            if is_scatter_add(inner_state, old_edge):
+                # A copy that adds into data-indexed elements keeps its target subset, which the write phase scatters
+                target = old_edge.data.get_dst_subset(old_edge, inner_state)
+                source = copy.deepcopy(bridge_memlet_template.subset)
+                added = Memlet(data=old_edge.dst.data, subset=target, other_subset=source, wcr=old_edge.data.wcr)
+                inner_state.add_edge(bridge_an, None, old_edge.dst, old_edge.dst_conn, added)
+                inner_state.remove_edge(old_edge)
+                continue
             # Every transient is already widened, so the only scalar write left is to a non-transient output
             # (``no_transient_scalar_stores``). Non-Scalar consumers go through a TileScatter, not CopyND.
             if (

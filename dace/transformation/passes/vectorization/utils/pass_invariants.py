@@ -32,7 +32,7 @@ from dace.sdfg.narrowing import as_expr, as_map_entry, as_range
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.dataflow.wcr_conversion import nested_connector_subset
-from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
+from dace.transformation.passes.vectorization.utils.map_predicates import is_scatter_add, map_body_nodes
 
 #: Reduction ops a lifted array-slot boundary WCR may carry. The tile path folds the lanes with a
 #: horizontal ``TileReduce`` and the boundary then combines one partial per tile, so the op must be
@@ -318,7 +318,7 @@ def no_wcr_in_map_body(scope: SDFG | SDFGState) -> str | None:
                 # ``acc = sum(A)`` or the per-row ``mean[j] = sum_i data[i, j]``); resolved at the
                 # boundary, no lane race. A per-element scatter (``a[idx[i]] (op)= ...``) stays
                 # flagged. See _is_lifted_reduction_wcr.
-                if _is_lifted_reduction_wcr(sd, state, edge):
+                if _is_lifted_reduction_wcr(sd, state, edge) or is_scatter_add(state, edge):
                     continue
                 return (
                     f"{sd.name}.{state.label}: edge {edge.src} -> {edge.dst} carries WCR "
@@ -498,7 +498,7 @@ def no_wcr_inside_nested_sdfgs(scope: SDFG | SDFGState, allow_boundary_duplicate
         for edge in state.edges():
             if edge.data is None or edge.data.wcr is None:
                 continue
-            if _is_lifted_reduction_wcr(sd, state, edge):
+            if _is_lifted_reduction_wcr(sd, state, edge) or is_scatter_add(state, edge):
                 continue
             if allow_boundary_duplicates and boundary_carries_same_wcr(sd, edge):
                 continue

@@ -7,6 +7,7 @@ Symmetric to :class:`~dace.libraries.tileops.nodes.tile_gather.TileGather`.
 import dace
 from dace import library, properties
 from dace.codegen.cppunparse import pyexpr2cpp
+from dace.frontend.operations import detect_reduction_type
 from dace.libraries.tileops.expansions import ExpandTilePure
 from dace.libraries.tileops.kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
 from dace.libraries.tileops.lanes import (
@@ -381,10 +382,15 @@ class TileScatter(TileOp):
             src_ref = f"({out_dtype})({ref})" if broadcast else ref
         else:
             src_ref = f"_src[{src_off}]"
-        if self.has_mask:
-            body = f"if (_mask[{src_off}]) {{ _dst[{dst_off}] = {src_ref}; }}"
-        else:
-            body = f"_dst[{dst_off}] = {src_ref};"
+        store = f"_dst[{dst_off}] = {src_ref};"
+        if self.wcr:
+            # Lanes that name one element add into it, from every thread and program, atomically
+            if detect_reduction_type(self.wcr) is not dace.dtypes.ReductionType.Sum:
+                raise NotImplementedError(f"{self.label}: a scatter combines its lanes by a sum only, not {self.wcr}")
+            store = (
+                f"dace::wcr_fixed<dace::ReductionType::Sum, {out_dtype}>::reduce_atomic(&_dst[{dst_off}], {src_ref});"
+            )
+        body = f"if (_mask[{src_off}]) {{ {store} }}" if self.has_mask else store
         code = nested_loops(widths, body, lowering=lowering)
         inputs = (set() if self.src_kind == SYMBOL else {"_src"}) | ({"_mask"} if self.has_mask else set())
         inputs |= {f"_idx_{d}" for d in self.gather_dims}

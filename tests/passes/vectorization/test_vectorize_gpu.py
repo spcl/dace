@@ -30,6 +30,7 @@ from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import TIL
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
 N = dace.symbol("N")
+M = dace.symbol("M")
 TSTEPS = dace.symbol("TSTEPS")
 
 
@@ -290,6 +291,33 @@ def test_gpu_reduction_uses_gpu_expansion():
         sdfg.compile()
 
 
+@dace.program
+def _histogram(src: dace.float64[N], ip: dace.int64[N], bins: dace.float64[M]):
+    for i in dace.map[0:N]:
+        bins[ip[i]] += src[i]
+
+
+@pytest.mark.gpu
+def test_a_scatter_add_tile_adds_its_lanes_atomically():
+    """Lanes whose indices repeat add into one bin: the tile scatter of a CUDA kernel adds atomically."""
+    import cupy
+
+    from dace.libraries.tileops import TileScatter
+
+    sdfg = _histogram.to_sdfg(simplify=True)
+    offload_to_gpu(sdfg)
+    VectorizeGPU(VectorizeConfig(widths=(4,))).apply_pass(sdfg, {})
+    rng = np.random.default_rng(9)
+    src, ip, bins = rng.random(1000), rng.integers(0, 17, 1000), cupy.zeros(17)
+    expected = np.zeros(17)
+    np.add.at(expected, ip, src)
+
+    sdfg(src=cupy.asarray(src), ip=cupy.asarray(ip), bins=bins, N=1000, M=17)
+
+    assert [n.wcr for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileScatter)]
+    assert np.allclose(bins.get(), expected)
+
+
 @pytest.mark.gpu
 def test_gpu_half2_lowers_to_native_f16x2(tmp_path):
     """The fp16 add tile lowers to a native packed two-lane fp16 instruction, not the scalar float fallback."""
@@ -408,6 +436,7 @@ if __name__ == "__main__":
     test_gpu_half2_compiles("jacobi2d16", _jacobi2d16)
     test_gpu_half2_compiles("heat3d16", _heat3d16)
     test_gpu_reduction_uses_gpu_expansion()
+    test_a_scatter_add_tile_adds_its_lanes_atomically()
     test_gpu_half2_lowers_to_native_f16x2(Path(tempfile.mkdtemp()))
     test_gpu_half2_reduce_lowers_to_native_f16x2(Path(tempfile.mkdtemp()))
     test_gpu_vectorize_width_gt2_numeric(4)

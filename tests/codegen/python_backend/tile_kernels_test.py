@@ -68,6 +68,11 @@ SPELLINGS = {
         "cutile": ["ct.scatter(a, (0 + 0 * ct.arange(512, dtype=ct.int32),), ", ", c, t[0],)"],
         "tilelang": ["a[(0 + 0 * lane0) * 1] = "],
     },
+    "scatter_add": {
+        "triton": ["tl.atomic_add(bins + (0 + _idx_scatter_bins_0_load0) * 1, "],
+        "cutile": ["ct.atomic_add(bins, (0 + _idx_scatter_bins_0_load0,), "],
+        "tilelang": ["T.atomic_add(bins[(0 + _idx_scatter_bins_0_load0[lane0]) * 1]"],
+    },
     "atomic": {
         "triton": ["tl.atomic_add(S_gpu + "],
         "cutile": ["ct.atomic_add(S_gpu, "],
@@ -584,6 +589,42 @@ def test_a_loop_bounded_by_the_tiled_param_leaves_the_map_untiled():
         sdfg.compile()
 
 
+@dace.program
+def histogram(src: dace.float64[N], ip: dace.int64[N], bins: dace.float64[M]):
+    for i in dace.map[0:N]:
+        bins[ip[i]] += src[i]
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_a_scatter_add_adds_every_lane_atomically(dialect: str):
+    """Lanes and programs whose indices repeat add into one bin, so the scatter adds atomically."""
+    import cupy
+
+    rng = np.random.default_rng(9)
+    src, ip, bins = rng.random(1000), rng.integers(0, 17, 1000), cupy.zeros(17)
+    expected = np.zeros(17)
+    np.add.at(expected, ip, src)
+
+    with tile_backend(dialect):
+        compiled = vectorized_gpu_sdfg(histogram, tile_programs=True).compile()
+        compiled(src=cupy.asarray(src), ip=cupy.asarray(ip), bins=bins, N=1000, M=17)
+
+    assert np.allclose(bins.get(), expected)
+    assert_spelled(compiled, "scatter_add", dialect)
+
+
+def test_a_scatter_combined_by_a_max_leaves_the_map_untiled():
+    """Only a sum has an atomic tile store; a scatter by any other reduction stays scalar."""
+    sdfg = histogram.to_sdfg(simplify=True)
+    for edge, _ in sdfg.all_edges_recursive():
+        if isinstance(edge.data, dace.Memlet) and edge.data.wcr is not None:
+            edge.data.wcr = "lambda x, y: max(x, y)"
+    offload_to_gpu(sdfg)
+    VectorizeGPU(VectorizeConfig(widths=(4,), tile_programs=True)).apply_pass(sdfg, {})
+
+    assert not any(isinstance(node, TileOp) for node, _ in sdfg.all_nodes_recursive())
+
+
 if __name__ == "__main__":
     # TileLang, which has no product reduction, runs under pytest
     for dialect in ("triton", "cutile"):
@@ -604,5 +645,7 @@ if __name__ == "__main__":
         test_a_scalar_index_argument_reaches_a_tile_kernel_as_a_symbol(dialect)
         test_a_lane_invariant_tile_node_stores_the_one_global_element_it_writes(dialect)
         test_a_lane_uniform_loop_runs_inside_the_tile_kernel(dialect)
+        test_a_scatter_add_adds_every_lane_atomically(dialect)
     test_a_tile_node_writing_a_tile_into_one_global_element_is_refused()
     test_a_loop_bounded_by_the_tiled_param_leaves_the_map_untiled()
+    test_a_scatter_combined_by_a_max_leaves_the_map_untiled()

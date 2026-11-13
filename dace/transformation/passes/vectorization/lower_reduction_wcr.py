@@ -18,6 +18,7 @@ from dace.memlet import Memlet
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.transformation.dataflow.wcr_conversion import _wcr_augassign_body
+from dace.transformation.passes.vectorization.utils.map_predicates import is_scatter_add
 
 
 def boundary_reduces(inner_sdfg: SDFG, name: str) -> bool:
@@ -51,7 +52,7 @@ def lower_reduction_wcr_in_body(inner_sdfg: SDFG, tiled: bool = True) -> int:
             if memlet is None or memlet.wcr is None:
                 continue
             dst = edge.dst
-            if not (isinstance(dst, nodes.AccessNode) and state.out_degree(dst) == 0):
+            if not (isinstance(dst, nodes.AccessNode) and state.out_degree(dst) == 0) or is_scatter_add(state, edge):
                 continue
             desc = inner_sdfg.arrays.get(dst.data)
             if desc is None or desc.transient or not isinstance(edge.src, (nodes.AccessNode, nodes.Tasklet)):
@@ -63,7 +64,7 @@ def lower_reduction_wcr_in_body(inner_sdfg: SDFG, tiled: bool = True) -> int:
                 edge.data.wcr = None
                 rewritten += 1
                 continue
-            acc, acc_subset = dst.data, memlet.subset
+            acc, acc_subset = dst.data, memlet.get_dst_subset(edge, state)
             if isinstance(edge.src, nodes.Tasklet):
                 # The tasklet's value is the addend: stage it in a scalar the accumulation reads.
                 addend, _ = inner_sdfg.add_scalar(f"{acc}_addend", desc.dtype, transient=True, find_new_name=True)
