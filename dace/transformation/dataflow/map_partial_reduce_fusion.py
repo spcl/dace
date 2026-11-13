@@ -45,7 +45,7 @@ class MapPartialReduceFusion(MapReduceFusion):
         params = self.dim_params(graph)
         if params is None:
             return False
-        kept_ranges = sorted(str(r) for d, r in enumerate(graph.in_edges(reduce_node)[0].data.subset) if d not in axes)
+        kept_ranges = sorted(str(r) for d, r in enumerate(reduce_node.input_edge(graph).data.subset) if d not in axes)
         return any(
             isinstance(e.dst, nodes.MapEntry) and sorted(str(r) for r in e.dst.map.range) == kept_ranges
             for e in graph.out_edges(out_array)
@@ -72,7 +72,7 @@ class MapPartialReduceFusion(MapReduceFusion):
         params = list(tmap_exit.map.params)
         kept = [params.index(str(p)) for d, p in enumerate(dims) if d not in axes]
         out_edge = graph.out_edges(reduce_node)[0]
-        reduce_in = graph.in_edges(reduce_node)[0].data.subset
+        reduce_in = reduce_node.input_edge(graph).data.subset
         in_desc = sdfg.arrays[in_array.data]
 
         outer_entry, inner_entry = helpers.extract_map_dims(sdfg, graph.entry_node(tmap_exit), kept)

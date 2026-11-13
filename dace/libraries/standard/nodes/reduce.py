@@ -100,7 +100,7 @@ class ExpandReducePure(pm.ExpandTransformation):
         default = (dtypes.ScheduleType.Default, dtypes.ScheduleType.Default)
         if scope.is_devicelevel_gpu(sdfg, state, node):
             return dtypes.ScheduleType.Sequential, dtypes.ScheduleType.Sequential
-        operands = [state.in_edges(node)[0].data.data, state.out_edges(node)[0].data.data]
+        operands = [node.input_edge(state).data.data, state.out_edges(node)[0].data.data]
         if any(sdfg.arrays[name].storage in GPU_RESIDENT_STORAGES for name in operands):
             return dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.Sequential
         return default
@@ -147,7 +147,7 @@ class ExpandReducePure(pm.ExpandTransformation):
     def expansion(node: "Reduce", state: SDFGState, sdfg: SDFG):
         node.validate(sdfg, state)
         outer_schedule, inner_schedule = ExpandReducePure.map_schedules(node, state, sdfg)
-        inedge: graph.MultiConnectorEdge = state.in_edges(node)[0]
+        inedge: graph.MultiConnectorEdge = node.input_edge(state)
         outedge: graph.MultiConnectorEdge = state.out_edges(node)[0]
         insubset = dcpy(inedge.data.subset)
         isqdim = insubset.squeeze()
@@ -318,7 +318,7 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
     @staticmethod
     def expansion(node: "Reduce", state: SDFGState, sdfg: SDFG):
         node.validate(sdfg, state)
-        inedge: graph.MultiConnectorEdge = state.in_edges(node)[0]
+        inedge: graph.MultiConnectorEdge = node.input_edge(state)
         outedge: graph.MultiConnectorEdge = state.out_edges(node)[0]
         insubset = dcpy(inedge.data.subset)
         isqdim = insubset.squeeze()
@@ -583,7 +583,7 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
     @staticmethod
     def expansion(node: "Reduce", state: SDFGState, sdfg: SDFG):
         node.validate(sdfg, state)
-        inedge: graph.MultiConnectorEdge = state.in_edges(node)[0]
+        inedge: graph.MultiConnectorEdge = node.input_edge(state)
         outedge: graph.MultiConnectorEdge = state.out_edges(node)[0]
         insubset = dcpy(inedge.data.subset)
         isqdim = insubset.squeeze()
@@ -678,12 +678,16 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
 
         in_offset = []
         octr = 0
+        # A slice's kept unit dimension (``P[1, 0:M, 0:K]``) has no output dimension: its begin is in the base.
+        kept = [i for i in range(input_dims) if i not in axes]
+        if len(kept) != len(outedge.data.subset.size()):
+            kept = [i for i in kept if inedge.data.subset.size()[i] != 1]
         for i in range(input_dims):
             stride = sym2cpp(input_data.strides[i] * inedge.data.subset[i][2])
             if i in axes:
                 if i in outer_red:
                     in_offset.append("_i%d * %s" % (outer_red.index(i), stride))
-            else:
+            elif i in kept:
                 in_offset.append("_o%d * %s" % (octr, stride))
                 octr += 1
 
@@ -752,7 +756,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         from dace.codegen.targets.cpp import mangle_dace_state_struct_name, unparse_cr_split
 
         node.validate(sdfg, state)
-        input_edge: graph.MultiConnectorEdge = state.in_edges(node)[0]
+        input_edge: graph.MultiConnectorEdge = node.input_edge(state)
         output_edge: graph.MultiConnectorEdge = state.out_edges(node)[0]
         insubset = dcpy(input_edge.data.subset)
         isqdim = insubset.squeeze()
@@ -1021,7 +1025,7 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
         from dace.codegen.targets.cpp import cpp_array_expr, unparse_cr_split
 
         node.validate(sdfg, state)
-        input_edge: graph.MultiConnectorEdge = state.in_edges(node)[0]
+        input_edge: graph.MultiConnectorEdge = node.input_edge(state)
         output_edge: graph.MultiConnectorEdge = state.out_edges(node)[0]
         input_dims = len(input_edge.data.subset)
         input_data = sdfg.arrays[input_edge.data.data]
@@ -1137,7 +1141,7 @@ def block_strided_refusal(node: "Reduce", state: SDFGState, sdfg: SDFG) -> str |
         return f"{redtype} is not supported."
     if state.out_edges(node)[0].data.subset.num_elements() != 1:
         return "only a full reduction to a scalar."
-    kept = dcpy(state.in_edges(node)[0].data.subset).squeeze()
+    kept = dcpy(node.input_edge(state).data.subset).squeeze()
     if len(kept) != 1:
         return f"the reduced region is not a single 1-D run (kept axes: {kept})."
     dtype = sdfg.arrays[state.out_edges(node)[0].data.data].dtype.base_type
@@ -1182,7 +1186,7 @@ class ExpandReduceCUDABlockStrided(pm.ExpandTransformation):
         reason = block_strided_refusal(node, state, sdfg)
         if reason is not None:
             raise NotImplementedError(f"Reduce(CUDA (block strided)): {reason}")
-        in_edge = state.in_edges(node)[0]
+        in_edge = node.input_edge(state)
         out_edge = state.out_edges(node)[0]
         in_desc = sdfg.arrays[in_edge.data.data]
         out_desc = sdfg.arrays[out_edge.data.data]
@@ -1255,7 +1259,7 @@ class ExpandReduceCUDABlockAtomic(pm.ExpandTransformation):
         from dace.codegen.targets.cpp import cpp_array_expr, unparse_cr_split
 
         node.validate(sdfg, state)
-        input_edge: graph.MultiConnectorEdge = state.in_edges(node)[0]
+        input_edge: graph.MultiConnectorEdge = node.input_edge(state)
         output_edge: graph.MultiConnectorEdge = state.out_edges(node)[0]
         input_dims = len(input_edge.data.subset)
         input_data = sdfg.arrays[input_edge.data.data]
@@ -1413,7 +1417,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         ExpandReduceGPUAuto.environments = []
 
         node.validate(sdfg, state)
-        inedge: graph.MultiConnectorEdge = state.in_edges(node)[0]
+        inedge: graph.MultiConnectorEdge = node.input_edge(state)
         outedge: graph.MultiConnectorEdge = state.out_edges(node)[0]
         insubset = dcpy(inedge.data.subset)
         isqdim = insubset.squeeze()
@@ -2112,8 +2116,13 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
     def __label__(self, sdfg, state):
         return str(self).replace(" Axes", "\nAxes")
 
+    def input_edge(self, state) -> graph.MultiConnectorEdge:
+        """The one edge carrying the reduced data in; an ordering edge (empty memlet) beside it carries none."""
+        (edge,) = [e for e in state.in_edges(self) if not e.data.is_empty()]
+        return edge
+
     def validate(self, sdfg, state):
-        if len(state.in_edges(self)) != 1:
+        if sum(1 for e in state.in_edges(self) if not e.data.is_empty()) != 1:
             raise ValueError("Reduce node must have one input")
         if len(state.out_edges(self)) != 1:
             raise ValueError("Reduce node must have one output")

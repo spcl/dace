@@ -135,7 +135,7 @@ class MapReduceFusion(pm.SingleStateTransformation):
             raise RuntimeError("Reduction memlet cannot be None")
 
         # Find which indices should be removed from new memlet
-        input_edge = graph.in_edges(reduce_node)[0]
+        input_edge = reduce_node.input_edge(graph)
         axes = reduce_node.axes or list(range(len(input_edge.data.subset)))
         array_edge = graph.out_edges(reduce_node)[0]
 

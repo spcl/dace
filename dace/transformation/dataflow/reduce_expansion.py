@@ -85,7 +85,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         reduce_node = self.reduce
-        inedge = graph.in_edges(reduce_node)[0]
+        inedge = reduce_node.input_edge(graph)
         input_dims = inedge.data.subset.dims()
         axes = reduce_node.axes
         # we cannot expand upon full reduction
@@ -137,7 +137,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
         # remove the reduce identity, will get reassigned after expansion
         reduce_node.identity = None
         # expand the reduce node
-        in_edge = graph.in_edges(reduce_node)[0]
+        in_edge = reduce_node.input_edge(graph)
         nsdfg = self._expand_reduce(sdfg, graph, reduce_node)
         # find the new nodes in the nested sdfg created
         nstate = nsdfg.sdfg.nodes()[0]
