@@ -183,6 +183,23 @@ def test_column_major_non_square_keeps_the_blas_extents():
     assert any("CblasColMajor, CblasNoTrans, 3, 5" in code for code in calls), calls
 
 
+def test_pure_float_zero_beta_never_reads_y():
+    """``beta=0.0`` is stored as a SymPy float, which compares unequal to ``0``: the pure expansion took it for a
+    real ``beta`` and computed ``0.0 * y + A x``, so a ``y`` holding NaN (uninitialized storage) gave NaN."""
+    rows, cols = 6, 5
+    sdfg = blas_gemv_graph(rows, cols)
+    (node,) = [n for n in sdfg.start_block.nodes() if isinstance(n, blas.Gemv)]
+    node.beta = 0.0
+    node.implementation = "pure"
+    sdfg.expand_library_nodes()
+    labels = [node.label for node, parent in sdfg.all_nodes_recursive() if isinstance(node, dace.sdfg.nodes.MapEntry)]
+    assert not any("_Add_" in label for label in labels), labels
+    A, x = np.random.default_rng(3).random((rows, cols)), np.random.default_rng(4).random(rows)
+    y = np.full(cols, np.nan)
+    sdfg(A=A, x=x, y=y)
+    assert np.allclose(y, A.T @ x)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("M", type=int, nargs="?", default=256)
@@ -201,3 +218,4 @@ if __name__ == "__main__":
         args.target, args.N, args.M, args.alpha, args.transposed, args.vectorize, args.tile_size_x, args.tile_size_y
     )
     test_column_major_non_square_keeps_the_blas_extents()
+    test_pure_float_zero_beta_never_reads_y()

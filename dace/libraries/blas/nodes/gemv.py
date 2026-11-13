@@ -86,7 +86,7 @@ class ExpandGemvPure(ExpandTransformation):
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
 
-        if node.beta == 0:
+        if symbolic.equal_valued(0, node.beta):
             mul_out, mul_out_array = "_y", array_y
             output_nodes = None
         else:
@@ -130,7 +130,7 @@ class ExpandGemvPure(ExpandTransformation):
         memlet_idx = "__i"
 
         # addition map
-        if node.beta != 0:
+        if not symbolic.equal_valued(0, node.beta):
             state.add_mapped_tasklet(
                 "_Add_",
                 {"__i": f"0:{N}"},
@@ -483,7 +483,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         super().__init__(
             name,
             location=location,
-            inputs=OrderedSet(("_A", "_x", "_y")) if beta != 0 else OrderedSet(("_A", "_x")),
+            inputs=OrderedSet(("_A", "_x")) if symbolic.equal_valued(0, beta) else OrderedSet(("_A", "_x", "_y")),
             outputs={"_y"},
         )
         self.transA = transA
