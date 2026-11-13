@@ -461,11 +461,18 @@ class RedundantArray(pm.SingleStateTransformation):
         if graph.out_degree(in_array) != 1 and not sdutil.ordering_can_move(graph, in_array, None, out_array):
             return False
         # An ordering in-edge holds in_array's producers back, and they write out_array after the removal: a producer
-        # that already runs before the edge's source cannot be put after it, so its write would overtake that read
+        # that already runs before the edge's source cannot be put after it, so its write would overtake the edge
+        # source's access to out_array's container
         guards = {graph.entry_node(e.src) or e.src for e in graph.in_edges(in_array) if not e.data.is_empty()}
+        others = [n for n in graph.data_nodes() if n.data == out_array.data and n is not out_array]
         for order in graph.in_edges(in_array):
-            if order.data.is_empty() and any(
-                g is not order.src and nx.has_path(graph.nx, g, order.src) for g in guards
+            if (
+                order.data.is_empty()
+                and any(g is not order.src and nx.has_path(graph.nx, g, order.src) for g in guards)
+                and any(
+                    n is order.src or nx.has_path(graph.nx, n, order.src) or graph.edges_between(order.src, n)
+                    for n in others
+                )
             ):
                 return False
 
