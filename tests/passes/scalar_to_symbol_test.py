@@ -1222,6 +1222,34 @@ def test_promoted_transient_stays_out_of_the_signature():
         assert out[0] == expected
 
 
+def test_promote_read_only_argument_behind_ordering_edge():
+    """An ordering edge into a read-only integer argument writes nothing: the argument is promoted,
+    and its reader still runs after the write the edge ordered it behind."""
+    sdfg = dace.SDFG("promote_behind_ordering")
+    sdfg.add_scalar("s", dace.int32)
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    state = sdfg.add_state()
+    write = state.add_write("A")
+    state.add_edge(state.add_tasklet("w", {}, {"o"}, "o = 1.0"), "o", write, None, dace.Memlet("A[0]"))
+    read = state.add_read("s")
+    state.add_nedge(write, read, dace.Memlet())
+    reader = state.add_tasklet("r", {"i"}, {"o"}, "o = 2 * i")
+    state.add_edge(read, None, reader, "i", dace.Memlet("s[0]"))
+    state.add_edge(reader, "o", state.add_write("B"), None, dace.Memlet("B[0]"))
+
+    promote = scalar_to_symbol.ScalarToSymbolPromotion()
+    promote.transients_only = False
+    assert promote.apply_pass(sdfg, {}) == {"s"}
+    assert "s" not in sdfg.arrays and "s" in sdfg.symbols
+    assert [s for s in sdfg.states() if s.nodes()] == [state], "the write must stay in the reader's state"
+    assert state.edges_between(write, reader), "the reader must stay ordered behind the write"
+
+    a, b = np.zeros(1), np.zeros(1)
+    sdfg(A=a, B=b, s=3)
+    assert a[0] == 1.0 and b[0] == 6.0
+
+
 if __name__ == "__main__":
     test_abs_complex_guard_compiles_and_runs()
     test_complex_scalar_from_array_not_promotable()
@@ -1392,3 +1420,4 @@ def test_a_widened_loop_iterator_promotes_although_the_iterator_is_a_scope_symbo
     sdfg(A=a, N=10)
     assert np.array_equal(a, np.ones(10))
     test_promoted_transient_stays_out_of_the_signature()
+    test_promote_read_only_argument_behind_ordering_edge()

@@ -21,6 +21,7 @@ from dace.sdfg import SDFG
 from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutils
 from dace.sdfg.sdfg import InterstateEdge
+from dace.sdfg.state import is_written
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as passes
 from dace.transformation.transformation import explicit_cf_compatible
@@ -158,7 +159,7 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
         # defining subgraph off in front). The per-edge checks below catch a dependence carried by a
         # data EDGE; this set is what catches one carried by a memlet SUBSET, where the container is
         # named as if it were a symbol and no edge records the read at all.
-        state_writes = {n.data for n in state.data_nodes() if state.in_degree(n) > 0}
+        state_writes = {n.data for n in state.data_nodes() if is_written(state, n)}
 
         for node in state.nodes():
             if not isinstance(node, nodes.AccessNode):
@@ -212,8 +213,8 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                 continue
             # End of read check
 
-            # If candidate is read-only, continue normally
-            if state.in_degree(node) == 0:
+            # If candidate is read-only, continue normally (an ordering edge into it writes nothing)
+            if not is_written(state, node):
                 # A read-only occurrence still FINDS the candidate, which the closing
                 # ``candidates_seen`` intersection needs. Record it only for a NON-transient
                 # scalar: its value comes from the caller, so the promoted symbol is exact.
@@ -798,7 +799,12 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: dict[str, str]):
             if node not in state:
                 continue
             symname = array_names[node.data]
+            # The node goes; what an ordering edge held behind it, its readers still wait for
+            if state.in_degree(node):
+                state.keep_order_through([node])
             for out_edge in state.out_edges(node):
+                if out_edge.data.is_empty():
+                    continue
                 for e in state.memlet_tree(out_edge):
                     # Step 3.1
                     dst = e.dst
@@ -865,8 +871,10 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: dict[str, str]):
                     if isinstance(e.src, nodes.EntryNode) and len(state.edges_between(e.src, dst)) == 0:
                         state.add_nedge(e.src, dst, mm.Memlet())
 
-        # Remove newly-isolated nodes
-        state.remove_nodes_from([n for n in scalar_nodes if len(state.all_edges(n)) == 0])
+        # Remove newly-isolated nodes, and read nodes left with ordering edges only (their order was kept above)
+        state.remove_nodes_from(
+            [n for n in scalar_nodes if n in state and all(e.data.is_empty() for e in state.all_edges(n))]
+        )
 
 
 def translate_cpp_tasklet_to_python(code: str):
@@ -938,7 +946,7 @@ class ScalarToSymbolPromotion(passes.Pass):
             scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in to_promote]
             # Step 2: Assignment tasklets
             for node in scalar_nodes:
-                if node not in state or state.in_degree(node) == 0:
+                if node not in state or not is_written(state, node):
                     continue
                 in_edge = state.in_edges(node)[0]
                 input = in_edge.src
