@@ -14,6 +14,7 @@ stronger statement than diffing them against each other.
 """
 
 import os
+import re
 import subprocess
 
 import pytest
@@ -23,6 +24,16 @@ from dace import Config
 TEST_DIR = os.path.dirname(os.path.abspath(__file__))
 SOURCE = os.path.join(TEST_DIR, "cpp", "half_ops_test.cpp")
 RUNTIME_INCLUDE = os.path.abspath(os.path.join(TEST_DIR, "..", "dace", "runtime", "include"))
+
+#: GCC 14.3 notes on every ``-march=native`` compile on an AVX10.1 host that the flag now means 512-bit; it is about the
+#: flag, not the code, so it is the one diagnostic a clean build may carry.
+ISA_NOTICE = re.compile(r"^cc1plus: warning: .-mavx10\.1. is aliased to 512 bit since GCC14\.3$")
+
+
+def diagnostics(stderr: str) -> str:
+    """The compiler's diagnostics on the code: ``stderr`` without the ISA notice."""
+    return "\n".join(line for line in stderr.strip().splitlines() if not ISA_NOTICE.match(line))
+
 
 #: (test id, extra compiler flags). ``-march=native`` mirrors DaCe's default
 #: ``compiler.cpu.args``, and is what enables the hardware conversion path on a host
@@ -67,7 +78,7 @@ def build_and_run(binary, extra_flags, strict=True):
 
     build = subprocess.run(cmd, capture_output=True, text=True)
     assert build.returncode == 0, f"compilation failed:\n{' '.join(cmd)}\n{build.stderr}"
-    assert not build.stderr.strip(), f"compiler diagnostics:\n{build.stderr}"
+    assert not diagnostics(build.stderr), f"compiler diagnostics:\n{build.stderr}"
 
     run = subprocess.run([binary], capture_output=True, text=True, env=dict(os.environ, OMP_NUM_THREADS="4"))
     assert run.returncode == 0, f"{run.stdout}\n{run.stderr}"
@@ -120,8 +131,17 @@ def test_native_conversion_path_is_selected_for_f16c(tmp_path):
     cmd += ["-I", RUNTIME_INCLUDE, "-o", binary, SOURCE]
     build = subprocess.run(cmd, capture_output=True, text=True)
     assert build.returncode == 0, f"{' '.join(cmd)}\n{build.stderr}"
-    assert not build.stderr.strip(), build.stderr
+    assert not diagnostics(build.stderr), build.stderr
+
+
+def test_only_the_avx10_flag_notice_is_left_out_of_the_diagnostics():
+    notice = "cc1plus: warning: \u2018-mavx10.1\u2019 is aliased to 512 bit since GCC14.3"
+    code = "half_ops_test.cpp:3:5: warning: unused variable \u2018x\u2019 [-Wunused-variable]"
+
+    assert diagnostics(notice + "\n") == ""
+    assert diagnostics(f"{notice}\n{code}\n") == code
 
 
 if __name__ == "__main__":
+    test_only_the_avx10_flag_notice_is_left_out_of_the_diagnostics()
     pytest.main([__file__, "-v"])
