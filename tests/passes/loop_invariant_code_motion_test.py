@@ -1577,6 +1577,37 @@ def test_an_ordering_edge_into_an_invariant_tasklet_does_not_pin_it():
     _run_and_check(sdfg, py_ref, a=np.float64(0.75), outp=np.zeros(5), N=5)
 
 
+def test_a_constant_inside_a_map_in_a_loop_leaves_through_the_map():
+    """``for k: map i: t = 2; outp[i] = a[i] * t + k``: the constant tasklet sits inside the map. Moved straight to the
+    loop's preheader it would leave ``t`` inside the map without a producer; it leaves the map first instead."""
+    sdfg = dace.SDFG("licm_constant_in_a_map")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("outp", [N], dace.float64)
+    sdfg.add_transient("t", [1], dace.float64)
+    loop = _build_loop(sdfg, "k", "K")
+    body = loop.add_state("body", is_start_block=True)
+    entry, exit_node = body.add_map("m", {"i": "0:N"})
+    const = body.add_tasklet("const", {}, {"o"}, "o = 2.0")
+    use = body.add_tasklet("use", {"x", "s"}, {"y"}, "y = x * s + k")
+    tnode = body.add_access("t")
+    body.add_nedge(entry, const, mm.Memlet())
+    body.add_edge(const, "o", tnode, None, mm.Memlet("t[0]"))
+    body.add_edge(tnode, None, use, "s", mm.Memlet("t[0]"))
+    body.add_memlet_path(body.add_read("a"), entry, use, dst_conn="x", memlet=mm.Memlet("a[i]"))
+    body.add_memlet_path(use, exit_node, body.add_write("outp"), src_conn="y", memlet=mm.Memlet("outp[i]"))
+    sdfg.validate()
+
+    LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    def py_ref(a, outp, N, K):
+        for k in range(K):
+            outp[:] = a * 2.0 + k
+
+    _run_and_check(sdfg, py_ref, a=np.arange(5.0), outp=np.zeros(5), N=5, K=3)
+
+
 if __name__ == "__main__":
     test_pure_tasklet_hoisted_from_loop_region()
     test_invariant_load_without_inloop_writer_is_hoisted()
@@ -1618,3 +1649,4 @@ if __name__ == "__main__":
     test_the_cpu_specialization_splits_a_nest_whose_outer_map_feeds_the_team()
     test_the_cpu_specialization_keeps_a_nest_whose_outer_map_has_few_trips()
     test_an_ordering_edge_into_an_invariant_tasklet_does_not_pin_it()
+    test_a_constant_inside_a_map_in_a_loop_leaves_through_the_map()

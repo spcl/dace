@@ -484,8 +484,11 @@ def _find_one_invariant_tasklet(
     variant_data: set[str],
     region_writers: dict[str, int],
 ) -> nodes.Tasklet | None:
+    # Only top-level tasklets: one inside a map leaves it through ``hoist_map_scope``, and moved to the preheader
+    # it would leave the map's nodes it feeds without a producer
+    scope = state.scope_dict()
     for n in state.nodes():
-        if not isinstance(n, nodes.Tasklet):
+        if not isinstance(n, nodes.Tasklet) or scope[n] is not None:
             continue
         if _is_tasklet_invariant(state, n, variant_syms, variant_data, region_writers):
             return n
