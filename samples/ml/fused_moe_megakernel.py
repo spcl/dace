@@ -402,8 +402,10 @@ def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18, pro
     @dace.program
     def output(g, x, dense_out, expert_acc, post_norm_1, post_norm_2, post_norm, out):
         """Normalizes both branches of token ``g``, adds them, normalizes, and adds the residual (in bfloat16, as the
-        model). The sum of the branches is computed again rather than kept, as it is read from L2."""
+        model). The sum of the branches is kept in shared memory, which shares its bytes with the other tasks'
+        containers."""
         sums = dace.ndarray([3], dtype=dace.float32, storage=SHARED)
+        both = dace.ndarray([D], dtype=dace.bfloat16, storage=SHARED)
         sums[:] = 0
         for d in dace.map[0:D] @ TB:
             v1 = dace.float32(dense_out[g, d])
@@ -414,10 +416,11 @@ def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18, pro
         inv2 = inverse_rms(sums[1])
         for d in dace.map[0:D] @ TB:
             v = branches(g, d, inv1, inv2, dense_out, expert_acc, post_norm_1, post_norm_2)
+            both[d] = v
             sums[2] += v * v
         inv = inverse_rms(sums[2])
         for d in dace.map[0:D] @ TB:
-            v = branches(g, d, inv1, inv2, dense_out, expert_acc, post_norm_1, post_norm_2)
+            v = dace.float32(both[d])
             out[g, d] = dace.float32(x[g, d]) + bf16(v * inv * dace.float32(post_norm[d]))
 
     @dace.program
