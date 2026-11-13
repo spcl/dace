@@ -73,7 +73,9 @@ def test_offloaded_sweep_is_one_kernel():
     kernels = [
         n
         for n, s in sdfg.all_nodes_recursive()
-        if isinstance(n, nodes.MapEntry) and n.map.schedule == dtypes.ScheduleType.GPU_Device and s.entry_node(n) is None
+        if isinstance(n, nodes.MapEntry)
+        and n.map.schedule == dtypes.ScheduleType.GPU_Device
+        and s.entry_node(n) is None
     ]
     assert len(kernels) == 1 and str(kernels[0].map.range) == "0:NJ, 0:NK"
 
@@ -131,7 +133,9 @@ def test_blocked_body_is_one_map_over_blocks_and_columns():
     kernels = [
         n
         for n, s in sdfg.all_nodes_recursive()
-        if isinstance(n, nodes.MapEntry) and n.map.schedule == dtypes.ScheduleType.GPU_Device and s.entry_node(n) is None
+        if isinstance(n, nodes.MapEntry)
+        and n.map.schedule == dtypes.ScheduleType.GPU_Device
+        and s.entry_node(n) is None
     ]
     assert len(kernels) == 1
 

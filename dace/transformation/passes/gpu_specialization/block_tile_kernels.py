@@ -97,7 +97,7 @@ def kernel_axes_coalesce(state: SDFGState, kernel: nodes.MapEntry, strided) -> b
     """Whether the kernel's own axes are strictly more contiguous than every inner map's: its threads already touch
     adjacent elements (a column sweep over plane lanes), and a block per outer iteration would put them on a
     strided axis instead."""
-    return min_stride(state, kernel) < min(min_stride(owner, entry) for owner, entry in strided)
+    return bool(strided) and min_stride(state, kernel) < min(min_stride(owner, entry) for owner, entry in strided)
 
 
 #: A container each lane of a block-tiled kernel holds its own copy of, as ``(owning SDFG, name)``.
@@ -499,7 +499,7 @@ class BlockTileKernels(ppl.Pass):
             if xfh.gpu_map_has_explicit_threadblocks(state, kernel):
                 continue
             strided = strided_maps(state, kernel)
-            if strided and kernel_axes_coalesce(state, kernel, strided):
+            if kernel_axes_coalesce(state, kernel, strided):
                 continue
             fills = give_blocks_their_containers(state, kernel, strided)
             if fills_per_lane_buffer(state, kernel, strided):

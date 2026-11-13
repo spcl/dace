@@ -96,8 +96,8 @@ def unfold_small_maps(loop: LoopRegion, axis: tuple, facts: symbolic.Facts) -> i
 def stride_costs(itervar: str | None, facts: mlim.LaneFacts, sdfg: SDFG) -> tuple[dict, list[str], list[str]]:
     """Contiguity scores of the loop variable ``itervar`` and every lane map parameter, with the lane and the other
     parameters."""
-    lanes = list(dict.fromkeys(entry.map.params[d] for _, entry in facts.lanes for d in facts.dims[entry]))
-    inner = list(dict.fromkeys(p for _, entry in facts.lanes for p in entry.map.params if p not in lanes))
+    lanes = list(dict.fromkeys(entry.map.params[d] for owner, entry in facts.lanes for d in facts.dims[entry]))
+    inner = list(dict.fromkeys(p for owner, entry in facts.lanes for p in entry.map.params if p not in lanes))
     edges = [
         e
         for state, entry in facts.lanes
@@ -152,7 +152,9 @@ def cpu_lane_tile(facts: mlim.LaneFacts, sdfg: SDFG) -> int | None:
     working set fills at most half of one core's L2, so it stays cached from one trip to the next. ``None`` when no
     tile fits, a symbolic working set included (its symbols are taken large): the steps then stream the arrays
     either way, and moving them inside only costs the parallelism of the planes."""
-    constants = {symbolic.symbol(name): value for name, value in sdfg.constants.items() if isinstance(value, numbers.Integral)}
+    constants = {
+        symbolic.symbol(name): value for name, value in sdfg.constants.items() if isinstance(value, numbers.Integral)
+    }
     per_point = symbolic.sympy.sympify(bytes_per_lane_point(facts, sdfg)).subs(constants)
     if not per_point.is_Number or per_point <= 0:
         return None
@@ -262,7 +264,7 @@ class InterchangeLoopsIntoLaneMaps(ppl.Pass):
         if lanes.refusal is not None:
             return False
         costs, _, _ = stride_costs(loop.loop_variable, lanes, sdfg)
-        tiled = {entry.map.params[lanes.dims[entry][-1]] for _, entry in lanes.lanes}
+        tiled = {entry.map.params[lanes.dims[entry][-1]] for owner, entry in lanes.lanes}
         rest = [cost for name, cost in costs.items() if name not in tiled]
         tile = cpu_lane_tile(lanes, sdfg)
         if tile is None or (rest and min(costs[name] for name in tiled) > min(rest)):

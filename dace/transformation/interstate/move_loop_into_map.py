@@ -597,11 +597,7 @@ def control_flow_reads_outside(loop: LoopRegion, sdfg: sd.SDFG) -> OrderedSet:
 def axis_dim(entry: nodes.MapEntry, axis: tuple, taken: tuple[int, ...] = ()) -> int | None:
     """The first dimension of ``entry``'s map spanning ``axis``, other than ``taken``, or ``None``."""
     return next(
-        (
-            d
-            for d, r in enumerate(entry.map.range)
-            if d not in taken and all(same_value(x, y) for x, y in zip(r, axis))
-        ),
+        (d for d, r in enumerate(entry.map.range) if d not in taken and all(same_value(x, y) for x, y in zip(r, axis))),
         None,
     )
 
@@ -612,12 +608,12 @@ def share_lane_axes(facts: LaneFacts) -> None:
     for d, axis in enumerate(first.map.range):
         if d in facts.dims[first]:
             continue
-        found = {entry: axis_dim(entry, axis, facts.dims[entry]) for _, entry in facts.lanes}
+        found = {entry: axis_dim(entry, axis, facts.dims[entry]) for owner, entry in facts.lanes}
         if all(dim is not None for dim in found.values()):
             for entry, dim in found.items():
                 facts.dims[entry] += (dim,)
     order = sorted(range(len(facts.dims[first])), key=lambda j: facts.dims[first][j])
-    for _, entry in facts.lanes:
+    for owner, entry in facts.lanes:
         facts.dims[entry] = tuple(facts.dims[entry][j] for j in order)
 
 
@@ -625,7 +621,7 @@ def gather_axis_lanes(facts: LaneFacts) -> str | None:
     """Re-gather ``facts.lanes`` around the one range most of the body's top-level maps span: a map spanning it is a
     lane, a map without it that holds maps is transparent and its maps are gathered in turn. Why not, or ``None``."""
     counts: dict[str, tuple[int, tuple]] = {}
-    for _, entry in facts.lanes:
+    for owner, entry in facts.lanes:
         for r in OrderedSet(str(r) for r in entry.map.range):
             seen, axis = counts.get(r, (0, None))
             counts[r] = (seen + 1, axis or next(q for q in entry.map.range if str(q) == r))
@@ -646,6 +642,24 @@ def gather_axis_lanes(facts: LaneFacts) -> str | None:
     if facts.shared and facts.lanes:
         share_lane_axes(facts)
     return None
+
+
+def fresh_lane_names(facts: LaneFacts, count: int) -> list[str]:
+    """Names for the common lanes that no lane map's parameter takes: a map's own dimensions stay inside it, and
+    may carry another map's lane parameter name."""
+    taken = OrderedSet(p for owner, entry in facts.lanes for p in entry.map.params)
+    return [find_new_name(f"__lane{j}", taken) for j in range(count)]
+
+
+def tiled_spans(lane_syms: list, ref: sbs.Range, tile: int) -> tuple[list[tuple], sbs.Range]:
+    """Each lane's ``(first, last)`` span and the lane map's range: the last lane steps by ``tile`` and spans the
+    ``tile`` positions from it, the last tile stopping at the range's end."""
+    spans = [(lane, lane) for lane in lane_syms]
+    if tile > 1:
+        begin, end, step = ref[-1]
+        spans[-1] = (lane_syms[-1], sympy.Min(lane_syms[-1] + tile - 1, end))
+        ref = sbs.Range(list(ref)[:-1] + [(begin, end, tile)])
+    return spans, ref
 
 
 def lane_refusal(loop: LoopRegion, sdfg: sd.SDFG, facts: LaneFacts, axis: bool = False) -> str | None:
@@ -671,11 +685,11 @@ def lane_refusal(loop: LoopRegion, sdfg: sd.SDFG, facts: LaneFacts, axis: bool =
         if reason is not None:
             return reason
     ref_state, ref_entry = facts.lanes[0]
-    lane_dims = {entry: list(facts.dims[entry]) if axis else list(range(len(entry.map.range))) for _, entry in facts.lanes}
+    lane_dims = {
+        entry: list(facts.dims[entry]) if axis else list(range(len(entry.map.range))) for state, entry in facts.lanes
+    }
     ref = sbs.Range([ref_entry.map.range[d] for d in lane_dims[ref_entry]])
-    # Fresh names: a map's own dimensions stay inside it, and may carry another map's lane parameter name
-    taken = OrderedSet(p for _, entry in facts.lanes for p in entry.map.params)
-    lanes = [find_new_name(f"__lane{j}", taken) for j in range(len(lane_dims[ref_entry]))]
+    lanes = fresh_lane_names(facts, len(lane_dims[ref_entry]))
     invariant = (OrderedSet(sdfg.symbols) | OrderedSet(sdfg.constants)) - assigned_symbols(loop)
     renames = {}
     for state, entry in facts.lanes:
@@ -789,7 +803,9 @@ def move_loop_into_lane_maps(
     facts = analyze_lanes(loop, sdfg, axis, shared)
     graph = loop.parent_graph
     ref_state, ref_entry = facts.lanes[0]
-    lane_dims = {entry: list(facts.dims[entry]) if axis else list(range(len(entry.map.range))) for _, entry in facts.lanes}
+    lane_dims = {
+        entry: list(facts.dims[entry]) if axis else list(range(len(entry.map.range))) for state, entry in facts.lanes
+    }
     ref = sbs.Range([copy.deepcopy(ref_entry.map.range[d]) for d in lane_dims[ref_entry]])
     types = ref_entry.new_symbols(sdfg, ref_state, sdfg.symbols)
     taken = (
@@ -805,11 +821,7 @@ def move_loop_into_lane_maps(
     for lane in lane_syms:
         nsdfg.sdfg.add_symbol(lane.name, lane.dtype)
         nsdfg.symbol_mapping[lane.name] = lane
-    spans = [(lane, lane) for lane in lane_syms]
-    if tile > 1:
-        begin, end, _ = ref[-1]
-        spans[-1] = (lane_syms[-1], sympy.Min(lane_syms[-1] + tile - 1, end))
-        ref = sbs.Range(list(ref)[:-1] + [(begin, end, tile)])
+    spans, ref = tiled_spans(lane_syms, ref, tile)
     for _, entry in facts.lanes:
         ranges = list(entry.map.range.ranges)
         for d, span in zip(lane_dims[entry], spans):
