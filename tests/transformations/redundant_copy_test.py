@@ -6,8 +6,10 @@ import pytest
 
 import dace
 from dace import data as dace_data
+from dace import graphlib as nx
 from dace import nodes
 from dace.libraries.linalg import Transpose
+from dace.libraries.standard.nodes.merge_node import MergeLibraryNode
 from dace.transformation.dataflow import (
     MapFusionVertical,
     RedundantArray,
@@ -979,6 +981,51 @@ def test_an_ordering_edge_out_of_the_copied_array_moves_to_its_target():
     assert np.array_equal(b_val, np.arange(4.0) + 1) and c_val[0] == 7.0
 
 
+def test_an_ordering_edge_into_a_slice_folded_as_a_view_orders_its_producer():
+    """icon_aes_graupel: ``A[:, :, :] = 1`` then ``A[1, 2, :] = where(M, T, F)`` through a slice transient that an empty
+    memlet orders behind the whole write. A library node writes the slice, so it folds into a view of ``A``: the
+    library node then writes ``A`` itself and must still run after the whole write, or that write overwrites the
+    slice."""
+    sdfg = dace.SDFG("slice_view_behind_ordering")
+    sdfg.add_array("A", [2, 3, 8], dace.float64)
+    sdfg.add_array("T", [8], dace.float64)
+    sdfg.add_array("F", [8], dace.float64)
+    sdfg.add_array("M", [8], dace.bool_)
+    sdfg.add_transient("slice", [8], dace.float64)
+    state = sdfg.add_state()
+    whole = state.add_access("A")
+    state.add_mapped_tasklet(
+        "whole",
+        {"i": "0:2", "j": "0:3", "k": "0:8"},
+        {},
+        "y = 1.0",
+        {"y": dace.Memlet("A[i, j, k]")},
+        output_nodes={"A": whole},
+        external_edges=True,
+    )
+    tmp = state.add_access("slice")
+    where = MergeLibraryNode("where")
+    for name, conn in (("T", "_mrg_t"), ("F", "_mrg_f"), ("M", "_mrg_mask")):
+        state.add_edge(state.add_read(name), None, where, conn, dace.Memlet(f"{name}[0:8]"))
+    state.add_edge(where, "_mrg_out", tmp, None, dace.Memlet("slice[0:8]"))
+    state.add_nedge(whole, tmp, dace.Memlet())
+    out = state.add_write("A")
+    state.add_edge(tmp, None, out, None, dace.Memlet("slice[0:8] -> [1, 2, 0:8]"))
+    sdfg.validate()
+
+    RedundantArray.apply_to(sdfg, in_array=tmp, out_array=out)
+    sdfg.validate()
+    assert isinstance(sdfg.arrays["slice"], dace_data.View), "the library node keeps writing the slice, now a view"
+    assert nx.has_path(state.nx, whole, where), "the library node writing the slice must follow the whole write"
+
+    a = np.zeros((2, 3, 8))
+    t, f, m = np.full(8, 2.0), np.full(8, 3.0), np.arange(8) % 2 == 0
+    sdfg(A=a, T=t, F=f, M=m)
+    expected = np.ones((2, 3, 8))
+    expected[1, 2, :] = np.where(m, t, f)
+    assert np.array_equal(a, expected)
+
+
 if __name__ == "__main__":
     test_reshaping_with_redundant_arrays()
     test_a_converting_copy_after_an_exact_store_folds()
@@ -1013,3 +1060,4 @@ if __name__ == "__main__":
     test_a_copy_that_converts_the_element_type_is_kept(True)
     test_a_copy_that_converts_the_element_type_is_kept(False)
     test_an_ordering_edge_out_of_the_copied_array_moves_to_its_target()
+    test_an_ordering_edge_into_a_slice_folded_as_a_view_orders_its_producer()

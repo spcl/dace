@@ -427,6 +427,30 @@ def conversion_survives_fold(state: SDFGState, node: nodes.AccessNode, dtype: dt
     return True
 
 
+def order_write_guards(graph: SDFGState, in_array: nodes.AccessNode) -> None:
+    """Move every ordering (empty) in-edge of ``in_array`` onto the scopes producing it.
+
+    The edge guards the WRITE of ``in_array``, and removing ``in_array`` (or turning it into a view) makes its own
+    producers write the container behind it. Left on the access node it would order that node alone and leave the
+    producing scope free to run first -- a silent write-after-write inversion. The producers are what it has to order.
+    """
+    write_guards = []
+    for e in graph.in_edges(in_array):
+        if e.data.is_empty():
+            continue
+        guard = graph.entry_node(e.src) or e.src
+        if guard not in write_guards:
+            write_guards.append(guard)
+    for e in graph.in_edges(in_array):
+        if not e.data.is_empty():
+            continue
+        guards = [g for g in write_guards if g is not e.src and not nx.has_path(graph.nx, g, e.src)]
+        if guards:
+            graph.remove_edge(e)
+            for guard in guards:
+                graph.add_nedge(e.src, guard, mm.Memlet())
+
+
 class RedundantArray(pm.SingleStateTransformation):
     """Implements the redundant array removal transformation, applied
     when a transient array is copied to and from (to another array),
@@ -780,6 +804,8 @@ class RedundantArray(pm.SingleStateTransformation):
     ):
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
+        # As a view, in_array's producers write out_array's container directly as well
+        order_write_guards(graph, in_array)
         # NOTE: We do not want to create another view, if the immediate
         # ancestors of in_array are views as well. We just remove it.
         in_ancestors_desc = [
@@ -1001,18 +1027,6 @@ class RedundantArray(pm.SingleStateTransformation):
             self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
             return in_array
 
-        # An ordering (empty) in-edge guards the WRITE of in_array, and that write becomes a write
-        # of out_array by in_array's own producers below. Re-attached to out_array it would order
-        # the access node alone and leave the producing scope free to run first -- a silent
-        # write-after-write inversion. The producers are what it has to order.
-        write_guards = []
-        for e in graph.in_edges(in_array):
-            if e.data.is_empty():
-                continue
-            guard = graph.entry_node(e.src) or e.src
-            if guard not in write_guards:
-                write_guards.append(guard)
-
         # A nested SDFG's connector is its whole container (No-View), so its edge names the image of the WHOLE removed
         # array: ``integrate_nested_sdfg`` reads that edge as the window the connector becomes a view of.
         whole_image = None
@@ -1024,14 +1038,8 @@ class RedundantArray(pm.SingleStateTransformation):
             whole_image = compose_and_push_back(bset, whole, b_dims_to_pop, popped)
 
         # 2. Iterate over the e2 edges and traverse the memlet tree; an ordering edge writes nothing, so it takes no WCR
+        order_write_guards(graph, in_array)
         for e2 in graph.in_edges(in_array):
-            if e2.data.is_empty():
-                guards = [g for g in write_guards if g is not e2.src and not nx.has_path(graph.nx, g, e2.src)]
-                if guards:
-                    graph.remove_edge(e2)
-                    for guard in guards:
-                        graph.add_nedge(e2.src, guard, mm.Memlet())
-                    continue
             path = graph.memlet_tree(e2)
             wcr = e1.data.wcr
             wcr_nonatomic = e1.data.wcr_nonatomic
