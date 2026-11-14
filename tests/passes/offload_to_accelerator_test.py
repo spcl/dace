@@ -1162,6 +1162,30 @@ def test_a_host_copy_out_of_a_kernel_output_is_not_a_kernel_write():
     assert list(written) == ["A"]
 
 
+def test_an_access_node_a_code_node_outside_writes_stays_out_of_the_wrapped_group():
+    """``rtrans = dot(r, r)`` after a read of the old ``rtrans`` (minife): the write's access node is ordered after the
+    read, so it touches the host group from inside, but the dot outside writes it. Wrapped, the size-1 map's entry
+    would take ``rtrans`` straight from the dot; it stays out of the group instead."""
+    sdfg = dace.SDFG("written_outside_stays_out")
+    sdfg.add_array("rtrans", [1], dace.float64)
+    sdfg.add_array("old", [1], dace.float64)
+    sdfg.add_array("beta", [1], dace.float64)
+    state = sdfg.add_state()
+    read = state.add_tasklet("read", {"_r"}, {"_o"}, "_o = _r")
+    state.add_edge(state.add_read("rtrans"), None, read, "_r", dace.Memlet("rtrans[0]"))
+    state.add_edge(read, "_o", state.add_write("old"), None, dace.Memlet("old[0]"))
+    dot = state.add_tasklet("dot", {}, {"_o"}, "_o = 2.0")
+    written = state.add_write("rtrans")
+    state.add_edge(dot, "_o", written, None, dace.Memlet("rtrans[0]"))
+    state.add_nedge(read, written, dace.Memlet())
+    use = state.add_tasklet("use", {"_r"}, {"_b"}, "_b = _r")
+    state.add_edge(written, None, use, "_r", dace.Memlet("rtrans[0]"))
+    state.add_edge(use, "_b", state.add_write("beta"), None, dace.Memlet("beta[0]"))
+    group = OrderedSet([read, written, use])
+    OffloadToAccelerator()._remove_all_outer_access_nodes_from_group(state, group)
+    assert written not in group and read in group and use in group
+
+
 if __name__ == "__main__":
     test_a_scalar_a_kernel_writes_and_the_host_reads_lives_on_the_device()
     test_a_kernel_never_reads_a_host_pinned_result()
@@ -1582,3 +1606,4 @@ def test_a_cpu_heap_array_survives_the_round_trip():
     sdfg(A=a, B=b)
 
     assert np.allclose(b, a * 2.0), "the device result never reached the host array"
+    test_an_access_node_a_code_node_outside_writes_stays_out_of_the_wrapped_group()

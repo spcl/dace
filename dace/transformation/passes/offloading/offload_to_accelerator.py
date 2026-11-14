@@ -2745,13 +2745,26 @@ class OffloadToAccelerator(ppl.Pass):
         return [pieces[key] for key in sorted(pieces) if pieces[key]]
 
     def _remove_all_outer_access_nodes_from_group(self, state: SDFGState, group: MutableSet[nodes.Node]):
-        outer_nodes = self._get_entry_nodes(state, group) | self._get_exit_nodes(state, group)
-        nodes_to_remove = OrderedSet(node for node in outer_nodes if isinstance(node, nodes.AccessNode))
+        def outer(group: MutableSet[nodes.Node]) -> OrderedSet[nodes.Node]:
+            # An access node a code node outside writes stays outside as well, even when an ordering edge ties it to
+            # the group (minife's ``rtrans = dot(r, r)`` after a read of the old ``rtrans``): wrapped, the wrapper's
+            # entry would take the data straight from that code node.
+            written_outside = OrderedSet(
+                node
+                for node in group
+                if isinstance(node, nodes.AccessNode)
+                and any(
+                    e.src not in group and not isinstance(e.src, nodes.AccessNode) and not e.data.is_empty()
+                    for e in state.in_edges(node)
+                )
+            )
+            outer_nodes = self._get_entry_nodes(state, group) | self._get_exit_nodes(state, group)
+            return OrderedSet(node for node in outer_nodes if isinstance(node, nodes.AccessNode)) | written_outside
 
+        nodes_to_remove = outer(group)
         while nodes_to_remove:
             group -= nodes_to_remove
-            outer_nodes = self._get_entry_nodes(state, group) | self._get_exit_nodes(state, group)
-            nodes_to_remove = OrderedSet(node for node in outer_nodes if isinstance(node, nodes.AccessNode))
+            nodes_to_remove = outer(group)
 
     def _insert_access_between_adjacent_maps(self, state: SDFGState, map_exit: nodes.MapExit) -> None:
         # avoid illegal direct map-to-map connections by routing through an access node.
