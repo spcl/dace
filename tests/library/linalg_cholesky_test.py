@@ -75,8 +75,48 @@ def test_cholesky(implementation, dtype, storage):
 
 ###############################################################################
 
+
+@pytest.mark.lapack
+def test_cholesky_upper_keeps_its_triangle():
+    sdfg = dace.SDFG("linalg_cholesky_upper")
+    state = sdfg.add_state("dataflow")
+    inp = sdfg.add_array("xin", [4, 4], dace.float64)
+    out = sdfg.add_array("xout", [4, 4], dace.float64)
+    node = Cholesky("cholesky", lower=False)
+    node.implementation = "OpenBLAS"
+    state.add_memlet_path(state.add_read("xin"), node, dst_conn="_a", memlet=Memlet.from_array(*inp))
+    state.add_memlet_path(node, state.add_write("xout"), src_conn="_b", memlet=Memlet.from_array(*out))
+
+    xin = generate_matrix(4, np.float64) + 4 * np.eye(4)
+    xout = np.zeros_like(xin)
+    sdfg(xin=xin, xout=xout)
+
+    assert np.array_equal(xout, np.triu(xout))
+    np.testing.assert_allclose(xout.T @ xout, xin)
+
+
+@pytest.mark.lapack
+def test_cholesky_of_a_column_major_matrix():
+    sdfg = dace.SDFG("linalg_cholesky_column_major")
+    state = sdfg.add_state("dataflow")
+    inp = sdfg.add_array("xin", [4, 4], dace.float64, strides=[1, 4])
+    out = sdfg.add_array("xout", [4, 4], dace.float64, strides=[1, 4])
+    node = Cholesky("cholesky", lower=True)
+    node.implementation = "OpenBLAS"
+    state.add_memlet_path(state.add_read("xin"), node, dst_conn="_a", memlet=Memlet.from_array(*inp))
+    state.add_memlet_path(node, state.add_write("xout"), src_conn="_b", memlet=Memlet.from_array(*out))
+
+    xin = np.asfortranarray(generate_matrix(4, np.float64) + 4 * np.eye(4))
+    xout = np.zeros_like(xin, order="F")
+    sdfg(xin=xin, xout=xout)
+
+    np.testing.assert_allclose(xout, np.linalg.cholesky(xin))
+
+
 if __name__ == "__main__":
     test_cholesky("MKL", dace.float32, dace.StorageType.Default)
     test_cholesky("MKL", dace.float64, dace.StorageType.Default)
     test_cholesky("cuSolverDn", dace.float32, dace.StorageType.GPU_Global)
     test_cholesky("cuSolverDn", dace.float64, dace.StorageType.GPU_Global)
+    test_cholesky_upper_keeps_its_triangle()
+    test_cholesky_of_a_column_major_matrix()
