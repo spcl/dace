@@ -4644,6 +4644,43 @@ def test_an_ordering_edge_into_a_node_another_reader_shares_keeps_that_reader_af
     assert np.allclose(ref["out"], res["out"]) and np.allclose(ref["scaled"], res["scaled"])
 
 
+def test_a_node_only_the_first_map_ordered_stays_in_the_enclosing_scope():
+    """Inside an outer Map, an ordering tasklet runs after the first inner Map and before the second. The inner Maps
+    fuse and that order goes, which leaves the tasklet without inputs: it stays ordered after the outer entry, so the
+    outer scope still holds it (cloudsc's ``zqx_order``)."""
+    sdfg = dace.SDFG(unique_name("ordering_node_inside_an_outer_map"))
+    for name in ("a", "out"):
+        sdfg.add_array(name, [4, 10], dace.float64)
+    sdfg.add_transient("t", [10], dace.float64)
+    state = sdfg.add_state()
+    outer_entry, outer_exit = state.add_map("outer", {"j": "0:4"})
+    first_entry, first_exit = state.add_map("first", {"i": "0:10"})
+    first = state.add_tasklet("first", {"_a"}, {"_t"}, "_t = _a + 1.0")
+    state.add_memlet_path(
+        state.add_read("a"), outer_entry, first_entry, first, dst_conn="_a", memlet=dace.Memlet("a[j, i]")
+    )
+    t = state.add_access("t")
+    state.add_memlet_path(first, first_exit, t, src_conn="_t", memlet=dace.Memlet("t[i]"))
+    second_entry, second_exit = state.add_map("second", {"i": "0:10"})
+    second = state.add_tasklet("second", {"_t"}, {"_o"}, "_o = 2.0 * _t")
+    state.add_memlet_path(t, second_entry, second, dst_conn="_t", memlet=dace.Memlet("t[i]"))
+    state.add_memlet_path(
+        second, second_exit, outer_exit, state.add_write("out"), src_conn="_o", memlet=dace.Memlet("out[j, i]")
+    )
+    order = state.add_tasklet("order", {}, {}, "")
+    state.add_nedge(first_exit, order, dace.Memlet())
+    state.add_nedge(order, second_entry, dace.Memlet())
+    sdfg.validate()
+
+    ref, res = make_sdfg_args(sdfg)
+    compile_and_run_sdfg(sdfg, **ref)
+    assert sdfg.apply_transformations_repeated(MapFusionVertical(relaxed_dataflow=True), validate_all=True) == 1
+    assert count_nodes(sdfg, nodes.MapEntry) == 2
+    assert state.entry_node(order) is outer_entry
+    compile_and_run_sdfg(sdfg, **res)
+    assert np.allclose(ref["out"], res["out"])
+
+
 if __name__ == "__main__":
     test_map_fusion_refuses_a_nested_producer_updating_the_whole_intermediate_in_place()
     test_fusion_intrinsic_memlet_direction()
@@ -4718,3 +4755,4 @@ if __name__ == "__main__":
     test_input_read_through_two_nodes_fuses(True)
     test_an_output_that_only_orders_the_second_map_is_a_pure_output()
     test_an_ordering_edge_into_a_node_another_reader_shares_keeps_that_reader_after_the_fused_map()
+    test_a_node_only_the_first_map_ordered_stays_in_the_enclosing_scope()

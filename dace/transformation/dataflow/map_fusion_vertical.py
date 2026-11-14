@@ -694,6 +694,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         # See `partition_first_outputs()`: moved behind the fused Map it would close a cycle
         ordered: set[str] = set()
+        enclosing_entry = graph.entry_node(first_map_entry)
         for edge in list(pure_outputs):
             if edge.data.is_empty() and any(e.dst is second_map_entry for e in graph.out_edges(edge.dst)):
                 # The node's other readers ran after the first Map: they stay after the fused one
@@ -701,6 +702,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     graph.add_nedge(second_map_exit, reader, dace.Memlet())
                 graph.remove_edge(edge)
                 pure_outputs.remove(edge)
+                # A node the first Map alone ordered stays in the scope both Maps share (cloudsc's ``zqx_order``)
+                if enclosing_entry is not None and graph.in_degree(edge.dst) == 0:
+                    graph.add_nedge(enclosing_entry, edge.dst, dace.Memlet())
             for ordering in graph.edges_between(edge.dst, second_map_entry) if not edge.data.is_empty() else ():
                 graph.remove_edge(ordering)
                 ordered.add(edge.dst.data)
