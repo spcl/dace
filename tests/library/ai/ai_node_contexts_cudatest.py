@@ -207,7 +207,7 @@ def test_the_compile_check_builds_device_code(tmp_path):
     # A single element of GPU memory is a pointer, as for every library node
     good = check("_out[0] = __fmul_rn(_in[0], 2.0f);", "good")
     assert good.ok and not good.skipped, good.skipped
-    assert any(name.endswith(".cu") for name in good.sources)
+    assert any(name.endswith((".cu", "_cuda.cpp")) for name in good.sources)
 
     host_only = check("_out[0] = _in[0]; __state->nothing = 0;", "host_only")
     assert not host_only.ok

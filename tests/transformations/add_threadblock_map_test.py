@@ -202,6 +202,21 @@ def _run_and_compare(prog, A_host, B_host, constants=None):
     numpy.testing.assert_allclose(cupy.asnumpy(A_ref), cupy.asnumpy(A_out))
 
 
+def test_the_kernel_map_keeps_its_instrumentation():
+    """The tiling makes the instrumented kernel map the thread-block map; the timing stays with the kernel."""
+    sdfg = elementwise_symbolic.to_sdfg(simplify=True)
+    (kernel,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+    kernel.map.instrument = dace.dtypes.InstrumentationType.GPU_Events
+    AddThreadBlockMap.apply_to(sdfg, map_entry=kernel)
+    instrumented = {
+        n.map.schedule: n.map.instrument for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)
+    }
+    assert instrumented == {
+        dace.dtypes.ScheduleType.GPU_Device: dace.dtypes.InstrumentationType.GPU_Events,
+        dace.dtypes.ScheduleType.GPU_ThreadBlock: dace.dtypes.InstrumentationType.No_Instrumentation,
+    }
+
+
 @pytest.mark.gpu
 def test_elementwise_constexpr_size():
     A = numpy.zeros(512, dtype=numpy.float64)
@@ -234,10 +249,40 @@ def test_elementwise_with_floor_div():
     _run_and_compare(elementwise_with_floor_div, A, B, constants={"i_beg": 0, "i_end": 1024})
 
 
+def test_a_thread_block_map_in_a_nested_sdfg_under_an_inner_map_is_found():
+    """A kernel whose thread-block map sits in a nested SDFG under a sequential map already has its threads: tiling it
+    again ran the block-level body on a per-thread map, a barrier under divergent threads."""
+    inner = dace.SDFG("block_body")
+    inner.add_transient("x", [64], dace.float64, storage=dace.dtypes.StorageType.GPU_Shared)
+    inner.add_state().add_mapped_tasklet(
+        "threads",
+        {"t": "0:64"},
+        {},
+        "o = 1.0",
+        {"o": dace.Memlet("x[t]")},
+        schedule=dace.dtypes.ScheduleType.GPU_ThreadBlock,
+        external_edges=True,
+    )
+
+    sdfg = dace.SDFG("thread_block_map_under_an_inner_map")
+    state = sdfg.add_state()
+    kernel, kernel_exit = state.add_map("kernel", {"r": "0:N"}, schedule=dace.dtypes.ScheduleType.GPU_Device)
+    rows, rows_exit = state.add_map("rows", {"k": "0:4"}, schedule=dace.dtypes.ScheduleType.Sequential)
+    nested = state.add_nested_sdfg(inner, set(), set())
+    for src, dst in ((kernel, rows), (rows, nested), (nested, rows_exit), (rows_exit, kernel_exit)):
+        state.add_nedge(src, dst, dace.Memlet())
+
+    found = [entry.map.schedule for _, entry in dace.transformation.helpers.get_internal_scopes(state, kernel)]
+    assert dace.dtypes.ScheduleType.GPU_ThreadBlock in found, found
+    assert not AddThreadBlockMap.can_be_applied_to(sdfg, map_entry=kernel)
+
+
 if __name__ == "__main__":
+    test_the_kernel_map_keeps_its_instrumentation()
     test_elementwise_constexpr_size()
     test_elementwise_small_constexpr_size()
     for symbol_param in symbol_params:
         test_elementwise_symbolic(symbol_param)
     test_elementwise_with_floor_div()
     test_memlet_tree()
+    test_a_thread_block_map_in_a_nested_sdfg_under_an_inner_map_is_found()

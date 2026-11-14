@@ -26,6 +26,9 @@ def gpu_error_doubler(A: dace.float64[M, N], B: dace.float64[M, N]):
 
 def build_doubler():
     """Compiles the doubler with block y == 1, so the map's M range lands directly on the grid y dimension."""
+    if common.get_gpu_backend() == "hip":
+        # HIP bounds a grid dimension only by 2**32 threads, which no array that fits in memory reaches
+        pytest.skip("HIP has no grid y limit an argument can exceed")
     sdfg = gpu_error_doubler.to_sdfg(simplify=True)
     sdfg.apply_gpu_transformations()
     for state in sdfg.states():

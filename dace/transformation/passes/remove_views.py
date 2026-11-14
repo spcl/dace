@@ -1,0 +1,1331 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+Eliminates View access nodes from an SDFG by composing the view's address
+mapping into the viewed array.
+
+A View node V between a viewed array A and a map
+``phi : index_space(V) -> index_space(A)`` encoded by the
+view edge memlet. We can rewrite memlets m
+that references V in terms of A by composing ``m' = phi.m``.  After
+rewriting, V has no remaining uses and can be removed.
+
+Two strategies are used depending on the view kind:
+
+Four strategies are tried in order until one succeeds:
+
+1. **Slice / squeeze / unsqueeze** --
+   :func:`dace.sdfg.utils.map_view_to_array` matches view strides to
+   array strides and returns a per-dimension mapping.  Memlet subsets are
+   rewritten by affine composition: ``new = rb + rs * v``.
+
+1b. **Mapping from view edge subset** -- when ``map_view_to_array`` fails,
+   the mapping is derived directly from the view edge subset:
+   size-1 dimensions are squeezed.  Handles
+   strided slices like ``A[0:M:2, col]``.
+
+2. **Dense reshape** -- both descriptors are gap-free
+   (``total_size == prod(shape)``) with the same element count.  Each
+   memlet range ``(b, e, s)`` is linearized using ``desc.strides``, then
+   delinearized via the mixed-radix formula
+   ``(flat // stride_d) % shape_d``.  Python tasklet code is rewritten
+   analogously via AST transformation. (This type of tasklet should not exist,
+   but we can't prevent them from being written as they also appear in unit
+   tests)
+
+3. **Pure linearization** -- same as strategy 2 but without the
+   dense guard.  Relies on per-memlet feasibility only: if the flat
+   offset range can be delinearized, the view is removed.  Catches
+   padded or non-standard layouts.
+"""
+
+import ast
+import copy
+import functools
+import operator
+from collections.abc import Callable
+from typing import Any
+
+import sympy
+
+from dace import SDFG, Memlet, SDFGState, config, dtypes, properties, subsets, symbolic
+from dace import data as dt
+from dace.frontend.python import astutils
+from dace.libraries.standard.nodes.reduce import Reduce
+from dace.ordered import OrderedSet
+from dace.sdfg import graph as gr
+from dace.sdfg import nodes as nd
+from dace.sdfg import utils as sdutil
+from dace.sdfg.narrowing import as_expr
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
+
+_PASS = "RemoveViews"
+_DEBUGPRINT = config.Config.get("debugprint") in (True, "1", "true", "yes")
+
+
+def _fmt_desc(desc, name):
+    """One-line summary of a data descriptor."""
+    kind = type(desc).__name__
+    return f"{name}: {kind}{list(desc.shape)} strides={list(desc.strides)}"
+
+
+def _ordering_side(
+    state: SDFGState,
+    view_node: nd.AccessNode,
+    view_edge: gr.MultiConnectorEdge,
+    is_viewed_src: bool,
+) -> tuple[list[gr.MultiConnectorEdge], list[gr.MultiConnectorEdge]]:
+    """Splits ``view_node``'s non-view edges by what :meth:`RemoveViews._reconnect_edges` does.
+
+    :return: ``(ordering, carriers)``. ``carriers`` are the edges the splice re-homes onto the
+             view edge's neighbour; ``ordering`` are the edges on the opposite side, which carry
+             no data (empty memlets are ordering constraints) and are re-homed onto the carriers.
+    """
+    in_edges = [e for e in state.in_edges(view_node) if e is not view_edge]
+    out_edges = [e for e in state.out_edges(view_node) if e is not view_edge]
+    return (in_edges, out_edges) if is_viewed_src else (out_edges, in_edges)
+
+
+def _classify_view(
+    state: SDFGState,
+    view_node: nd.AccessNode,
+    sdfg: SDFG,
+) -> tuple[nd.AccessNode, gr.MultiConnectorEdge, subsets.Range, bool] | None:
+    """
+    Classifies a View access node.
+
+    :return: ``(viewed_node, view_edge, viewed_subset, is_viewed_src)``
+             or None if the view is not removable.  ``is_viewed_src`` is
+             True when the viewed array feeds into the view.
+    """
+    desc = sdfg.arrays[view_node.data]
+    # Not view
+    if not isinstance(desc, dt.View):
+        return None
+
+    # Can't handle structs or container arrays
+    if isinstance(desc, (dt.StructureView, dt.ContainerView)):
+        return None
+
+    # Check view is valid
+    view_edge = sdutil.get_view_edge(state, view_node)
+    if view_edge is None:
+        return None
+
+    # Distinguish Array -> View or View -> Array
+    if view_edge.dst is view_node:
+        mpath = state.memlet_path(view_edge)
+        viewed_node = mpath[0].src
+        if not isinstance(viewed_node, nd.AccessNode):
+            return None
+        viewed_subset = view_edge.data.get_src_subset(view_edge, state)
+        is_viewed_src = True
+    else:
+        mpath = state.memlet_path(view_edge)
+        viewed_node = mpath[-1].dst
+        if not isinstance(viewed_node, nd.AccessNode):
+            return None
+        viewed_subset = view_edge.data.get_dst_subset(view_edge, state)
+        is_viewed_src = False
+
+    viewed_desc = sdfg.arrays[viewed_node.data]
+    if viewed_desc.dtype != desc.dtype:
+        return None  # a reinterpreting view (mixed_precision_ir) has no element-for-element splice
+
+    if viewed_subset is None:
+        viewed_subset = subsets.Range.from_array(viewed_desc)
+
+    # An empty memlet is an ORDERING edge. On the side the splice ignores (in-edges of a read
+    # view, out-edges of a write view) it is re-homed onto the carriers -- so a view with no
+    # carrier has nowhere to put the constraint, and a non-empty edge there is not an ordering
+    # edge at all. Refuse both rather than drop the constraint with the node.
+    ordering, carriers = _ordering_side(state, view_node, view_edge, is_viewed_src)
+    if ordering and (not carriers or any(not e.data.is_empty() for e in ordering)):
+        return None
+
+    return viewed_node, view_edge, viewed_subset, is_viewed_src
+
+
+def _derive_mapping_from_subset(
+    viewed_subset: subsets.Range,
+    view_shape: list,
+) -> dict[int, int] | None:
+    """
+    Derive a view-dim -> array-dim mapping directly from the view edge
+    subset, aligning the view's data (size != 1) dims with the array's
+    data dims in order.
+
+    Both sides may carry size-1 dims: a size-1 array-subset dim is a
+    squeezed slice pinned to its offset; a size-1 view dim is an
+    ``np.newaxis`` broadcast axis with no array counterpart. The mapping
+    pairs the two sides' non-size-1 dims positionally -- the
+    squeeze/unsqueeze contract -- so a windowed view feeding a map
+    (``x[:, i:i+S, j:j+S, :, newaxis]``, a partial slice with an extra
+    newaxis) folds into its consumer even though ``map_view_to_array``
+    rejects it (the window offset makes strides virtual).
+
+    Returns the mapping dict, or None when the data-dim counts disagree.
+    """
+    sizes = viewed_subset.size()
+    array_data_dims = [d for d, s in enumerate(sizes) if s != 1]
+    view_data_dims = [d for d, s in enumerate(view_shape) if s != 1]
+    if len(view_data_dims) != len(array_data_dims):
+        return None
+    # A pair of different extents is a reshape, not a squeeze: ``(N*B, C)`` over ``(N, B*C)`` pairs no dimension
+    if any(symbolic.equal(view_shape[v], sizes[a]) is not True for v, a in zip(view_data_dims, array_data_dims)):
+        return None
+    return dict(zip(view_data_dims, array_data_dims))
+
+
+def _compute_rewritten_subset(
+    mapping: dict[int, int],
+    view_subset: subsets.Range,
+    edge_subset: subsets.Range,
+) -> subsets.Range:
+    """
+    Composes ``edge_subset`` (in view space) with ``view_subset`` (in array
+    space) using the dimension ``mapping`` from :func:`map_view_to_array`.
+
+    For each mapped dimension, applies the affine composition:
+
+        new_start = rb + rs * vb
+        new_end   = rb + rs * ve
+        new_step  = rs * vs
+
+    where ``(rb, re, rs)`` is the array-side range from ``view_subset``
+    and ``(vb, ve, vs)`` is the view-side range from ``edge_subset``.
+    """
+    new_ranges: list[tuple] = list(view_subset.ndrange())
+    for vdim, adim in mapping.items():
+        rb, re, rs = new_ranges[adim]
+        vb, ve, vs = edge_subset.ranges[vdim]
+        new_ranges[adim] = (rb + rs * vb, rb + rs * ve, rs * vs)
+
+    return subsets.Range(new_ranges)
+
+
+class DimGroups:
+    """A dense C-contiguous reshape as consecutive groups of dimensions: one view dimension split over several array
+    dimensions, several merged into one, or one kept. Each group is linearized and delinearized on its own, so a
+    symbolic reshape keeps the indices it does not touch: ``[r, c]`` of a ``(R, B*B)`` view of ``(R, B, B)`` is
+    ``[r, c // B, c % B]``, and ``[i, j]`` of a ``(3*N, B)`` view of ``(N, 3, B)`` is ``[i // 3, i % 3, j]``.
+    """
+
+    def __init__(self, groups: list[tuple[list[int], list[int]]], vshape: list, ashape: list):
+        self.groups, self.vshape, self.ashape = groups, vshape, ashape
+
+    @staticmethod
+    def of(vdesc: dt.Data, adesc: dt.Data) -> "DimGroups | None":
+        """The groups of ``vdesc`` over ``adesc``, or None if a descriptor is not C-contiguous or no grouping exists."""
+        for desc in (vdesc, adesc):
+            if any(symbolic.equal(st, _product(desc.shape[d + 1 :])) is not True for d, st in enumerate(desc.strides)):
+                return None
+        vshape, ashape = list(vdesc.shape), list(adesc.shape)
+        groups, i, j = [], 0, 0
+        while i < len(vshape) and j < len(ashape):
+            # One to one, one view dimension split over several array dimensions, or several merged into one
+            sizes = [(1, 1)] + [(1, k) for k in range(2, len(ashape) - j + 1)]
+            sizes += [(k, 1) for k in range(2, len(vshape) - i + 1)]
+            same = (symbolic.equal(_product(vshape[i : i + v]), _product(ashape[j : j + a])) is True for v, a in sizes)
+            found = next((size for size, equal in zip(sizes, same) if equal), None)
+            if found is None:
+                return None
+            groups.append((list(range(i, i + found[0])), list(range(j, j + found[1]))))
+            i, j = i + found[0], j + found[1]
+        return DimGroups(groups, vshape, ashape) if (i, j) == (len(vshape), len(ashape)) else None
+
+    def indices(self, index: list, floor: Callable, mod: Callable, mul: Callable, add: Callable) -> list:
+        """Array indices of the view ``index``, built with the given operators (sympy or Python AST)."""
+        out = []
+        for vdims, adims in self.groups:
+            if len(vdims) == len(adims) == 1:
+                out.append(index[vdims[0]])
+                continue
+            flat = None
+            for v in vdims:
+                stride = _product(self.vshape[v + 1 : vdims[-1] + 1])
+                term = index[v] if symbolic.equal(stride, 1) is True else mul(index[v], stride)
+                flat = term if flat is None else add(flat, term)
+            for a in adims:
+                stride = _product(self.ashape[a + 1 : adims[-1] + 1])
+                digit = flat if symbolic.equal(stride, 1) is True else floor(flat, stride)
+                out.append(digit if a == adims[0] else mod(digit, self.ashape[a]))
+        return out
+
+    def subset(self, subset: subsets.Range) -> subsets.Range | None:
+        """``subset`` of the view on the array, or None: per group, single elements, the whole extent, a group of one
+        dimension on each side, or merged dimensions whose range is contiguous (single indices, then one unit-step
+        range, then whole extents: a row ``[r, 0:B]`` of a ``(N, B)`` view of ``(N*B,)``); any other range is not a
+        box of the array."""
+        ranges = subset.ranges
+        single = [symbolic.equal(b, e, is_length=False) is True for b, e, _ in ranges]
+        full = [
+            symbolic.equal(b, 0, is_length=False) is True and symbolic.equal(e, n - 1, is_length=False) is True
+            for (b, e, _), n in zip(ranges, self.vshape)
+        ]
+        ops = (symbolic.int_floor, sympy.Mod, operator.mul, operator.add)
+        begins = self.indices([b for b, _, _ in ranges], *ops)
+        ends = self.indices([e for _, e, _ in ranges], *ops)
+        out = []
+        for vdims, adims in self.groups:
+            ranged = [v for v in vdims if not single[v]]
+            if len(vdims) == len(adims) == 1:
+                out.append(ranges[vdims[0]])
+            elif not ranged:
+                out += [(begins[a], begins[a], 1) for a in adims]
+            elif all(full[v] for v in vdims):
+                out += [(0, self.ashape[a] - 1, 1) for a in adims]
+            elif len(adims) == 1 and ranges[ranged[0]][2] == 1 and all(full[v] for v in ranged[1:]):
+                out.append((begins[adims[0]], ends[adims[0]], 1))
+            else:
+                return None
+        # Floor division or modulo by a size only known at run time costs a division per access: keep the View
+        if not _affine([x for rng in out for x in rng[:2]]):
+            return None
+        return subsets.Range(out)
+
+    def elements_affine(self) -> bool:
+        """Whether the array indices of one view element need no division by a symbolic size (a tasklet
+        subscripting the whole view addresses single elements)."""
+        index = [symbolic.symbol(f"__dim_groups_{d}") for d in range(len(self.vshape))]
+        return _affine(self.indices(index, symbolic.int_floor, sympy.Mod, operator.mul, operator.add))
+
+    def ast_indices(self, index: list[ast.expr]) -> list[ast.expr]:
+        """``index``, Python AST of the view subscript, on the array."""
+
+        def binop(op: ast.operator) -> Callable:
+            def build(left: ast.expr, right: Any) -> ast.expr:
+                right = right if isinstance(right, ast.AST) else _InterstateSubscriptRewriter._sym_to_ast(right)
+                return ast.BinOp(left=left, op=op, right=right)
+
+            return build
+
+        return self.indices(index, binop(ast.FloorDiv()), binop(ast.Mod()), binop(ast.Mult()), binop(ast.Add()))
+
+
+def dim_groups(view_desc: dt.Data, array_desc: dt.Data) -> DimGroups | None:
+    """The dense reshape of ``array_desc`` that ``view_desc`` is, as groups of dimensions, or None if it is none.
+
+    Rewrites an access of the view onto the array with :meth:`DimGroups.indices` (sympy),
+    :meth:`DimGroups.subset` (a memlet subset) or :meth:`DimGroups.ast_indices` (Python tasklet code).
+    """
+    return DimGroups.of(view_desc, array_desc)
+
+
+def _affine(exprs: list) -> bool:
+    """Whether no expression of ``exprs`` divides (floor or modulo) by a symbolic divisor."""
+    for expr in exprs:
+        if not isinstance(expr, sympy.Basic):
+            continue
+        for atom in expr.atoms(sympy.Mod, symbolic.int_floor):
+            if atom.args[1].free_symbols:
+                return False
+    return True
+
+
+def _product(values: list) -> Any:
+    """The product of ``values`` (1 for none)."""
+    return functools.reduce(operator.mul, values, 1)
+
+
+def _int_shape(desc: dt.Data) -> list[int] | None:
+    """Return the shape as a list of Python ints, or None if symbolic."""
+    try:
+        return [int(s) for s in desc.shape]
+    except (TypeError, ValueError):
+        return None
+
+
+def _int_strides(desc: dt.Data) -> list[int] | None:
+    """Return the strides as a list of Python ints, or None if symbolic."""
+    try:
+        return [int(as_expr(s)) for s in desc.strides]
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_dense_reshape(vdesc: dt.Data, adesc: dt.Data) -> bool:
+    """
+    True if ``vdesc`` is a dense reshape of ``adesc``: same dtype, same
+    element count, and neither descriptor has gaps (``total_size ==
+    prod(shape)``).  All comparisons are symbolic.
+    """
+    if vdesc.dtype != adesc.dtype:
+        return False
+    vprod = functools.reduce(operator.mul, vdesc.shape, 1)
+    aprod = functools.reduce(operator.mul, adesc.shape, 1)
+    if symbolic.equal(vprod, aprod) is not True:
+        return False
+    if symbolic.equal(vdesc.total_size, vprod) is not True:
+        return False
+    if symbolic.equal(adesc.total_size, aprod) is not True:
+        return False
+    return True
+
+
+def _delinearize_flat(flat, astrides: list[int], array_shape: list[int]):
+    """
+    Convert a flat offset to multi-dimensional indices via the
+    mixed-radix decomposition ``(flat // stride_d) % shape_d``
+    per dimension.
+    """
+    if len(array_shape) == 1:
+        return [flat]
+    # int_floor, never `//`: `//` builds sympy floor(), which sympy distributes and sym2cpp then
+    # prints without the floor, so each term truncates separately and the index lands off by one.
+    return [symbolic.int_floor(flat, astr) % shp for astr, shp in zip(astrides, array_shape)]
+
+
+def _reshape_subset(
+    edge_subset: subsets.Range,
+    vstrides: list[int],
+    view_shape: list[int],
+    astrides: list[int],
+    array_shape: list[int],
+) -> subsets.Range | None:
+    """
+    Rewrite ``edge_subset`` from view coordinates to array coordinates
+    by linearizing each range ``(b, e, s)`` with ``vstrides``, then
+    delinearizing with ``astrides``.
+
+    :return: New Range in array coordinates, or None on failure.
+    """
+    sizes = edge_subset.size()
+
+    # Case 1: single element (all dims (e+1-b)//s == 1 for all dims)
+    if all(s == 1 for s in sizes):
+        starts = edge_subset.min_element()
+        flat = sum(s * vs for s, vs in zip(starts, vstrides))
+        indices = _delinearize_flat(flat, astrides, array_shape)
+        return subsets.Range([(idx, idx, 1) for idx in indices])
+
+    # Case 2: full view range
+    try:
+        is_full = all(
+            int(as_expr(r[0])) == 0 and int(as_expr(r[1])) == d - 1 and int(as_expr(r[2])) == 1
+            for r, d in zip(edge_subset.ranges, view_shape)
+        )
+    except (TypeError, ValueError):
+        is_full = False
+    if is_full:
+        return subsets.Range([(0, d - 1, 1) for d in array_shape])
+
+    # Case 3: general -- linearize, check contiguity, delinearize
+    # Requires the subset to be contiguous in the view's flat space, otherwise the
+    # delinearization would need to handle multiple distinct step sizes.
+    starts = [r[0] for r in edge_subset.ranges]
+    ends = [r[1] for r in edge_subset.ranges]
+    flat_start = sum(s * vs for s, vs in zip(starts, vstrides))
+    flat_end = sum(e * vs for e, vs in zip(ends, vstrides))
+
+    total_elements = functools.reduce(operator.mul, sizes, 1)
+    try:
+        if int(flat_end - flat_start + 1) != int(total_elements):
+            return None  # non-contiguous in flat space, we can't handle this
+    except (TypeError, ValueError):
+        return None
+
+    start_indices = _delinearize_flat(flat_start, astrides, array_shape)
+    end_indices = _delinearize_flat(flat_end, astrides, array_shape)
+    return subsets.Range([(s, e, 1) for s, e in zip(start_indices, end_indices)])
+
+
+def _try_constant_fold(node: ast.expr) -> ast.expr:
+    """Try to evaluate an AST expression to a Python int constant."""
+    try:
+        code = compile(ast.Expression(body=ast.fix_missing_locations(node)), "<fold>", "eval")
+        result = eval(code)
+        if isinstance(result, int):
+            return ast.Constant(value=result)
+    except Exception:
+        pass
+    return node
+
+
+class _ReshapeIndexRewriter(ast.NodeTransformer):
+    """
+    Rewrites ``connector[i0, i1, ...]`` subscript expressions in a
+    Python tasklet AST from view coordinates to array coordinates via
+    linearization with ``vstrides`` and delinearization with ``astrides``.
+
+    Example (view shape [2, 10], vstrides [10, 1] -> array shape [20], astrides [1]):
+        out[1, 3]  ->  out[13]           (constant: 1*10 + 3 = 13)
+        out[i, j]  ->  out[10*i + j]     (symbolic)
+
+    Example (view shape [20], vstrides [1] -> array shape [4, 5], astrides [5, 1]):
+        inp[13]    ->  inp[2, 3]          (constant: 13//5=2, 13%5=3)
+        inp[k]     ->  inp[k // 5, k % 5] (symbolic)
+    """
+
+    def __init__(
+        self,
+        connector: str,
+        vstrides: list[int],
+        astrides: list[int],
+        array_shape: list[int],
+        groups: "DimGroups | None" = None,
+    ):
+        self.connector = connector
+        self.groups = groups
+        self.vstrides = vstrides
+        self.astrides = astrides
+        self.array_shape = array_shape
+        self.changed = False
+
+    def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
+        self.generic_visit(node)
+
+        # Only rewrite subscripts on our connector, e.g. ``out[...]``
+        if not (isinstance(node.value, ast.Name) and node.value.id == self.connector):
+            return node
+
+        # Unpack index expressions
+        if isinstance(node.slice, ast.Tuple):
+            indices = list(node.slice.elts)
+        else:
+            indices = [node.slice]
+
+        if self.groups is not None:
+            if len(indices) != len(self.groups.vshape):
+                return node
+            new_indices = self.groups.ast_indices(indices)
+            new_slice = new_indices[0] if len(new_indices) == 1 else ast.Tuple(elts=new_indices, ctx=ast.Load())
+            self.changed = True
+            return ast.fix_missing_locations(ast.Subscript(value=node.value, slice=new_slice, ctx=node.ctx))
+
+        if len(indices) != len(self.vstrides):
+            return node
+
+        # Step 1: linearize view indices to a flat offset expression
+        #   flat = i0 * vstride[0] + i1 * vstride[1] + ...
+        flat_expr = self._linearize(indices)
+        flat_expr = _try_constant_fold(flat_expr)
+
+        # Step 2: delinearize flat offset to array indices
+        #   idx_d = (flat // astride[d]) % shape[d]
+        new_indices = self._delinearize(flat_expr)
+        new_indices = [_try_constant_fold(idx) for idx in new_indices]
+
+        new_slice = new_indices[0] if len(new_indices) == 1 else ast.Tuple(elts=new_indices, ctx=ast.Load())
+        self.changed = True
+        return ast.fix_missing_locations(ast.Subscript(value=node.value, slice=new_slice, ctx=node.ctx))
+
+    def _linearize(self, indices: list[ast.expr]) -> ast.expr:
+        """
+        Build an AST expression for the flat offset:
+            flat = idx[0] * vstride[0] + idx[1] * vstride[1] + ...
+
+        Skips zero-stride dimensions and avoids multiplying by 1.
+        """
+        result = None
+        for idx, vs in zip(indices, self.vstrides):
+            if vs == 0:
+                continue
+            # Build term: idx * vstride  (or just idx when vstride == 1)
+            term = idx if vs == 1 else ast.BinOp(left=idx, op=ast.Mult(), right=ast.Constant(value=vs))
+            # Accumulate: result + term
+            result = term if result is None else ast.BinOp(left=result, op=ast.Add(), right=term)
+        return result if result is not None else ast.Constant(value=0)
+
+    def _delinearize(self, flat: ast.expr) -> list[ast.expr]:
+        """
+        Build AST expressions for the mixed-radix decomposition:
+            idx_d = (flat // astride[d]) % shape[d]
+
+        For a 1D target array, returns [flat] directly.
+        Skips ``// 1`` when astride == 1 for the last dimension.
+        """
+        if len(self.array_shape) == 1:
+            return [flat]
+        out: list[ast.expr] = []
+        for astr, ashp in zip(self.astrides, self.array_shape):
+            # flat // stride  (skip division when stride == 1)
+            expr = flat if astr == 1 else ast.BinOp(left=flat, op=ast.FloorDiv(), right=ast.Constant(value=astr))
+            # (flat // stride) % shape  -- extract this dimension's digit
+            expr = ast.BinOp(left=expr, op=ast.Mod(), right=ast.Constant(value=ashp))
+            out.append(expr)
+        return out
+
+
+class _InterstateSubscriptRewriter(ast.NodeTransformer):
+    """
+    Rewrites ``view_name[i0, i1, ...]`` in interstate-edge assignment and
+    condition ASTs, replacing the name with ``array_name`` and transforming
+    the indices.
+
+    Two modes mirror the pass's strategy families:
+
+    - strategies 1 and 1b: for each view dim ``vd`` mapped to
+      array dim ``ad`` via ``mapping``, substitute the view index with
+      ``rb + rs * idx`` where ``(rb, _, rs)`` is the array-space range for
+      ``ad`` taken from ``view_subset``. Squeezed array dims take the
+      constant ``rb`` from the view edge subset.
+    - strategies 2 and 3: flatten with ``vstrides`` then
+      mixed-radix-decompose with ``astrides`` and ``array_shape``.
+    """
+
+    def __init__(self, view_name: str, array_name: str, mode: str, **kwargs):
+        self.view_name = view_name
+        self.array_name = array_name
+        self.mode = mode
+        self.changed = False
+        if mode == "affine":
+            self.mapping: dict[int, int] = kwargs["mapping"]
+            self.view_subset: subsets.Range = kwargs["view_subset"]
+            self.view_ndim: int = kwargs["view_ndim"]
+        elif mode == "linearize":
+            self.vstrides: list[int] = kwargs["vstrides"]
+            self.astrides: list[int] = kwargs["astrides"]
+            self.array_shape: list[int] = kwargs["array_shape"]
+            self.groups: DimGroups | None = kwargs.get("groups")
+        else:
+            raise ValueError(f"Unknown mode: {mode!r}")
+
+    @staticmethod
+    def _sym_to_ast(val) -> ast.expr:
+        """Turn an int / sympy expression / string into an AST expression."""
+        try:
+            return ast.Constant(value=int(val))
+        except (TypeError, ValueError):
+            return ast.parse(str(val), mode="eval").body
+
+    def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
+        self.generic_visit(node)
+        if not (isinstance(node.value, ast.Name) and node.value.id == self.view_name):
+            return node
+
+        # Unpack indices from either a Tuple slice or a single-index slice
+        if isinstance(node.slice, ast.Tuple):
+            indices = list(node.slice.elts)
+        else:
+            indices = [node.slice]
+
+        if self.mode == "affine":
+            if len(indices) != self.view_ndim:
+                return node
+            new_indices = self._rewrite_affine(indices)
+        elif self.groups is not None:
+            if len(indices) != len(self.groups.vshape):
+                return node
+            new_indices = self.groups.ast_indices(indices)
+        else:
+            if len(indices) != len(self.vstrides):
+                return node
+            new_indices = self._rewrite_linearize(indices)
+
+        new_indices = [_try_constant_fold(idx) for idx in new_indices]
+        new_slice = new_indices[0] if len(new_indices) == 1 else ast.Tuple(elts=new_indices, ctx=ast.Load())
+
+        new_value = ast.Name(id=self.array_name, ctx=node.value.ctx)
+        self.changed = True
+        return ast.fix_missing_locations(ast.Subscript(value=new_value, slice=new_slice, ctx=node.ctx))
+
+    def _rewrite_affine(self, indices: list[ast.expr]) -> list[ast.expr]:
+        """
+        Build per-array-dim index expressions via affine composition.
+
+        For every array dim, if a view dim maps to it, emit
+        ``rb + rs * idx``; otherwise emit the constant ``rb`` from the
+        view edge subset (squeezed dim).
+        """
+        new_ranges = list(self.view_subset.ndrange())
+        out: list[ast.expr] = []
+        for adim in range(len(new_ranges)):
+            rb, _re, rs = new_ranges[adim]
+            vdims_here = [vd for vd, ad in self.mapping.items() if ad == adim]
+
+            if not vdims_here:
+                # Squeezed dim -- pin to rb
+                out.append(self._sym_to_ast(rb))
+                continue
+
+            idx_ast = indices[vdims_here[0]]
+            try:
+                rs_int = int(as_expr(rs))
+            except (TypeError, ValueError):
+                rs_int = None
+            try:
+                rb_int = int(as_expr(rb))
+            except (TypeError, ValueError):
+                rb_int = None
+
+            # rs * idx (with simplification for 0 and 1)
+            if rs_int == 0:
+                prod: ast.expr = ast.Constant(value=0)
+            elif rs_int == 1:
+                prod = idx_ast
+            else:
+                prod = ast.BinOp(left=self._sym_to_ast(rs), op=ast.Mult(), right=idx_ast)
+
+            # rb + (rs * idx) (skip the add when rb == 0)
+            if rb_int == 0:
+                out.append(prod)
+            else:
+                out.append(ast.BinOp(left=self._sym_to_ast(rb), op=ast.Add(), right=prod))
+        return out
+
+    def _rewrite_linearize(self, indices: list[ast.expr]) -> list[ast.expr]:
+        """
+        Linearize ``indices`` with ``vstrides`` then mixed-radix decompose
+        into array coordinates using ``astrides`` and ``array_shape``.
+        """
+        flat: ast.expr | None = None
+        for idx, vs in zip(indices, self.vstrides):
+            if vs == 0:
+                continue
+            term = idx if vs == 1 else ast.BinOp(left=idx, op=ast.Mult(), right=ast.Constant(value=vs))
+            flat = term if flat is None else ast.BinOp(left=flat, op=ast.Add(), right=term)
+        if flat is None:
+            flat = ast.Constant(value=0)
+        flat = _try_constant_fold(flat)
+
+        if len(self.array_shape) == 1:
+            return [flat]
+
+        out: list[ast.expr] = []
+        for astr, ashp in zip(self.astrides, self.array_shape):
+            expr = flat if astr == 1 else ast.BinOp(left=flat, op=ast.FloorDiv(), right=ast.Constant(value=astr))
+            expr = ast.BinOp(left=expr, op=ast.Mod(), right=ast.Constant(value=ashp))
+            out.append(expr)
+        return out
+
+
+def _condition_text(edge_data) -> str:
+    """The edge condition as text, or '' when it has none -- the prefilter's haystack."""
+    try:
+        return edge_data.condition.as_string or ""
+    except Exception:
+        return ""
+
+
+def _references_view(edge_data, view_name: str, condition_text: str) -> bool:
+    """Cheap textual prefilter: does this interstate edge mention view_name at all?"""
+    if any(view_name in v for v in edge_data.assignments.values()):
+        return True
+    return view_name in condition_text
+
+
+def _has_view_subscript(tree: ast.AST, view_name: str) -> bool:
+    """
+    Scan ``tree`` for any remaining ``view_name[...]`` subscripts. Used by
+    the feasibility check: after a dry-run visit, a surviving V-subscript
+    means the rewriter didn't handle it (wrong rank, etc.).
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == view_name:
+            return True
+    return False
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class RemoveViews(ppl.Pass):
+    #: Interstate edges paired with their condition text, derived once per :meth:`apply_pass` run
+    #: and dropped again at its end. Empty outside a run.
+    interstate_edges: list[tuple[gr.Edge, str]] = []
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets | ppl.Modifies.Tasklets
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return bool(modified & ppl.Modifies.AccessNodes)
+
+    def depends_on(self):
+        return set()
+
+    def apply_pass(
+        self,
+        sdfg: SDFG,
+        pipeline_results: dict[str, Any],
+    ) -> set[str] | None:
+        removed: set[str] = set()
+        # Every SDFG, nested ones included: later passes nest the views the ingest run could not reach
+        for graph in sdfg.all_sdfgs_recursive():
+            # Cheapest first: most SDFGs hold no view at all
+            if any(isinstance(desc, dt.View) for desc in graph.arrays.values()):
+                removed |= self._remove_views(graph)
+
+        if _DEBUGPRINT:
+            if removed:
+                print(f"[{_PASS}] === done: removed {len(removed)} views: {removed} ===")
+            else:
+                print(f"[{_PASS}] === done: nothing to remove ===")
+
+        return removed or None
+
+    def _remove_views(self, sdfg: SDFG) -> set[str]:
+        """Removes the views of ``sdfg`` (not of its nested SDFGs); the names removed."""
+        removed: set[str] = set()
+
+        # Every view candidate asks three feasibility probes and three rewrites for the interstate
+        # edges, and each one re-unparsed every condition AST to a string. The set of interstate
+        # edges and the conditions are fixed for the whole run -- this pass adds and removes no
+        # block or edge, and rewrites only assignment right-hand sides, which are already strings
+        # and are read live -- so both are derived once here. On sw4_rhs4sg (850 views removed)
+        # that one unparse was 55% of this pass.
+        self.interstate_edges = [(e, _condition_text(e.data)) for e in sdfg.all_interstate_edges()]
+
+        iteration = 0
+        changed = True
+        while changed:
+            changed = False
+            iteration += 1
+            if _DEBUGPRINT:
+                print(f"[{_PASS}] --- fixpoint iteration {iteration} ---")
+            for state in sdfg.states():
+                changed |= self._process_state(sdfg, state, removed)
+        self.interstate_edges = []
+
+        # One walk for every name, not one walk per name: dropping a descriptor adds no access
+        # node, so the live set answers all of them.
+        accessed = OrderedSet(n.data for st in sdfg.states() for n in st.nodes() if isinstance(n, nd.AccessNode))
+        for name in list(removed):
+            if name in sdfg.arrays and name not in accessed:
+                sdfg.remove_data(name, validate=False)
+                if _DEBUGPRINT:
+                    print(f'[{_PASS}] garbage-collected descriptor "{name}"')
+
+        return removed
+
+    def report(self, pass_retval: set[str]) -> str:
+        return f"Removed {len(pass_retval)} views: {pass_retval}."
+
+    @staticmethod
+    def library_node_operands(state: SDFGState, vnode: nd.AccessNode, vdesc, adesc, viewed_subset) -> list | None:
+        """The library nodes ``vnode`` is a whole operand of, as ``(node, connector, dims)`` with the dimensions of
+        ``viewed_subset`` each reads in the View's place (``LibraryNode.operand_dims``); ``None`` when one of them
+        cannot, so the View gives it its operand's shape until expansion (a reshape, a unit dimension it keeps)."""
+        full = subsets.Range.from_array(vdesc)
+        operands = []
+        for e in state.all_edges(vnode):
+            node, conn = (e.src, e.src_conn) if e.dst is vnode else (e.dst, e.dst_conn)
+            if not isinstance(node, nd.LibraryNode):
+                continue
+            whole = e.data.data == vnode.data and e.data.wcr is None and e.data.subset == full
+            dims = node.operand_dims(conn, viewed_subset, adesc, vdesc) if whole else None
+            if dims is None:
+                return None
+            operands.append((node, conn, dims))
+        return operands
+
+    @staticmethod
+    def _is_reduce_output_slice(sdfg: SDFG, state: SDFGState, vnode: nd.AccessNode, viewed_node: nd.AccessNode) -> bool:
+        """True if ``vnode`` is only the output of Reduce nodes and views a slice of the same rank: a Reduce reads its
+        output extent off the memlet, so writing the slice directly reshapes nothing. Kept, the View blocks
+        ``MapReduceFusion``, which cannot initialize a View, and the reduced operand stays a full-size transient."""
+        if any(isinstance(e.dst, nd.LibraryNode) for e in state.out_edges(vnode)):
+            return False
+        if not all(isinstance(e.src, Reduce) for e in state.in_edges(vnode) if isinstance(e.src, nd.LibraryNode)):
+            return False
+        return len(sdfg.arrays[vnode.data].shape) == len(sdfg.arrays[viewed_node.data].shape)
+
+    @staticmethod
+    def _binds_nested_sdfg(state: SDFGState, vnode: nd.AccessNode, is_viewed_src: bool) -> bool:
+        """True if a memlet tree from ``vnode`` away from the viewed array ends at a nested SDFG connector."""
+        edges = state.out_edges(vnode) if is_viewed_src else state.in_edges(vnode)
+        for edge in edges:
+            for leaf in state.memlet_tree(edge).leaves():
+                if isinstance(leaf.dst if is_viewed_src else leaf.src, nd.NestedSDFG):
+                    return True
+        return False
+
+    def _process_state(self, sdfg, state, removed):
+        changed = False
+
+        view_nodes = [n for n in state.data_nodes() if isinstance(sdfg.arrays.get(n.data), dt.View)]
+
+        if _DEBUGPRINT and view_nodes:
+            print(
+                f'[{_PASS}] state "{state.label}": found {len(view_nodes)} view node(s): {[n.data for n in view_nodes]}'
+            )
+
+        for vnode in view_nodes:
+            if vnode not in state.nodes():
+                continue
+
+            info = _classify_view(state, vnode, sdfg)
+            if info is None:
+                if _DEBUGPRINT:
+                    print(
+                        f'[{_PASS}]   "{vnode.data}": cannot classify'
+                        f" (StructureView / no view edge / dtype mismatch)"
+                        f" -- skipping"
+                    )
+                continue
+            viewed_node, view_edge, viewed_subset, is_viewed_src = info
+
+            vdesc = sdfg.arrays[vnode.data]
+            adesc = sdfg.arrays[viewed_node.data]
+            # A library node reads a slice in place of the View only where it says so: the View is otherwise the
+            # operand's shape until expansion (scattering_self_energies: ``G[k, E-w, neigh] @ dH[a, b, i]``).
+            operands = self.library_node_operands(state, vnode, vdesc, adesc, viewed_subset)
+            if operands is None:
+                if not self._is_reduce_output_slice(sdfg, state, vnode, viewed_node):
+                    if _DEBUGPRINT:
+                        print(f'[{_PASS}]   "{vnode.data}": library-node operand -- skipping')
+                    continue
+                operands = []
+
+            # A nested SDFG's connector descriptor IS the container it is bound to (No-View). Binding it to the
+            # viewed array instead would need the nested SDFG's descriptor and accesses rewritten.
+            if self._binds_nested_sdfg(state, vnode, is_viewed_src=info[3]):
+                continue
+
+            if _DEBUGPRINT:
+                direction = "read" if is_viewed_src else "write"
+                print(f'[{_PASS}]   "{vnode.data}" -> "{viewed_node.data}" ({direction})')
+                print(f"[{_PASS}]     view:  {_fmt_desc(vdesc, vnode.data)}")
+                print(f"[{_PASS}]     array: {_fmt_desc(adesc, viewed_node.data)}")
+                print(f"[{_PASS}]     view edge subset: {viewed_subset}")
+
+            # Strategy 1: slice / squeeze / unsqueeze
+            mapping_result = sdutil.map_view_to_array(vdesc, adesc, viewed_subset)
+            if mapping_result is not None:
+                mapping, _unsqueezed, _squeezed = mapping_result
+                if _DEBUGPRINT:
+                    print(
+                        f"[{_PASS}]     strategy 1 (map_view_to_array):"
+                        f" mapping={mapping},"
+                        f" squeezed={_squeezed},"
+                        f" unsqueezed={_unsqueezed}"
+                    )
+
+                def _rw_1():
+                    return _InterstateSubscriptRewriter(
+                        vnode.data,
+                        viewed_node.data,
+                        mode="affine",
+                        mapping=mapping,
+                        view_subset=viewed_subset,
+                        view_ndim=len(vdesc.shape),
+                    )
+
+                if not self._interstate_feasible(sdfg, vnode.data, _rw_1):
+                    if _DEBUGPRINT:
+                        print(f"[{_PASS}]     strategy 1: interstate edge rewrite infeasible -- trying next strategy")
+                else:
+                    self._rewrite_memlets(state, vnode, viewed_node, view_edge, viewed_subset, mapping, is_viewed_src)
+                    self._rewrite_interstate_edges(sdfg, vnode.data, _rw_1)
+                    self._reconnect_edges(state, vnode, view_edge, is_viewed_src)
+                    state.remove_node(vnode)
+                    for node, conn, dims in operands:
+                        node.rebind_operand(conn, dims)
+                    self._cleanup_isolated_viewed_node(state, viewed_node)
+                    removed.add(vnode.data)
+                    changed = True
+                    if _DEBUGPRINT:
+                        print(f'[{_PASS}]     REMOVED "{vnode.data}" via strategy 1')
+                    continue
+
+            if _DEBUGPRINT:
+                print(f"[{_PASS}]     strategy 1: map_view_to_array returned None")
+
+            # Strategy 1b: derive mapping from view edge subset
+            mapping_1b = _derive_mapping_from_subset(viewed_subset, vdesc.shape)
+            if mapping_1b is not None:
+                if _DEBUGPRINT:
+                    print(f"[{_PASS}]     strategy 1b (derive_mapping_from_subset): mapping={mapping_1b}")
+
+                def _rw_1b():
+                    return _InterstateSubscriptRewriter(
+                        vnode.data,
+                        viewed_node.data,
+                        mode="affine",
+                        mapping=mapping_1b,
+                        view_subset=viewed_subset,
+                        view_ndim=len(vdesc.shape),
+                    )
+
+                if not self._interstate_feasible(sdfg, vnode.data, _rw_1b):
+                    if _DEBUGPRINT:
+                        print(f"[{_PASS}]     strategy 1b: interstate edge rewrite infeasible -- trying next strategy")
+                else:
+                    self._rewrite_memlets(
+                        state, vnode, viewed_node, view_edge, viewed_subset, mapping_1b, is_viewed_src
+                    )
+                    self._rewrite_interstate_edges(sdfg, vnode.data, _rw_1b)
+                    self._reconnect_edges(state, vnode, view_edge, is_viewed_src)
+                    state.remove_node(vnode)
+                    for node, conn, dims in operands:
+                        node.rebind_operand(conn, dims)
+                    self._cleanup_isolated_viewed_node(state, viewed_node)
+                    removed.add(vnode.data)
+                    changed = True
+                    if _DEBUGPRINT:
+                        print(f'[{_PASS}]     REMOVED "{vnode.data}" via strategy 1b')
+                    continue
+
+            if _DEBUGPRINT:
+                print(f"[{_PASS}]     strategy 1b: derive_mapping_from_subset returned None")
+
+            # A library node reads the subset as is: a linearized index is no operand of it
+            if operands:
+                continue
+
+            # Strategy 2: dense reshape
+            if self._try_linearize_removal(
+                state, vnode, viewed_node, view_edge, viewed_subset, is_viewed_src, require_dense=True
+            ):
+                removed.add(vnode.data)
+                changed = True
+                continue
+
+            # Strategy 3: pure linearization (last resort)
+            if self._try_linearize_removal(
+                state, vnode, viewed_node, view_edge, viewed_subset, is_viewed_src, require_dense=False
+            ):
+                removed.add(vnode.data)
+                changed = True
+                continue
+
+            if _DEBUGPRINT:
+                print(f'[{_PASS}]     all strategies failed for "{vnode.data}" -- keeping view')
+
+        return changed
+
+    def _rewrite_memlets(self, state, view_node, viewed_node, view_edge, viewed_subset, mapping, is_viewed_src):
+        sdfg = state.parent
+        full_view_range = subsets.Range.from_array(sdfg.arrays[view_node.data])
+        non_view_edges = list(state.out_edges(view_node)) if is_viewed_src else list(state.in_edges(view_node))
+        for edge in non_view_edges:
+            for tree_edge in state.memlet_tree(edge):
+                m = tree_edge.data
+                if m.data == view_node.data:
+                    old = f"{m.data}[{m.subset}]"
+                    m.data = viewed_node.data
+                    if m.subset is not None and m.subset == full_view_range:
+                        # Full view range: copy the view edge subset
+                        # directly to preserve the original end / step.
+                        m.subset = copy.deepcopy(viewed_subset)
+                    elif m.subset is not None:
+                        m.subset = _compute_rewritten_subset(mapping, viewed_subset, m.subset)
+                    else:
+                        m.subset = copy.deepcopy(viewed_subset)
+                    if _DEBUGPRINT:
+                        print(f"[{_PASS}]       memlet: {old} -> {m.data}[{m.subset}]")
+                elif m.other_subset is not None:
+                    old_other = f"other_subset={m.other_subset}"
+                    m.other_subset = _compute_rewritten_subset(mapping, viewed_subset, m.other_subset)
+                    if _DEBUGPRINT:
+                        print(f"[{_PASS}]       memlet {m.data}: {old_other} -> other_subset={m.other_subset}")
+                elif m.data is not None:
+                    # A copy keyed to the OTHER endpoint leaves this side UNSPELLED, meaning the
+                    # view's full range -- so the view's own indices live nowhere else on the edge.
+                    # Both branches above miss it, and splicing the view out then rewires the edge
+                    # to the viewed array with that side still unspelled: a 2-D view of A[:, :, K-1]
+                    # silently becomes a 2-D read of the 3-D A, losing which plane is copied.
+                    # Spell it, exactly as the ``m.subset is None`` case above does for the near side.
+                    # ``m.data is None`` is an EMPTY memlet -- an ordering edge that moves no bytes
+                    # and must keep both sides unspelled.
+                    m.other_subset = copy.deepcopy(viewed_subset)
+                    if _DEBUGPRINT:
+                        print(f"[{_PASS}]       memlet {m.data}: other_subset=None -> other_subset={m.other_subset}")
+
+    def _reconnect_edges(self, state, view_node, view_edge, is_viewed_src):
+        """Splice ``view_node`` out of its own edges, then drop the defining edge.
+
+        The replacement endpoint is the view edge's IMMEDIATE neighbour, never the viewed
+        AccessNode ``_classify_view`` resolved: when the view is staged through a Map
+        (``A -> MapEntry -> V``, ``V -> MapExit -> A``) the memlet path's far end is the outer
+        AccessNode while the connector on ``view_edge`` belongs to the scope node. Attaching that
+        connector to the outer node bypasses the scope, mints a bogus ``IN_``/``OUT_`` connector on
+        an AccessNode, and leaves the scope node's own connector pair with no edge -- the
+        "Dangling in-connector" validation failure. For a view edge that really does start (or end)
+        at the viewed AccessNode the neighbour IS that node, so the direct case is unchanged.
+
+        The opposite side carries only ordering edges (empty memlets). ``X -> V`` on a read view
+        means "X before the view's readers", so that constraint is re-homed onto the readers --
+        NOT onto the view edge's neighbour ``A``, which would mean "X before A" and is strictly
+        stronger. ``_classify_view`` has already refused the case with no carrier to hold it.
+        """
+        ordering, carriers = _ordering_side(state, view_node, view_edge, is_viewed_src)
+        far_ends = [e.dst if is_viewed_src else e.src for e in carriers]
+        if is_viewed_src:
+            for e in list(state.out_edges(view_node)):
+                if e is view_edge:
+                    continue
+                if _DEBUGPRINT:
+                    print(
+                        f"[{_PASS}]       reconnect:"
+                        f" {view_node.data}:{e.src_conn}"
+                        f" -> {e.dst}:{e.dst_conn}"
+                        f"  =>  {view_edge.src}:{view_edge.src_conn}"
+                        f" -> {e.dst}:{e.dst_conn}"
+                    )
+                state.remove_edge(e)
+                state.add_edge(view_edge.src, view_edge.src_conn, e.dst, e.dst_conn, e.data)
+        else:
+            for e in list(state.in_edges(view_node)):
+                if e is view_edge:
+                    continue
+                if _DEBUGPRINT:
+                    print(
+                        f"[{_PASS}]       reconnect:"
+                        f" {e.src}:{e.src_conn}"
+                        f" -> {view_node.data}:{e.dst_conn}"
+                        f"  =>  {e.src}:{e.src_conn}"
+                        f" -> {view_edge.dst}:{view_edge.dst_conn}"
+                    )
+                state.remove_edge(e)
+                state.add_edge(e.src, e.src_conn, view_edge.dst, view_edge.dst_conn, e.data)
+        # ``X -> V -> C`` already implied X before C, so the re-homed ``X -> C`` adds no
+        # reachability and cannot close a cycle the graph did not already have.
+        for oe in ordering:
+            near = oe.src if is_viewed_src else oe.dst
+            for far in far_ends:
+                if far is near:
+                    continue
+                u, v = (near, far) if is_viewed_src else (far, near)
+                if not state.edges_between(u, v):
+                    state.add_nedge(u, v, Memlet())
+                    if _DEBUGPRINT:
+                        print(f"[{_PASS}]       ordering edge re-homed: {u} -> {v}")
+            state.remove_edge(oe)
+        if view_edge in state.edges():
+            state.remove_edge(view_edge)
+
+    def _interstate_feasible(self, sdfg, view_name, rewriter) -> bool:
+        """
+        Dry-run the rewriter on every interstate edge that mentions
+        ``view_name``. Returns False if anything fails to parse or if any
+        ``V[...]`` subscript survives the visit.
+        """
+        for e, condition_text in self.interstate_edges:
+            if not _references_view(e.data, view_name, condition_text):
+                continue
+
+            # Assignments: parse each RHS, visit, confirm no V-subscripts remain.
+            for rhs in e.data.assignments.values():
+                try:
+                    tree = ast.parse(rhs, mode="exec")
+                except SyntaxError:
+                    return False
+                rw = rewriter()
+                new_tree = rw.visit(copy.deepcopy(tree))
+                if _has_view_subscript(new_tree, view_name):
+                    return False
+
+            # Condition: same check. Should be no unstructured control flow
+            if not e.data.is_unconditional():
+                return False
+        return True
+
+    def _rewrite_interstate_edges(self, sdfg, view_name, rewriter):
+        """
+        Parse each interstate edge that mentions ``view_name``, visit with
+        a fresh rewriter, and write the result back. Assignments round-trip
+        conditions are CodeBlocks so we reassign the code list.
+        """
+        for e, condition_text in self.interstate_edges:
+            data = e.data
+            if not _references_view(data, view_name, condition_text):
+                continue
+
+            for k, v in list(data.assignments.items()):
+                rw = rewriter()
+                tree = ast.parse(v, mode="exec")
+                tree = rw.visit(tree)
+                if rw.changed:
+                    new_v = astutils.unparse(tree)
+                    data.assignments[k] = new_v
+                    if _DEBUGPRINT:
+                        print(f'[{_PASS}]       interstate assign "{k}": {v!r} -> {new_v!r}')
+
+    def _cleanup_isolated_viewed_node(self, state, viewed_node):
+        """
+        Remove ``viewed_node`` if, after reconnection, it has no edges in
+        the state. This happens when the viewed array's access node existed
+        only to anchor the view edge (e.g., ``A -> V`` in an otherwise
+        empty state).
+        """
+        if viewed_node in state.nodes() and state.degree(viewed_node) == 0:
+            state.remove_node(viewed_node)
+            if _DEBUGPRINT:
+                print(f'[{_PASS}]       cleaned up isolated "{viewed_node.data}"')
+
+    def _try_linearize_removal(
+        self, state, vnode, viewed_node, view_edge, viewed_subset, is_viewed_src, require_dense=True
+    ):
+        """
+        Attempt to remove a view by linearizing memlet ranges with the
+        view's strides and delinearizing with the array's strides.
+        Rewrites Python tasklet code analogously.
+
+        When ``require_dense`` is True (strategy 2), both descriptors
+        must be gap-free (``total_size == prod(shape)``).  When False
+        (strategy 3), the pass skips that global check and relies on
+        per-memlet feasibility only.
+
+        Linearization via ``vstrides`` assumes the view's strides encode
+        physical memory offsets.  This is only true when the view edge
+        covers the **full** array; partial views (slices) are handled by
+        strategy 1 instead.
+
+        :return: True on success.
+        """
+        sdfg = state.parent
+        vdesc = sdfg.arrays[vnode.data]
+        adesc = sdfg.arrays[viewed_node.data]
+        strat_name = "strategy 2 (dense reshape)" if require_dense else "strategy 3 (pure linearization)"
+
+        if require_dense and not _is_dense_reshape(vdesc, adesc):
+            if _DEBUGPRINT:
+                print(f"[{_PASS}]     {strat_name}: not a dense reshape -- skipping")
+            return False
+
+        # Linearization via vstrides only works when the view maps to
+        # the entire array.  If the view edge is a partial subset
+        # (e.g. a strided slice), vstrides are virtual, not physical.
+        full_range = subsets.Range.from_array(adesc)
+        if viewed_subset != full_range:
+            if _DEBUGPRINT:
+                print(
+                    f"[{_PASS}]     {strat_name}: view edge subset"
+                    f" {viewed_subset} != full range {full_range}"
+                    f" -- skipping"
+                )
+            return False
+
+        view_shape = _int_shape(vdesc)
+        array_shape = _int_shape(adesc)
+        vstrides = _int_strides(vdesc)
+        astrides = _int_strides(adesc)
+        # Symbolic sizes: a dense reshape of grouped dimensions, each group rewritten on its own
+        groups = dim_groups(vdesc, adesc) if None in (view_shape, array_shape, vstrides, astrides) else None
+        if None in (view_shape, array_shape, vstrides, astrides) and groups is None:
+            if _DEBUGPRINT:
+                print(f"[{_PASS}]     {strat_name}: symbolic shapes/strides -- skipping")
+            return False
+
+        def reshape(subset: subsets.Range) -> subsets.Range | None:
+            if groups is not None:
+                return groups.subset(subset)
+            return _reshape_subset(subset, vstrides, view_shape, astrides, array_shape)
+
+        if vdesc.dtype != adesc.dtype:
+            if _DEBUGPRINT:
+                print(f"[{_PASS}]     {strat_name}: dtype mismatch -- skipping")
+            return False
+
+        if _DEBUGPRINT:
+            print(f"[{_PASS}]     {strat_name}: vstrides={vstrides}, astrides={astrides}")
+
+        non_view_edges = list(state.out_edges(vnode)) if is_viewed_src else list(state.in_edges(vnode))
+
+        # -- feasibility: every memlet subset must be reshapable,
+        #    every tasklet must be Python.
+        for edge in non_view_edges:
+            for te in state.memlet_tree(edge):
+                leaf = te.dst if is_viewed_src else te.src
+                if isinstance(leaf, nd.Tasklet):
+                    if leaf.language != dtypes.Language.Python:
+                        if _DEBUGPRINT:
+                            print(f'[{_PASS}]     {strat_name}: non-Python tasklet "{leaf.label}" -- aborting')
+                        return False
+                    # A tasklet subscripting the whole view is rewritten element by element, which must stay affine;
+                    #  one subscripting a part does so in that part's own shape, which the part must keep
+                    conn = te.dst_conn if is_viewed_src else te.src_conn
+                    part = te.data.subset if te.data.data == vnode.data else te.data.other_subset
+                    ranks = [
+                        len(n.slice.elts) if isinstance(n.slice, ast.Tuple) else 1
+                        for stmt in leaf.code.code
+                        for n in ast.walk(stmt)
+                        if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == conn
+                    ]
+                    if groups is not None and part is not None and ranks:
+                        if part == subsets.Range.from_array(vdesc):
+                            if not groups.elements_affine():
+                                return False
+                        else:
+                            new_part = groups.subset(part)
+                            before = [n for n in part.size() if n != 1]
+                            after = [n for n in new_part.size() if n != 1] if new_part is not None else None
+                            kept = after is not None and len(before) == len(after)
+                            kept = kept and all(symbolic.equal(x, y) is True for x, y in zip(before, after))
+                            if not kept or len(groups.vshape) in ranks:
+                                return False
+                m = te.data
+                if m.data == vnode.data and m.subset is not None:
+                    if reshape(m.subset) is None:
+                        if _DEBUGPRINT:
+                            print(f"[{_PASS}]     {strat_name}: cannot reshape subset {m.data}[{m.subset}] -- aborting")
+                        return False
+                if m.data != vnode.data and m.other_subset is not None:
+                    if reshape(m.other_subset) is None:
+                        if _DEBUGPRINT:
+                            print(
+                                f"[{_PASS}]     {strat_name}: cannot reshape other_subset {m.other_subset} -- aborting"
+                            )
+                        return False
+
+        # Interstate-edge feasibility: ensure every V-subscript in every
+        # interstate-edge assignment/condition can be parsed and has the
+        # right rank for the linearize rewriter.
+        def _rw_lin():
+            return _InterstateSubscriptRewriter(
+                vnode.data,
+                viewed_node.data,
+                mode="linearize",
+                vstrides=vstrides,
+                astrides=astrides,
+                array_shape=array_shape,
+                groups=groups,
+            )
+
+        # An interstate subscript reads single elements, like a tasklet subscripting the whole view
+        if groups is not None and not groups.elements_affine():
+            if any(_references_view(e.data, vnode.data, c) for e, c in self.interstate_edges):
+                return False
+        if not self._interstate_feasible(sdfg, vnode.data, _rw_lin):
+            if _DEBUGPRINT:
+                print(f"[{_PASS}]     {strat_name}: interstate edge rewrite infeasible -- aborting")
+            return False
+
+        # apply: rewrite memlets
+        for edge in non_view_edges:
+            for te in state.memlet_tree(edge):
+                m = te.data
+                if m.data == vnode.data:
+                    old = f"{m.data}[{m.subset}]"
+                    m.data = viewed_node.data
+                    if m.subset is not None:
+                        m.subset = reshape(m.subset)
+                    else:
+                        m.subset = subsets.Range.from_array(adesc)
+                    if _DEBUGPRINT:
+                        print(f"[{_PASS}]       memlet: {old} -> {m.data}[{m.subset}]")
+                elif m.data != vnode.data and m.other_subset is not None:
+                    old_other = f"{m.other_subset}"
+                    m.other_subset = reshape(m.other_subset)
+                    if _DEBUGPRINT:
+                        print(f"[{_PASS}]       memlet {m.data}: other_subset={old_other} -> {m.other_subset}")
+
+        # apply: rewrite tasklet Python code
+        for edge in non_view_edges:
+            for te in state.memlet_tree(edge):
+                leaf = te.dst if is_viewed_src else te.src
+                conn = te.dst_conn if is_viewed_src else te.src_conn
+                if isinstance(leaf, nd.Tasklet) and conn and leaf.language == dtypes.Language.Python and leaf.code.code:
+                    # A part of the view keeps its shape (checked above): its subscripts are its own
+                    if groups is not None and te.data.subset != subsets.Range.from_array(adesc):
+                        continue
+                    old_code = leaf.code.as_string
+                    rw = _ReshapeIndexRewriter(conn, vstrides, astrides, array_shape, groups)
+                    leaf.code.code = [rw.visit(copy.deepcopy(stmt)) for stmt in leaf.code.code]
+                    if _DEBUGPRINT and rw.changed:
+                        print(
+                            f'[{_PASS}]       tasklet "{leaf.label}"'
+                            f' connector "{conn}": {old_code!r}'
+                            f" -> {leaf.code.as_string!r}"
+                        )
+
+        # apply: rewrite interstate edge assignments & conditions
+        self._rewrite_interstate_edges(sdfg, vnode.data, _rw_lin)
+
+        # reconnect and remove
+        self._reconnect_edges(state, vnode, view_edge, is_viewed_src)
+        state.remove_node(vnode)
+        self._cleanup_isolated_viewed_node(state, viewed_node)
+        if _DEBUGPRINT:
+            print(f'[{_PASS}]     REMOVED "{vnode.data}" via {strat_name}')
+        return True

@@ -1,0 +1,161 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Give every GPU kernel an explicit thread-block map along its coalesced axis, and each thread several elements of
+an outer axis.
+
+The offload leaves a kernel as one ``GPU_Device`` map, and ``AddThreadBlockMaps`` later cuts it by the configured
+block size along its LAST parameters, whatever the accesses say. This pass decides the block from the accesses
+instead::
+
+    GPU_Device map (o, c):                       GPU_Device map (g_o, g_c):            # one block per tile
+        body(o, c)                        ->         GPU_ThreadBlock map (t_o, t_c):   # lanes along c
+                                                         map o in t_o : t_o + F (Sequential):
+                                                             body(o, c = t_c)
+
+``c`` is the coalesced axis: the parameter that indexes the unit-stride dimension of the most accesses. It becomes
+``threadIdx.x``, so a wavefront's lanes touch adjacent elements on every step of the thread's loop. ``o`` is the
+outermost other parameter (``threadIdx.y``); each thread walks ``factor`` consecutive points of it, so the block
+reuses what neighbouring points of ``o`` read (a stencil's rows). The block keeps the domain-matched shape
+:mod:`~dace.transformation.passes.gpu_block_size_selection` chose (``x`` on ``c``, ``y`` on ``o``, ``z`` on the
+next parameter); without one it is ``block_min_lanes x block_threads / block_min_lanes``.
+
+Left alone: a one-parameter kernel (folding a streaming map measured no gain on MI300A, see
+:mod:`~dace.transformation.passes.gpu_specialization.grid_stride_kernels`; its block is the domain-matched line),
+a kernel that owns or will own a thread-block level (an inner thread-block map, or a map tagged ``is_warp_tile``
+that ``PromoteWarpTiles`` turns into one), and a tree reduction, whose block is the width of its block-reduce.
+Re-blocking any of these after the block selection conflicts with what was sized from it.
+"""
+
+from typing import Any
+
+from dace import SDFG, SDFGState, dtypes, properties, subsets, symbolic
+from dace.config import Config
+from dace.sdfg import nodes
+from dace.transformation import helpers as xfh
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation.dataflow.tiling import MapTiling
+from dace.transformation.passes.gpu_block_size_selection import (
+    map_is_tree_reduction,
+    scope_contains_threadblock_map,
+    unit_stride_counts,
+)
+from dace.transformation.passes.gpu_specialization.block_tile_kernels import is_kernel
+
+
+def coalesced_param(state: SDFGState, entry: nodes.MapEntry, sdfg: SDFG) -> str:
+    """The parameter of ``entry`` that indexes the unit-stride dimension of the most accesses in its scope (counted
+    as :func:`~dace.transformation.passes.gpu_block_size_selection.unit_stride_counts` counts them for the block
+    shape); the last parameter on a tie (the order the frontend and canonicalization already chose)."""
+    counts = unit_stride_counts(sdfg, state, entry)[::-1]
+    best = max(counts)
+    return [p for p, count in zip(entry.map.params, counts) if count == best][-1]
+
+
+@properties.make_properties
+class TileKernelsCoalesced(ppl.Pass):
+    """See the module docstring."""
+
+    CATEGORY: str = "Device Specialization"
+
+    factor = properties.Property(dtype=int, default=4, desc="Points of the outer axis each thread computes.")
+    block_threads = properties.Property(
+        dtype=int, default=256, desc="Threads per block of a kernel without a preset block size."
+    )
+
+    def __init__(self, factor: int = 4, block_threads: int = 256) -> None:
+        super().__init__()
+        self.factor = factor
+        self.block_threads = block_threads
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Memlets | ppl.Modifies.Symbols
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, tuple] | None:
+        """:returns: per kernel label, ``(coalesced, outer, factor)``, or None if no kernel was tiled."""
+        kernels = [
+            (state, node)
+            for node, state in sdfg.all_nodes_recursive()
+            if isinstance(node, nodes.MapEntry) and is_kernel(state, node)
+        ]
+        tiled = {}
+        for state, kernel in kernels:
+            params = kernel.map.params
+            if (
+                len(params) == 1
+                or xfh.gpu_map_has_explicit_threadblocks(state, kernel)
+                or scope_contains_threadblock_map(state, kernel)
+                or map_is_tree_reduction(state, kernel)
+            ):
+                continue
+            coalesced = coalesced_param(state, kernel, state.sdfg)
+            outer = next(p for p in params if p != coalesced)
+            if self.tile(state, kernel, coalesced, outer):
+                tiled[kernel.map.label] = (coalesced, outer, self.factor)
+        return tiled or None
+
+    def tile(self, state: SDFGState, kernel: nodes.MapEntry, coalesced: str, outer: str) -> bool:
+        """Grid over tiles, an explicit thread-block map (``coalesced`` is ``threadIdx.x``, ``outer`` ``.y``) and a
+        sequential loop of ``factor`` points of ``outer`` per thread; False, and the kernel untouched, if it is one tile."""
+        # threadIdx.x is the last parameter of the thread-block map, .y the one before it.
+        rest = [p for p in kernel.map.params if p not in (coalesced, outer)]
+        lanes = Config.get("compiler", "cuda", "block_min_lanes")
+        bx, by, bz = [int(b) for b in (kernel.map.gpu_block_size or [lanes, max(1, self.block_threads // lanes), 1])]
+        perm = [kernel.map.params.index(p) for p in rest + [outer, coalesced]]
+        factor = max(1, self.factor)
+        sizes = {coalesced: bx, outer: by * factor}
+        if rest and bz > 1:
+            sizes[rest[-1]] = bz
+        else:
+            bz = 1
+        # A tile wider than a constant extent would carry its overhang into the memlets around the grid
+        extents = {p: symbolic.simplify(e) for p, e in zip(kernel.map.params, kernel.map.range.size())}
+        for param in sizes:
+            if not symbolic.issymbolic(extents[param]) and int(extents[param]) < sizes[param]:
+                sizes[param] = int(extents[param])
+        # MapTiling splits no axis whose tile is one point or the whole axis: then the kernel is one tile already
+        if all(size == 1 or symbolic.equal(size, extents[p]) is True for p, size in sizes.items()):
+            return False
+        ranges = kernel.map.range.ranges
+        kernel.map.params = [kernel.map.params[i] for i in perm]
+        kernel.map.range = subsets.Range([ranges[i] for i in perm])
+        bx, by = sizes[coalesced], -(-sizes[outer] // factor)
+        factor = min(factor, sizes[outer])
+        if bz > 1:
+            bz = sizes[rest[-1]]
+        MapTiling.apply_to(
+            state.sdfg,
+            options={
+                "prefix": "g",
+                "tile_sizes": [sizes.get(p, 1) for p in kernel.map.params],
+                "tile_trivial": False,
+                "divides_evenly": False,
+            },
+            map_entry=kernel,
+        )
+        grid, *_ = xfh.get_parent_map(state, kernel)
+        MapTiling.apply_to(
+            state.sdfg,
+            options={
+                "prefix": "t",
+                "tile_sizes": [factor if p == outer else 1 for p in kernel.map.params],
+                "tile_trivial": True,
+                "divides_evenly": False,
+            },
+            map_entry=kernel,
+        )
+        block, *_ = xfh.get_parent_map(state, kernel)
+        grid.map.schedule = dtypes.ScheduleType.GPU_Device
+        grid.map.gpu_block_size = [bx, by, bz]
+        grid.map.gpu_launch_bounds = kernel.map.gpu_launch_bounds
+        grid.map.gpu_min_warps_per_eu = kernel.map.gpu_min_warps_per_eu
+        grid.map.gpu_maxnreg = kernel.map.gpu_maxnreg
+        grid.map.instrument = kernel.map.instrument
+        block.map.schedule = dtypes.ScheduleType.GPU_ThreadBlock
+        block.map.gpu_block_size = None
+        block.map.instrument = dtypes.InstrumentationType.No_Instrumentation
+        kernel.map.schedule = dtypes.ScheduleType.Sequential
+        kernel.map.gpu_block_size = None
+        kernel.map.instrument = dtypes.InstrumentationType.No_Instrumentation
+        return True

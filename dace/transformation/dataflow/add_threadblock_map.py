@@ -11,7 +11,7 @@ import warnings
 import sympy
 
 from dace import Config, dtypes
-from dace.properties import make_properties
+from dace.properties import Property, make_properties
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import helpers, transformation
@@ -109,6 +109,9 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
     """
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
+    divides_evenly = Property(
+        dtype=bool, default=False, allow_none=False, desc="If the tblock-map devides the maps evenly"
+    )
 
     @classmethod
     def expressions(cls):
@@ -126,6 +129,11 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
 
         # Only applicable to GPU_Device maps
         if map_entry.map.schedule != dtypes.ScheduleType.GPU_Device:
+            return False
+        # A CUDA Tile C++ kernel runs one tile block per iteration and has no threads to map
+        from dace.codegen.python.dialects.cuda_tile_cpp import is_tile_kernel
+
+        if is_tile_kernel(state, map_entry):
             return False
 
         # Check if any inner maps are GPU-scheduled (e.g., GPU_ThreadBlock)
@@ -185,7 +193,13 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         # Apply map tiling transformation
         MapTiling.apply_to(
             sdfg=sdfg,
-            options={"prefix": "b", "tile_sizes": tile_sizes, "tile_trivial": True, "skew": False},
+            options={
+                "prefix": "b",
+                "tile_sizes": tile_sizes,
+                "tile_trivial": True,
+                "skew": False,
+                "divides_evenly": self.divides_evenly,
+            },
             map_entry=kernel_map_entry,
         )
 
@@ -202,6 +216,9 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         new_kernel_entry.map.allow_chiplet_threadblock_distribution = (
             kernel_map_entry.map.allow_chiplet_threadblock_distribution
         )
+        # Instrumentation times the kernel: it moves to the kernel map, the thread-block map is not timed on its own.
+        new_kernel_entry.map.instrument = kernel_map_entry.map.instrument
+        kernel_map_entry.map.instrument = dtypes.InstrumentationType.No_Instrumentation
 
     def preprocess_default_dims(self):
         """

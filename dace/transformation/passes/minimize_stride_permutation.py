@@ -1,0 +1,365 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Permute perfectly-nested map dimensions to minimize array access strides.
+
+This pass rewrites perfect map nests (a level may carry several parameters) so that the innermost map parameter
+indexes the contiguous (smallest-stride) array axis with a unit coefficient.
+The transformation is purely a reordering of the loop nest: it never changes
+the iteration space, the body, or the memlets' data, so the resulting SDFG is
+numerically identical to the input.
+
+The deterministic ordering is a pure function of the body's access pattern,
+which makes the pass idempotent (a second run finds the nest already
+canonical and performs no further interchange):
+
+1. For every array access reachable inside the innermost map scope, the
+   linear coefficient of each map parameter is extracted per array axis
+   using ``dace.symbolic``. An axis indexed by a parameter with unit
+   coefficient is a candidate "stride home" for that parameter.
+2. Each parameter receives a score equal to the smallest array stride it
+   linearly indexes with a unit coefficient (``+inf`` if it never does). The
+   parameter whose smallest indexed stride is smallest belongs innermost.
+3. Equal minima are ordered by the total of the unit-coefficient strides a
+   parameter indexes (larger outside); still equal (or not comparable)
+   scores keep their current relative order (a stable sort).
+
+The desired permutation is realized exclusively through a sequence of legal
+adjacent :class:`~dace.transformation.dataflow.map_interchange.MapInterchange`
+applications (an adjacent-transposition bubble sort). An interchange that is
+not legal at its turn is skipped rather than raising, so the pass degrades
+gracefully on nests it cannot fully reorder.
+"""
+
+import functools
+
+import sympy
+
+from dace import SDFG, properties, symbolic
+from dace import data as dt
+from dace.sdfg import nodes
+from dace.sdfg.narrowing import as_basic, as_expr
+from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace.sdfg.state import SDFGState
+from dace.symbolic import pystr_to_symbolic
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
+from dace.transformation.dataflow.map_expansion import MapExpansion
+from dace.transformation.dataflow.map_interchange import MapInterchange
+
+#: Sentinel score for a parameter that never indexes any axis with a unit
+#: coefficient (it has no contiguous "home" and is sorted outermost).
+NO_HOME_SCORE = sympy.oo
+
+
+def score_to_float(value: object) -> float:
+    """Best-effort conversion of a (possibly symbolic) score to a sortable float.
+
+    Non-numeric symbolic values cannot be reliably ordered, so they map to
+    ``+inf`` (treated as the worst/largest stride and sorted outermost).
+
+    :param value: A number or ``sympy`` expression.
+    :returns: A finite float, or ``+inf`` for non-numeric symbolic input.
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def score_indexed_strides(edges, sdfg, var_names) -> dict[str, tuple[object, object, object]]:
+    """Score how each name in ``var_names`` indexes arrays across ``edges``.
+
+    For every array memlet on an edge, each axis the variable indexes is
+    examined. A variable "homes" on an axis when it appears there with unit
+    absolute coefficient; that axis's absolute stride is then a contiguity
+    score. Strides of other listed variables are zeroed out so the per-variable
+    constant offset reflects only that variable's contribution.
+
+    Shared by :class:`MinimizeStridePermutation` (map-nest reordering) and the
+    loop<->map interchange gate, which both rank variables by indexed stride.
+
+    :param edges: Iterable of graph edges to scan (each carrying a ``Memlet``).
+    :param sdfg: The SDFG owning the arrays (for descriptor strides).
+    :param var_names: The variable names to score.
+    :returns: ``{name: (min_home_stride, total_home_stride, abs_offset_sum)}``.
+              ``min_home_stride`` is :data:`NO_HOME_SCORE` when the variable
+              never homes on any axis; ``total_home_stride`` sums home strides
+              over all accesses (repeated contiguous accesses weigh more);
+              ``abs_offset_sum`` accumulates the absolute constant offsets.
+    """
+    var_set = set(var_names)
+    min_stride: dict[str, object] = dict.fromkeys(var_set, NO_HOME_SCORE)
+    total_stride: dict[str, object] = dict.fromkeys(var_set, sympy.S.Zero)
+    offset_sum: dict[str, object] = dict.fromkeys(var_set, sympy.S.Zero)
+    for edge in edges:
+        memlet = edge.data
+        if memlet is None or memlet.data is None:
+            continue
+        desc = sdfg.arrays.get(memlet.data)
+        if not isinstance(desc, dt.Array):
+            continue
+        subset = memlet.subset
+        if subset is None or len(subset) != len(desc.strides):
+            continue
+        for rng, stride in zip(subset.ndrange(), desc.strides):
+            # A subset bound may be a SymExpr (main and approximate expressions): its main one is the index
+            index_expr = as_expr(pystr_to_symbolic(rng[0]))
+            # The expression may carry the map parameter as a plain sympy
+            # ``Symbol`` while ``pystr_to_symbolic`` returns a DaCe ``symbol``.
+            # Coefficient extraction is object-sensitive, so resolve each name to
+            # the actual symbol instance present in the expression.
+            symbols_by_name = {str(s): s for s in index_expr.free_symbols if str(s) in var_set}
+            if not symbols_by_name:
+                continue
+            stride_val = sympy.Abs(pystr_to_symbolic(str(stride)))
+            for vname, vsym in symbols_by_name.items():
+                coeff = as_expr(index_expr).coeff(as_expr(vsym), 1)
+                if coeff == 0:
+                    continue
+                others = {s: 0 for name, s in symbols_by_name.items() if name != vname}
+                constant = index_expr.subs(others).subs({vsym: 0})
+                offset_sum[vname] = offset_sum[vname] + sympy.Abs(constant)
+                if sympy.Abs(coeff) == 1:
+                    total_stride[vname] = total_stride[vname] + stride_val
+                    prev = min_stride[vname]
+                    if prev is NO_HOME_SCORE:
+                        min_stride[vname] = stride_val
+                    # A stride the minimum already holds leaves it as it is; rebuilding the ``Min`` re-compares
+                    # every argument, and a nest's accesses repeat the same few strides.
+                    elif stride_val != prev and not (isinstance(prev, sympy.Min) and stride_val in prev.args):
+                        min_stride[vname] = sympy.Min(prev, stride_val)
+    return {v: (min_stride[v], total_stride[v], offset_sum[v]) for v in var_set}
+
+
+class UndecidableStride(Exception):
+    """Two stride scores whose relative magnitude does not follow from the shape contract."""
+
+
+def stride_difference_sign(a, b) -> int:
+    """``-1``/``0``/``1`` as ``a`` is less than / equal to / greater than ``b``.
+
+    An array's strides are PRODUCTS OF ITS SHAPE EXTENTS, and an extent is at least one wherever the
+    array exists at all, so a symbolic stride is not an undecidable one: ``1`` versus ``LEN_2D`` and
+    ``M`` versus ``N*M`` both follow from that. The symbols are rebuilt ``positive`` here rather than
+    read off the incoming expression because assumptions do not survive the string round trip a
+    stride takes to reach this pass.
+
+    A pair that genuinely does not follow (``N*M`` versus ``M + K``) raises
+    :class:`UndecidableStride`, which leaves the nest untouched -- the behaviour this pass had for
+    every symbolic shape before.
+    """
+    left, right = as_expr(pystr_to_symbolic(str(a))), as_expr(pystr_to_symbolic(str(b)))
+    diff = symbolic.simplify(left - right)
+    if diff == 0:
+        return 0
+    if as_basic(diff).is_number:
+        return -1 if diff < 0 else 1
+    extents = symbolic.contract_facts(
+        as_basic(diff), positive=frozenset(sym.name for sym in as_basic(diff).free_symbols)
+    )
+    # Non-STRICT: two scores that may coincide (``1`` vs ``LEN_2D`` at ``LEN_2D == 1``) impose no
+    # order, and reporting them as tied keeps the stable sort's current-order behaviour. A score is the
+    # ``Min`` of a parameter's home strides, which :func:`~dace.symbolic.provably_at_most` takes apart.
+    if symbolic.provably_le(left, right, extents):
+        return -1
+    if symbolic.provably_le(right, left, extents):
+        return 1
+    raise UndecidableStride(f"{a} vs {b}")
+
+
+def min_stride_order(edges, sdfg: SDFG, params: list[str]) -> list[int] | None:
+    """The outer-to-inner order of ``params`` by the strides they index in the memlets of ``edges``.
+
+    Descending minimal unit-coefficient stride (the smallest belongs innermost); equal minima by descending total
+    of those strides (a parameter homing on a large stride elsewhere is worse innermost: ``x[i, j, k, l] * y[l, i,
+    j, k]`` puts ``k`` inside ``l``). Equal pairs, and minima that tie with an undecidable total, keep their order (a
+    stable sort). No tie-break on the accesses' constant offsets: they say nothing about locality (lavamd's
+    all-pairs nest).
+
+    :returns: ``order[k]``, the index into ``params`` that belongs at depth ``k``; ``None`` if two scores compare
+              undecidably (:func:`stride_difference_sign`).
+    """
+    scores = score_indexed_strides(edges, sdfg, params)
+
+    def compare(i: int, j: int) -> int:
+        left, right = scores[params[i]], scores[params[j]]
+        if sign := stride_difference_sign(left[0], right[0]):
+            return -sign
+        try:
+            return -stride_difference_sign(left[1], right[1])
+        except UndecidableStride:  # an undecided tie-break leaves the tie
+            return 0
+
+    try:
+        return sorted(range(len(params)), key=functools.cmp_to_key(compare))
+    except UndecidableStride:
+        return None
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class MinimizeStridePermutation(ppl.Pass):
+    """Reorder perfect map nests so the innermost parameter has minimal stride.
+
+    See the module docstring for the full design and the deterministic
+    ordering key. The pass only emits adjacent ``MapInterchange`` applications
+    and therefore preserves the SDFG's numerical result.
+    """
+
+    CATEGORY: str = "Optimization Preparation"
+    #: Whether this run split a map, so the SDFG's memlets need one propagation at the end.
+    _expanded: bool = False
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Scopes | ppl.Modifies.Memlets
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return bool(modified & (ppl.Modifies.Scopes | ppl.Modifies.Memlets | ppl.Modifies.Nodes))
+
+    def apply_pass(self, sdfg: SDFG, _: dict[str, object]) -> dict[int, int] | None:
+        """Apply the pass to ``sdfg``.
+
+        :param sdfg: The SDFG to canonicalize.
+        :returns: A mapping ``{state id: number of interchanges applied}`` for
+                 states that changed, or ``None`` if nothing was modified.
+        """
+        result: dict[int, int] = {}
+        self._expanded = False
+        # Nested SDFGs too: a nest inside one (a loop body nested in a map) is as free to reorder as a top-level one
+        for state in (state for nested in sdfg.all_sdfgs_recursive() for state in nested.states()):
+            applied = self._process_state(state, state.sdfg)
+            if applied:
+                result[state.block_id] = result.get(state.block_id, 0) + applied
+        if self._expanded:
+            propagate_memlets_sdfg(sdfg)
+        return result or None
+
+    def _process_state(self, state: SDFGState, sdfg: SDFG) -> int:
+        """Find and reorder every top-level perfect map nest in one state.
+
+        :param state: The state to scan.
+        :param sdfg: The SDFG owning ``state`` (for data descriptors).
+        :returns: The number of adjacent interchanges applied in this state.
+        """
+        scope_children = state.scope_children()
+        applied = 0
+        for node in [n for n in scope_children[None] if isinstance(n, nodes.MapEntry)]:
+            nest = self._collect_perfect_nest(state, node, scope_children)
+            if sum(len(me.map.params) for me in nest) < 2:
+                continue
+            swaps = self._reorder_nest(state, sdfg, nest)
+            if swaps:
+                applied += swaps
+                scope_children = state.scope_children()
+        return applied
+
+    def _collect_perfect_nest(
+        self, state: SDFGState, outer: nodes.MapEntry, scope_children: dict[nodes.Node | None, list[nodes.Node]]
+    ) -> list[nodes.MapEntry]:
+        """Collect the chain of perfectly-nested map entries.
+
+        A level is part of the perfect nest only if its scope contains exactly
+        one child node and that node is the next map entry. A level may carry
+        several parameters: :meth:`_reorder_nest` splits it into one map per
+        parameter only when the permutation needs to.
+
+        :param state: The containing state.
+        :param outer: The outermost candidate map entry.
+        :param scope_children: Precomputed scope-children mapping for ``state``.
+        :returns: The list of map entries from outermost to innermost.
+        """
+        nest: list[nodes.MapEntry] = []
+        current: nodes.MapEntry | None = outer
+        while current is not None:
+            nest.append(current)
+            # ``scope_children`` always lists the scope's own MapExit; the nest
+            # is perfect only if the sole remaining child is the next map.
+            exit_node = state.exit_node(current)
+            body = [c for c in scope_children.get(current, []) if c is not exit_node]
+            inner_maps = [c for c in body if isinstance(c, nodes.MapEntry)]
+            if len(body) == 1 and len(inner_maps) == 1:
+                current = inner_maps[0]
+            else:
+                current = None
+        return nest
+
+    def _reorder_nest(self, state: SDFGState, sdfg: SDFG, nest: list[nodes.MapEntry]) -> int:
+        """Compute the canonical order for ``nest`` and realize it.
+
+        :param state: The containing state.
+        :param sdfg: The SDFG owning ``state``.
+        :param nest: Map entries from outermost to innermost.
+        :returns: The number of map splits and adjacent interchanges applied.
+        """
+        params = [param for me in nest for param in me.map.params]
+        # The innermost entry and exit belong to the scan: the per-iteration memlets live on their edges
+        body = state.scope_subgraph(nest[-1], include_entry=True, include_exit=True)
+        order = min_stride_order(body.edges(), sdfg, params)
+        # ``order[k]`` is the original index that should end up at depth ``k``.
+        if order is None or order == list(range(len(params))):
+            return 0
+        # A multi-parameter level is split into one map per parameter, in its own order, so the permutation
+        # below runs over single-parameter levels; the collapse stage that follows this pass joins the
+        # reordered chain again. Each split counts as a rewrite even if no interchange then proves legal.
+        applied = 0
+        outer = nest[0]
+        for entry in nest:
+            if len(entry.map.params) > 1:
+                # The expansion propagates its own scope; the whole-SDFG propagation ``apply_to`` would add per split
+                # runs once, at the end of the pass.
+                MapExpansion.apply_to(
+                    sdfg,
+                    options={"inner_schedule": None},
+                    map_entry=entry,
+                    verify=False,
+                    save=False,
+                    annotate=False,
+                )
+                self._expanded = True
+                applied += 1
+        if applied:
+            nest = self._collect_perfect_nest(state, outer, state.scope_children())
+            if [me.map.params for me in nest] != [[param] for param in params]:
+                return applied
+
+        # Bubble-sort the target depth of the map at each depth, using only adjacent transpositions, each realized by a
+        # single MapInterchange (outer = depth k, inner = k+1). The target depths are the INVERSE of ``order``: sorting
+        # ``order`` itself realizes its inverse, which differs for a cycle (k, i, j -> i, j, k would end as j, k, i).
+        target = [0] * len(order)
+        for depth, index in enumerate(order):
+            target[index] = depth
+        n = len(target)
+        for end in range(n - 1, 0, -1):
+            for k in range(end):
+                if target[k] > target[k + 1]:
+                    if self._swap_adjacent(sdfg, nest, k):
+                        target[k], target[k + 1] = target[k + 1], target[k]
+                        applied += 1
+        return applied
+
+    def _swap_adjacent(self, sdfg: SDFG, nest: list[nodes.MapEntry], depth: int) -> bool:
+        """Interchange the maps at ``depth`` and ``depth + 1`` if legal.
+
+        On success ``nest`` is updated in place to reflect the new ordering.
+
+        :param sdfg: The SDFG owning the nest.
+        :param nest: Map entries (mutated in place on success).
+        :param depth: Zero-based depth of the outer of the adjacent pair.
+        :returns: True if the interchange was applied, False if it was skipped.
+        """
+        outer_entry = nest[depth]
+        inner_entry = nest[depth + 1]
+        # ``transform_bounds``: a triangular / trapezoidal nest is exactly the shape whose traversal
+        # order is worth fixing and the one a plain swap refuses, because the inner range mentions
+        # the outer parameter. TSVC ``s1232`` (``for j: for i in range(j*VLEN, N): aa[i, j] = ...``)
+        # keeps a stride-``N`` innermost loop without it -- the pass scores the nest correctly and
+        # then cannot act on the score.
+        options = {"transform_bounds": True}
+        if not MapInterchange.can_be_applied_to(
+            sdfg, options=options, outer_map_entry=outer_entry, inner_map_entry=inner_entry
+        ):
+            return False
+        MapInterchange.apply_to(
+            sdfg, options=options, outer_map_entry=outer_entry, inner_map_entry=inner_entry, verify=False, save=False
+        )
+        nest[depth], nest[depth + 1] = inner_entry, outer_entry
+        return True

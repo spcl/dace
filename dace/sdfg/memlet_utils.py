@@ -4,6 +4,7 @@ import copy
 import itertools
 from collections import defaultdict
 from collections.abc import Callable, Generator, Iterable
+from collections.abc import Set as AbstractSet
 from typing import Any, TypeVar
 
 from dace import Memlet, data, dtypes, subsets, symbolic
@@ -24,7 +25,7 @@ class MemletReplacer(ast.NodeTransformer):
         self,
         arrays: dict[str, data.Data],
         process: Callable[[Memlet], Memlet | None],
-        array_filter: set[str] | None = None,
+        array_filter: AbstractSet[str] | None = None,
     ) -> None:
         """
         Create a new memlet replacer.
@@ -54,7 +55,7 @@ class MemletReplacer(ast.NodeTransformer):
 
         # Parse memlet subset
         array = self.arrays[data]
-        subset, newaxes, _ = memlet_parser.parse_memlet_subset(array, node, self.arrays)
+        subset, newaxes, _, _ = memlet_parser.parse_memlet_subset(array, node, self.arrays)
         if newaxes:
             raise NotImplementedError("Adding new axes to memlets is not supported")
 
@@ -95,16 +96,24 @@ class MemletSet(set[Memlet]):
     Set updates and unions also perform unions on the contained memlet subsets.
     """
 
-    def __init__(self, iterable: Iterable[Memlet] | None = None, *, intersection_is_contained: bool = True) -> None:
+    def __init__(
+        self,
+        iterable: Iterable[Memlet] | None = None,
+        *,
+        facts: symbolic.Facts,
+        intersection_is_contained: bool = True,
+    ) -> None:
         """
         Initializes a memlet set.
 
         :param iterable: An optional iterable of memlets to initialize the set with.
+        :param facts: The facts that hold where the memlets are accessed, under which subsets are compared.
         :param intersection_is_contained: Whether the check ``m in memlet_set`` should return True if the memlet
                                           only intersects with the contents of the set. If False, only completely
                                           covered subsets would return True.
         """
         self.internal_set: dict[str, set[Memlet]] = {}
+        self.facts = facts
         self.intersection_is_contained = intersection_is_contained
         if iterable is not None:
             self.update(iterable)
@@ -142,19 +151,16 @@ class MemletSet(set[Memlet]):
         # Memlet is in set, either perform a union (if possible) or add to internal set
         # TODO(later): Consider other_subset as well
         for existing_memlet in self.internal_set[elem.data]:
-            try:
-                if subsets.intersects(existing_memlet.subset, elem.subset) == True:  # Definitely intersects
-                    if existing_memlet.subset.covers(elem.subset):
-                        break  # Nothing to do
+            if subsets.intersects(existing_memlet.subset, elem.subset, self.facts) is symbolic.Truth.TRUE:
+                if existing_memlet.subset.covers(elem.subset, self.facts):
+                    break  # Nothing to do
 
-                    # Create a new union memlet
-                    self.internal_set[elem.data].remove(existing_memlet)
-                    new_memlet = copy.deepcopy(existing_memlet)
-                    new_memlet.subset = subsets.union(existing_memlet.subset, elem.subset)
-                    self.internal_set[elem.data].add(new_memlet)
-                    break
-            except TypeError:  # Indeterminate
-                pass
+                # Create a new union memlet
+                self.internal_set[elem.data].remove(existing_memlet)
+                new_memlet = copy.deepcopy(existing_memlet)
+                new_memlet.subset = subsets.union(existing_memlet.subset, elem.subset, self.facts)
+                self.internal_set[elem.data].add(new_memlet)
+                break
         else:  # all intersections were False or indeterminate (may or does not intersect with existing memlets)
             self.internal_set[elem.data].add(elem)
 
@@ -165,16 +171,14 @@ class MemletSet(set[Memlet]):
         if elem.data not in self.internal_set:
             return False
         for existing_memlet in self.internal_set[elem.data]:
-            if existing_memlet.subset.covers(elem.subset):
+            if existing_memlet.subset.covers(elem.subset, self.facts):
                 return True
-            if self.intersection_is_contained:
-                try:
-                    if subsets.intersects(existing_memlet.subset, elem.subset) == False:
-                        continue
-                    else:  # May intersect or indeterminate
-                        return True
-                except TypeError:
-                    return True
+            # May intersect or indeterminate
+            if (
+                self.intersection_is_contained
+                and subsets.intersects(existing_memlet.subset, elem.subset, self.facts) is not symbolic.Truth.FALSE
+            ):
+                return True
 
         return False
 
@@ -184,7 +188,7 @@ class MemletSet(set[Memlet]):
 
         :return: New memlet set containing the union of this set and the inputs.
         """
-        newset = MemletSet(self)
+        newset = MemletSet(self, facts=self.facts)
         newset.update(s)
         return newset
 
@@ -198,7 +202,11 @@ class MemletDict(dict[Memlet, T]):
     or are covered by its other memlets.
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, *, facts: symbolic.Facts, **kwargs) -> None:
+        """
+        :param facts: The facts that hold where the memlets are accessed, under which subsets are compared.
+        """
+        self.facts = facts
         self.internal_dict: dict[str, dict[Memlet, T]] = defaultdict(dict)
         self.covers_cache: dict[tuple, bool] = defaultdict()
 
@@ -220,16 +228,13 @@ class MemletDict(dict[Memlet, T]):
             key = (existing_memlet.subset, elem.subset)
             is_covered = self.covers_cache.get(key, None)
             if is_covered is None:
-                is_covered = existing_memlet.subset.covers(elem.subset)
+                is_covered = existing_memlet.subset.covers(elem.subset, self.facts)
                 self.covers_cache[key] = is_covered
             if is_covered:
                 return existing_memlet
 
-            try:
-                if subsets.intersects(existing_memlet.subset, elem.subset) == False:  # Definitely does not intersect
-                    continue
-            except TypeError:
-                pass
+            if subsets.intersects(existing_memlet.subset, elem.subset, self.facts) is symbolic.Truth.FALSE:
+                continue
 
             # May or will intersect
             return existing_memlet
@@ -321,42 +326,32 @@ def memlet_to_map(
         copy_shape = dst_subset_size
         copy_a = False
 
-    if tuple(src_subset_size) == tuple(dst_subset_size):
-        # The two subsets have exactly the same shape, so we can just copying with an offset.
+    if same_size(src_subset_size, dst_subset_size):
+        # The two subsets have exactly the same shape, so we can just copying with an offset and a step.
         #  We use another index variables for the tests only.
         maprange = {f"__j{i}": (0, s - 1, 1) for i, s in enumerate(copy_shape)}
-        a_index = [symbolic.pystr_to_symbolic(f"__j{i} + ({src_subset[i][0]})") for i in range(len(copy_shape))]
-        b_index = [symbolic.pystr_to_symbolic(f"__j{i} + ({dst_subset[i][0]})") for i in range(len(copy_shape))]
+        indices = [symbolic.pystr_to_symbolic(f"__j{i}") for i in range(len(copy_shape))]
+        a_index = list(src_subset.coord_at(indices))
+        b_index = list(dst_subset.coord_at(indices))
     elif red_src_subset_size == red_dst_subset_size and (len(red_dst_subset_size) > 0):
         # If we remove all size 1 dimensions that the two subsets have the same size.
         #  This is essentially the memlet `a[0:10, 2, 0:10] -> 0:10, 10:20`
         #  We use another index variable only for the tests but we would have to
         #  recreate the index anyways.
         maprange = {f"__j{i}": (0, s - 1, 1) for i, s in enumerate(red_src_subset_size)}
-        cnt = itertools.count(0)
-        a_index = [
-            symbolic.pystr_to_symbolic(f"{src_subset[i][0]}")
-            if s == 1
-            else symbolic.pystr_to_symbolic(f"__j{next(cnt)} + ({src_subset[i][0]})")
-            for i, s in enumerate(src_subset_size)
-        ]
-        cnt = itertools.count(0)
-        b_index = [
-            symbolic.pystr_to_symbolic(f"{dst_subset[i][0]}")
-            if s == 1
-            else symbolic.pystr_to_symbolic(f"__j{next(cnt)} + ({dst_subset[i][0]})")
-            for i, s in enumerate(dst_subset_size)
-        ]
+        a_index = squeezed_coordinates(src_subset, src_subset_size)
+        b_index = squeezed_coordinates(dst_subset, dst_subset_size)
     else:
         # We have to delinearize and linearize
         #  We use another index variable for the tests.
         maprange = {f"__i{i}": (0, s - 1, 1) for i, s in enumerate(copy_shape)}
+        indices = [symbolic.pystr_to_symbolic(f"__i{i}") for i in range(len(copy_shape))]
         if copy_a:
-            a_index = [symbolic.pystr_to_symbolic(f"__i{i}") for i in range(len(copy_shape))]
-            b_index = _memlet_to_copy_delinearize_linearize(bdesc, copy_shape, edge.data.get_dst_subset(edge, state))
+            a_index = list(src_subset.coord_at(indices))
+            b_index = reshaped_coordinates(dst_subset, dst_subset_size, copy_shape, indices)
         else:
-            a_index = _memlet_to_copy_delinearize_linearize(adesc, copy_shape, edge.data.get_src_subset(edge, state))
-            b_index = [symbolic.pystr_to_symbolic(f"__i{i}") for i in range(len(copy_shape))]
+            a_index = reshaped_coordinates(src_subset, src_subset_size, copy_shape, indices)
+            b_index = list(dst_subset.coord_at(indices))
 
     a_subset = subsets.Range([(ind, ind, 1) for ind in a_index])
     b_subset = subsets.Range([(ind, ind, 1) for ind in b_index])
@@ -376,7 +371,7 @@ def memlet_to_map(
         maprange,
         dict(__inp=Memlet(data=av, subset=a_subset)),
         "__out = __inp",
-        dict(__out=Memlet(data=bv, subset=b_subset)),
+        dict(__out=Memlet(data=bv, subset=b_subset, wcr=edge.data.wcr)),
         schedule,
         external_edges=True,
         input_nodes={av: avnode},
@@ -430,24 +425,48 @@ def can_memlet_be_turned_into_a_map(
     return True
 
 
-def _memlet_to_copy_delinearize_linearize(
-    desc: data.Array, copy_shape: tuple[symbolic.SymbolicType], rng: subsets.Range
-) -> tuple[symbolic.SymbolicType]:
-    indices = [symbolic.pystr_to_symbolic(f"__i{i}") for i in range(len(copy_shape))]
+def same_size(first: Iterable[symbolic.SymbolicType], second: Iterable[symbolic.SymbolicType]) -> bool:
+    """Whether two subset sizes are the same in every dimension: structurally, or their difference simplifies to 0."""
+    first, second = tuple(first), tuple(second)
+    if first == second:
+        return True
+    return len(first) == len(second) and all(
+        a == b or symbolic.simplify(a - b) == 0 for a, b in zip(first, second, strict=True)
+    )
 
-    # Special case for when both dimensionalities are equal
-    if tuple(desc.shape) == tuple(copy_shape):
-        return subsets.Range([(ind, ind, 1) for ind in indices])
 
-    if rng is not None:  # Deal with offsets and strides in range
-        indices = rng.coord_at(indices)
+def squeezed_coordinates(subset: subsets.Range, size: Iterable[symbolic.SymbolicType]) -> list[symbolic.SymbolicType]:
+    """Coordinates of ``subset`` where a dimension of size one is fixed at its start and the other dimensions follow the
+    map indices ``__j0, __j1, ...`` in order, each as ``begin + index * step``."""
+    counter = itertools.count(0)
+    coordinates = []
+    for (begin, end, step), extent in zip(subset.ndrange(), size, strict=True):
+        if extent == 1:
+            coordinates.append(symbolic.pystr_to_symbolic(begin))
+        else:
+            coordinates.append(symbolic.pystr_to_symbolic(f"__j{next(counter)}") * step + begin)
+    return coordinates
 
-    linear_index = sum(indices[i] * data._prod(copy_shape[i + 1 :]) for i in range(len(indices)))
 
-    cur_index = [0] * len(desc.shape)
-    divide_by = 1
-    for i in reversed(range(len(desc.shape))):
-        cur_index[i] = (linear_index / divide_by) % desc.shape[i]
-        divide_by = divide_by * desc.shape[i]
+def reshaped_coordinates(
+    subset: subsets.Range,
+    size: tuple[symbolic.SymbolicType, ...],
+    copy_shape: tuple[symbolic.SymbolicType, ...],
+    indices: list[symbolic.SymbolicType],
+) -> list[symbolic.SymbolicType]:
+    """Coordinates in ``subset`` of the element a copy over ``copy_shape`` reaches at ``indices``.
 
-    return subsets.Range([(ind, ind, 1) for ind in cur_index])
+    The copied elements are matched in row-major order: ``indices`` are linearized over ``copy_shape``, delinearized
+    over the subset's own ``size`` and then placed with the subset's begin and step. A subset of the copy's own shape
+    is indexed directly.
+    """
+    if tuple(size) == tuple(copy_shape):
+        return list(subset.coord_at(indices))
+    linear = sum(indices[i] * data._prod(copy_shape[i + 1 :]) for i in range(len(indices)))
+    positions: list[symbolic.SymbolicType] = [0] * len(size)
+    block = 1
+    for dim in reversed(range(len(size))):
+        position = linear if block == 1 else symbolic.int_floor(linear, block)
+        positions[dim] = position % size[dim] if dim > 0 else position
+        block = block * size[dim]
+    return list(subset.coord_at(positions))

@@ -7,13 +7,13 @@ from enum import Enum, auto
 from types import TracebackType
 from typing import Final
 
-from dace import data, subsets, symbolic, utils
+from dace import data, dtypes, subsets, symbolic, utils
 from dace.memlet import Memlet
 from dace.sdfg import memlet_utils as mmu
 from dace.sdfg import nodes, propagation
 from dace.sdfg.analysis.schedule_tree import passes as stpasses
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
+from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge, scope_bound_names
 from dace.sdfg.state import (
     BreakBlock,
     ConditionalBlock,
@@ -1394,7 +1394,10 @@ def from_schedule_tree(
         result._arrays[key] = copy.deepcopy(container)
     result.constants_prop = copy.deepcopy(stree.constants)
     result.callback_mapping = copy.deepcopy(stree.callback_mapping)
-    result.symbols = copy.deepcopy(stree.symbols)
+    for name, dtype in stree.symbols.items():
+        if not isinstance(dtype, dtypes.typeclass):
+            raise TypeError(f'Symbol "{name}" of the schedule tree has no type')
+        result.symbol_repo.add(name, dtype)
     for code, tree_code in (
         (result.global_code, stree.global_code),
         (result.init_code, stree.init_code),
@@ -1412,6 +1415,11 @@ def from_schedule_tree(
     converter = _StreeToSDFG(boundary_behavior=state_boundary_behavior, max_nested_sdfg=max_nested_sdfgs)
     converter.visit(stree, sdfg=result)
     converter.connect_barriers()
+
+    # A tree declares its loop counters and map parameters among its symbols; in the SDFG the scope binds them.
+    for nested_sdfg in result.all_sdfgs_recursive():
+        for name in sorted(scope_bound_names(nested_sdfg) & nested_sdfg.symbols.keys()):
+            nested_sdfg.remove_symbol(name)
 
     # Memlet directions (src/dst subsets) are determined when edges are added. Scope pass-through edges are
     # connected later than the edges inside the scope, so re-initialize them before propagation.
@@ -1779,8 +1787,8 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope, view
     :param scope: The scope to insert state boundaries in.
     :param views: Views defined before this scope, mapping view names to memlets on the viewed containers.
     """
-    reads: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict()
-    writes: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict()
+    reads: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict(facts=scope.tree_facts())
+    writes: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict(facts=scope.tree_facts())
     parents: dict[int, set[int]] = defaultdict(set)
     boundaries_to_insert: list[int] = []
     views = dict(views) if views is not None else {}

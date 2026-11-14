@@ -2,13 +2,21 @@
 """``Norm2``: Fortran ``NORM2(X [, DIM])``, ``sqrt(sum(X**2))`` over the whole array or along ``DIM``."""
 
 import dace
-from dace import SDFG, SDFGState, library, properties
+from dace import SDFG, SDFGState, data, dtypes, library, properties
 from dace import memlet as mm
+from dace.codegen.common import global_code_id
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.standard.helper import connector_array, fortran_axis, map_ranges, reduced_coordinates
+from dace.libraries.standard.helper import (
+    connector_array,
+    fortran_axis,
+    in_kernel_block_or,
+    map_ranges,
+    reduced_coordinates,
+)
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation.transformation import ExpandTransformation
+from dace.utils import prod
 
 
 @library.expansion
@@ -52,12 +60,56 @@ class ExpandNorm2Pure(ExpandTransformation):
         return sdfg
 
 
+@library.expansion
+class ExpandNorm2CUDABlock(ExpandTransformation):
+    """In-kernel lowering of a whole-array norm: one thread block folds the squares, every lane takes the root."""
+
+    runs_inside_kernel = True
+    environments: list[type] = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        from dace.codegen.targets.cpp import sym2cpp
+        from dace.libraries.sort.environments.cub import BlockCollectives
+        from dace.libraries.standard.block_reduce import (
+            BLOCK_COLLECTIVE_THREADS,
+            block_redop,
+            block_reduce_code,
+            block_tasklet_sdfg,
+            linear_element,
+        )
+
+        ExpandNorm2CUDABlock.environments = [BlockCollectives]
+        idstr = global_code_id(parent_sdfg, parent_state, node)
+
+        def code(arrays: dict[str, data.Data]) -> str:
+            ctype = arrays["_out"].dtype.ctype
+            element = linear_element("__b_x", arrays["_x"], "__bri")
+            fold = block_reduce_code(
+                idstr=idstr,
+                ctype=ctype,
+                lanes=BLOCK_COLLECTIVE_THREADS,
+                count_expr=sym2cpp(prod(arrays["_x"].shape)),
+                element_expr=f"static_cast<{ctype}>(({element}) * ({element}))",
+                redop=block_redop(dtypes.ReductionType.Sum, ctype),
+                identity=f"static_cast<{ctype}>(0)",
+                out_expr="__n2_sumsq",
+            )
+            return f"{ctype} __n2_sumsq;\n{fold}\n__b_out[0] = sqrt(__n2_sumsq);"
+
+        return block_tasklet_sdfg(node, parent_state, parent_sdfg, code)
+
+
 @library.node
 class Norm2(nodes.LibraryNode):
     """Fortran ``NORM2(X [, DIM])``: the Euclidean norm."""
 
-    implementations = {"pure": ExpandNorm2Pure}
-    default_implementation = "pure"
+    implementations = {
+        "Auto": in_kernel_block_or(ExpandNorm2Pure),
+        "pure": ExpandNorm2Pure,
+        "CUDA (block)": ExpandNorm2CUDABlock,
+    }
+    default_implementation = "Auto"
 
     dim = properties.Property(
         dtype=int, default=None, allow_none=True, desc="Fortran 1-based axis; None reduces the whole array."

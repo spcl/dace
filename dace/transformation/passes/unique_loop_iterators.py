@@ -12,10 +12,13 @@ from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import ControlFlowBlockReachability, loop_analysis
+from dace.transformation.passes.iteration_domain import executed_trip_count
 from dace.transformation.transformation import explicit_cf_compatible
 
 #: Prefix of the renamed iterators.
 LOOP_ITERATOR_PREFIX = "_loop_it_"
+#: Prefix of a wavefront skew's diagonal iterator, which stays: it tells the skew the loop is its own.
+SKEW_T_PREFIX = "_skew_t_"
 #: Label prefix of the state assigning an iterator its exit value.
 POST_VALUE_STATE_PREFIX = "loop_iter_post_value"
 
@@ -26,13 +29,20 @@ def iterator_id(name: str) -> int:
     return int(suffix) if name.startswith(LOOP_ITERATOR_PREFIX) and suffix.isdigit() else -1
 
 
-def first_free_id(sdfg: dace.SDFG) -> int:
-    """One past the largest ``<N>`` any loop iterator or map parameter of the SDFG tree uses.
+def is_settled(name: str) -> bool:
+    """Whether a loop may keep the iterator ``name`` as long as no other loop shares it."""
+    return iterator_id(name) >= 0 or name.startswith(SKEW_T_PREFIX)
 
-    Map parameters count because ``LoopToMap`` keeps a loop's iterator name as its map parameter.
+
+def first_free_id(sdfg: dace.SDFG) -> int:
+    """One past the largest ``<N>`` any loop iterator, map parameter or interstate assignment of the SDFG tree uses.
+
+    Map parameters count because ``LoopToMap`` keeps a loop's iterator name as its map parameter, assignments because
+    a removed loop's name lives on as its exit value, which a loop renamed onto it would overwrite each iteration.
     """
     used = [-1]
     for nested in sdfg.all_sdfgs_recursive():
+        used += [iterator_id(sym) for edge in nested.all_interstate_edges() for sym in edge.data.assignments]
         used += [iterator_id(r.loop_variable) for r in nested.all_control_flow_regions() if isinstance(r, LoopRegion)]
         for state in nested.states():
             used += [iterator_id(p) for n in state.nodes() if isinstance(n, nodes.MapEntry) for p in n.map.params]
@@ -41,14 +51,20 @@ def first_free_id(sdfg: dace.SDFG) -> int:
 
 def rename_iterator(cfg: ControlFlowRegion, old: str, new: str) -> None:
     """Rename ``old`` to ``new`` in ``cfg``, the descriptors its states access and the nested SDFGs importing it."""
-    repl = {old: new}
+    rename_iterators(cfg, {old: new})
+
+
+def rename_iterators(cfg: ControlFlowRegion, repl: dict[str, str]) -> None:
+    """:func:`rename_iterator` for several names at once: one walk of ``cfg`` instead of one per name. The names must
+    be distinct iterators of ``cfg``'s tree (no loop rebinding another's name), as after :class:`UniqueLoopIterators`.
+    """
     cfg.replace_meta_accesses(repl)
     cfg.replace_dict(repl)
     if not isinstance(cfg, dace.SDFG):  # ``SDFG.replace_dict`` renames its own descriptors
         accessed = {n.data for state in cfg.states() for n in state.data_nodes()}
         for name in accessed:
             desc = cfg.sdfg.arrays[name]
-            if old in {str(s) for s in desc.free_symbols}:
+            if not repl.keys().isdisjoint(str(s) for s in desc.free_symbols):
                 replace_properties_dict(desc, repl)
     for state in cfg.states():
         for node in state.nodes():
@@ -56,11 +72,39 @@ def rename_iterator(cfg: ControlFlowRegion, old: str, new: str) -> None:
                 continue
             # ``replace_dict`` renamed the mapped value. A nested SDFG that does not import the iterator under its own
             # name owns any ``old`` it declares (its own loop's iterator), so it is left alone.
-            if str(node.symbol_mapping.get(old)) != new:
-                continue
-            node.symbol_mapping[new] = node.symbol_mapping.pop(old)
-            if old in node.sdfg.symbols:
-                rename_iterator(node.sdfg, old, new)
+            imported = {old: new for old, new in repl.items() if str(node.symbol_mapping.get(old)) == new}
+            for old, new in imported.items():
+                node.symbol_mapping[new] = node.symbol_mapping.pop(old)
+            inner = {old: new for old, new in imported.items() if old in node.sdfg.symbols}
+            if inner:
+                rename_iterators(node.sdfg, inner)
+
+
+def freshen_copied_loops(sdfg: dace.SDFG, copies: list[LoopRegion]) -> bool:
+    """Give each of ``copies`` (copies of one loop whose original keeps its names) and every loop nested in them a
+    fresh ``_loop_it_<N>``, so :class:`UniqueLoopIterators` finds nothing to rename after the pass that copied them.
+
+    Refused (``False``, nothing renamed) when an iterator is read outside its own loop within the loop: that read
+    needs the exit value :class:`UniqueLoopIterators` assigns, so the copies are left for it. The copies differ only in
+    their range, so the first answers for all.
+    """
+    if not copies:
+        return True
+    head = copies[0]
+    read = head.free_symbols
+    if any(
+        r.loop_variable in read
+        for r in head.all_control_flow_regions()
+        if r is not head and isinstance(r, LoopRegion) and r.loop_variable
+    ):
+        return False
+    next_id = first_free_id(sdfg)
+    for copy in copies:
+        loops = [r for r in copy.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+        repl = {loop.loop_variable: f"{LOOP_ITERATOR_PREFIX}{next_id + offset}" for offset, loop in enumerate(loops)}
+        next_id += len(loops)
+        rename_iterators(copy, repl)
+    return True
 
 
 def exit_value(loop: LoopRegion) -> symbolic.SymbolicType | None:
@@ -74,7 +118,16 @@ def exit_value(loop: LoopRegion) -> symbolic.SymbolicType | None:
         return end
     if init is None:
         return end + step
-    return init + symbolic.int_floor(end - init + step, step) * step
+    return init + executed_trip_count(loop) * step
+
+
+def plans_a_rename(sdfg: dace.SDFG) -> bool:
+    """Whether :meth:`UniqueLoopIterators.rename_loops` renames a loop of ``sdfg`` (not of its nested SDFGs): an
+    iterator not named ``_loop_it_<N>`` yet, or one that two of its loops share."""
+    iterators = [
+        r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable
+    ]
+    return len(set(iterators)) < len(iterators) or not all(map(is_settled, iterators))
 
 
 def symbol_readers(sdfg: dace.SDFG, names: set[str]) -> dict[str, set[ControlFlowBlock]]:
@@ -109,6 +162,9 @@ class UniqueLoopIterators(ppl.Pass):
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> set[str] | None:
         """:returns: The new iterator names, or ``None`` if every iterator was unique already."""
+        # Settled tree: no SDFG plans a rename, so skip the id scan and the reader index, two walks of the whole tree.
+        if not any(plans_a_rename(sd) for sd in sdfg.all_sdfgs_recursive()):
+            return None
         self.next_id = first_free_id(sdfg)
         self.top = sdfg
         self.readers: dict[str, set[ControlFlowBlock]] = {}
@@ -163,7 +219,7 @@ class UniqueLoopIterators(ppl.Pass):
             if not isinstance(loop, LoopRegion) or not loop.loop_variable:
                 continue
             old = loop.loop_variable
-            if iterator_id(old) >= 0 and old not in duplicated:
+            if is_settled(old) and old not in duplicated:
                 continue
             plan.append((loop, old, self.next_id))
             self.original[loop] = old

@@ -1,6 +1,8 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests loop raising trainsformations."""
 
+import copy
+
 import numpy as np
 import pytest
 
@@ -9,12 +11,21 @@ from dace.memlet import Memlet
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate.loop_lifting import LoopLifting
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
 
 
 def test_lift_regular_for_loop():
     sdfg = SDFG("regular_for")
     N = dace.symbol("N")
-    sdfg.add_symbol("i", dace.int32)
     sdfg.add_symbol("j", dace.int32)
     sdfg.add_symbol("k", dace.int32)
     sdfg.add_array("A", (N,), dace.int32)
@@ -45,6 +56,7 @@ def test_lift_regular_for_loop():
     A_valid = np.zeros((N,)).astype(np.int32)
     sdfg(A=A_valid, N=N)
     sdfg.apply_transformations_repeated([LoopLifting])
+    assert_cfg_list_matches_reset(sdfg)
 
     assert sdfg.using_explicit_control_flow == True
     assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
@@ -59,7 +71,6 @@ def test_lift_loop_llvm_canonical(increment_before_condition):
     addendum = "_incr_before_cond" if increment_before_condition else ""
     sdfg = dace.SDFG("llvm_canonical" + addendum)
     N = dace.symbol("N")
-    sdfg.add_symbol("i", dace.int32)
     sdfg.add_symbol("j", dace.int32)
     sdfg.add_symbol("k", dace.int32)
     sdfg.add_array("A", (N,), dace.int32)
@@ -172,7 +183,6 @@ def test_lift_loop_llvm_canonical_while():
 def test_do_while():
     sdfg = SDFG("do_while")
     N = dace.symbol("N")
-    sdfg.add_symbol("i", dace.int32)
     sdfg.add_symbol("j", dace.int32)
     sdfg.add_symbol("k", dace.int32)
     sdfg.add_array("A", (N,), dace.int32)

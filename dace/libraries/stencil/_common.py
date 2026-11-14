@@ -8,7 +8,9 @@ import operator
 import numpy as np
 
 import dace
+from dace import symbolic
 from dace.codegen.targets.cpp import sym2cpp
+from dace.data import core as datacore
 from dace.frontend.python import astutils
 
 from .subscript_converter import SubscriptConverter
@@ -55,11 +57,31 @@ def check_stencil_shape(shape: tuple, other: tuple):
     if len(other) > len(shape):
         shape = copy.copy(other)
     elif len(other) == len(shape):
-        if shape != other:
+        # Compared by NAME: one extent reaches the two sides through different rewrites and arrives
+        # as two spellings that raw ``!=`` calls unequal, rejecting sizes that match.
+        if not symbolic.shapes_equal(shape, other):
             raise ValueError(f"Inconsistent input sizes: {shape} vs. {other}")
     else:
         # Allow lower-dimensional accesses
         pass
+    return shape
+
+
+def connector_shape(edge, desc) -> list:
+    """The extents an edge moves, refusing a region the expansions cannot address.
+
+    The iteration space is the SUBSET the memlet carries, not the container it is cut from -- a
+    stencil reading ``a[0:size]`` of a ``2*size`` buffer iterates ``size`` points. The expansions
+    build their connector arrays packed, though, so a region that is not itself contiguous in the
+    container would be read at the wrong offsets; that case is refused rather than miscompiled.
+    """
+    shape = edge.data.subset.size()
+    if not datacore.strides_equal(datacore.packed_c_strides(shape), desc.strides):
+        raise NotImplementedError(
+            f"Stencil connector '{edge.dst_conn or edge.src_conn}' moves "
+            f"{tuple(shape)}, which is not contiguous in {tuple(desc.shape)} "
+            f"with strides {tuple(desc.strides)}."
+        )
     return shape
 
 
@@ -87,7 +109,7 @@ def parse_connectors(node, state, sdfg):
         field_to_desc[field] = desc
         field_to_edge[field] = e
         vector_lengths[field] = desc.veclen
-        shape = check_stencil_shape(shape, desc.shape)
+        shape = check_stencil_shape(shape, connector_shape(e, desc))
     for e in state.out_edges(node):
         field = e.src_conn
         outputs.append(field)
@@ -97,7 +119,7 @@ def parse_connectors(node, state, sdfg):
         field_to_desc[field] = desc
         field_to_edge[field] = e
         vector_lengths[field] = desc.veclen
-        shape = check_stencil_shape(shape, desc.shape)
+        shape = check_stencil_shape(shape, connector_shape(e, desc))
     # Adjust shape for vector length
     vector_length = max(vector_lengths.values())
     shape = tuple(s * vector_length if i == len(shape) - 1 else s for i, s in enumerate(shape))

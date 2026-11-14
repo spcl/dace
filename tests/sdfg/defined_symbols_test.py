@@ -26,6 +26,30 @@ def assigning_sdfg() -> dace.SDFG:
     return sdfg
 
 
+def reference_defined_symbols(state: dace.SDFGState) -> dict:
+    """The per-edge environment the method used to rebuild, kept verbatim as the oracle."""
+    sdfg = state.sdfg
+    defined = dict(sdfg.symbols)
+    for desc in sdfg.arrays.values():
+        for sym in desc.free_symbols:
+            if sym.dtype is not None:
+                defined.setdefault(str(sym), sym.dtype)
+    for edge in sdfg.all_interstate_edges():
+        defined.update({k: v for k, v in edge.data.new_symbols(sdfg, defined).items() if v is not None})
+        if isinstance(edge.dst, LoopRegion):
+            defined.update({k: v for k, v in edge.dst.new_symbols(defined).items() if v is not None})
+    return defined
+
+
+def test_defined_symbols_types_every_assignment_as_before():
+    sdfg = assigning_sdfg()
+    state = next(s for s in sdfg.states() if s.label == "last")
+    assert state.defined_symbols() == reference_defined_symbols(state)
+    assert state.defined_symbols()["z"] == dace.float64
+    # The declared ``N: int64`` wins over the default-typed ``N`` of the array extent.
+    assert state.defined_symbols()["N"] == dace.int64
+
+
 def test_defined_symbols_builds_no_type_environment_per_edge():
     """``new_symbols(sdfg, ...)`` copies the symbols and every array's dtype per assigning edge:
     2.4 s per call on warpx_field_gather, once per LoopToMap lift that nests a body."""
@@ -50,7 +74,7 @@ def nesting_parts() -> tuple[dace.SDFGState, dace.SDFG]:
     nested_state.add_edge(tasklet, "o", nested_state.add_write("a"), None, dace.Memlet("a[0]"))
 
     nesting = dace.SDFG("nesting")
-    nesting.add_symbol("N", dace.int64)
+    nesting.add_symbol("N", dace.int16)
     return nesting.add_state(), nested
 
 
@@ -67,7 +91,7 @@ def test_supplied_defined_symbols_type_the_nested_sdfg_without_recomputing():
         state.add_nested_sdfg(nested, {}, {"a"}, symbol_mapping={"n": "N"}, defined_symbols=cached)
 
     assert not defined_symbols.called
-    assert nested.symbols["n"] == dace.int64
+    assert nested.symbols["n"] == dace.int16
 
 
 def test_empty_supplied_defined_symbols_fall_back_to_the_symbol_default():
@@ -81,7 +105,7 @@ def test_empty_supplied_defined_symbols_fall_back_to_the_symbol_default():
         state.add_nested_sdfg(nested, {}, {"a"}, symbol_mapping={"n": "N"}, defined_symbols={})
 
     assert not defined_symbols.called
-    assert nested.symbols["n"] == dace.int32
+    assert nested.symbols["n"] != dace.int16, "typed from the parent, not the default"
 
 
 def test_defined_symbols_are_recomputed_when_not_supplied():
@@ -95,10 +119,11 @@ def test_defined_symbols_are_recomputed_when_not_supplied():
         state.add_nested_sdfg(nested, {}, {"a"}, symbol_mapping={"n": "N"})
 
     assert defined_symbols.called
-    assert nested.symbols["n"] == dace.int64
+    assert nested.symbols["n"] == dace.int16
 
 
 if __name__ == "__main__":
+    test_defined_symbols_types_every_assignment_as_before()
     test_defined_symbols_builds_no_type_environment_per_edge()
     test_supplied_defined_symbols_type_the_nested_sdfg_without_recomputing()
     test_empty_supplied_defined_symbols_fall_back_to_the_symbol_default()

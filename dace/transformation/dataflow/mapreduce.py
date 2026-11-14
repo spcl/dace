@@ -2,12 +2,16 @@
 """Contains classes and functions that implement the map-reduce-fusion
 transformation."""
 
+from typing import Any
+
 from dace import data as dt
+from dace import subsets, symbolic
 from dace.memlet import Memlet
 from dace.properties import Property, make_properties
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as pm
+from dace.transformation.dataflow import map_fusion_helper as mfhelper
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 
@@ -67,6 +71,19 @@ class MapReduceFusion(pm.SingleStateTransformation):
         if any(dest != reduce_node for _, _, dest, _, memlet in graph.out_edges(in_array)):
             return False
 
+        # Fused, the map accumulates into the output (seeded with the identity ahead of it), so nothing ahead of the
+        # reduction may read the output: not the map itself, nor a node the reduction does not precede.
+        reads, _ = mfhelper.scope_accesses(graph, graph.entry_node(tmap_exit), tmap_exit)
+        if any(name is None or name == out_data for name, _ in reads):
+            return False
+        for node in graph.data_nodes():
+            if (
+                node.data == out_data
+                and graph.out_degree(node) > 0
+                and not mfhelper.is_node_reachable_from(graph, reduce_node, node)
+            ):
+                return False
+
         # ``apply`` rewrites whichever in-edge of the exit carries the intermediate, and does not care
         # which node produced it -- so this check has to look at the same edge set. Reading only the
         # matched tasklet's edges instead raises a bare StopIteration whenever the map body holds a
@@ -118,7 +135,7 @@ class MapReduceFusion(pm.SingleStateTransformation):
             raise RuntimeError("Reduction memlet cannot be None")
 
         # Find which indices should be removed from new memlet
-        input_edge = graph.in_edges(reduce_node)[0]
+        input_edge = reduce_node.input_edge(graph)
         axes = reduce_node.axes or list(range(len(input_edge.data.subset)))
         array_edge = graph.out_edges(reduce_node)[0]
 
@@ -152,7 +169,7 @@ class MapReduceFusion(pm.SingleStateTransformation):
         memlet_edge.data.subset = type(memlet_edge.data.subset)(filtered_subset)
 
         # Add edge from map exit to output array
-        graph.add_edge(
+        fused = graph.add_edge(
             memlet_edge.dst,
             "OUT_" + memlet_edge.dst_conn[3:],
             array_edge.dst,
@@ -180,6 +197,19 @@ class MapReduceFusion(pm.SingleStateTransformation):
         )
         tmap_entry = graph.entry_node(tmap_exit)
         scope = graph.entry_node(tmap_entry)
+        # A top-level outer map whose every iteration reduces into a tile of its own writes the identity over all the
+        # tiles once, ahead of it: its body is then the fused map alone, which collapses into it (gem's point blocks).
+        tiles = tile_union(array_edge.data.subset, scope.map) if scope and not graph.entry_node(scope) else None
+        if (
+            tiles is not None
+            and not any(
+                name is None or name == array_edge.data.data
+                for name, _ in mfhelper.scope_accesses(graph, scope, graph.exit_node(scope))[0]
+            )
+            and not written_elsewhere(graph, scope, array_edge.data.data, graph.memlet_path(fused))
+        ):
+            init_args = (init_args[0], [(f"o{i}", f"{b}:{e + 1}") for i, (b, e) in enumerate(tiles)], *init_args[2:])
+            scope = None
         if scope is None:
             graph.parent_graph.add_state_before(graph).add_mapped_tasklet(*init_args, external_edges=True)
             return
@@ -191,6 +221,44 @@ class MapReduceFusion(pm.SingleStateTransformation):
         )
         graph.add_nedge(scope, init_entry, Memlet())
         graph.add_nedge(init_out, tmap_entry, Memlet())
+
+
+def written_elsewhere(graph: SDFGState, scope: nodes.MapEntry, name: str, path: list) -> bool:
+    """Whether ``graph`` writes ``name`` other than along ``path``, the fused reduction's write out of ``scope``, or
+    ``scope`` writes through a View that does not resolve. A per-iteration identity write would overwrite such a write
+    where one hoisted ahead of ``scope`` does not."""
+    scope_exit = graph.exit_node(scope)
+    if any(written is None for written, _ in mfhelper.scope_accesses(graph, scope, scope_exit)[1]):
+        return True
+    edges = [e for node in graph.data_nodes() if node.data == name for e in graph.in_edges(node)]
+    edges += [e for e in graph.in_edges(scope_exit) if e.data.data == name]
+    return any(not e.data.is_empty() and e not in path for e in edges)
+
+
+def tile_union(subset, outer: nodes.Map) -> list[tuple[Any, Any]] | None:
+    """The ``(begin, end)`` ranges ``subset`` covers over all iterations of ``outer``, when they partition it: every
+    dimension is either the same in every iteration or a tile ``c*p + a : c*p + a + c`` of one parameter ``p``, both
+    unit-step, and every parameter tiles one dimension. ``None`` otherwise (iterations overlap, or leave gaps)."""
+    if not isinstance(subset, subsets.Range):
+        return None
+    ranges = dict(zip(outer.params, outer.range, strict=True))
+    tiles, used = [], set()
+    for first, last, step in subset:
+        begin, end = symbolic.pystr_to_symbolic(first), symbolic.pystr_to_symbolic(last)
+        tiled = [s for s in begin.free_symbols | end.free_symbols if str(s) in ranges]
+        if not tiled:
+            tiles.append((begin, end))
+            continue
+        p = tiled[0]
+        lo, hi, outer_step = ranges[str(p)]
+        extent, coef = symbolic.simplify(end - begin + 1), begin.diff(p)
+        if len(tiled) > 1 or str(p) in used or step != 1 or outer_step != 1 or symbolic.simplify(coef - extent) != 0:
+            return None
+        if any(str(s) in ranges for s in extent.free_symbols | coef.free_symbols):
+            return None
+        used.add(str(p))
+        tiles.append((begin.subs(p, lo), end.subs(p, hi)))
+    return tiles if len(used) == len(ranges) else None
 
 
 class MapWCRFusion(pm.SingleStateTransformation):
@@ -231,6 +299,11 @@ class MapWCRFusion(pm.SingleStateTransformation):
         tmap_exit = self.tmap_exit
         in_array = self.in_array
         rmap_entry = self.rmap_out_entry
+
+        # ``apply`` fuses the collapsed reduction nest with the map unchecked: their iteration spaces must agree.
+        collapsed = list(rmap_entry.map.range) + list(self.rmap_in_entry.map.range)
+        if sorted(map(str, collapsed)) != sorted(map(str, tmap_exit.map.range)):
+            return False
 
         # Make sure that the array is only accessed by the map and the reduce
         if any(src != tmap_exit for src, _, _, _, memlet in graph.in_edges(in_array)):

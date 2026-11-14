@@ -11,13 +11,15 @@ import sympy as sp
 
 # DaCe imports
 import dace
+import dace.sdfg.utils as utils
 from dace import data as dt
 from dace import dtypes, symbolic
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException, BackwardContext, BackwardResult
 from dace.frontend.python.parser import DaceProgram
-from dace.sdfg import SDFG, SDFGState, utils
+from dace.ordered import OrderedSet
+from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import graph as dgraph
 from dace.sdfg import nodes as nd
 from dace.sdfg import state as dstate
@@ -98,12 +100,10 @@ def connector_symbol(name: str, dtype: dtypes.typeclass | None = None) -> symbol
 
     Always a ``symbolic.symbol``, never a bare ``sympy.Symbol``: the two compare unequal while
     still substituting for one another, which is what makes ``diff()`` return a silent zero.
-    ``integer=None`` where the dtype is unknown, so that ``symbol``'s int32 default does not
-    assert an integer assumption the declaration never made.
     """
     if isinstance(dtype, dtypes.typeclass):
         return symbolic.symbol(name, dtype)
-    return symbolic.symbol(name, integer=None)
+    return symbolic.symbol(name)
 
 
 def backward_symbol_mapping(nested_sdfg: SDFG, parent_state: SDFGState) -> dict[str, symbolic.symbol]:
@@ -140,7 +140,7 @@ def add_empty_sdfg_for_node(
 
     nsdfg = dace.SDFG(forward_node.label + "_backward_expansion")
 
-    def _get_fwd_descriptor(name):
+    def get_fwd_descriptor(name):
         """Returns the descriptor and whether it is an input"""
         if name in forward_node.out_connectors:
             return forward_out_desc_with_name(forward_node, context, name), False
@@ -152,13 +152,13 @@ def add_empty_sdfg_for_node(
     outputs_to_connect_from_forward = []
 
     result = BackwardResult.empty()
-    inputs = set()
-    outputs = set()
+    inputs: OrderedSet[str] = OrderedSet()
+    outputs: OrderedSet[str] = OrderedSet()
 
     for name in required_descriptors:
         if name.endswith("_grad"):
             # hook this up as a gradient
-            desc, is_input = _get_fwd_descriptor(name[:-5])
+            desc, is_input = get_fwd_descriptor(name[:-5])
             if is_input:
                 result.required_grad_names[name[:-5]] = name
             else:
@@ -169,7 +169,7 @@ def add_empty_sdfg_for_node(
             else:
                 inputs.add(name)
         else:
-            desc, is_input = _get_fwd_descriptor(name)
+            desc, is_input = get_fwd_descriptor(name)
             if not is_input:
                 outputs_to_connect_from_forward.append(name)
             inputs.add(name)
@@ -414,6 +414,52 @@ def extract_indices(expression: str) -> dict[str, list[str]]:
     return index_map
 
 
+def index_symbol(name: str, dtype: dtypes.typeclass | None = None) -> symbolic.symbol:
+    """Index of an ``IndexedBase`` access: the DaCe symbol itself, as the executed tasklet code indexes with.
+
+    Not an ``Idx``, whose label must be a SymPy integer: a DaCe symbol is its name and carries no assumption, and an
+    ``Idx`` index would not match the plain one the code built anyway.
+    """
+    return connector_symbol(name, dtype)
+
+
+def replace_bare_symbols(expr: sp.Expr, known: dict[str, sp.Expr]) -> sp.Expr:
+    """Replace every bare sympy Symbol in ``expr`` with the DaCe symbol of the same name.
+
+    The boundary guarantee for this module: no expression leaves it carrying a symbol that would
+    compare unequal to the SDFG's own. SymPy can still introduce one from inside the executed code.
+    """
+    replacements = {}
+    for sym in expr.free_symbols:
+        if type(sym) is not sp.Symbol:
+            continue
+        declared = known.get(sym.name)
+        replacements[sym] = declared if isinstance(declared, symbolic.symbol) else connector_symbol(sym.name)
+    return expr.xreplace(replacements) if replacements else expr
+
+
+def resolve_differentiation_target(expr: sp.Expr, name: str, indices: list[str] | None) -> sp.Expr:
+    """Find, inside ``expr``, the symbol or indexed access that stands for connector ``name``.
+
+    ``expr.diff(...)`` has to see the very instance the expression was built around; a re-minted
+    equivalent differentiates to zero (or to a KroneckerDelta). A connector absent from ``expr``
+    falls back to a fresh instance, where zero is the right derivative anyway.
+    """
+    if indices is None:
+        # sorted() only to keep the fallback deterministic; at most one symbol carries a given name.
+        candidates = sorted((s for s in expr.free_symbols if str(s) == name), key=str)
+        return candidates[0] if candidates else connector_symbol(name)
+
+    wanted = tuple(indices)
+    candidates = sorted(
+        (a for a in expr.atoms(sp.Indexed) if str(a.base) == name and tuple(str(i) for i in a.indices) == wanted),
+        key=str,
+    )
+    if candidates:
+        return candidates[0]
+    return sp.IndexedBase(name)[tuple(index_symbol(index) for index in indices)]
+
+
 def code_to_exprs(
     code: str, tasklet: nd.Tasklet, symbols: dict[str, dtypes.typeclass]
 ) -> tuple[dict[str, sp.Expr], dict[str, list[str]]]:
@@ -428,6 +474,14 @@ def code_to_exprs(
 
     inputs: list[str] = list(tasklet.in_connectors)
     outputs: list[str] = list(tasklet.out_connectors)
+
+    # Symbols reach the generated source through this table instead of being minted inside it from a
+    # bare name: minting here is the only place that still knows their dtypes.
+    symbol_table: dict[str, sp.Expr] = {}
+
+    # Symbols reach the generated source through this table instead of being minted inside it from a
+    # bare name: minting here is the only place that still knows their dtypes.
+    symbol_table: dict[str, sp.Expr] = {}
 
     # Symbols reach the generated source through this table instead of being minted inside it from a
     # bare name: minting here is the only place that still knows their dtypes.
@@ -460,9 +514,8 @@ def code_to_exprs(
                 raise AutoDiffException(f"Expected connector '{conn}' to be in indexed objects map for pointer type")
             indexed_objects_code += f"    {conn} = sp.IndexedBase('{conn}')\n"
             for idx in indexed_objects_map[conn]:
-                idx_sym = connector_symbol(idx, symbols.get(idx) or tasklet.in_connectors.get(idx))
-                # An Idx label must be integral, so a non-integer declaration cannot supply one.
-                symbol_table[idx] = sp.Idx(idx_sym if idx_sym.is_integer else symbolic.symbol(idx))
+                # An index of an SDFG symbol keeps its entry; sympy indexes an IndexedBase by any expression
+                symbol_table.setdefault(idx, connector_symbol(idx))
                 indexed_objects_code += f"    {idx} = {SYMBOL_TABLE_GLOBAL}['{idx}']\n"
 
     code_fn = """
@@ -539,6 +592,44 @@ def invert_map_connector(conn: str) -> str:
         return "IN" + conn[3:]
     else:
         raise AutoDiffException(f"Could not parse map connector '{conn}'")
+
+
+def carries_gradient(edge: dgraph.MultiConnectorEdge) -> bool:
+    """Whether a reverse traversal of the dataflow may follow ``edge``.
+
+    A non-empty memlet moves a value and always may. An empty memlet is an ordering edge and moves
+    nothing, so it carries no gradient -- except for the one shape DaCe gives no alternative: the
+    edge that ties a node without data inputs (or outputs) to its enclosing scope. Dropping those
+    would leave a map body without its entry. Every other ordering edge must be left alone;
+    following one drags unrelated dataflow -- an already generated backward pass, for instance --
+    into the differentiated subgraph.
+    """
+    return not edge.data.is_empty() or isinstance(edge.src, nd.EntryNode) or isinstance(edge.dst, nd.ExitNode)
+
+
+def reverse_bfs_gradient_nodes(state: dstate.StateSubgraphView, sources: list[nd.Node]) -> OrderedSet[nd.Node]:
+    """Collect the endpoints of every edge a reverse BFS from ``sources`` reaches along gradients.
+
+    :param state: The state (or subgraph view) to traverse.
+    :param sources: The nodes to start from.
+    :return: The endpoints of the traversed edges, in BFS order.
+    """
+    reached: OrderedSet[nd.Node] = OrderedSet()
+    visited: OrderedSet[nd.Node] = OrderedSet()
+    queue = collections.deque(sources)
+    while queue:
+        node = queue.popleft()
+        if node in visited:
+            continue
+        visited.add(node)
+        for edge in state.in_edges(node):
+            if not carries_gradient(edge):
+                continue
+            reached.add(edge.src)
+            reached.add(edge.dst)
+            if edge.src not in visited:
+                queue.append(edge.src)
+    return reached
 
 
 def path_src_node_in_subgraph(edge: dgraph.MultiConnectorEdge, subgraph: dstate.StateSubgraphView) -> bool:

@@ -6,7 +6,8 @@ import numpy as np
 
 import dace
 import dace.libraries.standard as stdlib
-from dace.transformation.dataflow import MapFusionVertical, MapReduceFusion, MapWCRFusion
+from dace.transformation.dataflow import MapCollapse, MapFusionVertical, MapReduceFusion, MapWCRFusion
+from dace.transformation.passes import FuseMaps
 
 W = dace.symbol("W")
 H = dace.symbol("H")
@@ -304,6 +305,43 @@ def test_mapreduce_onemap():
     onetest(mapreduce_onemap)
 
 
+def test_fuse_maps_removes_the_reduced_intermediate():
+    """``FuseMaps``'s vertical phase must reach a Map that feeds a Reduce, not only a Map.
+
+    ``MapFusionVertical`` matches Map -> Map, so on its own it leaves the whole reduced array
+    materialized between the two. That intermediate is the size of the input, and it is why a
+    reduction over a computed expression costs a second pass over it.
+    """
+    N = 64
+
+    @dace.program
+    def reduce_a_product(a: dace.float64[N], b: dace.float64[N], out: dace.float64[1]):
+        out[0] = np.sum(a * b)
+
+    def sized_transients(sdfg):
+        return sorted(k for k, v in sdfg.arrays.items() if v.transient and v.total_size != 1)
+
+    without = reduce_a_product.to_sdfg(simplify=True)
+    FuseMaps(perform_vertical_map_fusion=False).apply_pass(without, {})
+    assert sized_transients(without), "nothing to remove: the test no longer covers the case"
+
+    with_it = reduce_a_product.to_sdfg(simplify=True)
+    FuseMaps().apply_pass(with_it, {})
+    assert not sized_transients(with_it), f"intermediate survived: {sized_transients(with_it)}"
+    assert not [n for n, _ in with_it.all_nodes_recursive() if isinstance(n, stdlib.Reduce)]
+    assert any(e.data.wcr for sd in with_it.all_sdfgs_recursive() for st in sd.states() for e in st.edges()), (
+        "the Reduce went away without leaving a WCR behind"
+    )
+
+    with_it.validate()
+    rng = np.random.default_rng(0)
+    a, b = rng.random(N), rng.random(N)
+    out = np.zeros(1)
+    with_it(a=a.copy(), b=b.copy(), out=out)
+    # A parallel WCR reassociates, so this is close, not bit-identical.
+    assert np.allclose(out[0], np.sum(a * b))
+
+
 def test_a_second_body_tasklet_does_not_break_the_match():
     """``apply`` finds the reduced intermediate among ALL the exit's in-edges, so ``can_be_applied``
     must too. Reading only the matched tasklet's own edges raised a bare StopIteration as soon as a
@@ -417,6 +455,80 @@ def test_a_reduction_written_straight_into_the_outer_map_exit_fuses():
     assert np.allclose(out, (a * a).sum(axis=1)), out
 
 
+def blocked_row_sums(stride: int, flag: bool = False) -> dace.SDFG:
+    """``out[stride*b : stride*b + 4] = (a[4b:4b+4] * a[4b:4b+4]).sum(1)`` for ``b`` in ``0:N``: gem's point blocks.
+    With ``flag``, every block also stores ``1`` into ``out[stride*N]``, past the tiles."""
+    sdfg = dace.SDFG(f"blocked_row_sums_{stride}_{flag}")
+    sdfg.add_array("a", (4 * N, M), dace.float64)
+    sdfg.add_array("out", (stride * N + int(flag),), dace.float64)
+    sdfg.add_transient("sq", (4, M), dace.float64)
+    state = sdfg.add_state()
+    ome, omx = state.add_map("blocks", dict(b="0:N"))
+    ime, imx = state.add_map("elems", dict(i="0:4", j="0:M"))
+    square = state.add_tasklet("square", {"inp"}, {"o"}, "o = inp * inp")
+    state.add_memlet_path(state.add_read("a"), ome, ime, square, dst_conn="inp", memlet=dace.Memlet("a[4*b + i, j]"))
+    sq = state.add_access("sq")
+    state.add_memlet_path(square, imx, sq, src_conn="o", memlet=dace.Memlet("sq[i, j]"))
+    red = state.add_reduce("lambda x, y: x + y", axes=[1], identity=0)
+    state.add_edge(sq, None, red, None, dace.Memlet("sq[0:4, 0:M]"))
+    out = state.add_write("out")
+    state.add_memlet_path(red, omx, out, memlet=dace.Memlet(f"out[{stride}*b:{stride}*b + 4]"))
+    if flag:
+        mark = state.add_tasklet("mark", {}, {"o"}, "o = 1.0")
+        state.add_nedge(ome, mark, dace.Memlet())
+        state.add_memlet_path(mark, omx, out, src_conn="o", memlet=dace.Memlet(f"out[{stride}*N]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_blocks_reducing_into_their_own_tiles_initialize_once_and_collapse():
+    """Every block reduces into a tile of its own, so the identity is written over all tiles once, ahead of the block
+    map, which is then left holding the fused map alone and collapses with it into one map over every point."""
+    sdfg = blocked_row_sums(4)
+    assert sdfg.apply_transformations_repeated(MapReduceFusion) == 1
+    assert len(list(sdfg.states())) == 2, "the identity goes into a state of its own, ahead of the blocks"
+    assert sdfg.apply_transformations_repeated(MapCollapse) == 1
+    sdfg.validate()
+
+    n, m = 3, 5
+    a = np.random.default_rng(20261112).random((4 * n, m))
+    out = np.full(4 * n, 7.0)
+    sdfg(a=a.copy(), out=out, N=n, M=m)
+    assert np.allclose(out, (a * a).sum(axis=1)), out
+
+
+def test_blocks_leaving_gaps_between_their_tiles_keep_the_identity_per_block():
+    """Blocks that write ``out[8b : 8b+4]`` leave the gaps between their tiles untouched: one identity write over the
+    hull of the tiles would zero them, so each block keeps its own."""
+    sdfg = blocked_row_sums(8)
+    assert sdfg.apply_transformations_repeated(MapReduceFusion) == 1
+    assert len(list(sdfg.states())) == 1, "the identity stays inside the block map"
+
+    n, m = 3, 5
+    a = np.random.default_rng(20261113).random((4 * n, m))
+    out = np.full(8 * n, 7.0)
+    sdfg(a=a.copy(), out=out, N=n, M=m)
+    ref = np.full(8 * n, 7.0)
+    for b in range(n):
+        ref[8 * b : 8 * b + 4] = (a[4 * b : 4 * b + 4] ** 2).sum(axis=1)
+    assert np.allclose(out, ref), out
+
+
+def test_blocks_also_writing_the_output_elsewhere_keep_the_identity_per_block():
+    """Every block also stores into ``out`` past its tile: the block map writes ``out`` other than through the
+    reduction, so the identity is not hoisted ahead of it (a per-block write would overwrite such a store, a hoisted
+    one would not)."""
+    sdfg = blocked_row_sums(4, flag=True)
+    assert sdfg.apply_transformations_repeated(MapReduceFusion) == 1
+    assert len(list(sdfg.states())) == 1, "the identity stays inside the block map"
+
+    n, m = 3, 5
+    a = np.random.default_rng(20261114).random((4 * n, m))
+    out = np.full(4 * n + 1, 7.0)
+    sdfg(a=a.copy(), out=out, N=n, M=m)
+    assert np.allclose(out[:-1], (a * a).sum(axis=1)) and out[-1] == 1.0, out
+
+
 def test_a_reduction_into_an_offset_slice_keeps_the_offset():
     """``out[2:6] = (a * a).sum(1)``: the fused write indexes ``out`` at ``2 + i``, not at the intermediate's ``i``."""
     sdfg = dace.SDFG("reduce_into_offset_slice")
@@ -448,6 +560,39 @@ def test_a_reduction_into_an_offset_slice_keeps_the_offset():
     assert np.allclose(out, ref), out
 
 
+def test_a_map_reading_the_reduction_output_is_not_fused():
+    """Fused, the identity seed lands ahead of the map, which then reads it instead of the output's old value."""
+
+    def run(fuse: bool) -> np.ndarray:
+        sdfg = dace.SDFG(f"reduce_reads_output_{fuse}")
+        sdfg.add_array("O", (1,), dace.float64)
+        sdfg.add_array("A", (4,), dace.float64)
+        sdfg.add_array("T", (4,), dace.float64, transient=True)
+        state = sdfg.add_state()
+        intermediate = state.add_access("T")
+        state.add_mapped_tasklet(
+            "scale",
+            {"i": "0:4"},
+            {"_a": dace.Memlet("A[i]"), "_o": dace.Memlet("O[0]")},
+            "_b = _a * _o",
+            {"_b": dace.Memlet("T[i]")},
+            external_edges=True,
+            output_nodes={"T": intermediate},
+        )
+        reduction = stdlib.Reduce("sum", "lambda a, b: a + b", axes=None, identity=0)
+        state.add_node(reduction)
+        state.add_nedge(intermediate, reduction, dace.Memlet("T[0:4]"))
+        state.add_edge(reduction, None, state.add_write("O"), None, dace.Memlet("O[0]"))
+        if fuse:
+            FuseMaps().apply_pass(sdfg, {})
+        out = np.array([3.0])
+        sdfg(A=np.ones(4), O=out)
+        return out
+
+    assert run(False)[0] == 12.0
+    assert run(True)[0] == 12.0
+
+
 if __name__ == "__main__":
     test_basic()
     test_mmm()
@@ -456,7 +601,9 @@ if __name__ == "__main__":
     test_histogram()
     test_mapreduce_onemap()
     test_mapreduce_twomaps()
+    test_fuse_maps_removes_the_reduced_intermediate()
     test_a_second_body_tasklet_does_not_break_the_match()
     test_a_reduction_inside_an_outer_map_is_reinitialized_every_outer_iteration()
     test_a_reduction_written_straight_into_the_outer_map_exit_fuses()
     test_a_reduction_into_an_offset_slice_keeps_the_offset()
+    test_a_map_reading_the_reduction_output_is_not_fused()

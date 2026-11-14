@@ -4,12 +4,13 @@ import copy
 import warnings
 from collections import defaultdict
 
-import networkx as nx
 import sympy
 
 from dace import Memlet, data, dtypes, nodes, properties, subsets, symbol, symbolic
+from dace import graphlib as nx
 from dace import memlet as mm
 from dace.libraries.standard import Gearbox
+from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
@@ -592,8 +593,8 @@ class StreamingMemory(xf.SingleStateTransformation):
                 maps.append(state.add_map(f"__s{opname}_{mapname}", ranges, map.schedule))
             tasklet = state.add_tasklet(
                 f"{opname}_{mapname}",
-                {m[1] for m in rmemlets},
-                {m[1] for m in wmemlets},
+                OrderedSet(m[1] for m in rmemlets),
+                OrderedSet(m[1] for m in wmemlets),
                 code,
             )
             for node, cname, memlet in rmemlets:

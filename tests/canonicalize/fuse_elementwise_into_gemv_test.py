@@ -1,0 +1,131 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Tests for :class:`FuseElementwiseIntoGemv`: a matrix-vector product over an elementwise map's private matrix
+becomes a WCR map that fuses with the producer; GEMM and shared matrices keep their library node."""
+
+import numpy as np
+
+import dace
+from dace.libraries.blas.nodes.matmul import MatMul
+from dace.transformation.pass_pipeline import Pipeline
+from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+from dace.transformation.passes.canonicalize.fuse_elementwise_into_gemv import FuseElementwiseIntoGemv
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
+
+N = dace.symbol("N")
+
+
+def _apply(sdfg) -> int:
+    res = Pipeline([FuseElementwiseIntoGemv()]).apply_pass(sdfg, {})
+    return (res or {}).get("FuseElementwiseIntoGemv", 0) or 0
+
+
+def _square_transients(sdfg) -> list[str]:
+    return [
+        k
+        for g in sdfg.all_sdfgs_recursive()
+        for k, d in g.arrays.items()
+        if d.transient and len(d.shape) == 2 and d.total_size != 1
+    ]
+
+
+@dace.program
+def _pairwise_acc(x: dace.float64[N], mass: dace.float64[N], ax: dace.float64[N]):
+    dx = np.reshape(x, (1, N)) - np.reshape(x, (N, 1))
+    ax[:] = (dx * (dx * dx + 0.01) ** (-1.5)) @ mass
+
+
+@dace.program
+def _gemm(a: dace.float64[N, N], b: dace.float64[N, N], c: dace.float64[N, N]):
+    c[:] = (a * 2.0) @ b
+
+
+@dace.program
+def _matrix_read_twice(x: dace.float64[N], mass: dace.float64[N], ax: dace.float64[N], m: dace.float64[N, N]):
+    dx = np.reshape(x, (1, N)) - np.reshape(x, (N, 1))
+    ax[:] = dx @ mass
+    m[:] = dx
+
+
+def test_a_gemv_over_a_private_elementwise_matrix_fuses_away_the_matrix():
+    sdfg = _pairwise_acc.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    assert not any(isinstance(n, MatMul) for n, _ in sdfg.all_nodes_recursive())
+    assert _square_transients(sdfg) == []
+    n = 64
+    x, mass, ax = np.random.rand(n), np.random.rand(n), np.zeros(n)
+    sdfg(x=x, mass=mass, ax=ax, N=n)
+    dx = x[None, :] - x[:, None]
+    assert np.allclose(ax, (dx * (dx * dx + 0.01) ** (-1.5)) @ mass)
+
+
+def test_a_gemm_keeps_its_library_node():
+    assert _apply(_gemm.to_sdfg(simplify=True)) == 0
+
+
+def test_a_matrix_with_another_reader_keeps_the_library_node():
+    assert _apply(_matrix_read_twice.to_sdfg(simplify=True)) == 0
+
+
+m = dace.symbol("m")
+
+
+@dace.program
+def _pairwise_acc_over_m(x: dace.float64[m], mass: dace.float64[m], ax: dace.float64[m]):
+    dx = np.reshape(x, (1, m)) - np.reshape(x, (m, 1))
+    ax[:] = (dx * dx) @ mass
+
+
+def test_the_lowered_gemv_avoids_the_names_of_the_sdfg():
+    """vexx_k: its extent symbol ``m`` is not a free connector name."""
+    sdfg = _pairwise_acc_over_m.to_sdfg(simplify=True)
+    assert _apply(sdfg) == 1
+    sdfg.validate()
+
+
+@dace.program
+def output_scales_the_matrix(a: dace.float64[N, N], v: dace.float64[N], y: dace.float64[N]):
+    y[:] = (a * y) @ v
+
+
+def test_a_product_into_a_vector_its_matrix_reads_keeps_the_library_node():
+    """``y = (a * y) @ v``: the lowered product would zero ``y`` unordered with the map that reads it."""
+    sdfg = output_scales_the_matrix.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    finalize_for_target(sdfg, "cpu")
+    rng = np.random.default_rng(9)
+    a, v, y = rng.random((6, 6)), rng.random(6), rng.random(6)
+    expected = (a * y) @ v
+    sdfg(a=a, v=v, y=y, N=6)
+    np.testing.assert_allclose(y, expected)
+
+
+@dace.program
+def one_product_per_column(x: dace.float64[N], y: dace.float64[N], mass: dace.float64[N], acc: dace.float64[N, 2]):
+    dx = np.reshape(x, (1, N)) - np.reshape(x, (N, 1))
+    dy = np.reshape(y, (1, N)) - np.reshape(y, (N, 1))
+    acc[:, 0] = (dx * dx) @ mass
+    acc[:, 1] = (dy * dy) @ mass
+
+
+def test_products_into_two_columns_of_one_array_both_fuse_away_their_matrix():
+    """nbody's ``ax``, ``ay``, ``az`` are columns of one array. The second product names a column the first does not
+    touch, so it is no read of what its own init zeroes: both lower, and no ``N x N`` matrix is left."""
+    sdfg = one_product_per_column.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    assert not _square_transients(sdfg), _square_transients(sdfg)
+    finalize_for_target(sdfg, "cpu")
+    rng = np.random.default_rng(10)
+    x, y, mass = rng.random(7), rng.random(7), rng.random(7)
+    acc = np.zeros((7, 2))
+    sdfg(x=x, y=y, mass=mass, acc=acc, N=7)
+    dx, dy = x[None, :] - x[:, None], y[None, :] - y[:, None]
+    np.testing.assert_allclose(acc, np.stack(((dx * dx) @ mass, (dy * dy) @ mass), axis=1))
+
+
+if __name__ == "__main__":
+    test_a_gemv_over_a_private_elementwise_matrix_fuses_away_the_matrix()
+    test_a_gemm_keeps_its_library_node()
+    test_a_matrix_with_another_reader_keeps_the_library_node()
+    test_the_lowered_gemv_avoids_the_names_of_the_sdfg()
+    test_a_product_into_a_vector_its_matrix_reads_keeps_the_library_node()
+    test_products_into_two_columns_of_one_array_both_fuse_away_their_matrix()

@@ -1,0 +1,393 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Regressions for passes that treated a View as storage or an ordering edge as dataflow."""
+
+import warnings
+
+import numpy as np
+import pytest
+
+import dace
+from dace import Memlet, data
+from dace import graphlib as nx
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
+from dace.transformation.dataflow import (
+    MapFission,
+    RedundantArray,
+    RedundantArrayCopying,
+    RedundantArrayCopyingIn,
+    RedundantSecondArray,
+    RemoveSliceView,
+)
+
+
+def count_empty_edges(state: dace.SDFGState) -> int:
+    """Number of ordering (empty-memlet) edges in a state."""
+    return sum(1 for e in state.edges() if e.data.is_empty())
+
+
+def scale_row_through_view() -> dace.SDFG:
+    """``v = A[1, :]; v[:] = v * 2.0`` -- a write-through view chain, unsimplified."""
+
+    @dace.program
+    def scale_row(A: dace.float64[2, 2]):
+        v = A[1, :]
+        v[:] = v * 2.0
+
+    sdfg = scale_row.to_sdfg(simplify=False)
+    sdfg.validate()
+    return sdfg
+
+
+def test_get_view_edge_ignores_ordering_out_edges() -> None:
+    """An empty out-edge must not make a well-formed view look ambiguous (dace/sdfg/utils.py)."""
+    sdfg = dace.SDFG("view_with_ordering_out_edge")
+    sdfg.add_array("A", [2, 2], dace.float64)
+    sdfg.add_array("B", [2], dace.float64)
+    sdfg.add_view("V", [2], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    view = state.add_access("V")
+    write = state.add_access("A")
+    state.add_edge(view, "views", write, None, Memlet("A[1, 0:2]"))
+    tasklet = state.add_tasklet("t", {}, {"o"}, "o = 1.0")
+    state.add_edge(tasklet, "o", view, None, Memlet("V[0]"))
+    other = state.add_access("B")
+    state.add_edge(view, None, other, None, Memlet())  # ordering edge, carries no binding
+
+    edge = sdutil.get_view_edge(state, view)
+    assert edge is not None
+    assert edge.src is view and edge.dst is write
+    sdfg.validate()
+
+
+def test_partial_view_write_survives_simplify() -> None:
+    """The ordering out-edges of a partially written view used to make simplify() reject it."""
+
+    @dace.program
+    def partial_view_write_partial_view_write_survives_simplify(A: dace.float64[2, 2], B: dace.float64[2]):
+        v = A[1, :]
+        v[0] = B[0]
+        v[1] = B[1]
+
+    a = np.arange(4, dtype=np.float64).reshape(2, 2)
+    b = np.array([100.0, 200.0])
+    expected = a.copy()
+    expected[1, :] = b
+    got = a.copy()
+    partial_view_write_partial_view_write_survives_simplify(got, b)
+    assert np.allclose(got, expected), got
+
+
+def test_redundant_array_copying_in_declines_a_view_chain() -> None:
+    """The A -> B -> C fold deleted the binding edge of a View, losing the write-through."""
+    sdfg = scale_row_through_view()
+    assert sdfg.apply_transformations_repeated(RedundantArrayCopyingIn, validate=False, validate_all=False) == 0
+    sdfg.validate()
+
+    a = np.arange(4, dtype=np.float64).reshape(2, 2)
+    expected = a.copy()
+    expected[1, :] *= 2.0
+    got = a.copy()
+    sdfg(A=got)
+    assert np.allclose(got, expected), got
+
+
+def test_redundant_array_copying_declines_a_view_chain() -> None:
+    """Folding the chain moved the 'views' connector onto a node that views nothing."""
+    sdfg = scale_row_through_view()
+    assert sdfg.apply_transformations_repeated(RedundantArrayCopying, validate=False, validate_all=False) == 0
+    for state in sdfg.states():
+        for edge in state.edges():
+            if edge.src_conn == "views":
+                assert isinstance(sdfg.arrays[edge.src.data], data.View), edge.src.data
+            if edge.dst_conn == "views":
+                assert isinstance(sdfg.arrays[edge.dst.data], data.View), edge.dst.data
+
+    a = np.arange(4, dtype=np.float64).reshape(2, 2)
+    expected = a.copy()
+    expected[1, :] *= 2.0
+    got = a.copy()
+    sdfg(A=got)
+    assert np.allclose(got, expected), got
+
+
+def build_write_view_with_ordering_out_edge() -> dace.SDFG:
+    """Write view ``V -> A[0:1]``, plus an ordering edge putting the read of ``A`` after it."""
+    sdfg = dace.SDFG("slice_view_write_ordering")
+    sdfg.add_array("A", [2], dace.float64)
+    sdfg.add_array("B", [2], dace.float64)
+    sdfg.add_view("V", [1], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    # The reader is inserted first so it wins the insertion-order tie-break once nothing orders it
+    reader = state.add_access("A")
+    copy_tasklet = state.add_tasklet("copy", {"a"}, {"o"}, "o = a")
+    state.add_edge(reader, None, copy_tasklet, "a", Memlet("A[0]"))
+    state.add_edge(copy_tasklet, "o", state.add_access("B"), None, Memlet("B[0]"))
+    init = state.add_tasklet("init", {}, {"o"}, "o = 5.0")
+    view = state.add_access("V")
+    state.add_edge(init, "o", view, None, Memlet("V[0]"))
+    state.add_edge(view, "views", state.add_access("A"), None, Memlet("A[0:1]"))
+    state.add_edge(view, None, reader, None, Memlet())
+    sdfg.validate()
+    return sdfg
+
+
+def build_read_view_with_ordering_in_edge() -> dace.SDFG:
+    """Read view ``A[0:1] -> V``, plus an ordering edge putting the write to ``A`` before it."""
+    sdfg = dace.SDFG("slice_view_read_ordering")
+    sdfg.add_array("A", [2], dace.float64)
+    sdfg.add_array("B", [2], dace.float64)
+    sdfg.add_view("V", [1], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    view = state.add_access("V")
+    state.add_edge(state.add_access("A"), None, view, "views", Memlet("A[0:1]"))
+    copy_tasklet = state.add_tasklet("copy", {"a"}, {"o"}, "o = a")
+    state.add_edge(view, None, copy_tasklet, "a", Memlet("V[0]"))
+    state.add_edge(copy_tasklet, "o", state.add_access("B"), None, Memlet("B[0]"))
+    init = state.add_tasklet("init", {}, {"o"}, "o = 5.0")
+    write = state.add_access("A")
+    state.add_edge(init, "o", write, None, Memlet("A[0]"))
+    state.add_edge(write, None, view, None, Memlet())
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("builder", [build_write_view_with_ordering_out_edge, build_read_view_with_ordering_in_edge])
+def test_remove_slice_view_keeps_the_ordering_edge(builder) -> None:
+    """RemoveSliceView rewired one side only, so the ordering edge died with the node."""
+    sdfg = builder()
+    state = next(iter(sdfg.states()))
+    assert count_empty_edges(state) == 1
+    assert sdfg.apply_transformations(RemoveSliceView, validate=False, validate_all=False) == 1
+    assert not any(isinstance(n, nodes.AccessNode) and n.data == "V" for n in state.nodes())
+    assert count_empty_edges(state) >= 1
+    sdfg.validate()
+
+    a = np.zeros(2)
+    b = np.zeros(2)
+    sdfg(A=a, B=b)
+    assert a[0] == 5.0, a
+    assert b[0] == 5.0, b
+
+
+def build_write_view_behind_a_whole_write() -> tuple[dace.SDFG, nodes.Node, nodes.Node]:
+    """``A[:, :] = 1`` then ``A[1, :] = 2`` through a write view ordered behind the whole write by an empty memlet.
+    Returns the SDFG, the whole write's access node and the entry of the map writing the view."""
+    sdfg = dace.SDFG("slice_view_write_behind_whole_write")
+    sdfg.add_array("A", [3, 8], dace.float64)
+    sdfg.add_view("V", [8], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    whole = state.add_access("A")
+    state.add_mapped_tasklet(
+        "whole",
+        {"i": "0:3", "k": "0:8"},
+        {},
+        "y = 1.0",
+        {"y": Memlet("A[i, k]")},
+        output_nodes={"A": whole},
+        external_edges=True,
+    )
+    view = state.add_access("V")
+    _, part_entry, _ = state.add_mapped_tasklet(
+        "part", {"k": "0:8"}, {}, "y = 2.0", {"y": Memlet("V[k]")}, output_nodes={"V": view}, external_edges=True
+    )
+    state.add_nedge(whole, view, Memlet())
+    state.add_edge(view, "views", state.add_write("A"), None, Memlet(data="A", subset="1, 0:8", other_subset="0:8"))
+    sdfg.validate()
+    return sdfg, whole, part_entry
+
+
+def build_read_view_ahead_of_an_overwrite() -> tuple[dace.SDFG, nodes.Node, nodes.Node]:
+    """``B[:] = A[1, :]`` through a read view, then ``A[:, :] = 5`` held behind the view by an empty memlet.
+    Returns the SDFG, the exit of the map reading the view and the entry of the overwriting map."""
+    sdfg = dace.SDFG("slice_view_read_ahead_of_overwrite")
+    sdfg.add_array("A", [3, 8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    sdfg.add_view("V", [8], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    view = state.add_access("V")
+    state.add_edge(state.add_read("A"), None, view, "views", Memlet(data="A", subset="1, 0:8", other_subset="0:8"))
+    _, _, use_exit = state.add_mapped_tasklet(
+        "use",
+        {"k": "0:8"},
+        {"x": Memlet("V[k]")},
+        "y = x",
+        {"y": Memlet("B[k]")},
+        input_nodes={"V": view},
+        external_edges=True,
+    )
+    _, over_entry, _ = state.add_mapped_tasklet(
+        "over", {"i": "0:3", "k": "0:8"}, {}, "y = 5.0", {"y": Memlet("A[i, k]")}, external_edges=True
+    )
+    state.add_nedge(view, over_entry, Memlet())
+    sdfg.validate()
+    return sdfg, use_exit, over_entry
+
+
+@pytest.mark.parametrize("builder", [build_write_view_behind_a_whole_write, build_read_view_ahead_of_an_overwrite])
+def test_remove_slice_view_orders_the_scopes_that_access_through_it(builder) -> None:
+    """Without the view, its writers (readers) access ``A`` directly: the ordering edge has to order those scopes,
+    not the viewed access node, or the whole write lands after the row (the overwrite before the read)."""
+    sdfg, before, after = builder()
+    state = next(iter(sdfg.states()))
+    assert sdfg.apply_transformations(RemoveSliceView, validate=False, validate_all=False) == 1
+    assert "V" not in {n.data for n in state.data_nodes()}
+    sdfg.validate()
+    assert nx.has_path(state.nx, before, after)
+
+    a = np.arange(24, dtype=np.float64).reshape(3, 8)
+    if builder is build_write_view_behind_a_whole_write:
+        expected = np.ones((3, 8))
+        expected[1, :] = 2.0
+        sdfg(A=a)
+        assert np.array_equal(a, expected)
+    else:
+        b = np.zeros(8)
+        row = a[1, :].copy()
+        sdfg(A=a, B=b)
+        assert np.array_equal(b, row) and np.all(a == 5.0)
+
+
+def build_fission_border_view(viewed_is_border_transient: bool) -> dace.SDFG:
+    """Outer map ``i``; component 1 fills ``T``, a View ``V`` of ``T`` feeds component 2."""
+    sdfg = dace.SDFG("fission_border_view_" + ("t" if viewed_is_border_transient else "nt"))
+    sdfg.add_array("A", [2, 2], dace.float64)
+    sdfg.add_array("B", [2, 2], dace.float64)
+    if viewed_is_border_transient:
+        sdfg.add_transient("T", [2], dace.float64)
+    else:
+        sdfg.add_array("T", [2], dace.float64)
+    sdfg.add_view("V", [2], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    entry, exit_node = state.add_map("outer", dict(i="0:2"))
+    viewed = state.add_access("T")
+    view = state.add_access("V")
+
+    first_entry, first_exit = state.add_map("c1", dict(j="0:2"))
+    add_one = state.add_tasklet("add_one", {"a"}, {"o"}, "o = a + 1.0")
+    state.add_memlet_path(state.add_access("A"), entry, first_entry, add_one, memlet=Memlet("A[i, j]"), dst_conn="a")
+    state.add_memlet_path(add_one, first_exit, viewed, memlet=Memlet("T[j]"), src_conn="o")
+    state.add_edge(viewed, None, view, "views", Memlet("T[0:2]"))
+
+    second_entry, second_exit = state.add_map("c2", dict(k="0:2"))
+    double = state.add_tasklet("double", {"x"}, {"o"}, "o = x * 2.0")
+    state.add_memlet_path(view, second_entry, double, memlet=Memlet("V[k]"), dst_conn="x")
+    state.add_memlet_path(double, second_exit, exit_node, state.add_access("B"), memlet=Memlet("B[i, k]"), src_conn="o")
+    sdfg.validate()
+    return sdfg
+
+
+def test_map_fission_declines_a_view_of_non_border_data() -> None:
+    """Nothing may widen data the scope does not own, and one descriptor holds one binding."""
+    sdfg = build_fission_border_view(viewed_is_border_transient=False)
+    assert sdfg.apply_transformations_repeated(MapFission, validate=False, validate_all=False) == 0
+    assert list(sdfg.arrays["V"].shape) == [2]
+    sdfg.validate()
+
+    a = np.arange(4, dtype=np.float64).reshape(2, 2)
+    b = np.zeros((2, 2))
+    sdfg(A=a.copy(), B=b, T=np.zeros(2))
+    assert np.allclose(b, (a + 1.0) * 2.0), b
+
+
+def test_map_fission_does_not_push_a_view_into_a_nested_sdfg() -> None:
+    """The nested SDFG connector took the outer View descriptor, which has no binding inside."""
+
+    @dace.program
+    def accumulate_into_view(A: dace.float64[2, 2], B: dace.float64[2]):
+        v = A[1, :]
+        for i in dace.map[0:2]:
+            v[0] += B[i]
+
+    sdfg = accumulate_into_view.to_sdfg(simplify=False)
+    assert sdfg.apply_transformations(MapFission, validate=False, validate_all=False) == 1
+    sdfg.validate()
+    for nsdfg in sdfg.all_sdfgs_recursive():
+        for name, desc in nsdfg.arrays.items():
+            assert desc.transient or not isinstance(desc, data.View), f"{nsdfg.label}.{name}"
+
+    a = np.arange(4, dtype=np.float64).reshape(2, 2)
+    b = np.arange(1, 3, dtype=np.float64)
+    expected = a.copy()
+    expected[1, 0] += b.sum()
+    got = a.copy()
+    sdfg(A=got, B=b)
+    assert np.allclose(got, expected), got
+
+
+def test_redundant_array_race_guard_skips_ordering_edges() -> None:
+    """The data-race guards fed ordering memlets to _validate_subsets, which warned and refused."""
+
+    @dace.program
+    def partial_view_write_redundant_array_race_guard_skips_ordering_edges(A: dace.float64[2, 2], B: dace.float64[2]):
+        v = A[1, :]
+        v[0] = B[0]
+        v[1] = B[1]
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        sdfg = partial_view_write_redundant_array_race_guard_skips_ordering_edges.to_sdfg(simplify=True)
+    offenders = [str(w.message) for w in caught if "validate_subsets failed" in str(w.message)]
+    assert not offenders, offenders
+    sdfg.validate()
+
+
+def test_redundant_array_hands_an_ordering_edge_on_without_the_copys_wcr() -> None:
+    """Removing ``A`` in ``P -> A -WCR-> B`` re-attaches ``C``'s ordering edge into ``A`` to ``B``; it stays empty and
+    takes no WCR, which work-depth analysis read as an accumulated write with no subset (NestForge, durbin after
+    expanding its fills)."""
+    sdfg = dace.SDFG("ordering_into_an_accumulated_copy")
+    sdfg.add_array("B", [1], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
+    sdfg.add_transient("P", [1], dace.float64)
+    sdfg.add_transient("A", [1], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    tasklet = state.add_tasklet("t", {}, {"o": None}, "o = 2.0")
+    p, a, b, c = (state.add_access(name) for name in "PABC")
+    state.add_edge(tasklet, "o", p, None, Memlet("P[0]"))
+    state.add_edge(p, None, a, None, Memlet("A[0]"))
+    state.add_edge(p, None, c, None, Memlet("C[0]"))
+    state.add_edge(c, None, a, None, Memlet())  # C is stored before A is written
+    state.add_edge(a, None, b, None, Memlet("B[0]", wcr="lambda x, y: x + y"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(RedundantArray, validate=False) == 1
+
+    (ordering,) = [e for e in state.edges() if e.data.is_empty()]
+    assert ordering.src is c and ordering.dst.data == "B"
+    assert ordering.data.wcr is None
+    sdfg.validate()
+    out_b, out_c = np.array([1.0]), np.zeros(1)
+    sdfg(B=out_b, C=out_c)
+    assert out_b[0] == 3.0 and out_c[0] == 2.0
+
+
+def test_redundant_second_array_hands_an_ordering_edge_on_without_the_copys_wcr() -> None:
+    """Removing ``T`` in ``A -WCR-> T -> D`` re-sources ``T``'s ordering edge to ``A``; it stays empty and takes no WCR
+    (NestForge, durbin after expanding its fills: work-depth analysis then failed on it)."""
+    sdfg = dace.SDFG("ordering_out_of_an_accumulated_copy")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
+    sdfg.add_array("D", [1], dace.float64)
+    sdfg.add_transient("T", [1], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    first = state.add_tasklet("t", {}, {"o": None}, "o = 2.0")
+    second = state.add_tasklet("t2", {}, {"o": None}, "o = 5.0")
+    a, t, d, c = (state.add_access(name) for name in "ATDC")
+    state.add_edge(first, "o", a, None, Memlet("A[0]"))
+    state.add_edge(a, None, t, None, Memlet("T[0]", wcr="lambda x, y: x + y"))
+    state.add_edge(t, None, d, None, Memlet("D[0]"))
+    state.add_edge(t, None, second, None, Memlet())  # C is stored after T is written
+    state.add_edge(second, "o", c, None, Memlet("C[0]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(RedundantSecondArray, validate=False) == 1
+
+    (ordering,) = [e for e in state.edges() if e.data.is_empty()]
+    assert ordering.src is a and ordering.dst is second
+    assert ordering.data.wcr is None
+    sdfg.validate()
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

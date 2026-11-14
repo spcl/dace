@@ -133,14 +133,21 @@ def test_nested_sdfg_free_symbols():
     assert "k" not in inner_sdfg.free_symbols
 
 
-def _with_optional_unused_array(create_unused: bool) -> dace.SDFG:
-    """Two used arrays plus, optionally, an unused transient whose shape names ``x_shape``."""
+def _build_with_optional_unused_array(create_unused_transient: bool) -> dace.SDFG:
+    """
+    Builds the issue #2382 reproducer SDFG: two used arrays plus an optional
+    transient array whose shape depends on the symbol ``x_shape`` but that is
+    never read, written, or allocated.
+
+    :param create_unused_transient: If True, declare the unused ``x`` array.
+    :returns: The constructed SDFG.
+    """
     sdfg = dace.SDFG("unused_transient")
     state = sdfg.add_state()
     sdfg.add_array("a", (10,), dace.float64, transient=False)
     sdfg.add_array("b", (10,), dace.float64, transient=False)
     sdfg.add_symbol("x_shape", dace.int32)
-    if create_unused:
+    if create_unused_transient:
         sdfg.add_array("x", ("x_shape",), dace.float32, transient=True)
     state.add_mapped_tasklet(
         "map",
@@ -154,19 +161,71 @@ def _with_optional_unused_array(create_unused: bool) -> dace.SDFG:
 
 
 def test_unused_array_does_not_leak_shape_symbol():
-    """Issue #2382: declaring an unused array must not change what the SDFG needs to be invoked."""
-    without = _with_optional_unused_array(False)
-    with_unused = _with_optional_unused_array(True)
+    """
+    Regression test for issue #2382: the shape symbol of an array that is
+    merely declared (never read, written, or allocated) must not leak into the
+    SDFG signature. Declaring the unused transient ``x`` must not change the
+    set of arguments needed to invoke the SDFG.
+    """
+    without = _build_with_optional_unused_array(False)
+    with_unused = _build_with_optional_unused_array(True)
 
+    assert "x_shape" not in without.used_symbols(all_symbols=False)
     assert "x_shape" not in with_unused.used_symbols(all_symbols=False)
     assert "x_shape" not in with_unused.arglist()
     assert list(without.arglist().keys()) == list(with_unused.arglist().keys())
+    assert without.signature_arglist() == with_unused.signature_arglist()
     assert without.init_signature() == with_unused.init_signature()
+    assert "x_shape" not in with_unused.init_signature()
+
+
+def test_used_codeblock_array_keeps_shape_symbol():
+    """
+    The shape/stride symbols of an array that *is* used must be preserved even
+    when the only reference is in a control-flow code block. Here a
+    ``ConditionalBlock`` guard indexes a 2D array whose stride uses the free
+    symbol ``S``; ``S`` must remain in the SDFG's used symbols so that codegen
+    declares it.
+    """
+    from dace.properties import CodeBlock
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+
+    sdfg = dace.SDFG("used_codeblock_array")
+    sdfg.add_symbol("S", dace.int32)
+    sdfg.add_array("A", (10, 10), dace.int32, strides=(1, dace.symbol("S")))
+    sdfg.add_scalar("acc", dace.int32, transient=True)
+
+    loop = LoopRegion("loop", condition_expr="k < 5", loop_var="k", initialize_expr="k = 0", update_expr="k = k + 1")
+    sdfg.add_node(loop, is_start_block=True)
+
+    cb = ConditionalBlock("cb")
+    loop.add_node(cb, is_start_block=True)
+    branch = ControlFlowRegion("branch", sdfg=sdfg)
+    cb.add_branch(CodeBlock("A[0, k] == 1"), branch)
+
+    set_one = branch.add_state("set_one", is_start_block=True)
+    t1 = set_one.add_tasklet("t_set", {}, {"o"}, "o = 1")
+    set_one.add_edge(t1, "o", set_one.add_write("acc"), None, dace.Memlet("acc[0]"))
+
+    sdfg.validate()
+
+    # ``A`` is referenced only in the conditional guard, but it is genuinely
+    # used; its stride symbol ``S`` must therefore be kept.
+    assert "S" in sdfg.used_symbols(all_symbols=False)
+    assert "S" in sdfg.init_signature()
 
 
 def test_used_array_keeps_symbolic_extent():
-    """The converse: an array used only through a map memlet keeps its shape and stride symbols."""
-    n, s = dace.symbol("n"), dace.symbol("s")
+    """
+    An array that is used only through a map memlet (no top-level access node
+    and no code-block reference) must still contribute its symbolic shape and
+    stride symbols to the SDFG signature. This guards against the fix for
+    issue #2382 being too aggressive and dropping a genuinely needed extent
+    symbol.
+    """
+    n = dace.symbol("n")
+    s = dace.symbol("s")
+
     sdfg = dace.SDFG("used_via_map")
     sdfg.add_array("a", (n,), dace.float64, strides=(s,), transient=False)
     sdfg.add_array("b", (n,), dace.float64, transient=False)
@@ -182,33 +241,66 @@ def test_used_array_keeps_symbolic_extent():
     sdfg.validate()
 
     used = sdfg.used_symbols(all_symbols=False)
-    assert {"n", "s"} <= used
-    assert {"n", "s"} <= sdfg.arglist().keys()
+    assert "n" in used
+    assert "s" in used
+    assert "n" in sdfg.arglist()
+    assert "s" in sdfg.arglist()
 
 
-def test_array_used_only_in_a_guard_keeps_its_stride_symbol():
-    """An array referenced only by a ConditionalBlock guard is still used, so its stride survives."""
-    from dace.properties import CodeBlock
-    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+def conditional_block(
+    condition: str, then_assignments: dict, else_assignments: dict
+) -> dace.sdfg.state.ConditionalBlock:
+    """``if condition: <then_assignments> else: <else_assignments>``, each arm one interstate edge."""
+    sdfg = dace.SDFG("conditional_symbols")
+    for name in ("best", "v", "w"):
+        sdfg.add_symbol(name, dace.float64)
+    block = dace.sdfg.state.ConditionalBlock("if_region", sdfg=sdfg)
+    for arm, (arm_condition, assignments) in enumerate(((condition, then_assignments), (None, else_assignments))):
+        body = dace.sdfg.state.ControlFlowRegion(f"arm_{arm}", sdfg=sdfg, parent=block)
+        first = body.add_state(f"arm_{arm}_first", is_start_block=True)
+        body.add_edge(first, body.add_state(f"arm_{arm}_second"), dace.InterstateEdge(assignments=assignments))
+        block.add_branch(None if arm_condition is None else dace.sdfg.state.CodeBlock(arm_condition), body)
+    sdfg.add_node(block, is_start_block=True)
+    return block
 
-    sdfg = dace.SDFG("used_codeblock_array")
-    sdfg.add_symbol("S", dace.int32)
-    sdfg.add_array("A", (10, 10), dace.int32, strides=(1, dace.symbol("S")))
-    sdfg.add_scalar("acc", dace.int32, transient=True)
 
-    loop = LoopRegion("loop", condition_expr="k < 5", loop_var="k", initialize_expr="k = 0", update_expr="k = k + 1")
-    sdfg.add_node(loop, is_start_block=True)
-    cb = ConditionalBlock("cb")
-    loop.add_node(cb, is_start_block=True)
-    branch = ControlFlowRegion("branch", sdfg=sdfg)
-    cb.add_branch(CodeBlock("A[0, k] == 1"), branch)
-    set_one = branch.add_state("set_one", is_start_block=True)
-    t = set_one.add_tasklet("t_set", {}, {"o"}, "o = 1")
-    set_one.add_edge(t, "o", set_one.add_write("acc"), None, dace.Memlet("acc[0]"))
-    sdfg.validate()
+def test_a_conditional_keeps_a_symbol_its_condition_reads_before_a_branch_assigns_it():
+    """``if v > best: best = v`` reads ``best`` first; dropping that read hid a running max from LoopToMap."""
+    assert "best" in conditional_block("v > best", {"best": "v"}, {}).free_symbols
 
-    assert "S" in sdfg.used_symbols(all_symbols=False)
-    assert "S" in sdfg.init_signature()
+
+def test_a_conditional_keeps_a_symbol_one_branch_reads_and_a_sibling_branch_assigns():
+    """Only one branch runs, so a read in the else arm cannot see what the then arm assigned."""
+    assert "best" in conditional_block("v > 0", {"best": "v"}, {"w": "best"}).free_symbols
+
+
+def test_non_transient_shape_symbol_stays_in_the_signature():
+    """A symbol in a NON-transient shape is part of the ABI and must not depend on code use.
+
+    The counterpart of the transient case above. ``arglist`` used to name only the symbols the
+    generated code still mentions, so the signature moved as passes ran: canonicalization removed
+    the last use of an extent symbol and dropped it, then offloading reintroduced one (the
+    host-to-device copy needs the length) and brought it back. A caller holding the earlier
+    signature could not call the later graph -- ``Missing program argument "LEN_1D"``.
+    """
+    sdfg = dace.SDFG("interface_symbol")
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_array("a", ("n",), dace.float64, transient=False)
+    sdfg.add_array("b", ("n",), dace.float64, transient=False)
+    state = sdfg.add_state()
+    # A fixed trip count, so nothing in the BODY mentions ``n``; only the shapes do.
+    state.add_mapped_tasklet(
+        "map",
+        {"__i": "0:10"},
+        {"__in": dace.Memlet("a[__i]")},
+        "__out = __in + 1.0",
+        {"__out": dace.Memlet("b[__i]")},
+        external_edges=True,
+    )
+
+    assert "n" not in sdfg.used_symbols(all_symbols=False), "the body must not use it, or the test is vacuous"
+    assert "n" in sdfg.interface_symbols()
+    assert "n" in sdfg.arglist()
 
 
 def test_descriptor_free_symbols_follow_a_reassigned_extent():
@@ -281,25 +373,6 @@ def test_a_symbol_one_branch_assigns_and_the_join_reads_stays_free():
     assert "k" in sdfg.free_symbols
 
 
-def test_a_symbol_both_arms_of_an_if_else_assign_is_not_free():
-    """``if a[0] > 0: k = 1 else: k = 0`` assigns ``k`` on every path, so the read after the join never sees the
-    caller's ``k``: it is not free."""
-    sdfg = symbol_sdfg("if_else_assignment")
-    block = dace.sdfg.state.ConditionalBlock("if_region", sdfg=sdfg)
-    for label, condition, value in (("then", dace.sdfg.state.CodeBlock("a[0] > 0"), "1"), ("else", None, "0")):
-        arm = dace.sdfg.state.ControlFlowRegion(label, sdfg=sdfg, parent=block)
-        arm.add_edge(
-            arm.add_state(f"{label}_first", is_start_block=True),
-            arm.add_state(f"{label}_second"),
-            dace.InterstateEdge(assignments={"k": value}),
-        )
-        block.add_branch(condition, arm)
-    sdfg.add_node(block, is_start_block=True)
-    sdfg.add_edge(block, read_into(sdfg, "join", "k"), dace.InterstateEdge())
-
-    assert "k" not in sdfg.free_symbols
-
-
 def branch_assignments(name: str, conditions: tuple[str, ...]) -> dace.SDFG:
     """Each of ``conditions`` guards a branch that assigns ``k``; a state after the block reads ``k``."""
     sdfg = symbol_sdfg(name)
@@ -355,6 +428,50 @@ def test_a_cpp_tasklet_local_listed_in_ignored_symbols_is_not_a_read_of_the_symb
     assert "k" not in sdfg.free_symbols
 
 
+def test_array_used_only_in_a_guard_keeps_its_stride_symbol():
+    """An array referenced only by a ConditionalBlock guard is still used, so its stride survives."""
+    from dace.properties import CodeBlock
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+
+    sdfg = dace.SDFG("used_codeblock_array")
+    sdfg.add_symbol("S", dace.int32)
+    sdfg.add_array("A", (10, 10), dace.int32, strides=(1, dace.symbol("S")))
+    sdfg.add_scalar("acc", dace.int32, transient=True)
+
+    loop = LoopRegion("loop", condition_expr="k < 5", loop_var="k", initialize_expr="k = 0", update_expr="k = k + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    cb = ConditionalBlock("cb")
+    loop.add_node(cb, is_start_block=True)
+    branch = ControlFlowRegion("branch", sdfg=sdfg)
+    cb.add_branch(CodeBlock("A[0, k] == 1"), branch)
+    set_one = branch.add_state("set_one", is_start_block=True)
+    t = set_one.add_tasklet("t_set", {}, {"o"}, "o = 1")
+    set_one.add_edge(t, "o", set_one.add_write("acc"), None, dace.Memlet("acc[0]"))
+    sdfg.validate()
+
+    assert "S" in sdfg.used_symbols(all_symbols=False)
+    assert "S" in sdfg.init_signature()
+
+
+def test_a_symbol_both_arms_of_an_if_else_assign_is_not_free():
+    """``if a[0] > 0: k = 1 else: k = 0`` assigns ``k`` on every path, so the read after the join never sees the
+    caller's ``k``: it is not free."""
+    sdfg = symbol_sdfg("if_else_assignment")
+    block = dace.sdfg.state.ConditionalBlock("if_region", sdfg=sdfg)
+    for label, condition, value in (("then", dace.sdfg.state.CodeBlock("a[0] > 0"), "1"), ("else", None, "0")):
+        arm = dace.sdfg.state.ControlFlowRegion(label, sdfg=sdfg, parent=block)
+        arm.add_edge(
+            arm.add_state(f"{label}_first", is_start_block=True),
+            arm.add_state(f"{label}_second"),
+            dace.InterstateEdge(assignments={"k": value}),
+        )
+        block.add_branch(condition, arm)
+    sdfg.add_node(block, is_start_block=True)
+    sdfg.add_edge(block, read_into(sdfg, "join", "k"), dace.InterstateEdge())
+
+    assert "k" not in sdfg.free_symbols
+
+
 if __name__ == "__main__":
     test_single_state()
     test_state_subgraph()
@@ -363,14 +480,15 @@ if __name__ == "__main__":
     test_interstate_edge_symbols()
     test_nested_sdfg_free_symbols()
     test_unused_array_does_not_leak_shape_symbol()
+    test_used_codeblock_array_keeps_shape_symbol()
     test_used_array_keeps_symbolic_extent()
+
     test_array_used_only_in_a_guard_keeps_its_stride_symbol()
     test_descriptor_free_symbols_follow_a_reassigned_extent()
     test_a_state_reading_a_symbol_before_an_edge_assigns_it_keeps_it_free()
     test_a_loop_body_reading_a_symbol_its_own_later_edge_assigns_keeps_it_free()
     test_a_symbol_one_branch_assigns_and_the_join_reads_stays_free()
-    test_a_symbol_both_arms_of_an_if_else_assign_is_not_free()
-    test_a_symbol_assigned_by_branches_whose_last_condition_negates_the_others_is_not_free()
-    test_a_symbol_assigned_by_branches_whose_conditions_are_not_a_negation_stays_free()
     test_a_symbol_assigned_on_every_path_before_its_read_is_not_free()
     test_a_cpp_tasklet_local_listed_in_ignored_symbols_is_not_a_read_of_the_symbol()
+    test_array_used_only_in_a_guard_keeps_its_stride_symbol()
+    test_a_symbol_both_arms_of_an_if_else_assign_is_not_free()

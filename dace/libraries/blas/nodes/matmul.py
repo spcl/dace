@@ -6,7 +6,8 @@ from typing import Any
 
 import dace
 from dace import properties, symbolic
-from dace.libraries.blas.blas_helpers import matrix_view
+from dace.libraries.blas.blas_helpers import matrix_view, stepped_strides
+from dace.ordered import OrderedSet
 
 
 def _matrix_subset_size(subset):
@@ -33,6 +34,26 @@ def _matrix_operand(operand):
     return edge, desc, squeezed_size, squeezed_strides
 
 
+def compile_time_extent(extent, sdfg) -> int | None:
+    """``extent`` as an integer when it is a literal or names only compile-time constants of ``sdfg``
+    (``SDFG.specialize``), else ``None``.
+
+    :param extent: A symbolic or literal extent.
+    :param sdfg: The SDFG whose constants may resolve the extent's symbols.
+    """
+    try:
+        return int(symbolic.evaluate(extent, sdfg.constants))
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return None
+
+
+def is_gemm_shape(a, b, c) -> bool:
+    """Whether the operands :func:`_get_matmul_operands` returned make a matrix-matrix product, which
+    ``SpecializeMatMul`` lowers to a ``Gemm``."""
+    size_a, size_b, size_c = a[4], b[4], c[4]
+    return len(size_c) == 2 and ((len(size_a) == 2 and len(size_b) == 2) or (len(a[2]) == 2 and len(b[2]) == 2))
+
+
 def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_out="_c"):
     """Returns the matrix multiplication input edges, arrays, and shape."""
     res_lhs = None
@@ -45,8 +66,8 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
             squeezed_dims = squeezed.squeeze()
             squeezed_size = squeezed.size()
             outer_array = sdfg.data(dace.sdfg.find_input_arraynode(state, edge).data)
-            strides = list(outer_array.strides)
-            squeezed_strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed_dims]
+            strides = stepped_strides(outer_array, edge.data.subset)
+            squeezed_strides = [s for i, s in enumerate(strides) if i in squeezed_dims]
             res = edge, outer_array, size, strides, squeezed_size, squeezed_strides
             if edge.dst_conn == name_lhs:
                 res_lhs = res
@@ -58,8 +79,8 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
             squeezed_dims = squeezed.squeeze()
             squeezed_size = squeezed.size()
             outer_array = sdfg.data(dace.sdfg.find_output_arraynode(state, edge).data)
-            strides = list(outer_array.strides)
-            squeezed_strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed_dims]
+            strides = stepped_strides(outer_array, edge.data.subset)
+            squeezed_strides = [s for i, s in enumerate(strides) if i in squeezed_dims]
             res_out = edge, outer_array, size, strides, squeezed_size, squeezed_strides
     for res, name in ((res_lhs, name_lhs), (res_rhs, name_rhs), (res_out, name_out)):
         if res is None:
@@ -157,17 +178,44 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides
     return {"sa": stride_a, "sb": stride_b, "sc": stride_c, "b": batch_size, "batch_dims": result_batch_dims}
 
 
+def densify_matrix_operands(node: dace.nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> None:
+    """Copy every input whose matrix view has no unit stride into a dense transient read by ``node`` instead. BLAS
+    needs one unit stride, and a copy made before lowering does not survive: simplify turns a copy of a slice such as
+    ``w[:, :, 1, 2]`` back into a view of it."""
+    lhs, rhs, _ = _get_matmul_operands(node, state, sdfg)
+    for operand in (lhs, rhs):
+        edge, desc, shape, strides = _matrix_operand(operand)
+        if any(stride == 1 for stride in strides[-2:]):
+            continue
+        name, dense = sdfg.add_transient(
+            f"{edge.data.data}_dense", shape, desc.dtype, storage=desc.storage, find_new_name=True
+        )
+        copy = state.add_access(name)
+        whole = dace.subsets.Range.from_array(dense)
+        into = dace.Memlet(data=edge.data.data, subset=dc(edge.data.subset), other_subset=whole)
+        state.add_edge(edge.src, edge.src_conn, copy, None, into)
+        state.add_edge(copy, None, node, edge.dst_conn, dace.Memlet.from_array(name, dense))
+        state.remove_edge(edge)
+
+
 def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func) -> dict[str, Any]:
     """Get option map for GEMM code generation (with column-major order)."""
     # Avoid import loops
     from dace.codegen.common import sym2cpp
-    from dace.libraries.blas.blas_helpers import get_gemm_opts
+    from dace.libraries.blas.blas_helpers import get_gemm_opts, packed_unit_extent
+    from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
 
-    # M/N/K and the leading dimensions come from the matrix view the dispatcher matched.
+    if not isinstance(node, BatchedMatMul):
+        densify_matrix_operands(node, state, sdfg)
+    # M/N/K and the leading dimensions come from the matrix view the dispatcher matched. A batched
+    # product keeps its batch dimensions, which that view's squeeze would fold into rows: the
+    # (A, 1, B) row block an ``abij,ab->aij`` einsum lowers to became an (A, B) matrix, and every batch
+    # multiplied the same rows. The pure expansion already reads the raw operands.
     adata, bdata, cdata = _get_matmul_operands(node, state, sdfg)
-    _, _, ashape, astride = _matrix_operand(adata)
-    _, _, bshape, bstride = _matrix_operand(bdata)
-    _, _, cshape, cstride = _matrix_operand(cdata)
+    view = (lambda operand: operand[:4]) if isinstance(node, BatchedMatMul) else _matrix_operand
+    _, _, ashape, astride = view(adata)
+    _, _, bshape, bstride = view(bdata)
+    _, _, cshape, cstride = view(cdata)
 
     if node.transA:
         ashape = list(reversed(ashape))
@@ -176,7 +224,9 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
         bshape = list(reversed(bshape))
         bstride = list(reversed(bstride))
 
-    opt = get_gemm_opts(astride, bstride, cstride)
+    opt = get_gemm_opts(
+        packed_unit_extent(ashape, astride), packed_unit_extent(bshape, bstride), packed_unit_extent(cshape, cstride)
+    )
     bopt = _get_batchmm_opts(ashape, astride, bshape, bstride, cshape, cstride)
 
     opt["x"] = "_a"
@@ -215,6 +265,36 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
     return opt
 
 
+def specialization(a, b, c) -> str | None:
+    """What :class:`SpecializeMatMul` lowers a product of operands ``a``, ``b`` into ``c`` to (``_get_matmul_operands``
+    tuples): ``gemm``, ``batched``, ``gemv``, ``gemvt``, ``dot``, or ``None`` for shapes it has no lowering for."""
+    size_a, size_b, size_c = a[4], b[4], c[4]
+    # A degenerate operand dimension is squeezed with a unit batch, so also check the output
+    is_batched = len(size_a) >= 3 or len(size_b) >= 3 or (len(size_c) >= 3 and (len(a[2]) >= 3 or len(b[2]) >= 3))
+    if is_gemm_shape(a, b, c):
+        return "gemm"
+    if is_batched and len(size_a) >= 2 and len(size_b) >= 2:
+        return "batched"
+    if len(size_a) == 2 and len(size_b) == 1:
+        return "gemv"
+    if len(size_a) == 1 and len(size_b) == 2:
+        return "gemvt"
+    if len(size_a) == 1 and len(size_b) == 1:
+        return "dot"
+    return None
+
+
+def specialized_type(node, state, sdfg) -> type | None:
+    """The library node class :class:`SpecializeMatMul` lowers ``node`` to."""
+    from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
+    from dace.libraries.blas.nodes.dot import Dot
+    from dace.libraries.blas.nodes.gemm import Gemm
+    from dace.libraries.blas.nodes.gemv import Gemv
+
+    kinds = {"gemm": Gemm, "batched": BatchedMatMul, "gemv": Gemv, "gemvt": Gemv, "dot": Dot}
+    return kinds.get(specialization(*_get_matmul_operands(node, state, sdfg)))
+
+
 @dace.library.expansion
 class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
     environments = []
@@ -222,15 +302,9 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         a, b, c = _get_matmul_operands(node, state, sdfg)
-        size_a = a[4]
-        size_b = b[4]
-        size_c = c[4]
+        kind = specialization(a, b, c)
 
-        # Check if this is a batched operation (at least one input has 3+ dimensions).
-        # A degenerate operand dimension is squeezed with a unit batch, so also check the output
-        is_batched = len(size_a) >= 3 or len(size_b) >= 3 or (len(size_c) >= 3 and (len(a[2]) >= 3 or len(b[2]) >= 3))
-
-        if len(size_c) == 2 and ((len(size_a) == 2 and len(size_b) == 2) or (len(a[2]) == 2 and len(b[2]) == 2)):
+        if kind == "gemm":
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
 
@@ -257,14 +331,19 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
                 transB=node.transB,
             )
             return gemm
-        elif is_batched and len(size_a) >= 2 and len(size_b) >= 2:
+        elif kind == "batched":
             # Batched matrix multiplication with broadcasting support
             # Handles: [b, m, k] @ [b, k, n], [b, m, k] @ [k, n], [m, k] @ [b, k, n], [b1, b2, m, k] @ [b1, b2, k, n], etc.
             from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
 
             result = BatchedMatMul(node.name + "bmm", location=node.location)
-        elif len(size_a) == 2 and len(size_b) == 1:
-            # Matrix and vector -> GEMV
+            result.transA, result.transB = node.transA, node.transB
+        elif kind == "gemv":
+            # Matrix and vector -> GEMV.  ``transA`` flows through:
+            # Fortran ``MATMUL(TRANSPOSE(A), v)`` arrives with the
+            # node's ``transA=True`` flag, A is read as the
+            # un-transposed (k, m) box, and Gemv treats it as A^T
+            # via the BLAS transpose flag.
             from dace.libraries.blas.nodes.gemv import Gemv
 
             # Rename inputs to match dot naming
@@ -272,8 +351,12 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             b[0].dst_conn = "_x"
             c[0].src_conn = "_y"
             result = Gemv(node.name + "gemv", location=node.location, transA=node.transA)
-        elif len(size_a) == 1 and len(size_b) == 2:
-            # Vector and matrix -> GEMV with transposed matrix
+        elif kind == "gemvt":
+            # Vector and matrix -> GEMV with transposed matrix.
+            # ``node.transA`` flipping the second operand
+            # corresponds to ``v @ A^T``; XOR with the implicit
+            # vector-side transpose so the BLAS flag carries the
+            # net effect.
             from dace.libraries.blas.nodes.gemv import Gemv
 
             # Rename inputs to match dot naming
@@ -281,7 +364,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             b[0].dst_conn = "_A"
             c[0].src_conn = "_y"
             result = Gemv(node.name + "gemvt", location=node.location, transA=not node.transB)
-        elif len(size_a) == 1 and len(size_b) == 1:
+        elif kind == "dot":
             # Vector and vector -> dot product
             from dace.libraries.blas.nodes.dot import Dot
 
@@ -291,7 +374,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             c[0].src_conn = "_result"
             result = Dot(node.name + "dot", location=node.location)
         else:
-            raise NotImplementedError(f"Matrix multiplication not implemented for shapes: {size_a} and {size_b}")
+            raise NotImplementedError(f"Matrix multiplication not implemented for shapes: {a[4]} and {b[4]}")
 
         result.alpha = node.alpha
         result.beta = node.beta
@@ -305,6 +388,8 @@ class MatMul(dace.sdfg.nodes.LibraryNode):
     computational operators, namely GEMM, batched matrix multiplication,
     GEMV, and DOT."""
 
+    operand_subsets = "squeeze"
+
     # Global properties
     implementations = {
         "specialize": SpecializeMatMul,
@@ -317,19 +402,25 @@ class MatMul(dace.sdfg.nodes.LibraryNode):
         category="Semantics",
         desc="A scalar which will be multiplied with A @ B before adding C",
     )
+
+    def folds_onto_output(self) -> bool:
+        return self.folds_by_beta(self.beta)
+
     beta = properties.Property(
         allow_none=False,
         default=0,
         category="Semantics",
         desc="A scalar which will be multiplied with C before adding C",
     )
-
     transA = properties.Property(dtype=bool, default=False, desc="Whether to transpose A before multiplying")
     transB = properties.Property(dtype=bool, default=False, desc="Whether to transpose B before multiplying")
 
     def __init__(self, name, location=None, alpha=1, beta=0, transA=False, transB=False):
         self.alpha = alpha
         self.beta = beta
-        self.transA = transA
-        self.transB = transB
-        super().__init__(name, location=location, inputs={"_a", "_b"}, outputs={"_c"})
+        self.transA = bool(transA)
+        self.transB = bool(transB)
+        super().__init__(name, location=location, inputs=OrderedSet(("_a", "_b")), outputs={"_c"})
+
+    def scalar_code(self, state) -> str | None:
+        return f"_c = ({self.alpha}) * _a * _b" if symbolic.equal_valued(0, self.beta) else None

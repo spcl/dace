@@ -5,9 +5,13 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import block as lapack_block
 from dace.libraries.lapack import environments
+from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock
+from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -79,11 +83,13 @@ class ExpandGetrsMKL(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandGetrsCuSolverDn(ExpandTransformation):
-    environments = [environments.cusolverdn.cuSolverDn]
+class ExpandGetrsGPUSolver(ExpandTransformation):
+    """LU solve on a vendor GPU solver; the two differ only in the vocabulary below."""
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+    environments = []
+
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, n=None, **kwargs):
         (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs, cols_rhs), desc_ipiv, desc_res = (
             node.validate(parent_sdfg, parent_state)
         )
@@ -101,14 +107,14 @@ class ExpandGetrsCuSolverDn(ExpandTransformation):
         # cuSOLVER still expects ldb to be the "number of rows"
         if len(desc_rhs.shape) == 1:
             stride_rhs = rows_rhs
+            rhs_count = 1
+        else:
+            # Callers stage column-major data (``Solve`` transposes B into ``[nrhs, n]``), so the
+            # right-hand sides are the descriptor's ROWS; its columns are the solve's ``n``.
+            rhs_count = rows_rhs
 
-        code = (
-            environments.cusolverdn.cuSolverDn.handle_setup_code(node)
-            + f"""
-                cusolverDn{func}(
-                    __dace_cusolverDn_handle, CUBLAS_OP_N, {rows_a}, {cols_rhs},
-                    ({cuda_type}*)_a, {stride_a}, _ipiv, ({cuda_type}*)_rhs_in, {stride_rhs}, _res);
-                """
+        code = cls.environments[0].handle_setup_code(node) + cls.call(
+            func, cuda_type, rows_a, rhs_count, stride_a, stride_rhs
         )
 
         tasklet = dace.sdfg.nodes.Tasklet(
@@ -121,17 +127,64 @@ class ExpandGetrsCuSolverDn(ExpandTransformation):
         return tasklet
 
 
+@dace.library.expansion
+class ExpandGetrsCuSolverDn(ExpandGetrsGPUSolver):
+    environments = [environments.cusolverdn.cuSolverDn]
+
+    @classmethod
+    def call(cls, func, ctype, rows_a, cols_rhs, stride_a, stride_rhs) -> str:
+        return f"""
+                cusolverDn{func}(
+                    __dace_cusolverDn_handle, CUBLAS_OP_N, {rows_a}, {cols_rhs},
+                    ({ctype}*)_a, {stride_a}, _ipiv, ({ctype}*)_rhs_in, {stride_rhs}, _res);
+                """
+
+
+ExpandGetrsHipSolverDn = hip_dialect.hip_expansion(
+    ExpandGetrsCuSolverDn, environments.hipsolverdn.hipSolverDn, hip_dialect.SOLVER
+)
+
+
+@dace.library.expansion
+class ExpandGetrsBlock(ExpandLapackBlock):
+    """In-kernel LU solve by one thread block (``block_lapack::getrs``). Unlike the vendor GPU solvers, which read
+    column-major ``[nrhs, n]`` right-hand sides, it reads them ``[n, nrhs]`` as the CPU expansions do."""
+
+    matrix = "_a"
+
+    @classmethod
+    def body(cls, node, ops, uid):
+        return (
+            lapack_block.copy_code(ops, "_rhs_in", "_rhs_out")
+            + f"dace::block_lapack::getrs({lapack_block.mat(ops, '_a', True)}, {lapack_block.order(ops, '_a')}, {lapack_block.pointer('_ipiv', True)}, "
+            + f"{lapack_block.cpp(ops['_ipiv'].strides[0])}, {lapack_block.mat(ops, '_rhs_out')}, {lapack_block.columns(ops, '_rhs_in')});\n"
+            + lapack_block.info_code(ops, "0")
+        )
+
+
 @dace.library.node
 class Getrs(dace.sdfg.nodes.LibraryNode):
     # Global properties
-    implementations = {"OpenBLAS": ExpandGetrsOpenBLAS, "MKL": ExpandGetrsMKL, "cuSolverDn": ExpandGetrsCuSolverDn}
+    implementations = {
+        "OpenBLAS": ExpandGetrsOpenBLAS,
+        "MKL": ExpandGetrsMKL,
+        "cuSolverDn": ExpandGetrsCuSolverDn,
+        "hipSolverDn": ExpandGetrsHipSolverDn,
+        BLOCK_LAPACK: ExpandGetrsBlock,
+    }
     default_implementation = None
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, n=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_a", "_rhs_in", "_ipiv"}, outputs={"_rhs_out", "_res"}, **kwargs)
+        super().__init__(
+            name,
+            *args,
+            inputs=OrderedSet(("_a", "_rhs_in", "_ipiv")),
+            outputs=OrderedSet(("_rhs_out", "_res")),
+            **kwargs,
+        )
 
     def validate(self, sdfg, state):
         """

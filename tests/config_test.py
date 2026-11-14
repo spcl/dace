@@ -12,6 +12,15 @@ def test_set_temporary():
     assert Config.get(*path) == current_value
 
 
+def test_set_temporary_takes_a_dotted_path():
+    """``set_temporary("a.b", ...)`` is the same key as ``set_temporary("a", "b", ...)``."""
+    path = ["compiler", "build_type"]
+    current_value = Config.get(*path)
+    with set_temporary(".".join(path), value="I'm not a build type"):
+        assert Config.get(*path) == "I'm not a build type"
+    assert Config.get(*path) == current_value
+
+
 def test_temporary_config():
     path = ["compiler", "build_type"]
     current_value = Config.get(*path)
@@ -71,7 +80,7 @@ def test_config_isolation_multi_thread():
     thread_two_has_launched = threading.Event()
     master_thread_has_modified_its_configuration = threading.Event()
     thread_one_has_stoped_working = threading.Event()
-    CONFIG_KEY = "compiler.cuda.backend"
+    CONFIG_KEY = "compiler.cuda.hip_arch"
     initial_value = Config.get(CONFIG_KEY)
     assert Config.get_default(CONFIG_KEY) == initial_value
 
@@ -144,9 +153,18 @@ def test_config_isolation_multi_thread():
     assert initial_value == Config.get(CONFIG_KEY)
 
 
+def test_nondefaults_is_called_on_the_class_and_lists_a_setting_made_in_memory():
+    with set_temporary("compiler", "cpu", "args", value="-O1 -DNONDEFAULTS_PROBE"):
+        changed = Config.nondefaults()
+
+    assert changed["compiler"]["cpu"]["args"] == "-O1 -DNONDEFAULTS_PROBE"
+
+
 if __name__ == "__main__":
     test_set_temporary()
+    test_set_temporary_takes_a_dotted_path()
     test_temporary_config()
     test_temporary_config_exception()
     test_set_temporary_exception()
     test_config_isolation_multi_thread()
+    test_nondefaults_is_called_on_the_class_and_lists_a_setting_made_in_memory()

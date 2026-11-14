@@ -5,9 +5,13 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import block as lapack_block
 from dace.libraries.lapack import environments
+from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock
+from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -43,7 +47,8 @@ class ExpandGetrfOpenBLAS(ExpandTransformation):
 
         n = n or node.n
         code = (
-            f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, {cast}_xin, {stride_x}, _ipiv);"
+            f"_res = LAPACKE_{lapack_dtype}getrf({blas_helpers.lapack_order(desc_x)}, {rows_x}, {cols_x}, {cast}_xin, "
+            f"{stride_x}, _ipiv);"
         )
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
@@ -70,7 +75,8 @@ class ExpandGetrfMKL(ExpandTransformation):
 
         n = n or node.n
         code = (
-            f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, {cast}_xin, {stride_x}, _ipiv);"
+            f"_res = LAPACKE_{lapack_dtype}getrf({blas_helpers.lapack_order(desc_x)}, {rows_x}, {cols_x}, {cast}_xin, "
+            f"{stride_x}, _ipiv);"
         )
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
@@ -79,11 +85,16 @@ class ExpandGetrfMKL(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandGetrfCuSolverDn(ExpandTransformation):
-    environments = [environments.cusolverdn.cuSolverDn]
+class ExpandGetrfGPUSolver(ExpandTransformation):
+    """LU factorization on a vendor GPU solver.
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+    cuSolverDn sizes and allocates a workspace first; hipSOLVER is the same call renamed.
+    """
+
+    environments = []
+
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, n=None, **kwargs):
         (desc_x, stride_x, rows_x, cols_x), desc_ipiv, desc_result = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
@@ -95,23 +106,7 @@ class ExpandGetrfCuSolverDn(ExpandTransformation):
         if veclen != 1:
             n /= veclen
 
-        code = (
-            environments.cusolverdn.cuSolverDn.handle_setup_code(node)
-            + f"""
-                int __dace_workspace_size = 0;
-                {cuda_type}* __dace_workspace;
-                cusolverDn{func}_bufferSize(
-                    __dace_cusolverDn_handle, {rows_x}, {cols_x}, ({cuda_type}*)_xin,
-                    {stride_x}, &__dace_workspace_size);
-                cudaMalloc<{cuda_type}>(
-                    &__dace_workspace,
-                    sizeof({cuda_type}) * __dace_workspace_size);
-                cusolverDn{func}(
-                    __dace_cusolverDn_handle, {rows_x}, {cols_x}, ({cuda_type}*)_xin,
-                    {stride_x}, __dace_workspace, _ipiv, _res);
-                cudaFree(__dace_workspace);
-                """
-        )
+        code = cls.environments[0].handle_setup_code(node) + cls.call(func, cuda_type, rows_x, cols_x, stride_x)
 
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
@@ -123,17 +118,61 @@ class ExpandGetrfCuSolverDn(ExpandTransformation):
         return tasklet
 
 
+@dace.library.expansion
+class ExpandGetrfCuSolverDn(ExpandGetrfGPUSolver):
+    environments = [environments.cusolverdn.cuSolverDn]
+
+    @classmethod
+    def call(cls, func, ctype, rows, cols, stride) -> str:
+        return f"""
+                int __dace_workspace_size = 0;
+                cusolverDn{func}_bufferSize(
+                    __dace_cusolverDn_handle, {rows}, {cols}, ({ctype}*)_xin,
+                    {stride}, &__dace_workspace_size);
+                {ctype}* __dace_workspace = static_cast<{ctype}*>(
+                    __state->cusolverDn_handle.Workspace(0, sizeof({ctype}) * __dace_workspace_size, __dace_current_stream));
+                cusolverDn{func}(
+                    __dace_cusolverDn_handle, {rows}, {cols}, ({ctype}*)_xin,
+                    {stride}, __dace_workspace, _ipiv, _res);
+                """
+
+
+ExpandGetrfHipSolverDn = hip_dialect.hip_expansion(
+    ExpandGetrfCuSolverDn, environments.hipsolverdn.hipSolverDn, hip_dialect.SOLVER
+)
+
+
+@dace.library.expansion
+class ExpandGetrfBlock(ExpandLapackBlock):
+    """In-kernel LU with partial pivoting by one thread block (``block_lapack::getrf``)."""
+
+    @classmethod
+    def body(cls, node, ops, uid):
+        return (
+            lapack_block.copy_code(ops, "_xin", "_xout")
+            + f"const int __info = dace::block_lapack::getrf({lapack_block.mat(ops, '_xout')}, {lapack_block.order(ops, '_xin')}, "
+            + f"{lapack_block.columns(ops, '_xin')}, {lapack_block.pointer('_ipiv', False)}, {lapack_block.cpp(ops['_ipiv'].strides[0])});\n"
+            + lapack_block.info_code(ops, "__info")
+        )
+
+
 @dace.library.node
 class Getrf(dace.sdfg.nodes.LibraryNode):
     # Global properties
-    implementations = {"OpenBLAS": ExpandGetrfOpenBLAS, "MKL": ExpandGetrfMKL, "cuSolverDn": ExpandGetrfCuSolverDn}
+    implementations = {
+        "OpenBLAS": ExpandGetrfOpenBLAS,
+        "MKL": ExpandGetrfMKL,
+        "cuSolverDn": ExpandGetrfCuSolverDn,
+        "hipSolverDn": ExpandGetrfHipSolverDn,
+        BLOCK_LAPACK: ExpandGetrfBlock,
+    }
     default_implementation = None
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, n=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_xin"}, outputs={"_xout", "_ipiv", "_res"}, **kwargs)
+        super().__init__(name, *args, inputs={"_xin"}, outputs=OrderedSet(("_xout", "_ipiv", "_res")), **kwargs)
 
     def validate(self, sdfg, state):
         """
@@ -170,7 +209,10 @@ class Getrf(dace.sdfg.nodes.LibraryNode):
         if desc_ipiv.dtype.base_type != dace.dtypes.int32:
             raise ValueError("Pivot output must be an integer array!")
 
-        stride_x = desc_xin.strides[sqdims1[0]]
+        layout = blas_helpers.matrix_layout(blas_helpers.operand(self, state, sdfg, "_xin"))
+        if layout is None:
+            raise ValueError("Matrix must be contiguous along one dimension")
+        stride_x = layout.leading[0]
         shape_x = squeezed1.size()
         rows_x = shape_x[0]
         cols_x = shape_x[1]

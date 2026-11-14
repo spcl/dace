@@ -164,21 +164,35 @@ class StripMining(transformation.SingleStateTransformation):
         return self.map_entry.map.label + ": " + str(self.map_entry.map.params)
 
     def apply(self, graph: SDFGState, sdfg: SDFG) -> nodes.Map:
-        # Strip-mine selected dimension.
-        _, _, new_map = self._stripmine(sdfg, graph, self.map_entry)
+        # Strip-mine selected dimension. The new bounds are parsed from strings, so name the symbols at the dtype
+        # the scope declares them.
+        defined = graph.symbols_defined_at(self.map_entry)
+        scope = dict(defined)
+        scope.update(self.map_entry.new_symbols(sdfg, graph, scope))
+        # ``_find_new_dim`` reads the same table before the graph changes; resolving it again walks every scope.
+        self._entry_symbols = (self.map_entry, defined)
+        try:
+            with symbolic.serialization_symbol_dtypes(scope, inherit=True):
+                _, _, new_map = self._stripmine(sdfg, graph, self.map_entry)
+        finally:
+            self._entry_symbols = None
         return new_map
 
     def _find_new_dim(self, sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry, prefix: str, target_dim: str):
         """Finds a variable that is not already defined in scope."""
-        stree = state.scope_tree()
         if len(prefix) == 0:
             return target_dim
         candidate = f"{prefix}_{target_dim}"
         index = 1
-        defined_vars = {str(s) for s in (state.symbols_defined_at(entry).keys() | sdfg.symbols.keys())}
+        cached = getattr(self, "_entry_symbols", None)
+        defined_at = cached[1] if cached is not None and cached[0] is entry else state.symbols_defined_at(entry)
+        defined_vars = {str(s) for s in (defined_at.keys() | sdfg.symbols.keys())}
         while candidate in defined_vars:
             candidate = "%s%d_%s" % (prefix, index, target_dim)
             index += 1
+        # The tile iterates the same domain as the dimension it tiles, so it is declared at that dimension's dtype.
+        declared = entry.new_symbols(sdfg, state, defined_at)
+        symbolic.declare_symbol_dtype(candidate, declared[target_dim])
         return candidate
 
     def _create_strided_range(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry):
@@ -313,15 +327,18 @@ class StripMining(transformation.SingleStateTransformation):
         new_map = nodes.Map(map_entry.map.label, [new_dim], subsets.Range([new_dim_range]))
 
         dimsym = dace.symbolic.pystr_to_symbolic(new_dim)
-        td_from_new = (dimsym * size) // number_of_tiles
+        # int_floor, never `//`: `//` builds sympy `floor(...)`, which sympy distributes over the
+        # sum and sym2cpp then prints WITHOUT the floor, so each term truncates on its own
+        # (`((t+1)*size)//tiles` -> `t/2 + 1/2` -> `t/2 + 0`). int_floor survives to C intact.
+        td_from_new = symbolic.int_floor(dimsym * size, number_of_tiles)
         if divides_evenly:
-            td_to_new = ((dimsym + 1) * size) // number_of_tiles - 1
+            td_to_new = symbolic.int_floor((dimsym + 1) * size, number_of_tiles) - 1
         else:
             if isinstance(td_to, dace.symbolic.SymExpr):
                 td_to = td_to.expr
             td_to_new = dace.symbolic.SymExpr(
-                sympy.Min(((dimsym + 1) * size) // number_of_tiles, td_to + 1) - 1,
-                ((dimsym + 1) * size) // number_of_tiles - 1,
+                sympy.Min(symbolic.int_floor((dimsym + 1) * size, number_of_tiles), td_to + 1) - 1,
+                symbolic.int_floor((dimsym + 1) * size, number_of_tiles) - 1,
             )
         td_step_new = td_step
         return new_dim, new_map, (td_from_new, td_to_new, td_step_new)

@@ -1,0 +1,597 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""``ParallelizeLoops`` maps a loop that stores through an index array when the array's producer proves the stores
+disjoint: a counting-sort permutation (``INJECTIVE``) and prefix-sum row pointers (``NONDECREASING`` over
+nonnegative counts). Each negative breaks one premise of a proof and keeps the loop sequential."""
+
+import numpy as np
+import pytest
+
+import dace
+from dace.libraries.standard.nodes.fill.node import FillLibraryNode
+from dace.sdfg.state import LoopRegion
+from dace.transformation.passes.analysis import array_facts
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
+
+M = dace.symbol("M")
+N = dace.symbol("N")
+NNZ = dace.symbol("NNZ")
+BINS = 4
+
+
+def loop_variables(sdfg: dace.SDFG) -> set[str]:
+    return {
+        r.loop_variable
+        for sd in sdfg.all_sdfgs_recursive()
+        for r in sd.all_control_flow_regions()
+        if isinstance(r, LoopRegion)
+    }
+
+
+def fact_notes(sdfg: dace.SDFG) -> list[str]:
+    return [
+        n.specialization_hint
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and n.specialization_hint and "array facts" in n.specialization_hint
+    ]
+
+
+def parallelized(program) -> dace.SDFG:
+    sdfg = program.to_sdfg(simplify=True)
+    ParallelizeLoops().apply_pass(sdfg, {})
+    return sdfg
+
+
+@dace.program
+def gather_by_bin(key: dace.int64[M], val: dace.float64[M], out: dace.float64[M]):
+    perm = np.zeros((M,), dtype=np.int64)
+    count = np.zeros((BINS,), dtype=np.int64)
+    offset = np.zeros((BINS,), dtype=np.int64)
+    for i in range(M):
+        b = key[i]
+        if b >= 0:
+            count[b] = count[b] + 1
+    running = 0
+    for b in range(BINS):
+        offset[b] = running
+        running = running + count[b]
+        count[b] = 0
+    for r in range(M):
+        perm[r] = -1
+    for i in range(M):
+        b = key[i]
+        if b >= 0:
+            perm[offset[b] + count[b]] = i
+            count[b] = count[b] + 1
+    for r in range(M):
+        row = perm[r]
+        if row >= 0:
+            out[row] = val[row] * 2.0
+
+
+def test_a_store_through_a_counting_sort_permutation_maps():
+    """``perm`` is filled with -1, then each iteration of the scatter stores its own index once, so its entries
+    other than -1 are distinct and ``out[perm[r]]`` under ``perm[r] >= 0`` never collides."""
+    sdfg = parallelized(gather_by_bin)
+    assert "r" not in loop_variables(sdfg)
+    assert any("perm injective apart from -1 with values in [0, M - 1]" in n for n in fact_notes(sdfg))
+    rng = np.random.default_rng(0)
+    key = rng.integers(-1, BINS, 50)
+    val = rng.random(50)
+    out = np.zeros(50)
+    sdfg(key=key, val=val, out=out, M=50)
+    assert np.array_equal(out, np.where(key >= 0, val * 2.0, 0.0))
+
+
+@dace.program
+def segments_by_bin(key: dace.int64[M], ptr: dace.int64[M + 1], seg: dace.int64[NNZ]):
+    perm = np.zeros((M,), dtype=np.int64)
+    width = np.zeros((M,), dtype=np.int64)
+    for i in range(M):
+        perm[i] = -1
+    for i in range(M):
+        width[i] = 0
+        if key[i] >= 0:
+            width[i] = width[i] + 2
+    running = 0
+    for i in range(M):
+        ptr[i] = running
+        running = running + width[i]
+    ptr[M] = running
+    for i in range(M):
+        if key[i] >= 0:
+            perm[M - 1 - i] = i
+    for r in range(M):
+        row = perm[r]
+        if row >= 0:
+            base = ptr[row]
+            for t in range(ptr[row + 1] - base):
+                seg[base + t] = row
+
+
+def test_a_segment_store_through_running_sum_row_pointers_maps():
+    """``ptr`` is a running sum of nonnegative widths, so the segments ``[ptr[row], ptr[row + 1])`` of distinct rows
+    are disjoint, and ``perm`` gives each row to one iteration."""
+    sdfg = parallelized(segments_by_bin)
+    assert "r" not in loop_variables(sdfg)
+    notes = "\n".join(fact_notes(sdfg))
+    assert "ptr nondecreasing on [0, M]" in notes and "perm injective" in notes
+    rng = np.random.default_rng(1)
+    key = rng.integers(-1, 2, 40)
+    nnz = int(2 * np.count_nonzero(key >= 0))
+    ptr, seg = np.zeros(41, dtype=np.int64), np.full(nnz, -7, dtype=np.int64)
+    sdfg(key=key, ptr=ptr, seg=seg, M=40, NNZ=nnz)
+    ref_ptr = np.concatenate([[0], np.cumsum(np.where(key >= 0, 2, 0))])
+    ref_seg = np.repeat(np.flatnonzero(key >= 0), 2)
+    assert np.array_equal(ptr, ref_ptr) and np.array_equal(seg, ref_seg)
+
+
+@dace.program
+def two_scatters_after_one_fill(key: dace.int64[M], out: dace.float64[M]):
+    perm = np.zeros((M,), dtype=np.int64)
+    for r in range(M):
+        perm[r] = -1
+    for i in range(M):
+        if key[i] >= 0:
+            perm[key[i]] = i
+    for i in range(M):
+        if key[i] < 0:
+            perm[M - 1 - i] = i
+    for r in range(M):
+        row = perm[r]
+        if row >= 0:
+            out[row] = 1.0
+
+
+@dace.program
+def unguarded_sentinel(key: dace.int64[M], out: dace.float64[M]):
+    perm = np.zeros((M,), dtype=np.int64)
+    for r in range(M):
+        perm[r] = -1
+    for i in range(M):
+        if key[i] >= 0:
+            perm[key[i]] = i
+    for r in range(M):
+        row = perm[r]
+        out[row + 1] = 1.0
+
+
+@dace.program
+def index_array_rewritten_in_the_loop(key: dace.int64[M], out: dace.float64[M]):
+    perm = np.zeros((M,), dtype=np.int64)
+    for r in range(M):
+        perm[r] = -1
+    for i in range(M):
+        if key[i] >= 0:
+            perm[key[i]] = i
+    for r in range(M):
+        row = perm[r]
+        if row >= 0:
+            out[row] = 1.0
+            perm[row] = 0
+
+
+@dace.program
+def caller_supplied_index_array(perm: dace.int64[M], out: dace.float64[M]):
+    for r in range(M):
+        row = perm[r]
+        if row >= 0:
+            out[row] = 1.0
+
+
+@dace.program
+def widths_of_unknown_sign(width: dace.int64[M], ptr: dace.int64[M + 1], seg: dace.int64[NNZ]):
+    running = 0
+    for i in range(M):
+        ptr[i] = running
+        running = running + width[i]
+    ptr[M] = running
+    for r in range(M):
+        base = ptr[r]
+        for t in range(ptr[r + 1] - base):
+            seg[base + t] = r
+
+
+@pytest.mark.parametrize(
+    "program",
+    [
+        # Two scatters each store every index once, so together they can store one index twice.
+        two_scatters_after_one_fill,
+        # Without ``row >= 0`` two iterations can both read the sentinel and store into ``out[0]``.
+        unguarded_sentinel,
+        # The loop writes the array its stores are indexed through.
+        index_array_rewritten_in_the_loop,
+        # No producer: nothing is known about a caller's array.
+        caller_supplied_index_array,
+    ],
+)
+def test_a_store_through_an_unproven_permutation_stays_sequential(program):
+    sdfg = parallelized(program)
+    assert "r" in loop_variables(sdfg)
+    assert not fact_notes(sdfg)
+
+
+def test_segments_of_a_running_sum_over_caller_widths_stay_sequential():
+    """A caller's width can be negative, so the running sum need not be nondecreasing and segments can overlap."""
+    sdfg = parallelized(widths_of_unknown_sign)
+    assert "r" in loop_variables(sdfg)
+
+
+def test_a_declared_permutation_maps_a_store_through_a_caller_array():
+    """The caller's ``perm`` is declared ``permutation(0..M-1)``: the store ``out[perm[r]]`` needs no producer."""
+    sdfg = caller_supplied_index_array.to_sdfg(simplify=True)
+    sdfg.add_data_assumption("perm", dace.symbolic.permutation(0, M - 1))
+    ParallelizeLoops().apply_pass(sdfg, {})
+    assert "r" not in loop_variables(sdfg)
+    assert any("perm injective with values in [0, M - 1] (declared)" in n for n in fact_notes(sdfg))
+    perm = np.random.default_rng(2).permutation(30).astype(np.int64)
+    out = np.zeros(30)
+    sdfg(perm=perm, out=out, M=30)
+    assert np.array_equal(out, np.ones(30))
+
+
+@dace.program
+def update_through_caller_permutation(perm: dace.int64[M], out: dace.float64[M]):
+    for r in range(M):
+        row = perm[r]
+        out[row] = out[row] * 2.0 + 1.0
+
+
+@dace.program
+def update_reading_another_slot(perm: dace.int64[M], out: dace.float64[M]):
+    for r in range(M):
+        row = perm[r]
+        out[row] = out[r] * 2.0 + 1.0
+
+
+@dace.program
+def guarded_update_through_caller_index(perm: dace.int64[M], out: dace.float64[M]):
+    for r in range(M):
+        row = perm[r]
+        if row >= 0:
+            out[row] = out[row] * 2.0 + 1.0
+
+
+def test_a_guarded_update_of_the_stored_element_maps_under_a_sentinel_fact():
+    """``perm`` holds distinct entries apart from the sentinel -1, and the update runs only where ``perm[r] >= 0``: its
+    read sees the element its own iteration stores, so the loop maps without the sort-and-count scatter guard."""
+    sdfg = guarded_update_through_caller_index.to_sdfg(simplify=True)
+    sdfg.add_data_assumption("perm", dace.symbolic.permutation(0, M - 1)._replace(sentinel=-1))
+    ParallelizeLoops().apply_pass(sdfg, {})
+    assert "r" not in loop_variables(sdfg)
+    rng = np.random.default_rng(5)
+    perm = rng.permutation(30).astype(np.int64)
+    perm[::4] = -1
+    out = rng.random(30)
+    ref = out.copy()
+    ref[perm[perm >= 0]] = ref[perm[perm >= 0]] * 2.0 + 1.0
+    sdfg(perm=perm, out=out, M=30)
+    assert np.allclose(out, ref)
+
+
+def declared_permutation(program) -> dace.SDFG:
+    sdfg = program.to_sdfg(simplify=True)
+    sdfg.add_data_assumption("perm", dace.symbolic.permutation(0, M - 1))
+    ParallelizeLoops().apply_pass(sdfg, {})
+    return sdfg
+
+
+def test_a_declared_permutation_maps_an_update_of_the_stored_element():
+    """``out[perm[r]] = f(out[perm[r]])`` reads only the element its own iteration stores, which no other iteration
+    touches under the permutation: the loop maps without a runtime check."""
+    sdfg = declared_permutation(update_through_caller_permutation)
+    assert "r" not in loop_variables(sdfg)
+    assert fact_notes(sdfg)
+    rng = np.random.default_rng(3)
+    perm = rng.permutation(30).astype(np.int64)
+    out = rng.random(30)
+    ref = out * 2.0 + 1.0
+    sdfg(perm=perm, out=out, M=30)
+    assert np.allclose(out, ref)
+
+
+def test_an_update_reading_another_element_stays_sequential_under_a_permutation():
+    """``out[r]`` may be the element another iteration stores through ``perm``: the permutation says nothing of it."""
+    assert "r" in loop_variables(declared_permutation(update_reading_another_slot))
+
+
+def test_an_update_of_the_stored_element_without_a_fact_stays_sequential():
+    sdfg = update_through_caller_permutation.to_sdfg(simplify=True)
+    ParallelizeLoops().apply_pass(sdfg, {})
+    assert "r" in loop_variables(sdfg)
+
+
+@dace.program
+def scatter_rows(
+    indptr: dace.int64[M + 1], indices: dace.int64[NNZ], vals: dace.float64[NNZ], dense: dace.float64[M, N]
+):
+    for i in range(M):
+        for k in range(indptr[i], indptr[i + 1]):
+            dense[i, indices[k]] = vals[k]
+
+
+def test_unique_column_indices_per_row_map_the_row_scatter():
+    """Canonical CSR (``indices`` injective within each segment of ``indptr``) makes ``dense[i, indices[k]]`` over
+    one row collision-free, so the loop over the row's entries maps too; the fact reaches the nested SDFG the row
+    loop's lift creates."""
+    sdfg = scatter_rows.to_sdfg(simplify=True)
+    sdfg.add_data_assumption(
+        "indices", dace.symbolic.DataFact(dace.symbolic.DataFactKind.SEGMENT_INJECTIVE, segments="indptr")
+    )
+    ParallelizeLoops().apply_pass(sdfg, {})
+    assert not loop_variables(sdfg)
+    assert any("indices injective within each segment of indptr" in n for n in fact_notes(sdfg))
+    indptr = np.array([0, 2, 2, 5], dtype=np.int64)
+    indices = np.array([3, 0, 1, 4, 2], dtype=np.int64)
+    vals = np.arange(5, dtype=np.float64) + 1
+    dense = np.zeros((3, 5))
+    sdfg(indptr=indptr, indices=indices, vals=vals, dense=dense, M=3, N=5, NNZ=5)
+    ref = np.zeros((3, 5))
+    for i in range(3):
+        ref[i, indices[indptr[i] : indptr[i + 1]]] = vals[indptr[i] : indptr[i + 1]]
+    assert np.array_equal(dense, ref)
+
+
+def test_row_scatter_without_the_canonical_csr_fact_stays_sequential():
+    """Without the fact two entries of one row may name the same column: the inner loop stays a loop."""
+    sdfg = scatter_rows.to_sdfg(simplify=True)
+    ParallelizeLoops().apply_pass(sdfg, {})
+    assert "k" in loop_variables(sdfg)
+
+
+def test_data_assumptions_serialize_rename_and_validate():
+    """Data facts survive a JSON round trip, follow a container and a symbol rename, and only name non-transient
+    containers."""
+    sdfg = caller_supplied_index_array.to_sdfg(simplify=True)
+    sdfg.add_data_assumption("perm", dace.symbolic.permutation(0, M - 1))
+    loaded = dace.SDFG.from_json(sdfg.to_json())
+    assert loaded.data_assumptions("perm") == sdfg.data_assumptions("perm")
+    loaded.replace_dict({"perm": "order", "M": "K"})
+    (fact,) = loaded.data_assumptions("order")
+    assert str(fact.hi) == "K - 1" and not loaded.data_assumptions("perm")
+    loaded.validate()
+    sdfg.add_transient("scratch", [M], dace.int64)
+    sdfg.add_data_assumption("scratch", dace.symbolic.DataFact(dace.symbolic.DataFactKind.NONNEGATIVE))
+    with pytest.raises(dace.sdfg.InvalidSDFGError):
+        sdfg.validate()
+
+
+def test_data_assumptions_follow_the_symbol_registry_api():
+    """Declared at creation (``add_array(..., assumptions=...)``), replaced by ``set_data_assumptions``, re-adding a
+    known fact does nothing, and a permutation with fewer values than entries is refused as inconsistent."""
+    sdfg = dace.SDFG("data_assumptions_api")
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_array("perm", [M], dace.int64, assumptions=[dace.symbolic.permutation(0, M - 1)])
+    sdfg.add_data_assumption("perm", dace.symbolic.permutation(0, M - 1))
+    assert sdfg.data_assumptions("perm") == (dace.symbolic.permutation(0, M - 1),)
+    nonneg = dace.symbolic.DataFact(dace.symbolic.DataFactKind.NONNEGATIVE)
+    sdfg.set_data_assumptions("perm", [nonneg])
+    assert sdfg.data_assumptions("perm") == (nonneg,)
+    with pytest.raises(dace.symbolic.InconsistentAssumptionsError):
+        sdfg.add_data_assumption("perm", dace.symbolic.permutation(0, M - 2))
+    with pytest.raises(KeyError):
+        sdfg.add_data_assumption("missing", nonneg)
+
+
+def test_a_difference_is_not_nonnegative():
+    """A transient stored as ``a - b`` of two nonnegative transients is not nonnegative; a sum of them is."""
+    sdfg = dace.SDFG("nonneg")
+    for name in ("a", "b", "s", "d"):
+        sdfg.add_scalar(name, dace.int64, transient=True)
+    state = sdfg.add_state()
+    for name in ("a", "b"):
+        t = state.add_tasklet(f"set_{name}", {}, {"o"}, "o = 3")
+        state.add_edge(t, "o", state.add_write(name), None, dace.Memlet(f"{name}[0]"))
+    for name, op in (("s", "+"), ("d", "-")):
+        t = state.add_tasklet(f"set_{name}", {"x", "y"}, {"o"}, f"o = x {op} y")
+        state.add_edge(state.add_read("a"), None, t, "x", dace.Memlet("a[0]"))
+        state.add_edge(state.add_read("b"), None, t, "y", dace.Memlet("b[0]"))
+        state.add_edge(t, "o", state.add_write(name), None, dace.Memlet(f"{name}[0]"))
+    known = array_facts.nonnegative_containers(sdfg)
+    assert {"a", "b", "s"} <= known and "d" not in known
+
+
+def test_a_constant_fill_is_nonnegative_before_validation_drops_its_unwired_value_connector():
+    """Only validation removes the unwired value connector of a fill; the fact must not depend on that having run."""
+    sdfg = dace.SDFG("nonneg_fill")
+    sdfg.add_array("a", [4], dace.int64, transient=True)
+    sdfg.add_scalar("v", dace.int64, transient=True)
+    sdfg.add_array("b", [4], dace.int64, transient=True)
+    state = sdfg.add_state()
+    fill = FillLibraryNode("fill_a", value=0)
+    state.add_node(fill)
+    state.add_edge(fill, FillLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_write("a"), None, dace.Memlet("a[0:4]"))
+    wired = FillLibraryNode("fill_b", value=0)
+    state.add_node(wired)
+    t = state.add_tasklet("set_v", {}, {"o"}, "o = -1")
+    state.add_edge(t, "o", value := state.add_access("v"), None, dace.Memlet("v[0]"))
+    state.add_edge(value, None, wired, FillLibraryNode.VALUE_CONNECTOR_NAME, dace.Memlet("v[0]"))
+    state.add_edge(wired, FillLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_write("b"), None, dace.Memlet("b[0:4]"))
+    known = array_facts.nonnegative_containers(sdfg, frozenset({"v"}))
+    assert "a" in known and "b" not in known
+
+
+def prefix_scan(op, fill: int | None) -> tuple[dace.SDFG, LoopRegion]:
+    """``w`` (a transient filled with ``fill``, else a caller's array), ``ptr = Scan(op)(w)``, then a loop reading
+    ``ptr``; returns the SDFG and that loop."""
+    from dace.libraries.standard.nodes.scan import Scan
+
+    sdfg = dace.SDFG(f"prefix_scan_{op.value}_{'caller' if fill is None else 'fill' if fill >= 0 else 'negative'}")
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_array("w", ["M"], dace.int64, transient=fill is not None)
+    sdfg.add_array("ptr", ["M"], dace.int64, transient=True)
+    sdfg.add_array("out", ["M"], dace.int64)
+    first = sdfg.add_state("fill", is_start_block=True)
+    if fill is not None:
+        node = FillLibraryNode("fill_w", value=fill)
+        first.add_node(node)
+        first.add_edge(node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, first.add_write("w"), None, dace.Memlet("w[0:M]"))
+    scan_state = sdfg.add_state_after(first, "scan")
+    scan = Scan("scan", op=op)
+    scan_state.add_node(scan)
+    scan_state.add_edge(scan_state.add_read("w"), None, scan, Scan.INPUT_CONNECTOR_NAME, dace.Memlet("w[0:M]"))
+    scan_state.add_edge(scan, Scan.OUTPUT_CONNECTOR_NAME, scan_state.add_write("ptr"), None, dace.Memlet("ptr[0:M]"))
+    loop = LoopRegion("use", "r < M", "r", "r = 0", "r = r + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(scan_state, loop, dace.InterstateEdge())
+    body = loop.add_state("body", is_start_block=True)
+    t = body.add_tasklet("t", {"x"}, {"o"}, "o = x")
+    body.add_edge(body.add_read("ptr"), None, t, "x", dace.Memlet("ptr[r]"))
+    body.add_edge(t, "o", body.add_write("out"), None, dace.Memlet("out[r]"))
+    return sdfg, loop
+
+
+def kinds(sdfg: dace.SDFG, loop: LoopRegion) -> set:
+    return {f.kind for f in array_facts.facts_at(sdfg, loop, ["ptr"])}
+
+
+def test_a_prefix_sum_of_nonnegative_values_is_nondecreasing_and_nonnegative():
+    from dace.libraries.standard.nodes.scan import ScanOp
+
+    sdfg, loop = prefix_scan(ScanOp.SUM, 2)
+    (fact,) = [f for f in array_facts.facts_at(sdfg, loop, ["ptr"]) if f.kind is array_facts.FactKind.NONDECREASING]
+    assert (str(fact.lo), str(fact.hi)) == ("0", "M - 1")
+    assert "ptr" in array_facts.nonnegative_containers(sdfg)
+
+
+def test_a_prefix_sum_of_values_of_unknown_sign_is_neither():
+    from dace.libraries.standard.nodes.scan import ScanOp
+
+    sdfg, loop = prefix_scan(ScanOp.SUM, None)
+    assert kinds(sdfg, loop) == set()
+    assert "ptr" not in array_facts.nonnegative_containers(sdfg)
+    sdfg, loop = prefix_scan(ScanOp.SUM, -1)
+    assert kinds(sdfg, loop) == set()
+
+
+def test_a_running_maximum_is_nondecreasing_whatever_it_reads():
+    from dace.libraries.standard.nodes.scan import ScanOp
+
+    sdfg, loop = prefix_scan(ScanOp.MAX, None)
+    assert kinds(sdfg, loop) == {array_facts.FactKind.NONDECREASING}
+    sdfg, loop = prefix_scan(ScanOp.MIN, 2)
+    assert array_facts.FactKind.NONDECREASING not in kinds(sdfg, loop)
+
+
+def stored_index(value: str, assigned: bool = False, span: str = "0:N") -> tuple[dace.SDFG, LoopRegion]:
+    """``idx`` (a transient) filled with -1, then ``idx[i] = value`` over a map ``i`` in ``span``, then a loop reading
+    ``idx``; ``value`` may read ``s``, which an edge assigns when ``assigned``. Returns the SDFG and the loop."""
+    sdfg = dace.SDFG(f"stored_index_{abs(hash((value, assigned, span)))}")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("s", dace.int64)
+    sdfg.add_array("idx", ["N"], dace.int64, transient=True)
+    sdfg.add_array("out", ["N"], dace.int64)
+    first = sdfg.add_state("fill", is_start_block=True)
+    node = FillLibraryNode("fill_idx", value=-1)
+    first.add_node(node)
+    first.add_edge(node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, first.add_write("idx"), None, dace.Memlet("idx[0:N]"))
+    store = sdfg.add_state("store")
+    sdfg.add_edge(first, store, dace.InterstateEdge(assignments={"s": "N"} if assigned else None))
+    store.add_mapped_tasklet("st", {"i": span}, {}, f"o = {value}", {"o": dace.Memlet("idx[i]")}, external_edges=True)
+    loop = LoopRegion("use", "r < N", "r", "r = 0", "r = r + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(store, loop, dace.InterstateEdge())
+    body = loop.add_state("body", is_start_block=True)
+    t = body.add_tasklet("t", {"x"}, {"o"}, "o = x")
+    body.add_edge(body.add_read("idx"), None, t, "x", dace.Memlet("idx[r]"))
+    body.add_edge(t, "o", body.add_write("out"), None, dace.Memlet("out[r]"))
+    return sdfg, loop
+
+
+def bounded(sdfg: dace.SDFG, loop: LoopRegion) -> list[tuple[str, str]]:
+    return [
+        (str(f.lo), str(f.hi))
+        for f in array_facts.facts_at(sdfg, loop, ["idx"])
+        if f.kind is array_facts.FactKind.BOUNDED
+    ]
+
+
+def test_every_bounded_store_bounds_the_elements():
+    """The fill stores -1, the map ``N - 1 - i`` over ``i`` in ``[0, N - 1]``: every element lies in ``[-1, N - 1]``."""
+    sdfg, loop = stored_index("N - 1 - i")
+    assert bounded(sdfg, loop) == [("-1", "N - 1")]
+    assert list(array_facts.bounded_facts(sdfg)) == ["idx"], "one walk derives the facts of every container"
+
+
+def test_a_map_step_of_unknown_sign_bounds_nothing():
+    """``i`` over ``0:N:s`` with ``s`` of unknown sign: the extremes of ``i`` are not known."""
+    assert bounded(*stored_index("i", span="0:N:s")) == []
+
+
+@pytest.mark.parametrize(
+    "value, assigned",
+    [
+        # ``s`` is assigned by an edge: the bound would not hold where ``s`` changes
+        ("s + i", True),
+        # No slope: the extremes of ``i`` are not those of the value
+        ("i // 2", False),
+        # Not an integer: the store truncates it
+        ("i + 0.5", False),
+    ],
+)
+def test_a_store_without_invariant_affine_bounds_bounds_nothing(value, assigned):
+    assert bounded(*stored_index(value, assigned)) == []
+
+
+@dace.program
+def gather_reversed(a: dace.float64[2 * N]):
+    idx = np.empty((N,), dtype=np.int64)
+    for i in range(N):
+        idx[i] = N - 1 - i
+    for r in range(N):
+        row = idx[r]
+        a[N + r] = a[row] + 1.0
+
+
+@dace.program
+def gather_after_a_caller_store(a: dace.float64[2 * N], k: dace.int64[1]):
+    idx = np.empty((N,), dtype=np.int64)
+    for i in range(N):
+        idx[i] = N - 1 - i
+    idx[0] = k[0]
+    for r in range(N):
+        row = idx[r]
+        a[N + r] = a[row] + 1.0
+
+
+@dace.program
+def gather_through_caller_index(idx: dace.int64[N], a: dace.float64[2 * N]):
+    for r in range(N):
+        row = idx[r]
+        a[N + r] = a[row] + 1.0
+
+
+def test_a_gather_from_the_lower_half_maps_under_a_derived_range():
+    """``idx`` holds ``N - 1 - i``: the reads stay in ``a[0:N]``, apart from the stores into ``a[N:2N]``."""
+    sdfg = parallelized(gather_reversed)
+    assert "r" not in loop_variables(sdfg)
+    assert any("idx in [0, N - 1]" in n for n in fact_notes(sdfg))
+    a = np.arange(20, dtype=np.float64)
+    ref = a.copy()
+    ref[10:] = a[9::-1] + 1.0
+    sdfg(a=a, N=10)
+    assert np.array_equal(a, ref)
+
+
+def test_a_gather_through_a_caller_store_stays_sequential():
+    """``idx[0]`` is the caller's: it may name an element of ``a[N:2N]`` another iteration stores."""
+    sdfg = parallelized(gather_after_a_caller_store)
+    assert "r" in loop_variables(sdfg)
+
+
+def test_a_declared_range_maps_a_gather_through_a_caller_index():
+    sdfg = gather_through_caller_index.to_sdfg(simplify=True)
+    ParallelizeLoops().apply_pass(sdfg, {})
+    assert "r" in loop_variables(sdfg)
+    sdfg = gather_through_caller_index.to_sdfg(simplify=True)
+    sdfg.add_data_assumption(
+        "idx", dace.symbolic.DataFact(dace.symbolic.DataFactKind.BOUNDED, dace.symbolic.pystr_to_symbolic("0"), N - 1)
+    )
+    ParallelizeLoops().apply_pass(sdfg, {})
+    assert "r" not in loop_variables(sdfg)
+    assert any("idx in [0, N - 1] (declared)" in n for n in fact_notes(sdfg))
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(pytest.main([__file__]))

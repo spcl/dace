@@ -2,6 +2,7 @@
 import numpy as np
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.dataflow import MapUnroll
 
 
@@ -46,5 +47,92 @@ def test_map_unroll():
             assert input_array[i, k, 0] + 1 == output_array[0, k, i]
 
 
+def test_gpu_map_declined_unless_permissive():
+    """A GPU map is declined by default (a device map IS the kernel launch) and offered under permissive."""
+    sdfg = dace.SDFG("gpu_unroll")
+    sdfg.add_array("A", [4], dace.float64, transient=True)
+    state = sdfg.add_state("main")
+    state.add_mapped_tasklet(
+        "fill",
+        dict(i="0:4"),
+        {},
+        "out = 1.0",
+        dict(out=dace.Memlet("A[i]")),
+        schedule=dace.ScheduleType.GPU_Device,
+        external_edges=True,
+    )
+    entry = next(n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.MapEntry))
+
+    assert not MapUnroll.can_be_applied_to(sdfg, map_entry=entry)
+    assert MapUnroll.can_be_applied_to(sdfg, permissive=True, map_entry=entry)
+
+    # Same map on a CPU schedule is offered either way -- the GPU schedule alone is the precondition.
+    entry.map.schedule = dace.ScheduleType.Sequential
+    assert MapUnroll.can_be_applied_to(sdfg, map_entry=entry)
+
+
+def test_an_array_the_map_shares_with_a_computation_beside_it_keeps_feeding_that_computation():
+    """``A`` feeds the unrolled map and a tasklet beside it; the tasklet still reads ``A`` once the map is unrolled."""
+    sdfg = dace.SDFG("unroll_shared_read")
+    sdfg.add_array("A", [3], dace.float64)
+    sdfg.add_array("B", [3], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
+    state = sdfg.add_state()
+    a = state.add_read("A")
+    entry, leave = state.add_map("double", {"i": "0:3"})
+    twice = state.add_tasklet("twice", {"x"}, {"y"}, "y = 2 * x")
+    state.add_memlet_path(a, entry, twice, dst_conn="x", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(twice, leave, state.add_write("B"), src_conn="y", memlet=dace.Memlet("B[i]"))
+    first = state.add_tasklet("first", {"x"}, {"y"}, "y = x")
+    state.add_edge(a, None, first, "x", dace.Memlet("A[0]"))
+    state.add_edge(first, "y", state.add_write("C"), None, dace.Memlet("C[0]"))
+
+    assert sdfg.apply_transformations(MapUnroll) == 1
+
+    sdfg.validate()
+    assert state.in_degree(first) == 1 and not any(isinstance(n, dace.sdfg.nodes.MapEntry) for n in state.nodes())
+    A, B, C = np.array([1.0, 2.0, 3.0]), np.zeros(3), np.zeros(1)
+    sdfg(A=A, B=B, C=C)
+    assert np.array_equal(B, 2 * A) and C[0] == 1.0
+
+
+def test_unrolled_copies_of_a_multistate_body_are_inlined():
+    """Each unrolled copy of a body with two states ends at the top level of the state, where it is inlined."""
+    inner = dace.SDFG("two_state_body")
+    inner.add_array("a", [1], dace.float64)
+    inner.add_array("b", [1], dace.float64)
+    inner.add_scalar("t", dace.float64, transient=True)
+    first = inner.add_state("first")
+    task = first.add_tasklet("double", {"inp"}, {"res"}, "res = 2 * inp")
+    first.add_edge(first.add_read("a"), None, task, "inp", dace.Memlet("a[0]"))
+    first.add_edge(task, "res", first.add_write("t"), None, dace.Memlet("t[0]"))
+    second = inner.add_state_after(first, "second")
+    task = second.add_tasklet("inc", {"inp"}, {"res"}, "res = inp + 1")
+    second.add_edge(second.add_read("t"), None, task, "inp", dace.Memlet("t[0]"))
+    second.add_edge(task, "res", second.add_write("b"), None, dace.Memlet("b[0]"))
+
+    sdfg = dace.SDFG("unroll_multistate_body")
+    sdfg.add_array("A", [3], dace.float64)
+    sdfg.add_array("B", [3], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("m", {"i": "0:3"})
+    body = state.add_nested_sdfg(inner, {"a"}, {"b"})
+    state.add_memlet_path(state.add_read("A"), entry, body, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(body, exit_, state.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i]"))
+    convert_legacy_nested_sdfgs(sdfg)
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(MapUnroll) == 1
+    sdfg.validate()
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
+    a = np.arange(3, dtype=np.float64)
+    b = np.zeros(3)
+    sdfg(A=a, B=b)
+    assert np.array_equal(b, 2 * a + 1)
+
+
 if __name__ == "__main__":
     test_map_unroll()
+    test_gpu_map_declined_unless_permissive()
+    test_an_array_the_map_shares_with_a_computation_beside_it_keeps_feeding_that_computation()
+    test_unrolled_copies_of_a_multistate_body_are_inlined()

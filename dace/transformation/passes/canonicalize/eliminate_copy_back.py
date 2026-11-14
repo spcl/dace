@@ -1,0 +1,234 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""A map that reads ``A[S]`` and writes a transient that is only copied back to ``A[S]`` writes ``A[S]`` itself.
+
+The frontend spells an update ``A[S] = A[S] + e`` as ``A[S] -> map -> t -> A[S]``: the operator's result, then the
+assignment's copy. Each iteration writes the element it read, so writing ``A`` in place is exact; the transient and
+the copy are gone, and the map is the read-modify-write ``AugAssignToWCR`` turns into a WCR write. A read of ``A``
+outside ``S`` sees no write either way (``A[0, :] = A[0, :] / A[1, :]``), and a transient used only in part (the
+``kidia:kfdia`` of a ``klon`` array) folds the same way: the map's writes all lie in what the copy takes.
+"""
+
+import copy
+from collections import Counter
+from dataclasses import dataclass
+
+from dace import SDFG, SDFGState, data, dtypes, subsets, symbolic
+from dace.memlet import Memlet
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
+from dace.transformation.passes.canonicalize.fold_scalar_read_copies import reachable
+
+
+@dataclass
+class CopyBack:
+    """``map_exit -> transient -> target``: the map's writes of ``transient`` placed in ``target[subset]``."""
+
+    map_exit: nodes.MapExit
+    transient: nodes.AccessNode
+    copy: MultiConnectorEdge[Memlet]
+    #: The dimensions of ``subset`` the transient spans, in order; the others are single indices.
+    kept: list[int]
+    #: Where the copied part of the transient begins, per dimension.
+    origin: list[symbolic.SymbolicType]
+
+
+def same_index(a: subsets.Range, b: subsets.Range) -> bool:
+    """Whether ``a`` and ``b`` are the same single element."""
+    if a.dims() != b.dims():
+        return False
+    return all(
+        symbolic.simplify(symbolic.pystr_to_symbolic(x) - symbolic.pystr_to_symbolic(y)) == 0
+        for (ab, ae, _), (bb, be, _) in zip(a.ranges, b.ranges)
+        for x, y in ((ab, bb), (ae, be), (ab, ae))
+    )
+
+
+def placed(write: subsets.Range, subset: subsets.Range, found: CopyBack) -> subsets.Range:
+    """The element of the target a write of the transient at ``write`` lands on."""
+    begins = [begin for begin, _, _ in subset.ranges]
+    for dim, origin, (begin, _, _) in zip(found.kept, found.origin, write.ranges):
+        begins[dim] = begins[dim] + begin - origin
+    return subsets.Range([(begin, begin, 1) for begin in begins])
+
+
+def lifted(write: subsets.Range, subset: subsets.Range, found: CopyBack) -> subsets.Range:
+    """``write`` of the transient, restated in the target's index space. Unlike :func:`placed` it keeps a range's
+    length, so a connector that described the whole transient can describe the target."""
+    ranges = list(subset.ranges)
+    for dim, origin, (begin, end, step) in zip(found.kept, found.origin, write.ranges):
+        base = ranges[dim][0]
+        ranges[dim] = (base + begin - origin, base + end - origin, step)
+    return subsets.Range(ranges)
+
+
+def restate_connector(
+    node: nodes.NestedSDFG,
+    connector: str,
+    target: data.Data,
+    found: CopyBack,
+    subset: subsets.Range,
+    parent: SDFG,
+) -> None:
+    """The connector described the transient this fold replaced. It now has to describe ``target``, and the memlets
+    inside move with :func:`lifted`. Symbols the target's shape uses are declared on the nested SDFG and mapped to
+    the parent's symbol of the same name (``back``'s ``T`` on viterbi)."""
+    described = copy.deepcopy(target)
+    described.transient = False
+    declare(node, parent, (str(sym) for sym in described.free_symbols))
+    node.sdfg.arrays[connector] = described
+    for graph in node.sdfg.all_sdfgs_recursive():
+        for state in graph.states():
+            for edge in state.edges():
+                if edge.data.data == connector and isinstance(edge.data.subset, subsets.Range):
+                    edge.data.subset = lifted(edge.data.subset, subset, found)
+                    declare(node, parent, edge.data.subset.free_symbols)
+
+
+def declare(node: nodes.NestedSDFG, parent: SDFG, names) -> None:
+    """Give the nested SDFG every symbol the restated connector uses, mapped to the parent's symbol of that name."""
+    for name in names:
+        if name in node.sdfg.arrays:
+            continue
+        if name not in node.sdfg.symbols:
+            node.sdfg.add_symbol(name, parent.symbols.get(name, dtypes.int64))
+        if name not in node.symbol_mapping:
+            node.symbol_mapping[name] = symbolic.pystr_to_symbolic(name)
+
+
+def write_and_copy(
+    state: SDFGState, transient: nodes.AccessNode
+) -> tuple[MultiConnectorEdge, MultiConnectorEdge] | None:
+    """The one write into ``transient`` and the one copy out of it; ordering edges (empty memlets) carry no data."""
+    writes = [e for e in state.in_edges(transient) if not e.data.is_empty()]
+    copies = [e for e in state.out_edges(transient) if not e.data.is_empty()]
+    return (writes[0], copies[0]) if len(writes) == 1 and len(copies) == 1 else None
+
+
+def ordering_moves(state: SDFGState, found: CopyBack) -> bool:
+    """Whether what ran before the transient can run before the map writing the target, and what waited for the
+    transient can wait for the target, without a cycle."""
+    entry = state.entry_node(found.map_exit)
+    return sdutil.ordering_can_move(state, found.transient, entry, found.copy.dst)
+
+
+def copy_back(state: SDFGState, sdfg: SDFG, transient: nodes.AccessNode, uses: Counter[str]) -> CopyBack | None:
+    """The copy-back ``transient`` closes, or ``None``. ``uses``: access nodes per container in ``sdfg``."""
+    desc = sdfg.arrays[transient.data]
+    if not desc.transient or isinstance(desc, data.View):
+        return None
+    edges = write_and_copy(state, transient)
+    if edges is None:
+        return None
+    write, copy = edges
+    map_exit, target = write.src, copy.dst
+    if not isinstance(map_exit, nodes.MapExit) or not isinstance(target, nodes.AccessNode):
+        return None
+    if write.src_conn is None or not write.src_conn.startswith("OUT_"):
+        return None
+    if target.data == transient.data or isinstance(sdfg.arrays[target.data], data.View) or copy.data.wcr is not None:
+        return None
+    if uses[transient.data] != 1:
+        return None
+    whole, subset = copy.data.get_src_subset(copy, state), copy.data.get_dst_subset(copy, state)
+    if not isinstance(whole, subsets.Range) or not isinstance(subset, subsets.Range):
+        return None
+    if any(step != 1 for _, _, step in (*whole.ranges, *subset.ranges)):
+        return None
+    if not whole.covers(write.data.get_dst_subset(write, state), sdfg.facts()):
+        return None
+    kept = [dim for dim, (begin, end, _) in enumerate(subset.ranges) if symbolic.pystr_to_symbolic(end - begin) != 0]
+    if len(kept) != len(desc.shape):
+        return None
+    return CopyBack(map_exit, transient, copy, kept, [begin for begin, _, _ in whole.ranges])
+
+
+def in_place(state: SDFGState, found: CopyBack) -> bool:
+    """Whether every element the map writes is read, if at all, only by the iteration writing it: one write, straight
+    into the map exit, and every read of the target outside what the copy writes, or at that element and ahead of the
+    write: a sibling of the writing tasklet reads the old value only through the transient's detour."""
+    target = found.copy.dst
+    subset = found.copy.data.get_dst_subset(found.copy, state)
+    entry = state.entry_node(found.map_exit)
+    # The transient's one value edge names the map-exit connector; an ordering edge beside it names none.
+    (value,) = [e for e in state.in_edges(found.transient) if not e.data.is_empty()]
+    writes = [e for e in state.in_edges(found.map_exit) if e.dst_conn == "IN_" + value.src_conn[4:]]
+    if len(writes) != 1 or writes[0].data.is_empty() or writes[0].data.wcr is not None:
+        return False
+    write = writes[0].data.get_dst_subset(writes[0], state)
+    if not isinstance(write, subsets.Range) or write.num_elements() != 1:
+        return False
+    element = placed(write, subset, found)
+    facts = state.sdfg.facts()
+    ahead = reachable(state, writes[0].src, forward=False) | {writes[0].src}
+    for edge in state.in_edges(entry):
+        # A view may read any of the target.
+        if not edge.data.is_empty() and isinstance(state.sdfg.arrays[edge.data.data], data.View):
+            return False
+        if edge.data.is_empty() or edge.data.data != target.data:
+            continue
+        for leaf in state.memlet_tree(edge).leaves():
+            read = leaf.data.get_src_subset(leaf, state)
+            if not isinstance(read, subsets.Range):
+                return False
+            if same_index(read, element):
+                if leaf.dst not in ahead:
+                    return False
+            elif subsets.intersects(read, subset, facts) is not symbolic.Truth.FALSE:
+                return False
+    # Anything else in the scope naming the target (a nested write, a second access node) is not this pattern
+    inner = state.scope_subgraph(entry, include_entry=False, include_exit=False)
+    return not any(isinstance(n, nodes.AccessNode) and n.data == target.data for n in inner.nodes())
+
+
+def eliminate(state: SDFGState, sdfg: SDFG, found: CopyBack, uses: Counter[str]) -> None:
+    target, copy = found.copy.dst, found.copy
+    subset = copy.data.get_dst_subset(copy, state)
+    sdutil.move_ordering(state, found.transient, state.entry_node(found.map_exit), target)
+    (outer,) = state.in_edges(found.transient)
+    (inner,) = [e for e in state.in_edges(found.map_exit) if e.dst_conn == "IN_" + outer.src_conn[4:]]
+    write = inner.data.get_dst_subset(inner, state)
+    inner.data = Memlet(data=target.data, subset=placed(write, subset, found))
+    if isinstance(inner.src, nodes.NestedSDFG) and inner.src_conn in inner.src.sdfg.arrays:
+        restate_connector(inner.src, inner.src_conn, sdfg.arrays[target.data], found, subset, sdfg)
+    state.add_edge(found.map_exit, outer.src_conn, target, copy.dst_conn, Memlet(data=target.data, subset=subset))
+    state.remove_node(found.transient)
+    uses[found.transient.data] -= 1
+    if uses[found.transient.data] == 0:
+        sdfg.remove_data(found.transient.data, validate=False)
+
+
+@transformation.explicit_cf_compatible
+class EliminateCopyBack(ppl.Pass):
+    """A map reading ``A[S]`` and writing a transient whose only use copies it back to ``A[S]``, element by element,
+    writes ``A[S]`` in place."""
+
+    CATEGORY: str = "Canonicalization"
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.AccessNodes | ppl.Modifies.Memlets | ppl.Modifies.Descriptors
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return modified & (ppl.Modifies.AccessNodes | ppl.Modifies.Memlets)
+
+    def apply_pass(self, sdfg: SDFG, _) -> int | None:
+        """:returns: The number of copy-backs removed, or ``None`` if none was."""
+        count = 0
+        for sd in sdfg.all_sdfgs_recursive():
+            uses = Counter(node.data for state in sd.states() for node in state.data_nodes())
+            # Control flow reads a container by name: one more use the fold cannot move.
+            for region in sd.all_control_flow_regions():
+                uses.update(region.used_symbols(all_symbols=True, with_contents=False))
+            for edge in sd.all_interstate_edges():
+                uses.update(edge.data.free_symbols)
+            for state in sd.states():
+                for transient in list(state.data_nodes()):
+                    if transient not in state.nodes():
+                        continue
+                    found = copy_back(state, sd, transient, uses)
+                    if found is not None and in_place(state, found) and ordering_moves(state, found):
+                        eliminate(state, sd, found, uses)
+                        count += 1
+        return count or None

@@ -7,7 +7,14 @@ import re
 import sympy as sp
 
 from dace import SDFG, dtypes, nodes
-from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowBlock, ReturnBlock, UnstructuredControlFlow
+from dace.sdfg.state import (
+    BreakBlock,
+    ConditionalBlock,
+    ContinueBlock,
+    ControlFlowBlock,
+    ReturnBlock,
+    UnstructuredControlFlow,
+)
 from dace.symbolic import pystr_to_symbolic, symbol
 
 UUID_SEPARATOR = "/"
@@ -42,6 +49,8 @@ def has_unstructured_control_flow(sdfg: SDFG) -> bool:
     :return: True if any (possibly nested) control-flow region is unstructured.
     """
     for region in sdfg.all_control_flow_regions(recursive=True):
+        if isinstance(region, ConditionalBlock):
+            continue  # Its branches are no graph nodes, and the regions they hold are visited in turn
         if isinstance(region, UnstructuredControlFlow) or region.has_cycles():
             return True
         for block in region.nodes():

@@ -3,16 +3,20 @@
 Contains utility functions and types for replacements in the DaCe Python frontend.
 """
 
+import copy
 import itertools
-from collections.abc import Sequence
+import math
+from collections.abc import Mapping, Sequence
 from numbers import Integral, Number
 from typing import TYPE_CHECKING
 
+import ml_dtypes
 import numpy as np
 import sympy as sp
 
 from dace import SDFG, Memlet, SDFGState, data, dtypes, symbolic
 from dace.frontend.python import astutils
+from dace.sdfg import nodes
 
 ########################################################################
 # Type hint definitions
@@ -49,7 +53,7 @@ def simple_call(
         sdfg.add_constant(inpname, cst, inparr)
         sdfg.add_datadesc(inpname, inparr)
     elif symbolic.issymbolic(inpname):
-        dtype = symbolic.symtype(inpname)
+        dtype = symbolic.symtype(inpname, pv.symbol_types())
         inparr = data.Scalar(dtype)
         create_input = False
     else:
@@ -87,6 +91,50 @@ def simple_call(
     return outname
 
 
+def step_state(pv: "ProgramVisitor", state: SDFGState) -> SDFGState:
+    """The state that the next step of a lowering built from several maps has to be emitted into.
+
+    Two maps dropped into one state carry no ordering between them, so a step reading what the
+    previous step wrote gets a second, unconnected access node for that transient. Nothing then
+    stops map fusion from joining the two maps and leaving the read pointed at a transient the
+    fused map has not written yet. A state boundary is the dependency; simplification fuses the
+    states back together once it has linked the access nodes.
+    """
+    if pv is None:
+        return state
+    return pv._add_state(f"{state.label}_step")
+
+
+def operand_read(
+    pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, name: str, node: nodes.LibraryNode, connector: str
+) -> tuple[nodes.AccessNode, Memlet]:
+    """A read of all of ``name`` for ``connector`` of ``node``. A View of a slice is read as that slice of the array
+    it views: the node finds the leading dimension, offset and step in the memlet, and a View left in front of it
+    blocks fusion and widens the memlets around it to the whole array.
+
+    A View is kept where ``node.operand_dims`` refuses the slice: a reshape, or a unit dimension the node would not
+    squeeze away. A name bound to a container (``b = a[i]``) is a View of all of it, read as that container.
+    """
+    views = pv.views if pv is not None else {}
+    source = name
+    while source in views and views[source][0] in sdfg.arrays:
+        viewed, memlet = views[source]
+        if memlet != Memlet.from_array(viewed, sdfg.arrays[viewed]):
+            break
+        source = viewed
+    desc = sdfg.arrays[source]
+    array, memlet = views.get(source, (None, None))
+    parent = sdfg.arrays.get(array)
+    if (
+        isinstance(parent, data.Array)
+        and not isinstance(parent, data.View)
+        and memlet.wcr is None
+        and node.operand_dims(connector, memlet.subset, parent, desc) is not None
+    ):
+        return state.add_read(array), Memlet(data=array, subset=copy.deepcopy(memlet.subset))
+    return state.add_read(source), Memlet.from_array(source, desc)
+
+
 ########################################################################
 # Shape utilities
 ########################################################################
@@ -103,10 +151,10 @@ def normalize_axes(axes: tuple[int], max_dim: int) -> list[int]:
     return [ax if ax >= 0 else max_dim + ax for ax in axes]
 
 
-def broadcast_to(target_shape, operand_shape):
+def broadcast_to(target_shape, operand_shape, facts: symbolic.Facts | None = None):
     # the difference to normal broadcasting is that the broadcasted shape is the same as the target
     # I was unable to find documentation for this in numpy, so we follow the description from ONNX
-    results = broadcast_together(target_shape, operand_shape, unidirectional=True)
+    results = broadcast_together(target_shape, operand_shape, unidirectional=True, facts=facts)
 
     # the output_shape should be equal to the target_shape
     assert all(i == o for i, o in zip(target_shape, results[0]))
@@ -114,7 +162,9 @@ def broadcast_to(target_shape, operand_shape):
     return results
 
 
-def broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
+def broadcast_together(arr1_shape, arr2_shape, unidirectional=False, facts: symbolic.Facts | None = None):
+    """numpy broadcasting of two shapes. ``facts`` are those of the SDFG the shapes belong to: two extents are the
+    same dimension when they are equal under them (:func:`~dace.symbolic.inequal_symbols`)."""
 
     all_idx_dict, all_idx, a1_idx, a2_idx = {}, [], [], []
 
@@ -126,7 +176,7 @@ def broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
     for i, (dim1, dim2) in enumerate(itertools.zip_longest(reversed(arr1_shape), reversed(arr2_shape))):
         all_idx.append(get_idx(i))
 
-        if not symbolic.inequal_symbols(dim1, dim2):
+        if not symbolic.inequal_symbols(dim1, dim2, facts):
             a1_idx.append(get_idx(i))
             a2_idx.append(get_idx(i))
 
@@ -208,7 +258,10 @@ def representative_num(dtype: dtypes.typeclass | Number) -> Number:
         # return nptype(np.iinfo(nptype).max)
         return nptype(1)
     else:
-        return nptype(np.finfo(nptype_class).resolution)
+        # ml_dtypes' finfo, not numpy's: bfloat16 and the two fp8 types are registered
+        # outside numpy's float hierarchy, so np.finfo raises "not inexact" on them. It
+        # answers for every numpy float and complex type identically.
+        return nptype(ml_dtypes.finfo(nptype_class).resolution)
 
 
 def np_result_type(nptypes):
@@ -222,11 +275,48 @@ def np_result_type(nptypes):
     return dtypes.dtype_to_typeclass(restype.type)
 
 
-def sym_type(expr: symbolic.symbol | sp.Basic) -> dtypes.typeclass:
+#: The namespace :func:`sym_type` evaluates a representative value in. ``astutils.unparse`` renders
+#: sympy's singletons through the math module -- ``zoo`` comes out as ``math.nan`` -- and the eval
+#: below used to be given no globals at all, so those names resolved against whatever this module
+#: happened to import. ``h = 1.0 / (N - 1)`` refused with "name 'math' is not defined" for exactly
+#: that reason, in a frontend that has no business needing the caller to import math.
+SYM_TYPE_NAMESPACE = {"math": math, "np": np, "numpy": np, "nan": math.nan, "inf": math.inf}
+
+
+def representative_value(expr: sp.Basic, symbols: Mapping[str, dtypes.typeclass]):
+    """``expr`` evaluated at one representative point, for the sole purpose of reading its TYPE.
+
+    TWO points are tried, because the first is degenerate for an ordinary expression: the integer
+    representative is 1, so every ``N - 1`` denominator is zero and sympy folds the whole expression
+    to ``zoo``. A grid spacing ``1.0 / (N - 1)`` is not an error, and the type it infers should come
+    from the arithmetic rather than from a division by zero, so the second point moves the integers
+    off 1. The first point is kept where it evaluates, since it is the one the rest of the frontend
+    has always agreed with. The degeneracy shows up two ways and both are handled: a float division
+    folds to ``zoo``, while an integer one (``N // (N - 1)``) raises out of sympy's substitution
+    before there is any value to inspect.
+    """
+    points = (0, 1)
+    for offset in points:
+        substitutions = [(s, representative_num(symbols[s.name]) + offset) for s in expr.free_symbols]
+        try:
+            value = eval(astutils.unparse(expr.subs(substitutions)), dict(SYM_TYPE_NAMESPACE))
+        except ZeroDivisionError:
+            if offset == points[-1]:
+                raise
+            continue
+        if not isinstance(value, float) or math.isfinite(value):
+            return value
+    return value
+
+
+def sym_type(expr: symbolic.symbol | sp.Basic, symbols: Mapping[str, dtypes.typeclass]) -> dtypes.typeclass:
+    """The type of a symbolic expression whose symbols have the types ``symbols`` gives by name.
+
+    :raise KeyError: If ``symbols`` does not type a symbol of the expression.
+    """
     if isinstance(expr, symbolic.symbol):
-        return expr.dtype
-    representative_value = expr.subs([(s, representative_num(s.dtype)) for s in expr.free_symbols])
-    pyval = eval(astutils.unparse(representative_value))
+        return symbols[expr.name]
+    pyval = representative_value(expr, symbols)
     # Overflow check
     if isinstance(pyval, int) and (pyval > np.iinfo(np.int64).max or pyval < np.iinfo(np.int64).min):
         nptype = np.int64
