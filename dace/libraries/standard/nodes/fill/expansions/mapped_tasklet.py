@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import dace
 from dace import library
-from dace.libraries.standard.helper import transfer_runs_on_one_core
+from dace.libraries.standard.helper import element_map, transfer_runs_on_one_core
 from dace.libraries.standard.nodes.fill.common import VALUE_CONNECTOR_NAME, make_fill_skeleton, python_literal
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.sdfg.scope import is_devicelevel_gpu
@@ -42,8 +42,9 @@ class ExpandPure(ExpandTransformation):
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
         # Symbolic bounds, never a rendered string: the range parser splits on ':', so any extent
         # whose spelling carries one comes back as bogus tokens.
-        map_rng = {i: (0, s - 1, 1) for i, s in zip(map_params, map_lengths)}
-        outputs = {inner_out: dace.memlet.Memlet(f"{out_name}[{','.join(map_params)}]")}
+        _, _, out_subset = node.validate(parent_sdfg, parent_state)
+        map_rng, index = element_map(map_params, out_subset, map_lengths)
+        outputs = {inner_out: dace.memlet.Memlet(data=out_name, subset=index)}
         # Inside a kernel a device-scheduled map would be a nested kernel, so the storage cannot pick the schedule.
         if is_devicelevel_gpu(parent_state.sdfg, parent_state, node):
             schedule = dace.dtypes.ScheduleType.Sequential
