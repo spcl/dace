@@ -54,6 +54,10 @@ def _sym2cpp(s, arrayexprs, dialect, fp_ctype, context):
         # Already C++ (a ``dace::math::ipow`` beside the cast, say), so ``pyexpr2cpp`` hands it back
         # untouched and a bare ``int64(x)`` would reach the compiler: spell the cast for it instead.
         return symbolic.symstr(s, arrayexprs, cpp_mode=True, dialect=dialect, fp_ctype=fp_ctype, reparsed=False)
+    if dialect is cpf_lowering.Dialect.STANDALONE_C and isinstance(s, symbolic.sympy.Basic):
+        # C names a maths function by its argument types (``pow`` against ``powf``); a symbol carries its own.
+        types = {str(sym): sym.dtype for sym in s.free_symbols if isinstance(sym, symbolic.symbol)}
+        return cppunparse.py2cpp(text, expr_semicolon=False, defined_symbols=types, c_operators=True)
     return cppunparse.pyexpr2cpp(text, c_operators=True)
 
 

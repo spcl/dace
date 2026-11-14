@@ -347,3 +347,12 @@ def test_python_printing_of_a_math_call_ignores_an_ambient_standalone_dialect(
     with cpf_lowering.dialect_scope(dialect):
         text = symbolic.symstr(expression)
     assert text == expected
+
+
+def test_a_power_of_symbols_prints_in_c_by_the_types_the_symbols_carry():
+    """stockham_fft's GEMM extent ``ceiling(R**(K - 1))``: C picks ``pow`` by its argument types, which the symbols
+    carry themselves; untyped, the C rendering was refused."""
+    R, K = dace.symbol("R"), dace.symbol("K")
+    with cpf_lowering.dialect_scope(Dialect.STANDALONE_C):
+        text = sym2cpp(sympy.ceiling(R ** (K - 1)), dialect=Dialect.STANDALONE_C)
+    assert text == "ceil(pow(R, (K - 1)))"
