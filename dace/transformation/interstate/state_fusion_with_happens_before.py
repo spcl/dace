@@ -1260,7 +1260,8 @@ class StateFusionExtended(StateFusion):
                     absorbed.setdefault(node.data, []).append(node)
                 elif second_state.out_degree(node) > 0:
                     # An unmerged read of a container the second state rewrites stays behind the first-state writers
-                    # that rewrite overlaps: the WAW check counted on the merge to order them
+                    # that rewrite or the read overlaps: the WAW check counted on the merge to order them, and orders
+                    # only the writers the rewrite overlaps
                     rewrites = [
                         n for n in second_state.data_nodes() if n.data == node.data and is_written(second_state, n)
                     ]
@@ -1279,6 +1280,9 @@ class StateFusionExtended(StateFusion):
                             c is counted
                             or StateFusionExtended.memlets_intersect(
                                 first_state, [c], False, second_state, rewrites, False, facts
+                            )
+                            or StateFusionExtended.memlets_intersect(
+                                first_state, [c], False, second_state, [node], True, facts
                             )
                         )
                     ]
