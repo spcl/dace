@@ -1314,6 +1314,45 @@ def test_a_map_bounded_by_a_power_casts_its_bound_in_c():
     assert_matches({"a": np.ones(8)}, {"a": a}, name)
 
 
+def register_accumulator_sdfg(name: str) -> dace.SDFG:
+    """``f[i, :] += x[i, :]`` through a register ``acc[3]`` that one WCR copy resolves into the outer map's exit, as
+    ``accumulate_in_registers`` leaves it."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("x", (N, 3), dace.float64)
+    sdfg.add_array("f", (N, 3), dace.float64)
+    sdfg.add_transient("acc", (3,), dace.float64, storage=dace.StorageType.Register)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("outer", {"i": "0:N"}, schedule=dace.ScheduleType.CPU_Multicore)
+    inner_entry, inner_exit = state.add_map("fill", {"j": "0:3"}, schedule=dace.ScheduleType.Sequential)
+    tasklet = state.add_tasklet("move", {"inp"}, {"out"}, "out = inp")
+    acc, f = state.add_access("acc"), state.add_write("f")
+    state.add_memlet_path(
+        state.add_read("x"), entry, inner_entry, tasklet, dst_conn="inp", memlet=dace.Memlet("x[i, j]")
+    )
+    state.add_memlet_path(tasklet, inner_exit, acc, src_conn="out", memlet=dace.Memlet("acc[j]"))
+    exit_node.add_in_connector("IN_f")
+    exit_node.add_out_connector("OUT_f")
+    add = "lambda a, b: a + b"
+    state.add_edge(acc, None, exit_node, "IN_f", dace.Memlet(data="f", subset="i, 0:3", other_subset="0:3", wcr=add))
+    state.add_edge(exit_node, "OUT_f", f, None, dace.Memlet(data="f", subset="0:N, 0:3", wcr=add))
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("language", ["c", "c++"])
+def test_an_accumulating_copy_into_a_scope_exit_becomes_tasklets(language: str):
+    """examinimd: a register accumulator resolved into the outer map's exit by a WCR copy was emitted as
+    ``dace::CopyND::Accumulate``, which no standalone unit can name."""
+    name = "cpf_register_accumulator_%s" % language.replace("+", "x")
+    rendering = render_sdfg(register_accumulator_sdfg(name), language=language)
+    assert_standalone(rendering.code, name, language=language)
+    rng = np.random.default_rng(2)
+    x, f = rng.random((5, 3)), rng.random((5, 3))
+    expected = f + x
+    call_standalone(build_standalone(rendering.code, name, language=language), rendering.sdfg, {"x": x, "f": f, "N": 5})
+    assert_matches({"f": expected}, {"f": f}, name)
+
+
 if __name__ == "__main__":
     test_entry_point_has_no_language_linkage()
     test_two_dimensional_index_helper_carries_the_stride()
@@ -1390,3 +1429,5 @@ if __name__ == "__main__":
     test_a_scatter_sized_by_its_iteration_space_takes_atomics_not_an_array_reduction()
     test_a_stack_array_the_frame_allocates_is_cast_in_c()
     test_a_map_bounded_by_a_power_casts_its_bound_in_c()
+    test_an_accumulating_copy_into_a_scope_exit_becomes_tasklets("c")
+    test_an_accumulating_copy_into_a_scope_exit_becomes_tasklets("c++")

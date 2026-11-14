@@ -801,12 +801,14 @@ def widen_narrow_scalar_arguments(sdfg: SDFG) -> list[str]:
 
 
 def explicit_accumulating_copies(sdfg: SDFG) -> None:
-    """Turn every accumulating access-node-to-access-node copy into a tasklet or a map, in place.
+    """Turn every accumulating copy out of an access node into a tasklet or a map, in place.
 
     ``InsertExplicitCopies`` leaves an accumulating copy implicit, since it is a reduction rather than a copy,
     and the generator then emits ``dace::CopyND::Accumulate``, which a standalone unit cannot name (icon_scatter,
     seissol_tensor_contraction, spmm). One element becomes one accumulating tasklet; more become a map over the
     copied elements, each iteration accumulating into its own element, which the generator lowers like any WCR.
+    The copy may also leave its access node into a scope exit, as a register accumulator resolved into its output
+    once per outer iteration does (examinimd); the memlet path then ends at the access node accumulated into.
     An omitted side of the memlet is the whole array on that side, as in copy-edge codegen.
 
     :param sdfg: the SDFG to rewrite, nested SDFGs included.
@@ -818,23 +820,54 @@ def explicit_accumulating_copies(sdfg: SDFG) -> None:
                 if (
                     wcr is None
                     or not isinstance(edge.src, nodes.AccessNode)
-                    or not isinstance(edge.dst, nodes.AccessNode)
+                    or not isinstance(edge.dst, (nodes.AccessNode, nodes.ExitNode))
                 ):
                     continue
+                destination = state.memlet_path(edge)[-1].dst
+                if not isinstance(destination, nodes.AccessNode):
+                    continue
                 source = edge.data.get_src_subset(edge, state) or subsets.Range.from_array(edge.src.desc(nested))
-                target = edge.data.get_dst_subset(edge, state) or subsets.Range.from_array(edge.dst.desc(nested))
+                target = edge.data.get_dst_subset(edge, state) or subsets.Range.from_array(destination.desc(nested))
                 if source.num_elements_exact() == 1 and target.num_elements_exact() == 1:
                     # A Scalar end has no index a map could use.
                     tasklet = state.add_tasklet("accumulate", {"__inp": None}, {"__out": None}, "__out = __inp")
                     state.add_edge(edge.src, edge.src_conn, tasklet, "__inp", Memlet(data=edge.src.data, subset=source))
                     state.add_edge(
-                        tasklet, "__out", edge.dst, edge.dst_conn, Memlet(data=edge.dst.data, subset=target, wcr=wcr)
+                        tasklet, "__out", edge.dst, edge.dst_conn, Memlet(data=destination.data, subset=target, wcr=wcr)
                     )
                     state.remove_edge(edge)
+                elif isinstance(edge.dst, nodes.ExitNode):
+                    accumulate_into_scope_exit(state, edge, source, target, destination.data)
                 elif memlet_utils.can_memlet_be_turned_into_a_map(edge, state, nested):
                     map_exit = memlet_utils.memlet_to_map(edge, state, nested)[1]
                     for written in state.in_edges(map_exit) + state.out_edges(map_exit):
                         written.data.wcr = wcr
+
+
+def accumulate_into_scope_exit(
+    state: SDFGState, edge, source: subsets.Range, target: subsets.Range, destination: str
+) -> None:
+    """Replace the accumulating copy ``edge`` from an access node into a scope exit by a sequential map whose
+    tasklets each accumulate one element of ``source`` into its element of ``destination``'s ``target``; left as it
+    is when the two subsets do not agree on their non-unit extents."""
+    sizes = [size for size in source.size() if size != 1]
+    if not memlet_utils.same_size(sizes, [size for size in target.size() if size != 1]):
+        return
+    ranges = {f"__j{d}": subsets.Range([(0, size - 1, 1)]) for d, size in enumerate(sizes)}
+    entry, exit_node = state.add_map("accumulate", ranges, schedule=dtypes.ScheduleType.Sequential)
+    tasklet = state.add_tasklet("accumulate", {"__inp": None}, {"__out": None}, "__out = __inp")
+    read = subsets.Range.from_indices(memlet_utils.squeezed_coordinates(source, source.size()))
+    state.add_memlet_path(edge.src, entry, tasklet, dst_conn="__inp", memlet=Memlet(data=edge.src.data, subset=read))
+    written = subsets.Range.from_indices(memlet_utils.squeezed_coordinates(target, target.size()))
+    state.add_memlet_path(
+        tasklet,
+        exit_node,
+        edge.dst,
+        src_conn="__out",
+        dst_conn=edge.dst_conn,
+        memlet=Memlet(data=destination, subset=written, wcr=edge.data.wcr),
+    )
+    state.remove_edge(edge)
 
 
 def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) -> tuple[str, ...]:
