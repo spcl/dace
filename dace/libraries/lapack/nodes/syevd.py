@@ -8,8 +8,9 @@ the eigenvalues in ascending order and ``_res`` the info code. The CPU expansion
 row-major (``LAPACK_ROW_MAJOR``) and the GPU solvers column-major, as for the other LAPACK nodes.
 
 A nonzero info code -- an illegal argument, or a tridiagonal eigensolve that did not converge -- is
-raised as ``std::runtime_error`` by the expansion itself, so no caller can read eigenvectors that
-were never computed. On the device that check costs one stream synchronization.
+raised as ``std::runtime_error`` by the expansion itself (``abort()`` in a CPF C unit, which has no
+exceptions), so no caller can read eigenvectors that were never computed. On the device that check
+costs one stream synchronization.
 """
 
 import copy
@@ -18,7 +19,7 @@ from typing import Any
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace import SDFG, SDFGState, dtypes, symbolic
+from dace import SDFG, SDFGState, cpf_lowering, dtypes, symbolic
 from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
@@ -40,7 +41,9 @@ def lapack_driver(dtype: dtypes.typeclass) -> str:
 
 
 def info_error(func: str, info: str) -> str:
-    """C++ statement raising a nonzero info code ``info`` of solver call ``func``."""
+    """Statement raising a nonzero info code ``info`` of solver call ``func``: a C++ exception, or ``abort()`` in C."""
+    if cpf_lowering.standalone_c():
+        return f"if ({info} != 0) {{ /* {func} failed */ abort(); }}\n"
     return (
         f'if ({info} != 0) throw std::runtime_error(std::string("{func} failed with info ") + '
         f"std::to_string({info}));\n"

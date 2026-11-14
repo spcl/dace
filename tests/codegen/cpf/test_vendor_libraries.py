@@ -45,6 +45,11 @@ def vendor_solve(a: dace.float64[N, N], b: dace.float64[N], x: dace.float64[N]):
 
 
 @dace.program
+def vendor_eigvalsh(a: dace.float64[N, N], w: dace.float64[N]):
+    w[:] = np.linalg.eigvalsh(a)
+
+
+@dace.program
 def integer_gemv(a: dace.int64[N, N], x: dace.int64[N], y: dace.int64[N]):
     y[:] = a @ x
 
@@ -92,6 +97,13 @@ CASES = {
         "lapack",
         lambda rng: {"a": spd(rng), "b": rng.standard_normal(SIZE)},
         lambda inputs: {"x": np.linalg.solve(inputs["a"], inputs["b"])},
+    ),
+    "eigvalsh": (
+        vendor_eigvalsh,
+        "LAPACKE_dsyevd",
+        "lapack",
+        lambda rng: {"a": spd(rng)},
+        lambda inputs: {"w": np.linalg.eigvalsh(inputs["a"])},
     ),
     "fft": (
         vendor_fft,
