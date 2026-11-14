@@ -215,6 +215,36 @@ class ConditionalCodeResolver(ast.NodeTransformer):
             self.globals_and_locals[node.id] = SyntaxError
         return self.generic_visit(node)
 
+    def visit_Compare(self, node: ast.Compare) -> Any:
+        """``x in (a, b)`` with a symbolic side as ``x == a or x == b`` (``not in`` as ``!=`` and ``and``): Python
+        compares a symbol structurally there, so the test folded to a constant and pruned a branch taken at run
+        time (warpx_esirkepov_deposition's ``geom in (1, 2)``)."""
+        node = self.generic_visit(node)
+        elements = node.comparators[0]
+        if (
+            len(node.ops) != 1
+            or not isinstance(node.ops[0], (ast.In, ast.NotIn))
+            or not isinstance(elements, (ast.Tuple, ast.List, ast.Set))
+            or not elements.elts
+            or any(isinstance(element, ast.Starred) for element in elements.elts)
+        ):
+            return node
+        try:
+            values = [astutils.evalnode(operand, self.globals_and_locals) for operand in [node.left, *elements.elts]]
+        except SyntaxError:
+            return node
+        if not any(isinstance(value, sympy.Basic) for value in values):
+            return node
+        negated = isinstance(node.ops[0], ast.NotIn)
+        tests = [
+            ast.Compare(
+                left=astutils.copy_tree(node.left), ops=[ast.NotEq() if negated else ast.Eq()], comparators=[element]
+            )
+            for element in elements.elts
+        ]
+        result = tests[0] if len(tests) == 1 else ast.BoolOp(op=ast.And() if negated else ast.Or(), values=tests)
+        return ast.fix_missing_locations(ast.copy_location(result, node))
+
     def visit_If(self, node: ast.If) -> Any:
         node = self.generic_visit(node)
         try:

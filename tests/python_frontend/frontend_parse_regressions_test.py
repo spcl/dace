@@ -57,6 +57,27 @@ def test_symbolic_equality_in_boolop():
 
 
 @dace.program
+def symbolic_membership(x: dace.float64[10]):
+    if N == 3:
+        x[:] = 1.0
+    elif N in (1, 2):
+        x[:] = 2.0
+    elif N not in (0, 4):
+        x[:] = 3.0
+    else:
+        x[:] = 4.0
+
+
+def test_symbolic_membership_keeps_its_branch():
+    """``N in (1, 2)`` on a symbol folded to ``False`` while preprocessing, so the branch was dropped from the
+    SDFG and the run took the next one (warpx_esirkepov_deposition's XZ geometry)."""
+    for n, expected in ((3, 1.0), (1, 2.0), (2, 2.0), (5, 3.0), (0, 4.0), (4, 4.0)):
+        x = np.zeros(10, dtype=np.float64)
+        symbolic_membership(x, N=n)
+        assert np.allclose(x, expected), (n, x[0])
+
+
+@dace.program
 def computed_index_gather(p: dace.float64[10], cols: dace.int64[5], out: dace.float64[5]):
     for i in range(5):
         out[i] = p[int(cols[i])]
@@ -105,6 +126,7 @@ def test_symbolic_index_list():
 
 if __name__ == "__main__":
     test_symbolic_equality_in_boolop()
+    test_symbolic_membership_keeps_its_branch()
     test_computed_index()
     test_literal_index_list()
     test_symbolic_index_list()
