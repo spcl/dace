@@ -747,7 +747,8 @@ def anti_dependences(
     """The ``(reader, writer)`` pairs of a fusion: a node of the first Map's body reads or writes a container that a
     node of the second Map's body writes. Apart, the Map boundary runs it first; fused, only a path in the body does.
 
-    A nested scope stands for its whole body: a reader by its exit, a writer by its entry.
+    A nested scope stands for its whole body: a reader by its exit, a writer by its entry. An access node at the
+    boundary only passes the access on: the nodes reading out of it read, the nodes writing into it write.
 
     :param state: The state of both Maps.
     :param first_entry: The entry of the first Map.
@@ -757,8 +758,14 @@ def anti_dependences(
     for edge in state.out_edges(first_entry):
         if edge.data.is_empty() or edge.data.data is None:
             continue
-        reader = state.exit_node(edge.dst) if isinstance(edge.dst, nodes.EntryNode) else edge.dst
-        readers.setdefault(edge.data.data, []).append(reader)
+        found = (
+            [e.dst for e in state.out_edges(edge.dst) if not e.data.is_empty()]
+            if isinstance(edge.dst, nodes.AccessNode)
+            else []
+        )
+        for reader in found or [edge.dst]:
+            reader = state.exit_node(reader) if isinstance(reader, nodes.EntryNode) else reader
+            readers.setdefault(edge.data.data, []).append(reader)
     for edge in state.in_edges(state.exit_node(first_entry)):
         if not edge.data.is_empty() and edge.data.data is not None:
             readers.setdefault(edge.data.data, []).append(edge.src)
@@ -766,8 +773,14 @@ def anti_dependences(
     for edge in state.in_edges(second_exit):
         if edge.data.is_empty() or edge.data.data not in readers:
             continue
-        writer = state.entry_node(edge.src) if isinstance(edge.src, nodes.ExitNode) else edge.src
-        pairs.extend((reader, writer) for reader in readers[edge.data.data] if reader is not writer)
+        found = (
+            [e.src for e in state.in_edges(edge.src) if not e.data.is_empty()]
+            if isinstance(edge.src, nodes.AccessNode)
+            else []
+        )
+        for writer in found or [edge.src]:
+            writer = state.entry_node(writer) if isinstance(writer, nodes.ExitNode) else writer
+            pairs.extend((reader, writer) for reader in readers[edge.data.data] if reader is not writer)
     return pairs
 
 

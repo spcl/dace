@@ -530,6 +530,58 @@ def test_vertical_fusion_must_not_move_a_side_read_past_the_in_place_write():
     assert update in state.bfs_nodes(side_read)
 
 
+def test_vertical_fusion_orders_a_side_read_before_the_tasklet_behind_the_written_node():
+    """As above, but the second Map writes ``X`` through an access node of its body: the update happens in the
+    tasklet writing into that node, so the side read must precede the tasklet, not only the node (cloudsc's
+    ``zqxfg``)."""
+    sdfg = dace.SDFG(unique_name("side_read_before_node_update"))
+    sdfg.add_array("A", [2, N], dace.float64)
+    sdfg.add_array("B", [2, N], dace.float64)
+    # Transient: a Map body may hold an access node of transient data only
+    sdfg.add_array("X", [2, N], dace.float64, transient=True)
+    sdfg.add_array("s", [N], dace.float64)
+    sdfg.add_array("d", [N], dace.float64, transient=True)
+    init = sdfg.add_state("init", is_start_block=True)
+    init.add_nedge(init.add_access("A"), init.add_access("X"), dace.Memlet(f"A[0:2, 0:{N}]"))
+    state = sdfg.add_state_after(init, "s")
+    final = sdfg.add_state_after(state, "final")
+    final.add_nedge(final.add_access("X"), final.add_access("B"), dace.Memlet(f"X[0:2, 0:{N}]"))
+    x_read, x_updated, d, side = (state.add_access(name) for name in ("X", "X", "d", "s"))
+    entry, exit_ = state.add_map("first", dict(i=f"0:{N}"))
+    for name, node, code in (("d", d, "o = a - 1.0"), ("s", side, "o = a")):
+        tasklet = state.add_tasklet(f"first_{name}", ["a"], ["o"], code)
+        state.add_memlet_path(x_read, entry, tasklet, dst_conn="a", memlet=dace.Memlet("X[0, i]"))
+        state.add_memlet_path(tasklet, exit_, node, src_conn="o", memlet=dace.Memlet(f"{name}[i]"))
+    second, second_exit = state.add_map("update", dict(i=f"0:{N}"))
+    update = state.add_tasklet("update_t", ["a0"], ["o"], "o = 2.0 * a0")
+    state.add_memlet_path(d, second, update, dst_conn="a0", memlet=dace.Memlet("d[i]"))
+    written = state.add_access("X")
+    state.add_edge(update, "o", written, None, dace.Memlet("X[0, i]"))
+    state.add_memlet_path(
+        written, second_exit, x_updated, memlet=dace.Memlet(data="X", subset="0, i", other_subset="0, i")
+    )
+    sdfg.validate()
+    a = np.random.rand(2, N)
+    expected_b, expected_s = a.copy(), a[0].copy()
+    expected_b[0] = 2.0 * (a[0] - 1.0)
+
+    match = {
+        dftrans.MapFusionVertical.first_map_exit: state.node_id(exit_),
+        dftrans.MapFusionVertical.array: state.node_id(d),
+        dftrans.MapFusionVertical.second_map_entry: state.node_id(second),
+    }
+    xform = dftrans.MapFusionVertical()
+    xform.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(state), match, 0)
+    assert xform.can_be_applied(state, 0, sdfg)
+    side_read = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet) and n.label == "first_s")
+    xform.apply(state, sdfg)
+
+    assert update in state.bfs_nodes(side_read)
+    b, s = np.zeros((2, N)), np.zeros(N)
+    sdfg(A=a, B=b, s=s)
+    assert np.allclose(b, expected_b) and np.allclose(s, expected_s)
+
+
 def _fused_shift(fuse: bool) -> np.ndarray:
     """``T[i] = V[i]; X[i + 1] = T[i]`` with ``V`` a View of ``X``: the first Map reads what the second writes."""
     sdfg = dace.SDFG(unique_name("view_hidden_read_write"))
@@ -615,5 +667,6 @@ if __name__ == "__main__":
     test_horizontal_fusion_must_not_move_a_read_past_a_write()
     test_horizontal_fusion_must_not_merge_a_read_with_an_unordered_in_place_update()
     test_vertical_fusion_must_not_move_a_side_read_past_the_in_place_write()
+    test_vertical_fusion_orders_a_side_read_before_the_tasklet_behind_the_written_node()
     test_vertical_fusion_sees_a_read_through_a_view_of_what_the_second_map_writes()
     test_writes_through_a_view_do_not_count_as_written_disjointly()
