@@ -127,22 +127,23 @@ def privatize_reduction_accumulator(
         break
 
     # Another writer of ``arr`` in this state (a sibling map reducing into the same slot) would get its own seed and
-    # writeback, and only the last writeback would survive.
+    # writeback, and only the last writeback would survive. A writer after the map runs after the writeback.
     if state.in_degree(arr_node) != 1 or any(
         n.data == arr_node.data
         and n is not arr_node
         and n is not in_state_init_an
+        and n not in after_map
         and any(not e.data.is_empty() for e in state.in_edges(n))
         for n in state.data_nodes()
     ):
         return False
 
-    # The cross-state writeback would run after any access to ``arr`` that follows the map in this state.
-    if in_state_init_an is None and any(
+    # An access to ``arr`` that follows the map in this state (lu's division of the reduced ``A[i, j]``) reads the
+    # reduced value: the writeback stays in this state, ahead of it
+    writeback_here = in_state_init_an is None and any(
         isinstance(n, nodes.AccessNode) and n.data == arr_node.data and (n is not arr_node or state.out_degree(n))
         for n in after_map
-    ):
-        return False
+    )
 
     # Allocate a transient scalar to hold the accumulator.
     scalar_name, _ = sdfg.add_scalar(f"_priv_{arr_node.data}", dtype=desc.dtype, transient=True, find_new_name=True)
@@ -202,6 +203,15 @@ def privatize_reduction_accumulator(
         map_exit, oedge.src_conn, new_scalar_an, None, mm.Memlet(data=scalar_name, subset=subsets.Range([(0, 0, 1)]))
     )
     state.remove_edge(oedge)
+    if writeback_here:
+        state.add_edge(
+            new_scalar_an,
+            None,
+            arr_node,
+            None,
+            mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))),
+        )
+        return True
     if state.degree(arr_node) == 0:
         state.remove_node(arr_node)
 

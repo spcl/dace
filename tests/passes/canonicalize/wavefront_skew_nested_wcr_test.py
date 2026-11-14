@@ -77,21 +77,23 @@ def dataflow_nodes(sdfg: dace.SDFG) -> list:
     return [n for sd in sdfg.all_sdfgs_recursive() for state in sd.states() for n in state.nodes()]
 
 
-def is_skewed_into_nested_body(sdfg: dace.SDFG) -> bool:
-    skewed = any(
+def is_skewed(sdfg: dace.SDFG) -> bool:
+    return any(
         isinstance(r, LoopRegion) and r.loop_variable.startswith("_skew_t_") for r in sdfg.all_control_flow_regions()
     )
-    return skewed and any(isinstance(n, nodes.NestedSDFG) for n in dataflow_nodes(sdfg))
 
 
 @pytest.mark.parametrize("target", ["cpu", "gpu"])
 def test_skewed_lu_body_emits_no_nested_sdfg_wcr(target: str):
+    """The skewed body is a NestedSDFG that folds its reductions into scalars, or one state (GPU, where the division
+    fuses into the ``k``-map state) whose ``k`` maps reduce inside the diagonal map."""
     sdfg = lu_small.to_sdfg(simplify=True)
     canonicalize(sdfg, target=target, validate=True)
-    assert is_skewed_into_nested_body(sdfg)
+    assert is_skewed(sdfg)
     assert illegal_wcr_sources(sdfg) == []
-    accumulators = [n.data for n in dataflow_nodes(sdfg) if isinstance(n, nodes.AccessNode)]
-    assert any(name.startswith("_priv_A") for name in accumulators)
+    if any(isinstance(n, nodes.NestedSDFG) for n in dataflow_nodes(sdfg)):
+        accumulators = [n.data for n in dataflow_nodes(sdfg) if isinstance(n, nodes.AccessNode)]
+        assert any(name.startswith("_priv_A") for name in accumulators)
 
 
 def test_skewed_lu_matches_numpy_on_cpu():

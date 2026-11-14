@@ -328,7 +328,9 @@ def test_ordering_memlet_is_not_an_in_state_init():
     assert np.allclose(dot[0], 7.0 + a.sum()), f"seed dropped: got {dot[0]}, want {7.0 + a.sum()}"
 
 
-def test_reader_after_the_reduction_in_the_same_state_blocks_privatization():
+def test_a_reader_after_the_reduction_in_the_same_state_reads_the_writeback():
+    """``out[0] = 2 * s[0]`` follows the reduction in its state: the scalar is written back to ``s`` in that state,
+    ahead of the reader."""
 
     @dace.program
     def reduce_then_read(a: dace.float64[8], s: dace.float64[1], out: dace.float64[1]):
@@ -337,7 +339,8 @@ def test_reader_after_the_reduction_in_the_same_state_blocks_privatization():
         out[0] = 2.0 * s[0]
 
     sdfg = reduce_then_read.to_sdfg(simplify=True)
-    assert privatize_all(sdfg) is None
+    assert privatize_all(sdfg) == 1
+    sdfg.validate()
     s, out = np.ones(1), np.zeros(1)
     sdfg(a=np.arange(8.0), s=s, out=out)
     assert out[0] == 58.0
@@ -430,7 +433,8 @@ def test_a_map_nest_reducing_into_one_slot_accumulates_into_the_scalar():
 
 
 def test_a_write_after_the_map_is_no_seed():
-    """``s[0] += x[i]`` then ``s[0] = s[0] * 2`` in one state: the later write is not the accumulator's seed."""
+    """``s[0] += x[i]`` then ``s[0] = s[0] * 2`` in one state: the later write is not the accumulator's seed, and the
+    doubling reads the writeback."""
     sdfg = dace.SDFG("privatize_write_after_map")
     sdfg.add_array("x", [N], dace.float64)
     sdfg.add_array("s", [1], dace.float64)
@@ -448,7 +452,7 @@ def test_a_write_after_the_map_is_no_seed():
     tasklet = state.add_tasklet("double", {"a": None}, {"o": None}, "o = a * 2")
     state.add_edge(summed, None, tasklet, "a", dace.Memlet("s[0]"))
     state.add_edge(tasklet, "o", doubled, None, dace.Memlet("s[0]"))
-    assert not privatize_reduction_accumulator(state, map_exit, state.in_edges(map_exit)[0])
+    assert privatize_reduction_accumulator(state, map_exit, state.in_edges(map_exit)[0])
     sdfg.validate()
     s = np.array([1.0])
     sdfg(x=np.arange(4.0), s=s, N=4)
