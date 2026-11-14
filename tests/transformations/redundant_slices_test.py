@@ -6,6 +6,7 @@ import pytest
 
 import dace
 from dace import data, nodes
+from dace import graphlib as nx
 from dace.sdfg import utils as sdutil
 from dace.transformation.dataflow import RedundantReadSlice, RedundantWriteSlice
 
@@ -223,6 +224,90 @@ def test_a_view_a_nested_sdfg_reads_under_renamed_symbols_is_kept():
     propagate_memlets_state(sdfg, state)
 
 
+def test_a_write_slice_behind_an_ordering_edge_keeps_its_producer_ordered():
+    """``A[:, :] = 1`` then ``A[1, :] = 2`` through a write view ``V`` that an empty memlet orders behind the whole
+    write. Removing ``V`` makes the map writing it write ``A`` itself, so that map, not only the access node, has to
+    stay behind the whole write, or the whole write overwrites the row."""
+    sdfg = dace.SDFG("write_slice_behind_ordering")
+    sdfg.add_array("A", [3, 8], dace.float64)
+    sdfg.add_view("V", [8], dace.float64)
+    state = sdfg.add_state()
+    whole = state.add_access("A")
+    state.add_mapped_tasklet(
+        "whole",
+        {"i": "0:3", "k": "0:8"},
+        {},
+        "y = 1.0",
+        {"y": dace.Memlet("A[i, k]")},
+        output_nodes={"A": whole},
+        external_edges=True,
+    )
+    view = state.add_access("V")
+    _, part_entry, _ = state.add_mapped_tasklet(
+        "part",
+        {"k": "0:8"},
+        {},
+        "y = 2.0",
+        {"y": dace.Memlet("V[k]")},
+        output_nodes={"V": view},
+        external_edges=True,
+    )
+    state.add_nedge(whole, view, dace.Memlet())
+    out = state.add_write("A")
+    state.add_edge(view, "views", out, None, dace.Memlet(data="A", subset="1, 0:8", other_subset="0:8"))
+    sdfg.validate()
+
+    RedundantWriteSlice.apply_to(sdfg, in_array=view, out_array=out)
+    sdfg.validate()
+    assert "V" not in sdfg.arrays
+    assert nx.has_path(state.nx, whole, part_entry), "the map writing the row must follow the whole write"
+
+    a = np.zeros((3, 8))
+    sdfg(A=a)
+    expected = np.ones((3, 8))
+    expected[1, :] = 2.0
+    assert np.array_equal(a, expected)
+
+
+def test_a_read_slice_ahead_of_an_ordering_edge_keeps_its_readers_ordered():
+    """``B[:] = A[1, :]`` through a read view ``V``, then ``A[:, :] = 5`` held behind ``V`` by an empty memlet.
+    Removing ``V`` makes the map reading it read ``A`` itself, so the overwrite has to wait for that map, not only
+    for the access node, or the map reads the overwritten row."""
+    sdfg = dace.SDFG("read_slice_ahead_of_ordering")
+    sdfg.add_array("A", [3, 8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    sdfg.add_view("V", [8], dace.float64)
+    state = sdfg.add_state()
+    source = state.add_read("A")
+    view = state.add_access("V")
+    state.add_edge(source, None, view, "views", dace.Memlet(data="A", subset="1, 0:8", other_subset="0:8"))
+    _, _, use_exit = state.add_mapped_tasklet(
+        "use",
+        {"k": "0:8"},
+        {"x": dace.Memlet("V[k]")},
+        "y = x",
+        {"y": dace.Memlet("B[k]")},
+        input_nodes={"V": view},
+        external_edges=True,
+    )
+    _, over_entry, _ = state.add_mapped_tasklet(
+        "over", {"i": "0:3", "k": "0:8"}, {}, "y = 5.0", {"y": dace.Memlet("A[i, k]")}, external_edges=True
+    )
+    state.add_nedge(view, over_entry, dace.Memlet())
+    sdfg.validate()
+
+    RedundantReadSlice.apply_to(sdfg, in_array=source, out_array=view)
+    sdfg.validate()
+    assert "V" not in sdfg.arrays
+    assert nx.has_path(state.nx, use_exit, over_entry), "the overwrite must wait for the map reading the row"
+
+    a = np.arange(24, dtype=np.float64).reshape(3, 8)
+    b = np.zeros(8)
+    row = a[1, :].copy()
+    sdfg(A=a, B=b)
+    assert np.array_equal(b, row) and np.all(a == 5.0)
+
+
 if __name__ == "__main__":
     test_read_slice()
     test_read_slice2()
@@ -235,3 +320,5 @@ if __name__ == "__main__":
     test_view_slice_detect_nonslice()
     test_strided_slice_of_a_slice_keeps_its_step()
     test_a_view_a_nested_sdfg_reads_under_renamed_symbols_is_kept()
+    test_a_write_slice_behind_an_ordering_edge_keeps_its_producer_ordered()
+    test_a_read_slice_ahead_of_an_ordering_edge_keeps_its_readers_ordered()

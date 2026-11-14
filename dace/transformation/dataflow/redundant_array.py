@@ -451,6 +451,30 @@ def order_write_guards(graph: SDFGState, in_array: nodes.AccessNode) -> None:
                 graph.add_nedge(e.src, guard, mm.Memlet())
 
 
+def order_read_guards(graph: SDFGState, view: nodes.AccessNode) -> None:
+    """Move every ordering (empty) out-edge of the read view ``view`` onto the scopes reading through it.
+
+    The edge holds a later access back until the view is read. Removing the view makes its readers read the viewed
+    container directly, so the edge must follow those readers: left on the viewed node it would order the read of
+    that node alone, and a writer it held back could overtake the readers -- a silent write-after-read inversion.
+    """
+    read_guards = []
+    for e in graph.out_edges(view):
+        if e.data.is_empty():
+            continue
+        guard = graph.exit_node(e.dst) if isinstance(e.dst, nodes.EntryNode) else e.dst
+        if guard not in read_guards:
+            read_guards.append(guard)
+    for e in graph.out_edges(view):
+        if not e.data.is_empty():
+            continue
+        guards = [g for g in read_guards if g is not e.dst and not nx.has_path(graph.nx, e.dst, g)]
+        if guards:
+            graph.remove_edge(e)
+            for guard in guards:
+                graph.add_nedge(guard, e.dst, mm.Memlet())
+
+
 class RedundantArray(pm.SingleStateTransformation):
     """Implements the redundant array removal transformation, applied
     when a transient array is copied to and from (to another array),
@@ -937,6 +961,7 @@ class RedundantArray(pm.SingleStateTransformation):
                     simple_case = False
                     break
             if simple_case:
+                order_write_guards(graph, in_array)
                 for e in graph.in_edges(in_array):
                     for e2 in graph.memlet_tree(e):
                         if e2 is e:
@@ -1965,6 +1990,7 @@ class RedundantReadSlice(pm.SingleStateTransformation):
         aset, popped = pop_dims(a_subset, nviewed_dims)
 
         # Iterate over the e2 edges and traverse the memlet tree; an ordering edge writes nothing, so it takes no WCR
+        order_read_guards(graph, out_array)
         for e2 in graph.out_edges(out_array):
             path = graph.memlet_tree(e2)
             wcr = e1.data.wcr
@@ -2121,6 +2147,7 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
         aset, popped = pop_dims(a_subset, nviewed_dims)
 
         # Iterate over the e2 edges and traverse the memlet tree; an ordering edge writes nothing, so it takes no WCR
+        order_write_guards(graph, in_array)
         for e2 in graph.in_edges(in_array):
             path = graph.memlet_tree(e2)
             wcr = e1.data.wcr
@@ -2299,6 +2326,15 @@ class RemoveSliceView(pm.SingleStateTransformation):
             subset = subsets.Range.from_array(viewed.desc(sdfg))
 
         mapping, unsqueezed, squeezed = sdutil.map_view_to_array(desc, viewed.desc(sdfg), subset)
+
+        # The view's readers (writers) access the viewed container directly once it is gone: an ordering edge on the
+        # rewired side orders them, not the viewed node
+        if is_src:
+            order_read_guards(state, self.view)
+            non_view_edges = state.out_edges(self.view)
+        else:
+            order_write_guards(state, self.view)
+            non_view_edges = state.in_edges(self.view)
 
         # The rewiring below only touches one side of the view, so an ordering edge on the other
         # side would die with the node; it is re-attached to what takes the view's place.
