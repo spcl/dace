@@ -37,6 +37,7 @@ KNOWN_FUNCTIONS: dict[str, Callable[[list[dtypes.typeclass]], dtypes.typeclass]]
     "min": lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
     "max": lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
     "round": lambda arg_types: dtypes.typeclass(int),
+    "ROUND": lambda arg_types: dtypes.typeclass(int),
     **{name: lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types) for name in MODULO_FUNCTIONS},
     # Symbolic functions (as they appear in subsets and range bounds), typed like their C++ runtime counterparts
     "int_floor": lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),

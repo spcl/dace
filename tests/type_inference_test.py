@@ -366,5 +366,12 @@ def test_abs_of_a_complex_operand_is_its_real_magnitude():
             assert type_inference.infer_expr_type(spelling, {"z": operand}) == magnitude, (spelling, operand)
 
 
+def test_the_sympy_spelling_of_round_is_typed():
+    """A ``round`` assignment reads back from a saved SDFG as sympy's ``ROUND`` (distribution_search's
+    ``round_0_005_p_size = ROUND(__tmp0)``); left untyped, the C rendering of the loaded SDFG crashed."""
+    for spelling in ("round(x)", "ROUND(x)"):
+        assert type_inference.infer_expr_type(spelling, {"x": dtypes.float64}) == dtypes.typeclass(int), spelling
+
+
 if __name__ == "__main__":
     unittest.main()
