@@ -1316,6 +1316,31 @@ def test_a_loop_in_a_nested_sdfg_of_a_gpu_map_stays_a_loop():
     assert any(isinstance(r, LoopRegion) for r in inner.all_control_flow_regions())
 
 
+def test_a_strided_copy_loop_is_not_a_copy():
+    """``for i in range(0, 8, 2): dst[i] = src[i]`` moves every other element, no single contiguous run: the loop
+    stays and computes what it computed (dwt2d_daubechies)."""
+    sdfg = dace.SDFG("strided_copy_loop")
+    sdfg.add_array("src", [8], dace.float64)
+    sdfg.add_array("dst", [8], dace.float64)
+    loop = LoopRegion("copy", "i < 8", "i", "i = 0", "i = i + 2", sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("copy", {"__inp"}, {"__out"}, "__out = __inp")
+    body.add_edge(body.add_read("src"), None, tasklet, "__inp", dace.Memlet("src[i]"))
+    body.add_edge(tasklet, "__out", body.add_write("dst"), None, dace.Memlet("dst[i]"))
+
+    AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert _get_num_memcpy_library_nodes(sdfg) == 0
+    src = numpy.arange(8, dtype=numpy.float64)
+    dst = numpy.zeros(8)
+    sdfg(src=src, dst=dst)
+    expected = numpy.zeros(8)
+    expected[::2] = src[::2]
+    numpy.testing.assert_array_equal(dst, expected)
+
+
 def test_a_flattened_index_is_not_a_copy():
     """``dst[ii, jj] = src[3 * jj + ii]`` reads column-major: the dense box and the volume match a row-major copy."""
     sdfg = dace.SDFG("flattened_index")

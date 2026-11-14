@@ -284,7 +284,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             for p, (b2, e2, s2) in range_list.items():
                 nb = nb.subs(p, b2)
                 ne = ne.subs(p, e2)
-                assert ns == 1 and s2 == 1, "Only step of 1 is supported for memcpy/memset detection"
             new_range.append((nb, ne, ns))
         return new_range
 
@@ -384,6 +383,13 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         :returns: ``(begin_subset, exit_subset, copy_length)`` or all-``None`` on bail.
         """
         has_in = in_data is not None
+        # A strided sweep or subset is no single contiguous run: no memcpy/memset describes it.
+        strides = [s for (_, _, s) in range_list.values()]
+        for subset in (in_subset, out_subset):
+            if subset is not None:
+                strides.extend(s for (_, _, s) in subset)
+        if range_list and any(s != 1 for s in strides):
+            return None, None, None
 
         # Substitute first (the exact box the map sweeps), then optionally widen the stride-1 axis.
         # The exactness guard below compares the un-widened ``subst_out`` volume against the trip
