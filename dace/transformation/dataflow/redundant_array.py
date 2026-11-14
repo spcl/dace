@@ -2577,6 +2577,11 @@ class RedundantMapReadCopy(pm.SingleStateTransformation):
         node = self.copy
         edge, name, source, kept = self.staging(graph, sdfg)
         for out_edge in list(graph.out_edges(node)):
+            if out_edge.data.is_empty():
+                # An ordering edge orders nothing behind the copy that the entry does not: keep it from there.
+                graph.add_nedge(edge.src, out_edge.dst, mm.Memlet())
+                graph.remove_edge(out_edge)
+                continue
             tree = graph.memlet_tree(out_edge)
             edges = [child.edge for child in tree.traverse_children(include_self=True)]
             leaves = list(tree.leaves())

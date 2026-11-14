@@ -97,6 +97,30 @@ def test_a_read_only_staging_copy_in_a_map_is_folded():
     assert np.allclose(out, src[:, idx])
 
 
+def test_an_ordering_edge_out_of_the_folded_copy_stays_an_ordering_edge():
+    """A tasklet ordered after the copy by an empty edge keeps that order from the map entry; the edge does not become
+    a read of the source."""
+    sdfg = staged_gather()
+    state = sdfg.start_state
+    sdfg.add_array("flag", [K], dace.float64)
+    t = next(n for n in state.data_nodes() if n.data == "t")
+    outer_entry = state.entry_node(t)
+    mark = state.add_tasklet("mark", {}, {"f"}, "f = 1.0")
+    state.add_nedge(t, mark, dace.Memlet())
+    state.add_memlet_path(
+        mark, state.exit_node(outer_entry), state.add_write("flag"), src_conn="f", memlet=dace.Memlet("flag[n]")
+    )
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(RedundantMapReadCopy) == 1
+    sdfg.validate()
+    assert [e.data.is_empty() for e in state.in_edges(mark)] == [True]
+    rng = np.random.default_rng(0)
+    src, idx, out, flag = rng.random((3, 7)), rng.integers(0, 7, 7), np.zeros((3, 7)), np.zeros(3)
+    sdfg(src=src, idx=idx, out=out, flag=flag, K=3, M=7)
+    assert np.allclose(out, src[:, idx]) and np.all(flag == 1.0)
+
+
 def test_a_copy_of_a_container_the_scope_writes_is_kept():
     sdfg = staged_gather(write_source=True)
     assert sdfg.apply_transformations_repeated(RedundantMapReadCopy) == 0
@@ -106,4 +130,5 @@ def test_a_copy_of_a_container_the_scope_writes_is_kept():
 if __name__ == "__main__":
     test_a_read_only_staging_copy_in_a_map_is_folded()
     test_a_copy_of_a_container_the_scope_writes_is_kept()
+    test_an_ordering_edge_out_of_the_folded_copy_stays_an_ordering_edge()
     test_a_staging_copy_read_by_a_nested_sdfg_is_folded()
