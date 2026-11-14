@@ -40,6 +40,7 @@ from tests.codegen.cpf.conftest import (
     compile_standalone,
     wcr_sdfg,
 )
+from tests.codegen.variable_length_array_test import split_declaration_sdfg
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -1282,6 +1283,18 @@ def test_a_scatter_sized_by_its_iteration_space_takes_atomics_not_an_array_reduc
     assert_matches({"bins": expected}, {"bins": bins}, name)
 
 
+def test_a_stack_array_the_frame_allocates_is_cast_in_c():
+    """warpx_esirkepov_deposition: a forced register array sized on an interstate edge is ``alloca``'d once per
+    frame, and that pointer was cast with a ``static_cast``, which C has no spelling for."""
+    name = "cpf_c_frame_alloca"
+    sdfg = split_declaration_sdfg(name, False, dace.StorageType.Register(force=True))
+    rendering = render_sdfg(sdfg, language="c")
+    assert "tmp = (double*)(__builtin_alloca_with_align(" in rendering.code, rendering.code
+    a, b = np.random.default_rng(1).random(8), np.zeros(8)
+    run_c(rendering.sdfg, rendering.code, {"a": a, "b": b, "N": 8}, name)
+    assert_matches({"b": a + 1.0}, {"b": b}, name)
+
+
 if __name__ == "__main__":
     test_entry_point_has_no_language_linkage()
     test_two_dimensional_index_helper_carries_the_stride()
@@ -1356,3 +1369,4 @@ if __name__ == "__main__":
     test_a_dynamic_scalar_read_binds_by_value_in_c()
     test_the_pure_dft_types_its_local_across_statements_and_builds_its_twiddle_in_c()
     test_a_scatter_sized_by_its_iteration_space_takes_atomics_not_an_array_reduction()
+    test_a_stack_array_the_frame_allocates_is_cast_in_c()

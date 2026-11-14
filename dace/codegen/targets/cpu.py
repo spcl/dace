@@ -1548,8 +1548,9 @@ class CPUCodeGen(TargetCodeGenerator):
             )
             if not declared and declarator is None:
                 declaration_stream.write(f"{nodedesc.dtype.ctype} *{name};\n", cfg, state_id, node)
+            cast = f"({ctypedef})" if cpf_lowering.standalone_c() else f"static_cast<{ctypedef}>"
             allocation_stream.write(
-                f"{alloc_name} = static_cast<{ctypedef}>(__builtin_alloca_with_align("
+                f"{alloc_name} = {cast}(__builtin_alloca_with_align("
                 f"sizeof({nodedesc.dtype.ctype}) * ({cpp.sym2cpp(arrsize)}), 512));"
                 if on_frame
                 else self.heap_alloc_stmt(
