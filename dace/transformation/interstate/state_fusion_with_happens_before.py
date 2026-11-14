@@ -485,10 +485,8 @@ class StateFusionExtended(StateFusion):
                     continue
                 if first_producers.get(dname, 0) < 2:
                     continue
-                if not self.aggressive_merges or not producers_disjoint(first_state, first_scope, dname, sdfg.facts()):
+                if not self.aggressive_merges:
                     return False
-                if not any(is_read(second_state, n) for n in second_state.data_nodes() if n.data == dname):
-                    continue
                 # A read in the second state binds to one node, which has to come after every producer: the producers
                 # that are sinks of the first state become one node, and every other producer already reaches one
                 producers = [
@@ -497,7 +495,15 @@ class StateFusionExtended(StateFusion):
                     if n.data == dname and first_scope[n] is None and _has_data_write(n)
                 ]
                 sinks = [n for n in producers if first_state.out_degree(n) == 0]
-                if not sinks or not all(any(nx.has_path(first_state._nx, n, t) for t in sinks) for n in producers):
+                ordered = bool(sinks) and all(any(nx.has_path(first_state._nx, n, t) for t in sinks) for n in producers)
+                # Overlapping producers are one value too once a single sink follows all of them: the last write
+                if not (ordered and len(sinks) == 1) and not producers_disjoint(
+                    first_state, first_scope, dname, sdfg.facts()
+                ):
+                    return False
+                if not any(is_read(second_state, n) for n in second_state.data_nodes() if n.data == dname):
+                    continue
+                if not ordered:
                     return False
                 if len(sinks) > 1:
                     self.connections_to_make.append(("unify", sinks, []))

@@ -2357,6 +2357,48 @@ def test_two_overlapping_producers_of_a_reused_transient_still_refuse():
     assert sdfg.number_of_nodes() == 2
 
 
+def test_overlapping_producers_of_a_reused_transient_fuse_behind_their_one_sink():
+    """``first``: ``x = inp + 1``, then ``x[1] = 2 * x[0]`` into a sink ``x`` node that follows both producers;
+    ``second``: ``z = x[1]; x[0] = x[1]``. The producers overlap, but the sink is the last write of ``x``: the
+    second state's read binds to it and the states fuse (``z`` is ``2 * (inp[0] + 1)``, not ``inp[1] + 1``)."""
+    sdfg = SDFG("sfx_overlapping_producers_one_sink")
+    sdfg.add_array("inp", [2, 8], dtypes.float64)
+    sdfg.add_array("z", [8], dtypes.float64)
+    sdfg.add_transient("x", [2, 8], dtypes.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    written, sink = first.add_access("x"), first.add_access("x")
+    first.add_mapped_tasklet(
+        "init",
+        {"i": "0:2", "j": "0:8"},
+        {"a": Memlet("inp[i, j]")},
+        "b = a + 1",
+        {"b": Memlet("x[i, j]")},
+        external_edges=True,
+        output_nodes={"x": written},
+    )
+    first.add_mapped_tasklet(
+        "rewrite",
+        {"j": "0:8"},
+        {"a": Memlet("x[0, j]")},
+        "b = 2 * a",
+        {"b": Memlet("x[1, j]")},
+        external_edges=True,
+        input_nodes={"x": written},
+        output_nodes={"x": sink},
+    )
+    second = sdfg.add_state_after(first, "second")
+    second.add_mapped_tasklet(
+        "reread",
+        {"j": "0:8"},
+        {"a": Memlet("x[1, j]")},
+        "b = a\nc = a",
+        {"b": Memlet("x[0, j]"), "c": Memlet("z[j]")},
+        external_edges=True,
+    )
+    inp = np.arange(16, dtype=np.float64).reshape(2, 8)
+    _aggressive_fusion_matches(sdfg, inp=inp, z=np.zeros(8))
+
+
 def _writer_reaches_every_reader(state, name: str) -> bool:
     """Whether the node writing ``name`` reaches every scope reading it in ``state``."""
     writers = [n for n in state.data_nodes() if n.data == name and state.in_degree(n) > 0]
@@ -2471,5 +2513,6 @@ if __name__ == "__main__":
     test_reader_of_a_rewritten_container_stays_ordered_after_its_writer()
     test_a_node_entered_by_an_ordering_edge_is_no_second_producer()
     test_two_overlapping_producers_of_a_reused_transient_still_refuse()
+    test_overlapping_producers_of_a_reused_transient_fuse_behind_their_one_sink()
     test_a_container_both_states_write_is_ordered_by_its_write_write_edge()
     test_two_reads_of_one_container_bind_to_its_one_writer()
