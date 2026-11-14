@@ -998,6 +998,70 @@ def test_a_connector_shape_keeps_the_symbol_the_nested_body_binds(propagation, v
     sdfg.validate()
 
 
+def lane_alias_sdfg(local: bool = False) -> dace.SDFG:
+    """``map p { nested { q = p; B[q] = 2 * A[q] } }``: the alias an inlined one-iteration map leaves (velocity's lane
+    maps), propagated while it stands, so the nest's connector memlets cover all of ``A`` and ``B``. ``local`` makes it
+    ``k = idx[p]; q = k`` with the connector memlets written by hand: the alias then names a value only the nest
+    knows (scatter_reduction_wcr_refuse_test's view self-reference)."""
+    body = dace.SDFG("lane_body")
+    for name in ("p", "q", "k"):
+        body.add_symbol(name, dace.int64)
+    for name in ("A", "B", "idx"):
+        body.add_array(name, ["N"], dace.int64 if name == "idx" else dace.float64)
+    head = body.add_state("head", is_start_block=True)
+    alias = body.add_state_after(head, "alias", assignments={"k": "idx[p]"})
+    work = body.add_state_after(alias, "work", assignments={"q": "k" if local else "p"})
+    double = work.add_tasklet("double", {"a"}, {"b"}, "b = 2 * a")
+    work.add_edge(work.add_read("A"), None, double, "a", dace.Memlet("A[q]"))
+    work.add_edge(double, "b", work.add_write("B"), None, dace.Memlet("B[q]"))
+
+    sdfg = dace.SDFG("lane_alias")
+    sdfg.add_symbol("N", dace.int64)
+    for name in ("A", "B", "idx"):
+        sdfg.add_array(name, ["N"], dace.int64 if name == "idx" else dace.float64)
+    state = sdfg.add_state("main")
+    entry, exit_node = state.add_map("lanes", {"p": "0:N"})
+    nest = state.add_nested_sdfg(body, {"A", "idx"}, {"B"}, symbol_mapping={"p": "p", "N": "N"})
+    for name in ("A", "idx"):
+        state.add_memlet_path(state.add_read(name), entry, nest, dst_conn=name, memlet=dace.Memlet(f"{name}[0:N]"))
+    state.add_memlet_path(nest, exit_node, state.add_write("B"), src_conn="B", memlet=dace.Memlet("B[0:N]"))
+    if not local:
+        dace.sdfg.propagation.propagate_memlets_sdfg(sdfg)
+    return sdfg
+
+
+def nest_memlets(sdfg: dace.SDFG) -> dict[str, str]:
+    ((nest, state),) = [(n, s) for n, s in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG)]
+    return {e.data.data: str(e.data) for e in state.all_edges(nest)}
+
+
+def test_a_nest_rewritten_off_its_own_alias_narrows_its_connector_memlets():
+    """Once the nest reads ``A[p]`` and writes ``B[p]``, its connector memlets say so: left whole, every consumer
+    reading them saw a lane writing all of ``B`` (velocity_tendencies GPU: four level maps were refused the
+    demotion that launches their planes, and ran ``nlev`` threads over whole planes, 97% of its device time)."""
+    sdfg = lane_alias_sdfg()
+    assert nest_memlets(sdfg) == {"A": "A(dyn) [0:N]", "idx": "idx[p]", "B": "B(dyn) [0:N]"}
+
+    SymbolPropagation().apply_pass(sdfg, {})
+
+    assert nest_memlets(sdfg) == {"A": "A[p]", "idx": "idx[p]", "B": "B[p]"}
+    A = np.random.default_rng(0).random(8)
+    B = np.zeros(8)
+    sdfg(A=A, B=B, idx=np.zeros(8, dtype=np.int64), N=8)
+    assert np.array_equal(B, 2 * A)
+
+
+def test_a_nest_rewritten_onto_a_name_of_its_own_keeps_its_connector_memlets():
+    """``q = k`` with ``k`` read from data inside the nest: the subsets still name a symbol only the nest knows, so its
+    connector memlets stay as written; a propagation would widen them to dynamic whole-container memlets."""
+    sdfg = lane_alias_sdfg(local=True)
+    before = nest_memlets(sdfg)
+
+    SymbolPropagation().apply_pass(sdfg, {})
+
+    assert nest_memlets(sdfg) == before
+
+
 if __name__ == "__main__":
     test_loop_carried_symbol()
     test_nested_loop_carried_symbol()
@@ -1029,3 +1093,5 @@ if __name__ == "__main__":
     test_a_descriptor_never_takes_a_value_naming_a_rebound_symbol()
     test_a_value_naming_a_map_parameter_stays_out_of_that_map()
     test_a_substitution_into_a_descriptor_is_reported()
+    test_a_nest_rewritten_off_its_own_alias_narrows_its_connector_memlets()
+    test_a_nest_rewritten_onto_a_name_of_its_own_keeps_its_connector_memlets()

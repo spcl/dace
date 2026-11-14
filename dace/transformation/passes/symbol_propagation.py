@@ -15,6 +15,7 @@ from dace import data as dt
 from dace.frontend.python import astutils
 from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg as cfg_analysis
+from dace.sdfg.propagation import propagate_memlets_nested_sdfg
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
     ConditionalBlock,
@@ -39,6 +40,12 @@ def free_symbol_names(value) -> frozenset[str]:
         return frozenset(str(s) for s in pystr_to_symbolic(value).free_symbols)
     except Exception:
         return frozenset()
+
+
+def binds_outside(nest: nodes.NestedSDFG, value) -> bool:
+    """Whether ``value`` names symbols, and only symbols ``nest``'s symbol mapping binds from outside."""
+    names = free_symbol_names(value)
+    return bool(names) and names <= nest.symbol_mapping.keys()
 
 
 @lru_cache(maxsize=16384, typed=True)
@@ -462,12 +469,22 @@ class SymbolPropagation(ppl.Pass):
 
         # An honest return set is what lets a FixedPointPipeline converge.
         propagated: set[str] = set()
+        # The nested SDFGs where a name the nest assigns itself became one its symbol mapping binds outside, innermost
+        # first: their connector memlets were propagated while that name stood in their subsets, which widened them
+        # to the whole container (an inlined one-iteration lane map's ``i = i_lane``), and now they can say where.
+        rewritten: dict[SDFG, int] = {}
         for cfg_blk, parent in all_cfg_blks.items():
-            propagated |= self._update_syms(cfg_blk, parent, in_syms, out_syms)
+            names = self._update_syms(cfg_blk, parent, in_syms, out_syms)
+            nest = cfg_blk.sdfg.parent_nsdfg_node
+            if nest is not None and any(binds_outside(nest, in_syms[cfg_blk].get(name)) for name in names):
+                rewritten.setdefault(cfg_blk.sdfg, len(rewritten))
+            propagated |= names
         # Substitution leaves the defining assignment behind; sweep to a fixed point.
         eliminated = self._eliminate_dead_iedge_assignments(binding_sdfgs)
         if eliminated:
             propagated |= eliminated
+        for nested in reversed(rewritten):
+            propagate_memlets_nested_sdfg(nested.parent_sdfg, nested.parent, nested.parent_nsdfg_node)
 
         # A new free symbol means a value rendered into a name that does not resolve.
         if self._before_free is not None:
