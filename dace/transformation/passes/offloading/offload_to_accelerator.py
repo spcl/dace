@@ -43,7 +43,7 @@ from dace.transformation.helpers import isolate_nested_sdfg, isolate_small_map_a
 from dace.transformation.interstate.map_loop_interchange import isolate_map
 from dace.transformation.passes import FuseMaps
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import small_count
+from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import sequential_reason
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars,
     ConvertScalarsToLengthOneArrays,
@@ -1105,7 +1105,9 @@ class OffloadToAccelerator(ppl.Pass):
         """``GPU_Device`` at a host level, ``Sequential`` below one; a taskloop keeps its body host-level.
 
         A map the offload keeps on the host that launches nothing runs as its CPU form does: ``CPU_Multicore``
-        unless canonicalization left it sequential or its iteration count is small; maps it holds then run inside its one parallel region. With no
+        unless canonicalization left it sequential or the CPU rule keeps it on one thread
+        (:func:`~dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes.sequential_reason`); maps it
+        holds then run inside its one parallel region. With no
         taskloops this is the old rule: top-level maps are the kernels.
         """
 
@@ -1127,7 +1129,10 @@ class OffloadToAccelerator(ppl.Pass):
                         host_level
                         and not is_kernel
                         and not was_sequential
-                        and not small_count(node.map.range.num_elements(), state.sdfg.facts())
+                        and sequential_reason(
+                            state, node, node.map.range.num_elements(), SymbolResolver().facts_at(state, node)
+                        )
+                        is None
                     ):
                         inner = self.host_maps_under(state, node)
                         if inner is not None:

@@ -248,6 +248,19 @@ def small_count(count: Any, facts: symbolic.Facts) -> bool:
     return at_most_one_trip(count, lambda: facts)
 
 
+def sequential_reason(state: SDFGState, entry: nodes.MapEntry, count: Any, facts: symbolic.Facts) -> str | None:
+    """Why the host map of ``entry``, ``count`` iterations, runs on one thread: too few iterations
+    (:func:`small_count`), or a range read from data inside a sequential loop (:func:`data_segment`), which would fork
+    once per trip over a few elements; ``None`` when a team shares it out."""
+    if small_count(count, facts):
+        return SMALL_REASON.format(count=count)
+    loop = innermost_loop(state)
+    if loop is None or short_loop(loop, facts):
+        return None
+    segment = data_segment(state, entry, facts.small)
+    return None if segment is None else DATA_SEGMENT_REASON.format(begin=segment[0], end=segment[1])
+
+
 def at_most_one_trip(count: Any, facts_of: Callable[[], symbolic.Facts]) -> bool:
     """Whether a map of ``count`` iterations provably runs at most once: no loop at all, but a guard. ``facts_of``
     gives the facts at the map, asked only when the count's numeric bounds do not decide it."""
@@ -758,17 +771,10 @@ class DecideCpuParallelAxes(ppl.Pass):
             children = state.scope_children()
             if node.map.schedule == dtypes.ScheduleType.Sequential:
                 return False, True
-        facts = SymbolResolver().facts_at(state, node)
-        if small_count(count, facts):
-            note_sequential(node, SMALL_REASON.format(count=count))
-        elif (
-            (loop := innermost_loop(state)) is not None
-            and not short_loop(loop, facts)
-            and (segment := data_segment(state, node, facts.small)) is not None
-        ):
-            note_sequential(node, DATA_SEGMENT_REASON.format(begin=segment[0], end=segment[1]))
-        else:
+        reason = sequential_reason(state, node, count, SymbolResolver().facts_at(state, node))
+        if reason is None:
             node.map.schedule = dtypes.ScheduleType.CPU_Multicore
             return True, reshaped
+        note_sequential(node, reason)
         self.pinned += 1
         return False, reshaped

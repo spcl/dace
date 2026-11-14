@@ -473,11 +473,9 @@ def test_a_bound_a_host_maps_body_reads_on_the_host_computes_what_the_host_compu
     assert np.count_nonzero(expected) == (3 * 2 if read_in == "interstate" else 2 * 8)
 
 
-def test_a_map_in_a_row_loop_under_a_carried_pin_stays_on_the_host():
-    """amg_setup's shape: a carried-pinned level loop around a row loop whose host code touches ``A`` beside a map over
-    the ``K`` elements of the row, a length the row loop assigns. Offloading the map copies ``A`` once per row for a
-    row's work, so it stays on the host; the outer pin is a dependence fact, not a fallback arm, and does not exempt
-    it."""
+def row_loop_under_pin() -> tuple[dace.SDFG, nodes.MapEntry]:
+    """amg_setup's shape: a carried-pinned level loop around a row loop whose host code writes ``A[i]`` beside a map
+    copying the ``K = lengths[i]`` first elements of ``A`` to ``B``; returns the SDFG and the map."""
     sdfg = sdfg_with_two_arrays("row_loop_under_pin")
     sdfg.add_symbol("K", dace.int64)
     sdfg.add_array("lengths", ["N"], dace.int64)
@@ -494,8 +492,55 @@ def test_a_map_in_a_row_loop_under_a_carried_pin_stays_on_the_host():
     _, entry, _ = body.add_mapped_tasklet(
         "copy_out", {"j": "0:K"}, {"a": dace.Memlet("A[j]")}, "b = a", {"b": dace.Memlet("B[j]")}, external_edges=True
     )
+    return sdfg, entry
+
+
+def test_a_map_in_a_row_loop_under_a_carried_pin_stays_on_the_host():
+    """Offloading the map of :func:`row_loop_under_pin` copies ``A`` once per row for a row's work, so it stays on the
+    host; the outer pin is a dependence fact, not a fallback arm, and does not exempt it."""
+    sdfg, entry = row_loop_under_pin()
 
     assert list(maps_pinned_by_host_loops(sdfg)) == [entry]
+
+
+def test_a_row_map_kept_on_the_host_runs_on_one_thread():
+    """The row map stays ``Sequential`` on the host, as the CPU rule decides its range read from data inside a
+    sequential loop. As ``CPU_Multicore`` it forked a team per row for the few elements of the row (amg_setup's
+    ``ntouch`` maps: GPU 3.8 s against 0.65 s on the CPU, nearly all of it in libgomp)."""
+    sdfg, _ = row_loop_under_pin()
+
+    OffloadToAccelerator().apply_pass(sdfg, {})
+
+    assert map_schedules(sdfg)["copy_out_map"] == dace.ScheduleType.Sequential
+
+
+def test_a_map_kept_on_the_host_over_a_program_size_is_shared_out():
+    """A map the offload keeps on the host over a program size (a guard's sequential fallback arm over ``N``) still
+    runs on the host's team."""
+    sdfg = sdfg_with_two_arrays("fallback_shared_out")
+    guard = ConditionalBlock("guard")
+    sdfg.add_node(guard, is_start_block=True)
+    arm = ControlFlowRegion("seq_arm", sdfg=sdfg)
+    guard.add_branch(CodeBlock("N > 1"), arm)
+    pinned_loop_over_a_map(arm)
+
+    OffloadToAccelerator().apply_pass(sdfg, {})
+
+    assert map_schedules(sdfg)["add_i_map"] == dace.ScheduleType.CPU_Multicore
+
+
+@pytest.mark.gpu
+def test_a_row_map_kept_on_the_host_computes_what_the_host_computes():
+    lengths = np.array([3, 0, 5, 2, 7, 1, 4, 6], dtype=np.int64)
+    expected, got = np.zeros(8), np.zeros(8)
+    A, A_dev = np.zeros(8), np.zeros(8)
+    sdfg, _ = row_loop_under_pin()
+    sdfg(A=A, B=expected, lengths=lengths, N=8)
+    sdfg, _ = row_loop_under_pin()
+    OffloadToAccelerator().apply_pass(sdfg, {})
+    sdfg(A=A_dev, B=got, lengths=lengths, N=8)
+    assert np.array_equal(got, expected) and np.array_equal(A_dev, A)
+    assert np.array_equal(expected[:7], np.arange(7.0)) and expected[7] == 0.0
 
 
 def test_a_map_in_a_row_loop_over_a_program_size_stays_a_kernel():
