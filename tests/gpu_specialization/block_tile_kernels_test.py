@@ -181,15 +181,26 @@ def library_nodes(sdfg: dace.SDFG) -> dict:
     }
 
 
-@pytest.mark.parametrize("program", [matvec, gemm_loops])
-def test_an_inner_reduction_runs_across_the_lanes_of_one_block(program):
-    sdfg = canonical_gpu(program)
+def test_an_inner_reduction_runs_across_the_lanes_of_one_block():
+    sdfg = canonical_gpu(matvec)
     kernels = maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_Device)
     lanes = maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)
     assert len(kernels) == 1 and kernels[0].map.gpu_block_size is None
     assert len(lanes) == 1 and lanes[0].map.range.size() == [256]
     code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
     assert "gpucub::BlockReduce" in code, "the lane partials must fold with the block collective"
+
+
+def test_an_inner_reduction_the_kernel_threads_coalesce_is_each_threads_loop():
+    """GEMM's ``k`` reads ``B[k, j]`` a row apart, while the kernel's threads over ``j`` read ``B`` and ``C``
+    adjacently: the block's threads tile the output, each walks ``k`` itself, and no lanes fold partials."""
+    sdfg = canonical_gpu(gemm_loops)
+    kernels = maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_Device)
+    tiles = maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)
+    assert len(kernels) == 1 and len(tiles) == 1
+    assert len(tiles[0].map.params) == len(kernels[0].map.params) == 2
+    code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "gpucub::BlockReduce" not in code
 
 
 def test_a_host_map_that_only_launches_device_work_is_the_kernel():
@@ -465,8 +476,8 @@ def test_an_inner_map_the_kernel_threads_already_coalesce_is_not_strided_across_
 
 
 if __name__ == "__main__":
-    test_an_inner_reduction_runs_across_the_lanes_of_one_block(matvec)
-    test_an_inner_reduction_runs_across_the_lanes_of_one_block(gemm_loops)
+    test_an_inner_reduction_runs_across_the_lanes_of_one_block()
+    test_an_inner_reduction_the_kernel_threads_coalesce_is_each_threads_loop()
     test_a_host_map_that_only_launches_device_work_is_the_kernel()
     test_a_library_node_inside_a_kernel_takes_its_block_collective(batched_dot, "Dot", "CUDA (block strided)")
     test_a_library_node_inside_a_kernel_takes_its_block_collective(gathered_gemm, "Gemm", "CUDA (block strided)")

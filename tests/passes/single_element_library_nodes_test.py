@@ -27,9 +27,15 @@ def wired(name: str, node: nodes.LibraryNode, inputs: dict[str, str], outputs: d
 
 
 ONE_A, ONE_B, ONE_C = "A[1, 0]", "B[0, 1]", "C[1, 1]"
+CPY_IN, CPY_OUT = CopyLibraryNode.INPUT_CONNECTOR_NAME, CopyLibraryNode.OUTPUT_CONNECTOR_NAME
 CASES = {
-    "copy": (lambda: CopyLibraryNode("cp"), {"_cpy_in": ONE_A}, {"_cpy_out": ONE_C}, lambda a, b, c: a[1, 0]),
-    "fill": (lambda: FillLibraryNode("fl", value=2.5), {}, {"_fill_out": ONE_C}, lambda a, b, c: 2.5),
+    "copy": (lambda: CopyLibraryNode("cp"), {CPY_IN: ONE_A}, {CPY_OUT: ONE_C}, lambda a, b, c: a[1, 0]),
+    "fill": (
+        lambda: FillLibraryNode("fl", value=2.5),
+        {},
+        {FillLibraryNode.OUTPUT_CONNECTOR_NAME: ONE_C},
+        lambda a, b, c: 2.5,
+    ),
     "gemm": (
         lambda: Gemm("gm", alpha=2.0, beta=3.0),
         {"_a": "A[1:2, 0:1]", "_b": "B[0:1, 1:2]", "_c": "C[1:2, 1:2]"},
@@ -94,7 +100,7 @@ def test_a_single_element_library_node_is_its_tasklet(case: str):
 
 
 def test_a_two_element_copy_stays_a_library_node():
-    sdfg = wired("single_element_wide_copy", CopyLibraryNode("cp"), {"_cpy_in": "A[1, 0:2]"}, {"_cpy_out": "C[1, 0:2]"})
+    sdfg = wired("single_element_wide_copy", CopyLibraryNode("cp"), {CPY_IN: "A[1, 0:2]"}, {CPY_OUT: "C[1, 0:2]"})
     assert SingleElementLibraryNodes().apply_pass(sdfg, {}) is None
 
 

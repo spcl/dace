@@ -15,6 +15,7 @@ from dace import dtypes
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.sdfg import infer_types, nodes
 from dace.symbolic import Scale
+from dace.symbolic_facts import SMALL_CONSTANT_EXTENT
 from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import (
     ITERATIONS_PER_THREAD,
     DecideCpuParallelAxes,
@@ -296,7 +297,8 @@ def test_a_leaf_map_never_collapses_its_innermost_axis():
 
 
 def test_a_first_axis_that_fills_the_team_is_shared_out_alone():
-    extent = ITERATIONS_PER_THREAD * topology().physical_cores
+    # Not a few-trip map either, which a host with few cores would make it
+    extent = max(ITERATIONS_PER_THREAD * topology().physical_cores, SMALL_CONSTANT_EXTENT)
     sdfg = block_strip_sdfg("cpu_collapse_wide_first", {"b": f"0:{extent}", "p": f"0:{BLOCK}", "c": "0:ncol"})
     assert DecideCpuParallelAxes().apply_pass(sdfg, {}) is None
     assert map_nest(sdfg) == [(["b", "p", "c"], PAR)] and collapse_of(sdfg) == 1

@@ -7,6 +7,8 @@ slices, and ``LoopToTranspose`` writes its window's subsets directly. A View sta
 the node's operand: a unit dimension the matrix nodes would squeeze away.
 """
 
+import os
+
 import numpy as np
 import pytest
 
@@ -136,6 +138,7 @@ def test_a_library_node_reads_the_slice_without_a_view(prog):
     check(prog, sdfg)
 
 
+@pytest.mark.skipif("HPTT_ROOT" not in os.environ, reason="HPTT is not installed")
 @pytest.mark.parametrize("prog", SUBSET_PROGRAMS, ids=lambda p: p.name)
 def test_the_canonical_form_reads_the_slice_without_a_view(prog):
     """Canonicalization adds no View, and the finalized CPU program (BLAS, LAPACK, HPTT) reads the subset right."""
