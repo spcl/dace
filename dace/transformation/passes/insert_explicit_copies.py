@@ -392,7 +392,8 @@ class InsertExplicitCopies(ppl.Pass):
         if edge.dst_conn == "set":
             return False
         inner_desc = sdfg.arrays[inner_node.data]
-        if isinstance(inner_desc, data.View):
+        # A view is bound by its defining edge, which moves nothing; a copy on its other side is lifted like any other.
+        if isinstance(inner_desc, data.View) and sdutils.get_view_edge(state, inner_node) in (edge, None):
             return False
         find_outer = sdutils.find_input_arraynode if stage_in else sdutils.find_output_arraynode
         try:
@@ -400,11 +401,15 @@ class InsertExplicitCopies(ppl.Pass):
         except RuntimeError:
             return False
         # One container passing through the scope with one subset is one memory on both sides: nothing moves. A node
-        # that only renames it is dropped, so that no copy onto itself is emitted for it. One that cannot be dropped
-        # keeps the identity copy -- its absent far side must not be derived from the array, which would cover the
-        # whole of it from the slice one iteration owns.
+        # that only renames it is dropped, so that no copy onto itself is emitted for it. A stage-in one that cannot
+        # be dropped stays implicit: both code generators emit nothing for it (``hands_on_unchanged``), a lifted copy
+        # would copy the container onto itself. A stage-out one keeps the identity copy -- its absent far side must
+        # not be derived from the array, which would cover the whole of it from the slice one iteration owns.
         identity = inner_node.data == outer.data and edge.data.other_subset is None
-        if identity and (drop_scope_alias if stage_in else drop_scope_exit_alias)(state, edge, inner_node):
+        if identity and stage_in:
+            drop_scope_alias(state, edge, inner_node)
+            return False
+        if identity and drop_scope_exit_alias(state, edge, inner_node):
             return False
         # A container handed on through the map exit as itself, also when the edge spells the
         # one subset twice (MapFusionVertical's in-place intermediate), moves nothing; both code generators emit

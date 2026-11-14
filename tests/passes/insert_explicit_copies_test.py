@@ -889,6 +889,75 @@ def test_a_pass_through_that_is_read_again_copies_nothing():
     np.testing.assert_array_equal(C, expected_c)
 
 
+def build_pass_through_into_another_array_sdfg(name: str) -> dace.SDFG:
+    """``A`` passes through the map entry as itself and goes straight on through the exit into a row of ``B``, so
+    the access node carrying it cannot be dropped."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [_TILE], dace.float64, storage=_CPU)
+    sdfg.add_array("B", [_TILE, _TILE], dace.float64, storage=_CPU)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("rows", {"i": f"0:{_TILE}"})
+    carried = state.add_access("A")
+    state.add_memlet_path(state.add_access("A"), me, carried, memlet=Memlet(f"A[0:{_TILE}]"))
+    state.add_memlet_path(
+        carried, mx, state.add_access("B"), memlet=Memlet(data="B", subset=f"i, 0:{_TILE}", other_subset=f"0:{_TILE}")
+    )
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_stage_in_pass_through_that_cannot_be_dropped_copies_nothing():
+    """A container handed in through the map entry as itself moves nothing, also when the access node carrying it
+    cannot be dropped: a lifted copy would copy the container onto itself in every iteration."""
+    sdfg = build_pass_through_into_another_array_sdfg("same_container_through_entry_into_b")
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    copies = [n for n in sdfg.start_state.nodes() if isinstance(n, CopyLibraryNode)]
+    assert [
+        (sdfg.start_state.in_edges(n)[0].data.data, sdfg.start_state.out_edges(n)[0].data.data) for n in copies
+    ] == [("A", "B")]
+    A = np.arange(_TILE, dtype=np.float64)
+    B = np.zeros((_TILE, _TILE))
+    sdfg(A=A, B=B)
+    np.testing.assert_array_equal(B, np.broadcast_to(A, (_TILE, _TILE)))
+
+
+def build_stage_out_from_a_view_inside_the_map_sdfg(name: str) -> dace.SDFG:
+    """A view of ``A``'s tile, bound by its edge from the map entry, is staged out through the exit into ``B``
+    (stockham_fft's reshaped ``tmp`` copied into a slice of the next stage)."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [_N_STAGE], dace.float64, storage=_CPU)
+    sdfg.add_array("B", [_N_STAGE], dace.float64, storage=_CPU)
+    sdfg.add_view("tile", [_TILE], dace.float64, storage=_CPU)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("tiles", {"bi": f"0:{_N_STAGE}:{_TILE}"})
+    view = state.add_access("tile")
+    state.add_memlet_path(state.add_access("A"), me, view, memlet=Memlet(f"A[bi:bi+{_TILE}]"))
+    state.add_memlet_path(
+        view, mx, state.add_access("B"), memlet=Memlet(data="B", subset=f"bi:bi+{_TILE}", other_subset=f"0:{_TILE}")
+    )
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_copy_out_of_a_view_bound_on_its_other_side_is_lifted():
+    """The view's edge from the map entry binds it and moves nothing; its copy into ``B`` is a copy like any other
+    and is lifted, so no ``dace::CopyND`` is emitted for it."""
+    sdfg = build_stage_out_from_a_view_inside_the_map_sdfg("stage_out_from_a_view_inside_the_map")
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    state = sdfg.start_state
+    copies = [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
+    assert [(state.in_edges(n)[0].src.data, state.out_edges(n)[0].data.data) for n in copies] == [("tile", "B")]
+    _assert_no_copynd(_copy.deepcopy(sdfg))
+    A = np.arange(_N_STAGE, dtype=np.float64)
+    B = np.zeros(_N_STAGE)
+    sdfg(A=A, B=B)
+    np.testing.assert_array_equal(B, A)
+
+
 def _view_an_names(sdfg, state):
     return [
         n.data
@@ -1747,6 +1816,8 @@ if __name__ == "__main__":
     test_lift_stage_out_copy()
     test_a_container_passing_through_a_map_exit_is_not_a_copy()
     test_a_pass_through_that_is_read_again_copies_nothing()
+    test_a_stage_in_pass_through_that_cannot_be_dropped_copies_nothing()
+    test_a_copy_out_of_a_view_bound_on_its_other_side_is_lifted()
     test_lift_stage_in_copy_through_view()
     test_lift_stage_out_copy_through_view()
     test_lift_stage_in_copy_chained_map_entries()
