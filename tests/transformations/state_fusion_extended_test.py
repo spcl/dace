@@ -2417,6 +2417,70 @@ def test_two_reads_of_one_container_bind_to_its_one_writer():
     assert _writer_reaches_every_reader(fused.start_state, "A")
 
 
+def build_rewritten_container_read_twice_one_read_held() -> SDFG:
+    """``first``: ``X = P; X = X + Q``; ``second``: ``Q = 2 * X`` and ``Z = 3 * X`` through two source reads of ``X``.
+    The write of ``Q`` holds the first read behind ``first``'s read of ``Q`` with an ordering edge."""
+    sdfg = SDFG("sfx_held_duplicate_read")
+    for name in ("P", "Q", "X", "Z"):
+        sdfg.add_array(name, [4], dtypes.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    x1 = first.add_access("X")
+    first.add_mapped_tasklet(
+        "w1",
+        {"i": "0:4"},
+        {"a": Memlet("P[i]")},
+        "b = a",
+        {"b": Memlet("X[i]")},
+        output_nodes={"X": x1},
+        external_edges=True,
+    )
+    first.add_mapped_tasklet(
+        "w2",
+        {"i": "0:4"},
+        {"a": Memlet("X[i]"), "c": Memlet("Q[i]")},
+        "b = a + c",
+        {"b": Memlet("X[i]")},
+        input_nodes={"X": x1},
+        external_edges=True,
+    )
+    second = sdfg.add_state_after(first, "second")
+    second.add_mapped_tasklet(
+        "u1",
+        {"i": "0:4"},
+        {"a": Memlet("X[i]")},
+        "b = 2 * a",
+        {"b": Memlet("Q[i]")},
+        external_edges=True,
+    )
+    second.add_mapped_tasklet(
+        "u2",
+        {"i": "0:4"},
+        {"a": Memlet("X[i]")},
+        "b = 3 * a",
+        {"b": Memlet("Z[i]")},
+        external_edges=True,
+    )
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_held_read_and_its_duplicate_read_the_same_instance():
+    """The read of ``X`` an ordering edge holds back takes ``first``'s last ``X``; its duplicate read must bind to
+    that one too, not to the ``X`` before ``X = X + Q``, which made ``Z = 3 * P``."""
+    sdfg = build_rewritten_container_read_twice_one_read_held()
+    fused = copy.deepcopy(sdfg)
+    assert fused.apply_transformations_repeated(StateFusionExtended) == 1
+    state = fused.start_state
+    last = next(n for n in state.data_nodes() if n.data == "X" and any("w2" in str(e.src) for e in state.in_edges(n)))
+    readers = [n for n in state.nodes() if isinstance(n, dnodes.MapEntry) and n.map.label in ("u1_map", "u2_map")]
+    assert len(readers) == 2 and all(nx.has_path(state._nx, last, r) for r in readers)
+    arrays = dict(P=np.arange(4.0), Q=np.ones(4), X=np.zeros(4), Z=np.zeros(4))
+    ref = _run(sdfg, "ref", **arrays)
+    out = _run(fused, "fused", **arrays)
+    for name in arrays:
+        np.testing.assert_array_equal(out[name], ref[name])
+
+
 if __name__ == "__main__":
     test_aggressive_fusion_orders_only_the_first_writer_the_overwrite_overlaps()
     test_a_read_after_the_overwrite_follows_every_first_writer_it_overlaps()
@@ -2473,3 +2537,4 @@ if __name__ == "__main__":
     test_two_overlapping_producers_of_a_reused_transient_still_refuse()
     test_a_container_both_states_write_is_ordered_by_its_write_write_edge()
     test_two_reads_of_one_container_bind_to_its_one_writer()
+    test_a_held_read_and_its_duplicate_read_the_same_instance()

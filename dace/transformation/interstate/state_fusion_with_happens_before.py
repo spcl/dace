@@ -1221,6 +1221,16 @@ class StateFusionExtended(StateFusion):
             source_node = first_state.in_degree(node) == 0
 
             # If not source node, try to connect every memlet-intersecting candidate
+            # A second-state source read that only an ordering edge keeps from being a source here
+            held_read = not source_node and second_state.in_degree(node) == 0
+            if held_read and node.data in bound:
+                # Every source read of one container reads its value at the state boundary: the instance a sibling read
+                # already took, also when this one is held behind an ordering edge
+                n = bound[node.data]
+                sdutil.change_edge_src(first_state, node, n)
+                sdutil.change_edge_dest(first_state, node, n)
+                first_state.remove_node(node)
+                continue
             if not source_node:
                 # WAW guard: refuse the same-name merge when ``can_be_applied``
                 # flagged a write-write hazard for this (cand, node) data via
@@ -1260,6 +1270,9 @@ class StateFusionExtended(StateFusion):
                         merged_nodes.add(cand)
                 if took:
                     absorbed.setdefault(node.data, []).append(node)
+                    if held_read:
+                        # The held read now stands for the value at the state boundary: its sibling reads bind to it
+                        bound.setdefault(node.data, node)
                 elif second_state.out_degree(node) > 0:
                     # An unmerged read of a container the second state rewrites stays behind the first-state writers
                     # that rewrite or the read overlaps: the WAW check counted on the merge to order them, and orders
