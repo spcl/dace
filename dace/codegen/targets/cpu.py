@@ -4664,7 +4664,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 bound = cpp.sym2cpp(end + 1)
                 # A range is integral: a ``pow`` bound would compare as floating point, which OpenMP rejects
                 if symbolic.has_symbolic_power(end):
-                    bound = f"{loop_ctypes[i]}({bound})"
+                    cast = f"({loop_ctypes[i]})" if cpf_lowering.standalone_c() else loop_ctypes[i]
+                    bound = f"{cast}({bound})"
                 result.write(
                     "for (%s; %s < %s; %s += %s) {\n" % (init, var, bound, var, cpp.sym2cpp(skip)),
                     cfg,

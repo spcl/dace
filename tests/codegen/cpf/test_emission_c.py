@@ -19,6 +19,7 @@ import re
 
 import numpy as np
 import pytest
+import sympy
 
 import dace
 from dace import cpf, cpf_lowering
@@ -1295,6 +1296,24 @@ def test_a_stack_array_the_frame_allocates_is_cast_in_c():
     assert_matches({"b": a + 1.0}, {"b": b}, name)
 
 
+def test_a_map_bounded_by_a_power_casts_its_bound_in_c():
+    """spgemm_hash: a loop whose bound is a power of a symbol an interstate edge binds casts it to the loop's integer
+    type, which was the C++ functional cast ``int64_t(...)``; C needs the cast expression."""
+    name = "cpf_c_power_bound"
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", (N,), dace.float64)
+    sdfg.add_array("bins", (1,), dace.int64)
+    init = sdfg.add_state("init", is_start_block=True)
+    state = sdfg.add_state_after(init, "fill", assignments={"k": "bins[0]"})
+    extent = dace.subsets.Range([(0, 2 * sympy.Pow(2, sympy.Max(0, dace.symbol("k", dace.int64))) - 1, 1)])
+    state.add_mapped_tasklet("fill", {"i": extent}, {}, "o = 1.0", {"o": dace.Memlet("a[i]")}, external_edges=True)
+    rendering = render_sdfg(sdfg, language="c")
+    assert re.search(r"i < \(int\w*\)\(", rendering.code), rendering.code
+    a = np.zeros(8)
+    run_c(rendering.sdfg, rendering.code, {"a": a, "bins": np.array([2]), "N": 8}, name)
+    assert_matches({"a": np.ones(8)}, {"a": a}, name)
+
+
 if __name__ == "__main__":
     test_entry_point_has_no_language_linkage()
     test_two_dimensional_index_helper_carries_the_stride()
@@ -1370,3 +1389,4 @@ if __name__ == "__main__":
     test_the_pure_dft_types_its_local_across_statements_and_builds_its_twiddle_in_c()
     test_a_scatter_sized_by_its_iteration_space_takes_atomics_not_an_array_reduction()
     test_a_stack_array_the_frame_allocates_is_cast_in_c()
+    test_a_map_bounded_by_a_power_casts_its_bound_in_c()
