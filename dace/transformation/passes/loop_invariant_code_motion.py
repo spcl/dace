@@ -235,7 +235,7 @@ def _hoist_invariant_child_regions(loop: LoopRegion) -> int:
     writes to the parent region, placing them before ``loop``.
     """
     parent = loop.parent_graph
-    hoistable = _hoistable_child_regions(loop)
+    hoistable = hoistable_child_regions(loop)
     if parent is None or not hoistable:
         return 0
 
@@ -254,7 +254,7 @@ def _hoist_invariant_child_regions(loop: LoopRegion) -> int:
     return moved
 
 
-def _hoistable_child_regions(loop: LoopRegion) -> list[Any]:
+def hoistable_child_regions(loop: LoopRegion) -> list[Any]:
     """The direct children of ``loop`` :func:`_hoist_invariant_child_regions` moves before it; nothing is changed."""
     if loop.parent_graph is None:
         return []
@@ -762,7 +762,7 @@ def _hoist_tasklet_to_preheader(
 # Map scope path
 
 
-def _map_variance(state: SDFGState, me: nodes.MapEntry, root: nodes.MapEntry) -> tuple[set[str], set[str]] | None:
+def map_variance(state: SDFGState, me: nodes.MapEntry, root: nodes.MapEntry) -> tuple[set[str], set[str]] | None:
     """The symbols and data that are variant for a hoist out of ``me`` judged against ``root``'s scope, or ``None``
     when that scope has no body."""
     variant_syms: set[str] = set(me.map.params)
@@ -798,7 +798,7 @@ def hoist_map_scope(state: SDFGState, me: nodes.MapEntry, root: nodes.MapEntry) 
     """Hoist invariant tasklets out of a Map scope to its enclosing scope. Invariance is judged against ``root``'s
     scope (``me`` or a map around it): the params of every map from ``me`` up to ``root`` and the data written in
     ``root``'s scope are variant."""
-    variance = _map_variance(state, me, root)
+    variance = map_variance(state, me, root)
     if variance is None:
         return 0
     variant_syms, variant_data = variance
@@ -816,14 +816,14 @@ def hoist_map_scope(state: SDFGState, me: nodes.MapEntry, root: nodes.MapEntry) 
 
 def map_has_invariant_code(state: SDFGState, me: nodes.MapEntry, root: nodes.MapEntry) -> bool:
     """Whether :func:`hoist_map_scope` finds a tasklet to hoist out of ``me``; nothing is changed."""
-    variance = _map_variance(state, me, root)
+    variance = map_variance(state, me, root)
     return variance is not None and _find_one_map_invariant_tasklet(state, me, *variance) is not None
 
 
 def loop_has_invariant_code(loop: LoopRegion) -> bool:
     """Whether :func:`hoist_loop_region` finds a sub-region or a tasklet to hoist out of ``loop``; nothing is
     changed."""
-    if _hoistable_child_regions(loop):
+    if hoistable_child_regions(loop):
         return True
     if not loop.nodes():
         return False
