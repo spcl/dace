@@ -221,6 +221,33 @@ def test_inline_refuses_an_ordered_nest_copying_a_source_into_a_sink():
     assert not InlineSDFG.can_be_applied_to(sdfg, nested_sdfg=node)
 
 
+def test_inline_refuses_an_ordered_library_input_read_through_a_map_entry():
+    """In a map the Reduce reads ``S`` straight from the map entry: an access node of ``S`` placed there to take the
+    ordering edge would write ``S``, an input only of the enclosing nest, so the body stays nested. Every iteration
+    writes the same ``R = 0`` and ``C = sum(S)``."""
+    inner = ordered_reduce("inline_ordering_edges_reduce_in_map", init_reads_s=False)[1].sdfg
+    mid = dace.SDFG("inline_ordering_edges_reduce_in_map_mid")
+    outer = dace.SDFG("inline_ordering_edges_reduce_in_map_outer")
+    for graph in (mid, outer):
+        for data, shape in (("S", [N]), ("R", [1]), ("C", [1])):
+            graph.add_array(data, shape, dace.float64)
+    state = mid.add_state()
+    node = state.add_nested_sdfg(inner, {"s": None}, {"r": None, "c": None})
+    entry, exit_ = state.add_map("in_map", dict(i=f"0:{N}"))
+    state.add_memlet_path(state.add_read("S"), entry, node, dst_conn="s", memlet=dace.Memlet(f"S[0:{N}]"))
+    for conn in "rc":
+        state.add_memlet_path(
+            node, exit_, state.add_write(conn.upper()), src_conn=conn, memlet=dace.Memlet(f"{conn.upper()}[0]")
+        )
+    ostate = outer.add_state()
+    mid_node = ostate.add_nested_sdfg(mid, {"S": None}, {"R": None, "C": None})
+    ostate.add_edge(ostate.add_read("S"), None, mid_node, "S", dace.Memlet(f"S[0:{N}]"))
+    for data in "RC":
+        ostate.add_edge(mid_node, data, ostate.add_write(data), None, dace.Memlet(f"{data}[0]"))
+    outer.validate()
+    assert not InlineSDFG.can_be_applied_to(mid, nested_sdfg=node)
+
+
 if __name__ == "__main__":
     test_inline_keeps_ordering_edges_of_boundary_nodes_on_a_tasklet()
     test_inline_refuses_an_input_copied_into_another_behind_ordering_edges()
@@ -228,3 +255,4 @@ if __name__ == "__main__":
     test_inline_refuses_an_ordered_library_input_whose_outer_node_feeds_another_connector()
     test_inline_moves_the_ordering_edges_of_the_nested_node_onto_its_body()
     test_inline_refuses_an_ordered_nest_copying_a_source_into_a_sink()
+    test_inline_refuses_an_ordered_library_input_read_through_a_map_entry()

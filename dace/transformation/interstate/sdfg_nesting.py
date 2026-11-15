@@ -458,7 +458,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
         nstate: SDFGState = nested_sdfg.sdfg.nodes()[0]
         # A carrier's library neighbor is ordered through the outer access node on its connector
         # (``_order_library_neighbors``); one that also reaches the body through another connector (or is reached from
-        # it, for an output) would close a cycle
+        # it, for an output) would close a cycle. One read from a scope entry would need a fresh access node there,
+        # whose in-edge writes the container
         for node in self._order_carriers(nstate, in_connectors | out_connectors):
             for reads, edges in ((True, data_edges(nstate, node, False)), (False, data_edges(nstate, node, True))):
                 if node.data not in (in_connectors if reads else out_connectors) or not any(
@@ -468,6 +469,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 if reads:
                     outer = next(graph.in_edges_by_connector(nested_sdfg, node.data)).src
                     others = [e.src for e in graph.in_edges(nested_sdfg) if e.dst_conn != node.data]
+                    if isinstance(outer, nodes.EntryNode):
+                        return False
                 else:
                     outer = next(graph.out_edges_by_connector(nested_sdfg, node.data)).dst
                     others = [e.dst for e in graph.out_edges(nested_sdfg) if e.src_conn != node.data]
@@ -1204,8 +1207,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
     ) -> None:
         """Order each tasklet ``_order_by_tasklet`` deferred against its library node through the node on that
         connector's data edge, now in ``state``: an access node (the outer one the carrier was reconnected to, or the
-        carrier itself) takes the ordering edge; any other node, a scope entry or exit, gets a fresh access node of the
-        edge's data between it and the library node. The library node keeps one edge per connector."""
+        carrier itself) takes the ordering edge; any other node, a scope exit, gets a fresh access node of the edge's
+        data between it and the library node (``can_be_applied`` refuses a read from a scope entry). The library node
+        keeps one edge per connector."""
         for order, lib, conn, reads in deferred:
             if lib not in state._nodes:
                 continue  # a fission moved it to another state, whose boundary orders it
