@@ -3,12 +3,13 @@
 
 import ctypes.util
 import subprocess
+import sys
 
 import numpy as np
 import pytest
 
 import dace
-from dace.libraries.standard.environments.mimalloc import MiMalloc
+from dace.libraries.standard.environments.mimalloc import CXX_RUNTIME, MiMalloc
 
 N = dace.symbol("N")
 
@@ -42,6 +43,24 @@ def test_heap_arrays_come_from_mimalloc():
     np.testing.assert_allclose(B, (A + 1.0) * 2.0)
 
 
+def needed_libraries(compiled) -> list[str]:
+    """The shared libraries ``compiled`` lists (``DT_NEEDED``), in the order the loader searches them."""
+    dynamic = subprocess.run(["readelf", "-d", compiled.filename], capture_output=True, text=True, check=True).stdout
+    return [line.split("[", 1)[1].split("]", 1)[0] for line in dynamic.splitlines() if "(NEEDED)" in line]
+
+
+@pytest.mark.skipif(MiMalloc.library_path() is None, reason="mimalloc is not installed")
+def test_a_mimalloc_program_binds_operator_delete_to_libstdcxx_not_mimalloc():
+    """libmimalloc exports ``operator new`` / ``delete`` too: listed before libstdc++, a program's ``delete`` of
+    memory libstdc++ allocated went to ``mi_free`` and crashed (a later program's instrumentation report)."""
+    with dace.config.set_temporary("compiler", "cpu", "heap_allocator", value="mimalloc"):
+        compiled = heap_transient_sdfg("heap_mimalloc_order").compile()
+    needed = needed_libraries(compiled)
+    cxx = next(i for i, name in enumerate(needed) if name.startswith("libstdc++"))
+    mimalloc = next(i for i, name in enumerate(needed) if name.startswith("libmimalloc"))
+    assert cxx < mimalloc, needed
+
+
 def test_the_system_allocator_links_no_mimalloc():
     with dace.config.set_temporary("compiler", "cpu", "heap_allocator", value="system"):
         compiled = heap_transient_sdfg("heap_system").compile()
@@ -55,6 +74,7 @@ def test_the_system_allocator_links_no_mimalloc():
 if __name__ == "__main__":
     if MiMalloc.library_path() is not None:
         test_heap_arrays_come_from_mimalloc()
+        test_a_mimalloc_program_binds_operator_delete_to_libstdcxx_not_mimalloc()
     test_the_system_allocator_links_no_mimalloc()
 
 
@@ -64,4 +84,5 @@ def test_a_runtime_only_mimalloc_is_linked_by_its_file_name(monkeypatch):
     monkeypatch.delenv("MIMALLOC_ROOT", raising=False)
     monkeypatch.setattr(ctypes.util, "find_library", lambda name: "libmimalloc.so.3")
 
-    assert MiMalloc.cmake_libraries() == ["-l:libmimalloc.so.3"]
+    runtime = [CXX_RUNTIME] if sys.platform.startswith("linux") else []
+    assert MiMalloc.cmake_libraries() == [*runtime, "-l:libmimalloc.so.3"]

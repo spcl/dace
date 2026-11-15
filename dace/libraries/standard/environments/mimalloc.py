@@ -3,8 +3,12 @@
 
 import ctypes.util
 import os
+import sys
 
 from dace import config, library
+
+#: The C++ runtime whose ``operator new`` / ``delete`` a program must bind before mimalloc's (GCC's, on Linux).
+CXX_RUNTIME = "stdc++"
 
 
 @library.environment
@@ -41,11 +45,13 @@ class MiMalloc:
     @staticmethod
     def cmake_libraries():
         """The library to link: its path, else the loader's file name (``-l:libmimalloc.so.3``), as a runtime-only
-        install has no ``libmimalloc.so`` for ``-lmimalloc`` to find."""
+        install has no ``libmimalloc.so`` for ``-lmimalloc`` to find. On Linux libstdc++ is linked ahead of it:
+        libmimalloc also exports ``operator new`` / ``delete``, and a program that lists it first binds them there
+        while libstdc++ allocates through its own, so a ``delete`` of memory libstdc++ allocated (a ``std::string``
+        it grew) reaches ``mi_free`` and crashes."""
         path = MiMalloc.library_path()
-        if path is None:
-            return ["mimalloc"]
-        return [path] if os.path.isabs(path) else [f"-l:{path}"]
+        mimalloc = "mimalloc" if path is None else path if os.path.isabs(path) else f"-l:{path}"
+        return [CXX_RUNTIME, mimalloc] if sys.platform.startswith("linux") else [mimalloc]
 
     @staticmethod
     def enabled() -> bool:
