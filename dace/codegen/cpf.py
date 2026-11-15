@@ -5,7 +5,7 @@
 ``-I``, no ``libdace``, no BLAS -- and that computes what the SDFG computes. ``cpf(sdfg,
 language='c')`` returns C23 under the same terms; the two are one semantics in two spellings, held
 together by ``tests/codegen/cpf/test_lowering_table.py``. The point is not portability for its own
-sake: it is that the result can be read, diffed and edited on its own, so a maximally parallel
+sake: it is that the result can be read, diffed and edited on its own, so the parallel
 rendering of a program can be compared against the original the way Pluto's output is.
 
 Nothing here re-implements code generation. The readable CPU generator

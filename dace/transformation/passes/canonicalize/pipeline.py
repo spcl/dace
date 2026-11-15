@@ -579,7 +579,7 @@ FIND_FIRST_CHUNK: dict[str, int] = {"cpu": 1 << 20, "gpu": 1 << 21}
 # The recipe
 # The phased canonicalization recipe: the paper's phases in order, with a structural cleanup between them.
 #
-# Phases (mpr paper, Fig. "phases"): ingest, normalize statements, lift semantics, derive parallelism, then recompose
+# Phases (doc/sdfg/canonicalize.rst): ingest, normalize statements, lift semantics, derive parallelism, then recompose
 # (maximal fusion and what it exposes) and finish. Specialization is a separate call (``finalize_for_target``).
 #
 # - ``StructuralCleanup`` runs at the start, after lowering, before derivation, before fusion, whose rounds run it

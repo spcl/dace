@@ -18,4 +18,5 @@ Below you can find the different ways transformations are represented in DaCe an
    passes
    transformations
    simplify
+   canonicalize
    auto_optimize
