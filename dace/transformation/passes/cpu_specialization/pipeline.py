@@ -2,7 +2,7 @@
 """The CPU specialization stage: the one place a canonical parallel scope is made sequential.
 
 Canonicalization and specialization are two stages, in that order, and this module is the second
-one. The first produces the maximally parallel, device-neutral form: wherever the choice between
+one. The first produces the canonical parallel form: wherever the choice between
 parallel and sequential is open, canonicalization takes parallel, because that form is the one a
 GPU, a vectorizer and a CPU can all still specialize from. Only here, with the target known and the
 map shapes final, is parallelism given back -- for a scope whose work cannot pay for a

@@ -1006,7 +1006,7 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     else:
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
-    # Canonicalization stops at the maximally parallel form, so the target's specialization stage
+    # Canonicalization stops at the canonical parallel form, so the target's specialization stage
     # runs here -- BEFORE library selection, so libnode_is_sequential sees the corrected schedules.
     # On CPU that is the whole cpu_specialize stage (calibration, anti-dependence chunking,
     # oversized-intermediate recompute, the fork/join cost model, transfer specialization); on GPU

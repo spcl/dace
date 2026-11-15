@@ -2,7 +2,7 @@
 """CPU specialization's one decision on parallel axes: which maps share their iterations out over the OpenMP team,
 over which of their axes, and which run sequentially.
 
-Canonicalization leaves the maximally parallel, device-neutral form with every schedule unset (``Default``). This
+Canonicalization leaves the canonical parallel form with every schedule unset (``Default``). This
 pass decides every CPU map's schedule, top-down, before schedule inference: the verdict for a map depends on its
 body (a few-trip map hands the team to its body maps), so it cannot be made after inference has pinned every
 nested map ``Sequential``. A map with an enclosing map runs sequentially, as inference would make it; at the top
