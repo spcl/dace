@@ -6,9 +6,10 @@ Canonicalization and the Canonical Parallel Form
 Canonicalization rewrites an SDFG into the Canonical Parallel Form (CPF), a restricted shape of the SDFG IR that a
 program reaches before any target-specific optimization runs. In the CPF, every axis whose iterations are proven
 independent is a Map, every loop that stays a loop carries the reason it stays sequential, and every computation the
-pipeline recognizes (a reduction, a scan, a contraction, a copy) is a library node. Two programs that compute the
-same thing through different spellings of the same loops reach the same form, so a later pass, a code generator, or a
-person reading the result sees one shape per computation.
+pipeline recognizes (a reduction, a scan, a contraction, a copy) is a library node. Normalization undoes the
+spelling choices of the source (unrolled or tiled loops, reused scalars, statements sharing a loop), so that a later
+pass, a code generator, or a person reading the result meets one shape per computation where the rewrites apply. The
+form claims no maximality: a loop it leaves sequential or unknown may still be parallel.
 
 Canonicalization is the first of two steps. It stops where the target begins: wherever the choice between a parallel
 and a sequential form is open, it keeps the parallel form, because a CPU, a GPU, and a vectorizer can each still
@@ -163,6 +164,9 @@ settled at one of three levels:
 * **Level 2**: a polyhedral wavefront skew (isl). The skew moves every dependence onto one axis and leaves the other
   axes parallel.
 * **Level 3**: an SMT query (Z3) that proves a pair of accesses never conflicts.
+
+``LoopToMap`` runs levels 1 and 3 on every loop; the skew of level 2 runs last, on the nests whose loops all still
+carry a dependence.
 
 A loop can also settle by lifting (it became a library node) or as a guarded loop (property 5). A loop that settles
 nowhere stays a :class:`~dace.sdfg.state.LoopRegion`.
