@@ -182,20 +182,23 @@ def bulk_copies(state: SDFGState) -> list[MultiConnectorEdge[Memlet]]:
     ]
 
 
+def copy_subsets(edge: MultiConnectorEdge[Memlet], state: SDFGState) -> tuple[subsets.Subset, subsets.Subset]:
+    """The source and target subsets of the copy ``edge``; a side the memlet leaves implicit is its whole container."""
+    sdfg = state.sdfg
+    return (
+        edge.data.get_src_subset(edge, state) or subsets.Range.from_array(edge.src.desc(sdfg)),
+        edge.data.get_dst_subset(edge, state) or subsets.Range.from_array(edge.dst.desc(sdfg)),
+    )
+
+
 def element_copy(edge: MultiConnectorEdge[Memlet], state: SDFGState) -> bool:
     """Whether the copy ``edge`` moves one element: a statement like an assignment tasklet, run as one."""
-    return (
-        all(
-            subset is not None and subset.num_elements_exact() == 1
-            for subset in (edge.data.get_src_subset(edge, state), edge.data.get_dst_subset(edge, state))
-        )
-        and edge.data.wcr is None
-    )
+    return edge.data.wcr is None and all(subset.num_elements_exact() == 1 for subset in copy_subsets(edge, state))
 
 
 def copy_as_assignment(edge: MultiConnectorEdge[Memlet], state: SDFGState) -> nodes.Tasklet:
     """Run the element copy ``edge`` as an assignment tasklet, which the team treats like any statement."""
-    source, target = edge.data.get_src_subset(edge, state), edge.data.get_dst_subset(edge, state)
+    source, target = copy_subsets(edge, state)
     tasklet = state.add_tasklet(f"copy_{edge.src.data}_{edge.dst.data}", {"__inp"}, {"__out"}, "__out = __inp")
     state.add_edge(edge.src, edge.src_conn, tasklet, "__inp", Memlet(data=edge.src.data, subset=copy.deepcopy(source)))
     state.add_edge(tasklet, "__out", edge.dst, edge.dst_conn, Memlet(data=edge.dst.data, subset=copy.deepcopy(target)))
@@ -213,8 +216,7 @@ def shares_out_as_a_map(edge: MultiConnectorEdge[Memlet], state: SDFGState) -> b
         return False
     if not memlet_utils.can_memlet_be_turned_into_a_map(edge, state, sdfg):
         return False
-    source = edge.data.get_src_subset(edge, state) or subsets.Range.from_array(edge.src.desc(sdfg))
-    target = edge.data.get_dst_subset(edge, state) or subsets.Range.from_array(edge.dst.desc(sdfg))
+    source, target = copy_subsets(edge, state)
     extents = [[size for size in subset.size() if size != 1] for subset in (source, target)]
     return bool(extents[0]) and [str(e) for e in extents[0]] == [str(e) for e in extents[1]]
 

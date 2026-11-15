@@ -145,8 +145,86 @@ def test_inline_refuses_an_ordered_library_input_whose_outer_node_feeds_another_
     assert not InlineSDFG.can_be_applied_to(sdfg, nested_sdfg=node)
 
 
+def ordered_nest(name: str, copy_body: bool = False) -> tuple[dace.SDFG, nodes.NestedSDFG]:
+    """``B = A + 1``, a nest writing ``A = 2``, then ``C = A``. The nest has no input: only empty memlets order it
+    after the write of ``B`` (whose map reads the old ``A``) and before the access node ``C`` reads ``A`` from. With
+    ``copy_body`` the nest instead copies an input ``e`` straight into ``a``."""
+    sdfg = dace.SDFG(name)
+    for data in "ABCE":
+        sdfg.add_array(data, [N], dace.float64)
+    inner = dace.SDFG(f"{name}_inner")
+    inner.add_array("a", [N], dace.float64)
+    nstate = inner.add_state()
+    if copy_body:
+        inner.add_array("e", [N], dace.float64)
+        nstate.add_nedge(nstate.add_read("e"), nstate.add_write("a"), dace.Memlet(f"e[0:{N}] -> [0:{N}]"))
+    else:
+        nstate.add_mapped_tasklet("two", {"j": f"0:{N}"}, {}, "y = 2", {"y": dace.Memlet("a[j]")}, external_edges=True)
+    state = sdfg.add_state()
+    b = state.add_write("B")
+    state.add_mapped_tasklet(
+        "inc",
+        {"i": f"0:{N}"},
+        {"x": dace.Memlet("A[i]")},
+        "y = x + 1",
+        {"y": dace.Memlet("B[i]")},
+        input_nodes={"A": state.add_read("A")},
+        output_nodes={"B": b},
+        external_edges=True,
+    )
+    node = state.add_nested_sdfg(inner, {"e"} if copy_body else {}, {"a"})
+    if copy_body:
+        state.add_edge(state.add_read("E"), None, node, "e", dace.Memlet(f"E[0:{N}]"))
+    state.add_edge(node, "a", state.add_write("A"), None, dace.Memlet(f"A[0:{N}]"))
+    a = state.add_read("A")
+    state.add_nedge(b, node, dace.Memlet())
+    state.add_nedge(node, a, dace.Memlet())
+    state.add_mapped_tasklet(
+        "copy",
+        {"i": f"0:{N}"},
+        {"x": dace.Memlet("A[i]")},
+        "y = x",
+        {"y": dace.Memlet("C[i]")},
+        input_nodes={"A": a},
+        external_edges=True,
+    )
+    sdfg.validate()
+    return sdfg, node
+
+
+def test_inline_moves_the_ordering_edges_of_the_nested_node_onto_its_body():
+    """MapToForLoop keeps a map's ordering edges on the nest it makes; a nest left ordered so is still inlined, with
+    what ran before it ahead of its body and what ran after it behind."""
+    sdfg, node = ordered_nest("inline_ordered_nest")
+    InlineSDFG.apply_to(sdfg, nested_sdfg=node)
+    sdfg.validate()
+    assert not any(isinstance(n, nodes.NestedSDFG) for n, _ in sdfg.all_nodes_recursive())
+    state = sdfg.start_block
+    entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry) and n.map.label.startswith("two"))
+    b = next(n for n in state.data_nodes() if n.data == "B")
+    a = next(
+        n
+        for n in state.data_nodes()
+        if n.data == "A" and any(e.dst.label.startswith("copy") for e in state.out_edges(n))
+    )
+    assert reaches(state, b, entry), "the body must still run after the old A is read"
+    assert reaches(state, state.exit_node(entry), a), "the body must still run before the new A is read"
+    a_in = np.random.rand(N)
+    b_out, c_out = np.zeros(N), np.zeros(N)
+    sdfg(A=a_in.copy(), B=b_out, C=c_out, E=np.zeros(N))
+    assert np.allclose(b_out, a_in + 1) and np.allclose(c_out, 2)
+
+
+def test_inline_refuses_an_ordered_nest_copying_a_source_into_a_sink():
+    """Inlined, the copy would be an edge between two outer access nodes, with no body node left to order."""
+    sdfg, node = ordered_nest("inline_ordered_nest_copy", copy_body=True)
+    assert not InlineSDFG.can_be_applied_to(sdfg, nested_sdfg=node)
+
+
 if __name__ == "__main__":
     test_inline_keeps_ordering_edges_of_boundary_nodes_on_a_tasklet()
     test_inline_refuses_an_input_copied_into_another_behind_ordering_edges()
     test_inline_orders_a_library_node_through_the_access_node_feeding_it()
     test_inline_refuses_an_ordered_library_input_whose_outer_node_feeds_another_connector()
+    test_inline_moves_the_ordering_edges_of_the_nested_node_onto_its_body()
+    test_inline_refuses_an_ordered_nest_copying_a_source_into_a_sink()

@@ -132,6 +132,38 @@ def data_edges(state: SDFGState, node: nodes.Node, incoming: bool) -> list[Multi
     return [e for e in (state.in_edges(node) if incoming else state.out_edges(node)) if not e.data.is_empty()]
 
 
+def ordering_edges(state: SDFGState, node: nodes.NestedSDFG) -> list[MultiConnectorEdge]:
+    """The empty memlets ordering ``node`` against a node of its own scope (not its scope's entry or exit): a
+    happens-before constraint, which binds no connector."""
+    ins = [e for e in state.in_edges(node) if not e.dst_conn and not isinstance(e.src, nodes.EntryNode)]
+    outs = [e for e in state.out_edges(node) if not e.src_conn and not isinstance(e.dst, nodes.ExitNode)]
+    return [e for e in ins + outs if e.data.is_empty()]
+
+
+def order_inlined_body(
+    state: SDFGState,
+    nsdfg_node: nodes.NestedSDFG,
+    body: list[nodes.Node],
+    boundary: set[nodes.Node],
+    ordering: list[MultiConnectorEdge],
+) -> None:
+    """Move the ``ordering`` edges of the nested node onto its inlined ``body``: what ran before the node precedes
+    every top-level body node only connectors feed, what ran after it follows every one that feeds only connectors."""
+    nstate = nsdfg_node.sdfg.nodes()[0]
+    scope = nstate.scope_dict()
+    tops = [n for n in body if scope[n] is None]
+    for edge in ordering:
+        state.remove_edge(edge)
+        if edge.dst is nsdfg_node:
+            for n in tops:
+                if not isinstance(n, nodes.ExitNode) and all(e.src in boundary for e in nstate.in_edges(n)):
+                    state.add_nedge(edge.src, n, Memlet())
+        else:
+            for n in tops:
+                if not isinstance(n, nodes.EntryNode) and all(e.dst in boundary for e in nstate.out_edges(n)):
+                    state.add_nedge(n, edge.dst, Memlet())
+
+
 def code_connector_names(states: Iterable[SDFGState]) -> set[str]:
     """The connector names of the code nodes of ``states``, library nodes and nested SDFGs apart."""
     names: set[str] = set()
@@ -352,7 +384,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if edge.dst_conn in in_connectors:
                 return False
             if edge.data.is_empty() and not isinstance(edge.src, nodes.EntryNode):
-                return False
+                if edge.dst_conn:
+                    return False
+                continue  # An ordering edge, which ``order_inlined_body`` moves onto the body
             # NOTE: Empty memlets do not attach to connectors
             if edge.dst_conn or not edge.data.is_empty():
                 in_connectors.add(edge.dst_conn)
@@ -360,10 +394,20 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if edge.src_conn in out_connectors:
                 return False
             if edge.data.is_empty() and not isinstance(edge.dst, nodes.ExitNode):
-                return False
+                if edge.src_conn:
+                    return False
+                continue
             # NOTE: Empty memlets do not attach to connectors
             if edge.src_conn or not edge.data.is_empty():
                 out_connectors.add(edge.src_conn)
+
+        # A copy from a source straight into a sink becomes an edge between two outer nodes, which no body node orders
+        if ordering_edges(graph, nested_sdfg) and any(
+            nested_state.in_degree(e.src) == 0 and nested_state.out_degree(e.dst) == 0
+            for e in nested_state.edges()
+            if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)
+        ):
+            return False
 
         shared_connectors = self.inlinable_shared_connectors(graph, sdfg, nested_sdfg, in_connectors & out_connectors)
 
@@ -402,12 +446,12 @@ class InlineSDFG(transformation.SingleStateTransformation):
         inp_data = {conn: set() for conn in in_connectors}
         for e in graph.in_edges(nested_sdfg):
             src = graph.memlet_path(e)[0].src
-            if isinstance(src, nodes.AccessNode):
+            if isinstance(src, nodes.AccessNode) and e.dst_conn in inp_data:
                 inp_data[e.dst_conn].add(src.data)
         out_data = dict()
         for e in graph.out_edges(nested_sdfg):
             dst = graph.memlet_path(e)[-1].dst
-            if isinstance(dst, nodes.AccessNode):
+            if isinstance(dst, nodes.AccessNode) and not e.data.is_empty():
                 out_data[dst.data] = e.src_conn
         rem_inpconns = dc(in_connectors)
         rem_outconns = dc(out_connectors)
@@ -657,7 +701,10 @@ class InlineSDFG(transformation.SingleStateTransformation):
         views: dict[str, tuple[str, Memlet]] = {}
         input_set: dict[str, str] = {}
         output_set: dict[str, str] = {}
+        ordering = ordering_edges(state, nsdfg_node)
         for e in state.in_edges(nsdfg_node):
+            if e in ordering:
+                continue
             inputs[e.dst_conn] = e
             input_set[e.data.data] = e.dst_conn
             if isinstance(e.src, nodes.AccessNode):
@@ -673,6 +720,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     mem.other_subset = dstset
                     views[d] = (arr, mem)
         for e in state.out_edges(nsdfg_node):
+            if e in ordering:
+                continue
             outputs[e.src_conn] = e
             output_set[e.data.data] = e.src_conn
             if isinstance(e.dst, nodes.AccessNode):
@@ -931,6 +980,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         state.add_nodes_from(subgraph.nodes())
         for edge in subgraph.edges():
             state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, Memlet.from_memlet(edge.data))
+        order_inlined_body(state, nsdfg_node, subgraph.nodes(), boundary_accesses, ordering)
 
         #######################################################
         # Reconnect inlined SDFG

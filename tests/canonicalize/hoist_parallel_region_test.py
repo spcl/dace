@@ -693,6 +693,24 @@ def test_bulk_copy_between_access_nodes_in_the_loop_is_shared_out_as_a_workshari
     assert np.allclose(a, 1.0) and np.allclose(b, 1.0)
 
 
+def test_element_copy_naming_only_its_source_runs_as_an_assignment():
+    """``s = t`` between two scalars, its memlet ``t[0]`` leaving the target implicit (its whole container): one
+    element, so an assignment statement the team runs once, like a copy naming both elements."""
+    sdfg = dace.SDFG("element_copy_implicit_target")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_scalar("s", dace.float64)
+    sdfg.add_scalar("t", dace.float64, transient=True)
+    body = mapped_state(loop_region(sdfg, "outer", "N"), "par", "a", "1.0", ["0:N"])
+    body.add_nedge(body.add_access("t"), body.add_access("s"), dace.Memlet("t[0]"))
+    sdfg.validate()
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert not any(
+        isinstance(e.src, nd.AccessNode) and isinstance(e.dst, nd.AccessNode) and not e.data.is_empty()
+        for e, _ in sdfg.all_edges_recursive()
+    ), "the copy must leave as an assignment tasklet, not as a copy every thread replicates"
+
+
 def test_relinearizing_bulk_copy_in_the_loop_is_refused():
     """A copy that reshapes has no element-for-element map, so nothing shares it out."""
     sdfg = dace.SDFG("bulk_copy_reshape")
