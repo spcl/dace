@@ -1208,8 +1208,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
         """Order each tasklet ``_order_by_tasklet`` deferred against its library node through the node on that
         connector's data edge, now in ``state``: an access node (the outer one the carrier was reconnected to, or the
         carrier itself) takes the ordering edge; any other node, a scope exit, gets a fresh access node of the edge's
-        data between it and the library node (``can_be_applied`` refuses a read from a scope entry). The library node
-        keeps one edge per connector."""
+        data between it and the library node (``can_be_applied`` refuses a read from a scope entry), and so does an
+        access node already ordered before the tasklet. The library node keeps one edge per connector."""
         for order, lib, conn, reads in deferred:
             if lib not in state._nodes:
                 continue  # a fission moved it to another state, whose boundary orders it
@@ -1224,7 +1224,15 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 else:
                     state.add_edge(lib, conn, end, None, dc(edge.data))
                     state.add_edge(end, None, edge.dst, edge.dst_conn, dc(edge.data))
-            if reads:
+            if reads and nx.has_path(state.nx, end, order):
+                # ``end`` already runs before the order (another read of it does): ordering it after the order would
+                # close a cycle, so the library node reads a fresh access node of the data after both
+                fresh, into = state.add_access(end.data), next(state.in_edges_by_connector(lib, conn))
+                state.remove_edge(into)
+                state.add_edge(fresh, into.src_conn, lib, conn, dc(into.data))
+                state.add_nedge(end, fresh, Memlet())
+                state.add_nedge(order, fresh, Memlet())
+            elif reads:
                 state.add_nedge(order, end, Memlet())
             else:
                 state.add_nedge(end, order, Memlet())

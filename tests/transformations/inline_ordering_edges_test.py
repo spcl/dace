@@ -5,6 +5,8 @@ inline leaves them, and keeps every such order on an empty tasklet."""
 import numpy as np
 
 import dace
+from dace import graphlib as nx
+from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 
@@ -145,6 +147,32 @@ def test_inline_refuses_an_ordered_library_input_whose_outer_node_feeds_another_
     assert not InlineSDFG.can_be_applied_to(sdfg, nested_sdfg=node)
 
 
+def test_inline_orders_a_library_input_another_read_of_its_data_runs_before_through_a_fresh_node():
+    """The init reads ``s`` through a second access node, so ``s -> init -> r -> s``: inlined, both reads are the one
+    outer node of ``S``, which already runs before the order tasklet (sdpa's scores after NestForge's default moves).
+    The Reduce reads a fresh access node of ``S`` after both instead, so the state stays acyclic."""
+    sdfg, node = ordered_reduce("inline_ordering_edges_reduce_twin", init_reads_s=False)
+    nstate = node.sdfg.start_block
+    init = next(n for n in nstate.nodes() if isinstance(n, nodes.Tasklet) and n.label == "init")
+    init.add_in_connector("x")
+    init.code = CodeBlock("y = 0 * x")
+    nstate.add_edge(nstate.add_read("s"), None, init, "x", dace.Memlet("s[0]"))
+    sdfg.validate()
+
+    InlineSDFG.apply_to(sdfg, nested_sdfg=node)
+
+    sdfg.validate()
+    state = sdfg.start_block
+    red = next(n for n in state.nodes() if isinstance(n, nodes.LibraryNode))
+    (feed,) = [e.src for e in state.in_edges(red)]
+    assert nx.is_directed_acyclic_graph(state.nx)
+    assert isinstance(feed, nodes.AccessNode) and feed.data == "S" and state.in_degree(feed) == 2
+    assert reaches(state, init, red), "the ordering of the sum after r = 0 was lost"
+    s, r, c = np.random.rand(N), np.ones(1), np.zeros(1)
+    sdfg(S=s, R=r, C=c)
+    assert r[0] == 0 and np.isclose(c[0], s.sum())
+
+
 def ordered_nest(name: str, copy_body: bool = False) -> tuple[dace.SDFG, nodes.NestedSDFG]:
     """``B = A + 1``, a nest writing ``A = 2``, then ``C = A``. The nest has no input: only empty memlets order it
     after the write of ``B`` (whose map reads the old ``A``) and before the access node ``C`` reads ``A`` from. With
@@ -253,6 +281,7 @@ if __name__ == "__main__":
     test_inline_refuses_an_input_copied_into_another_behind_ordering_edges()
     test_inline_orders_a_library_node_through_the_access_node_feeding_it()
     test_inline_refuses_an_ordered_library_input_whose_outer_node_feeds_another_connector()
+    test_inline_orders_a_library_input_another_read_of_its_data_runs_before_through_a_fresh_node()
     test_inline_moves_the_ordering_edges_of_the_nested_node_onto_its_body()
     test_inline_refuses_an_ordered_nest_copying_a_source_into_a_sink()
     test_inline_refuses_an_ordered_library_input_read_through_a_map_entry()
