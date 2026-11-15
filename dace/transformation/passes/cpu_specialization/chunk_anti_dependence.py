@@ -66,6 +66,13 @@ _CPU_SCHEDULES = (
 )
 
 
+#: The class line of the in-chunk sweep, which reads the live array ahead of its own writes.
+CHUNK_SWEEP_HINT = (
+    "sequential -- in order inside one chunk: an iteration reads what a later iteration of its chunk overwrites\n"
+    "settled: kept in order on purpose; the chunks run in parallel, and the reads past a chunk come from its seam"
+)
+
+
 def _min(a, b):
     """``min(a, b)`` built through DaCe's parser, not raw sympy."""
     return symbolic.pystr_to_symbolic(f"Min({symbolic.symstr(a)}, {symbolic.symstr(b)})")
@@ -352,6 +359,10 @@ class ChunkAntiDependence(ppl.Pass):
         to_loop.inline_after = False
         to_loop.map_entry = me
         to_loop.apply(state, sdfg)
+        # The order is this pass's decision, not an open question: the rendering must not invite parallelizing it
+        sweep = to_loop.loop_region
+        sweep.pinned_sequential = True
+        sweep.specialization_hint = CHUNK_SWEEP_HINT
 
     @staticmethod
     def _drop_copy(copy_state: SDFGState, copy_edge, snap_node: nodes.AccessNode) -> None:

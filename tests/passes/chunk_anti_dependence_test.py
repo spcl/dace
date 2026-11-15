@@ -153,6 +153,19 @@ def test_the_in_chunk_sweep_is_a_loop_and_not_a_map():
     assert len(sweeps[0][0]) == 1 and not sweeps[0][1], f"the sweep is a loop, not a map: {bodies}"
 
 
+def test_the_rendered_sweep_says_it_is_sequential_on_purpose():
+    """The sweep's order is the pass's own decision, so its rendering is ``sequential``, never ``unknown``: an
+    ``unknown`` loop is the one an agent reading the form is told to try to parallelize."""
+    from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
+
+    sdfg = _canonical(_shift)
+    assert ChunkAntiDependence().apply_pass(sdfg, {}) == 1
+    AnnotateLoopKinds().apply_pass(sdfg, {})
+    (sweep,) = [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+    assert sweep.pinned_sequential
+    assert sweep.specialization_hint.startswith("sequential -- in order inside one chunk"), sweep.specialization_hint
+
+
 def test_chunk_rewrite_is_bit_exact():
     """Sequential order inside a chunk satisfies the read-ahead; only the seam needs the snapshot."""
     sdfg = _canonical(_shift)
@@ -355,6 +368,7 @@ def test_chunk_rewrite_is_idempotent():
 
 if __name__ == "__main__":
     test_the_in_chunk_sweep_is_a_loop_and_not_a_map()
+    test_the_rendered_sweep_says_it_is_sequential_on_purpose()
     test_chunk_rewrite_is_bit_exact()
     test_chunk_rewrite_is_bit_exact_when_the_chunk_size_does_not_divide()
     test_chunk_rewrite_copies_one_element_per_thread_plus_one()
