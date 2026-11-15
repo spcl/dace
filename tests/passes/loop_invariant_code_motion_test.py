@@ -1577,6 +1577,41 @@ def test_an_ordering_edge_into_an_invariant_tasklet_does_not_pin_it():
     _run_and_check(sdfg, py_ref, a=np.float64(0.75), outp=np.zeros(5), N=5)
 
 
+def test_an_ordering_tasklet_stays_between_the_writes_it_orders():
+    """``for i: outp[i] = 1; outp[i] = d[i]``, the second write ordered after the first by an empty tasklet between
+    them (an inlined nest's ``aa_order``). The tasklet has no value inputs, but it writes nothing either: hoisted,
+    the two writes lost their order and the fill overwrote the diagonal (tsvc_2_s2102). It stays."""
+    sdfg = dace.SDFG("licm_ordering_tasklet_stays")
+    sdfg.add_array("d", [N], dace.float64)
+    sdfg.add_array("outp", [N], dace.float64)
+    sdfg.add_transient("t", [1], dace.float64)
+    loop = _build_loop(sdfg, "i", "N")
+    body = loop.add_state("body", is_start_block=True)
+    fill = body.add_tasklet("fill", {}, {"o"}, "o = 1.0")
+    filled = body.add_write("outp")
+    body.add_edge(fill, "o", filled, None, mm.Memlet("outp[i]"))
+    order = body.add_tasklet("outp_order", {}, {}, "")
+    body.add_nedge(filled, order, mm.Memlet())
+    load = body.add_tasklet("load", {"x"}, {"y"}, "y = x")
+    tnode = body.add_access("t")
+    body.add_edge(body.add_read("d"), None, load, "x", mm.Memlet("d[i]"))
+    body.add_edge(load, "y", tnode, None, mm.Memlet("t[0]"))
+    body.add_nedge(order, tnode, mm.Memlet())
+    store = body.add_tasklet("store", {"x"}, {"y"}, "y = x")
+    body.add_edge(tnode, None, store, "x", mm.Memlet("t[0]"))
+    body.add_edge(store, "y", body.add_write("outp"), None, mm.Memlet("outp[i]"))
+    sdfg.validate()
+
+    assert not LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    assert "outp_order" in {t.label for t in _state_tasklets(body)}
+
+    def py_ref(d, outp, N):
+        for i in range(N):
+            outp[i] = d[i]
+
+    _run_and_check(sdfg, py_ref, d=np.arange(5, dtype=np.float64) + 2.0, outp=np.zeros(5), N=5)
+
+
 def test_a_constant_inside_a_map_in_a_loop_leaves_through_the_map():
     """``for k: map i: t = 2; outp[i] = a[i] * t + k``: the constant tasklet sits inside the map. Moved straight to the
     loop's preheader it would leave ``t`` inside the map without a producer; it leaves the map first instead."""
@@ -1649,4 +1684,5 @@ if __name__ == "__main__":
     test_the_cpu_specialization_splits_a_nest_whose_outer_map_feeds_the_team()
     test_the_cpu_specialization_keeps_a_nest_whose_outer_map_has_few_trips()
     test_an_ordering_edge_into_an_invariant_tasklet_does_not_pin_it()
+    test_an_ordering_tasklet_stays_between_the_writes_it_orders()
     test_a_constant_inside_a_map_in_a_loop_leaves_through_the_map()

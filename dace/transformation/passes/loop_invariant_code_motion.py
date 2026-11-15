@@ -546,7 +546,9 @@ def _is_tasklet_invariant(
     if len(out_edges) != 1:
         return False
     oe = out_edges[0]
-    if not isinstance(oe.dst, nodes.AccessNode):
+    # An empty out-edge writes nothing: the tasklet only orders its predecessors before that node, an order hoisting
+    # would drop.
+    if not isinstance(oe.dst, nodes.AccessNode) or oe.data.is_empty():
         return False
     # Output memlet subset must be loop-invariant too (otherwise writing in
     # the preheader to a loop-index-dependent slot would be wrong).
@@ -873,7 +875,8 @@ def _is_map_tasklet_invariant(
     if len(out_edges) != 1:
         return False
     oe = out_edges[0]
-    if not isinstance(oe.dst, nodes.AccessNode):
+    # An empty out-edge writes nothing: the tasklet only orders, see ``_is_tasklet_invariant``.
+    if not isinstance(oe.dst, nodes.AccessNode) or oe.data.is_empty():
         return False
     if oe.data is not None and oe.data.subset is not None:
         if _subset_uses_any(oe.data.subset, variant_syms):
