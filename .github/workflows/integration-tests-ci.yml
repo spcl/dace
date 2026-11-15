@@ -65,6 +65,44 @@ jobs:
           "$ROOT/tests/corpus/cloudsc/cloudsc_pipeline_coalesce_test.py" \
           "$ROOT/tests/corpus/cloudsc/cloudsc_pipeline_offload_test.py"
 
+  # Canonicalization on CloudSC: every stage through ``parallelize`` keeps the SDFG valid, the staged walk canonicalizes
+  # the whole dwarf, and a pipeline resumes from its checkpoints. All three carry ``integration`` (the staged walk by
+  # marker, the checkpoint test by the ``tests/corpus/cloudsc`` directory rule), so the general matrix deselects them --
+  # naming them here is the only thing that runs them at all.
+  cloudsc-canonicalize:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      matrix:
+        python-version: ['3.14']
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Canonicalize CloudSC, validating every stage
+      run: |
+        export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
+        export DACE_cache=unique
+        # The tests simplify as an explicit step, so the automatic heuristic must not run first.
+        export DACE_optimizer_automatic_simplification=0
+        ROOT=$(uv run python -c 'import pathlib, dace; print(pathlib.Path(dace.__file__).resolve().parents[1])')
+        # No xdist: the SDFG is parsed once per process and memoized, so a worker per test would pay
+        # the multi-minute parse again instead of sharing one.
+        uv run pytest --tb=short --timeout_method thread --timeout=5400 \
+          -m "integration and not gpu" \
+          "$ROOT/tests/canonicalize/cloudsc_canonicalize_test.py" \
+          "$ROOT/tests/canonicalize/cloudsc_canonicalize_staged_test.py" \
+          "$ROOT/tests/corpus/cloudsc/pipeline_checkpoint_resume_test.py"
+
   # The host leg of the default parallelization pipeline on CloudSC, on its own runner. It shares every phase with the
   # device leg the CSCS GPU pipeline runs (``ci/cscs_gpu.yml``: test_cscs_gh200_cloudsc_pipelines),
   # which appends the offload -- so a red here is the recipe's and a red there is the offload's.
