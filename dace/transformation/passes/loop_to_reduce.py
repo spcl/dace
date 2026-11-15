@@ -131,7 +131,8 @@ class LoopToReduce(ppl.Pass):
             return None
         # The matcher reads the facts of each loop's SDFG; they are derived once per SDFG between lifts
         with memoize_facts(sdfg):
-            for node, parent in list(sdfg.all_nodes_recursive()):
+            # Innermost first: an outer loop whose body is the ``Reduce`` its inner loop became widens that ``Reduce``
+            for node, parent in reversed(list(sdfg.all_nodes_recursive())):
                 if not isinstance(node, LoopRegion) or (only is not None and id(node) not in only):
                     continue
                 info = _extract(node, _owner_sdfg(parent), permissive=self.permissive)
@@ -1107,6 +1108,43 @@ def _extract_any_pattern(
     )
 
 
+def _extract_reduce_nest(
+    loop: LoopRegion, state: SDFGState, loop_var_sym, start, end, stride, facts: symbolic.Facts
+) -> _Reduction | None:
+    """The body ``arr[.., f(i), ..] -> Reduce -> accum[c]`` of a loop whose inner reduction was lifted: a ``Reduce``
+    over every axis, seeded from a loop-invariant accumulator slot, folds the same slot on every iteration, so the loop
+    is one ``Reduce`` over ``arr`` widened along the axis the loop variable moves."""
+    from dace.libraries.standard.nodes.reduce import Reduce
+
+    reduces = [n for n in state.nodes() if isinstance(n, Reduce)]
+    if len(reduces) != 1 or state.number_of_nodes() != 3:
+        return None
+    red = reduces[0]
+    in_edges, out_edges = state.in_edges(red), state.out_edges(red)
+    if red.identity is not None or len(in_edges) != 1 or len(out_edges) != 1:
+        return None
+    src, dst = in_edges[0].src, out_edges[0].dst
+    if not isinstance(src, nodes.AccessNode) or not isinstance(dst, nodes.AccessNode) or src.data == dst.data:
+        return None
+    read, accum_subset = in_edges[0].data.subset, out_edges[0].data.subset
+    if red.axes is not None and sorted(red.axes) != list(range(read.dims())):
+        return None
+    if _one_elem(accum_subset, facts) != 1 or _uses(accum_subset, loop_var_sym):
+        return None
+    assigned = loop_iteration_assigned_symbols(loop)
+    if any(str(sym) in assigned for subset in (read, accum_subset) for sym in subset.free_symbols):
+        return None
+    ranges = list(read.ndrange())
+    moving = [k for k, rng in enumerate(ranges) if _uses(subsets.Range([rng]), loop_var_sym)]
+    if len(moving) != 1:
+        return None
+    widened = _expand_over_loop(subsets.Range([ranges[moving[0]]]), loop_var_sym, start, end, facts, stride)
+    if widened is None:
+        return None
+    ranges[moving[0]] = widened.ndrange()[0]
+    return _Reduction(red.wcr, dst.data, copy.deepcopy(accum_subset), src.data, subsets.Range(ranges))
+
+
 def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reduction | None:
     if not loop.loop_variable:
         return None
@@ -1141,6 +1179,9 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
     # matmuls into ``Reduce`` libnodes, bypassing that BLAS path.
     if len(blocks) == 1 and isinstance(blocks[0], SDFGState):
         state = blocks[0]
+        nest = _extract_reduce_nest(loop, state, loop_var_sym, start, end, stride, facts)
+        if nest is not None:
+            return nest
         tasklet = None
         for n in state.nodes():
             if isinstance(n, nodes.Tasklet):
@@ -1987,7 +2028,12 @@ def _lift_multi_state_chain(parent: ControlFlowRegion, loop: LoopRegion, info):
     root = _owner_sdfg(parent)
 
     desc = root.arrays[accum_name]
-    priv_name, _ = root.add_scalar(f"_priv_{accum_name}", dtype=desc.dtype, transient=True, find_new_name=True)
+    # A scalar accumulator already is the private scalar: the WCR writes it directly, and the init and writeback
+    # copies a private one needs would sit in an enclosing loop's body as a plain write that keeps it sequential.
+    privatize = not isinstance(desc, data.Scalar)
+    priv_name = accum_name
+    if privatize:
+        priv_name, _ = root.add_scalar(f"_priv_{accum_name}", dtype=desc.dtype, transient=True, find_new_name=True)
 
     # rewrite the tasklet's RHS to drop the carry operand
     AugAssignToWCR.write_increment(final_tasklet, first_write_edge.src_conn, *update)
@@ -2014,6 +2060,8 @@ def _lift_multi_state_chain(parent: ControlFlowRegion, loop: LoopRegion, info):
     )
     if state.degree(sink_an) == 0:
         state.remove_node(sink_an)
+    if not privatize:
+        return
 
     # wrap the loop with init + writeback states
     was_start = parent.start_block is loop
