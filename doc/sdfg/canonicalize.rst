@@ -100,8 +100,11 @@ inside the pipeline must preserve them.
 5. **Guarded parallelism is explicit.** A loop that is parallel only under a runtime fact (no index conflicts in a
    scatter, a bound on a symbol) becomes a conditional block: the parallel map when the condition holds, the original
    loop otherwise. Facts the caller declared (``nonnegative_symbols``) are checked once at program entry.
-6. **No target decisions.** The form contains no tiling, no persistent kernels, and no OpenMP or kernel-launch
-   choices. Invariant guards stay pushed into the loops; hoisting them is a step of the target specialization.
+6. **Few target decisions.** The form contains no OpenMP or kernel-launch choices and no persistent kernels, and
+   invariant guards stay pushed into the loops; hoisting them is a step of the target specialization. The
+   ``target`` argument changes a few choices between equally parallel forms: whether a carried loop is interchanged
+   with an enclosing map, the chunk of a find-first search, and the tile a wavefront skew walks (64 by 64 on both
+   targets, with a thread-block diagonal inside a GPU tile). Canonicalization does not tile any other nest.
 7. **Deterministic.** The same input SDFG and the same DaCe commit produce the same form, node for node.
 
 
