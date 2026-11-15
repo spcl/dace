@@ -4153,6 +4153,16 @@ C_CAST_TYPES: tuple[str, ...] = (
 _C_STATIC_CAST = re.compile(r"\bstatic_cast\s*<\s*([^<>;{}]+?)\s*>\s*\(")
 _C_FUNCTIONAL_CAST = re.compile(r"(?<![\w:.])(" + "|".join(C_CAST_TYPES) + r")\s*\(")
 
+#: A complex type a library expansion constructs from its two components (``dace::complex128(1.0, 0.0)``, a BLAS
+#: ``alpha``), before or after the type rename -> the :data:`C_COMPLEX_BUILDERS` function that builds it in C. The
+#: cast expression :data:`_C_FUNCTIONAL_CAST` writes would be ``(double _Complex)(1.0, 0.0)``: a cast of the comma
+#: operator, so the imaginary component alone.
+C_COMPLEX_CONSTRUCTORS: dict[str, str] = {
+    **C_COMPLEX_BUILDERS,
+    **{C_CTYPE_RENAMES[name]: builder for name, builder in C_COMPLEX_BUILDERS.items()},
+}
+_C_COMPLEX_CONSTRUCTOR = re.compile(r"(?<![\w:.])(" + "|".join(map(re.escape, C_COMPLEX_CONSTRUCTORS)) + r")\s*\(")
+
 #: The scan's min / max neutral element per element type, as a C constant expression. Mirrors
 #: ``dace::scan::min_identity`` / ``max_identity``: infinity where the type has one, otherwise the
 #: extreme value. The C++ version is one function template; C needs the type spelled out, and the
@@ -4875,4 +4885,28 @@ def c_cast_native_code(code: str) -> str:
     :returns: the body with both cast forms written as ``(type)(...)``.
     """
     code = _C_STATIC_CAST.sub(lambda match: "(%s)(" % match.group(1), code)
-    return _C_FUNCTIONAL_CAST.sub(lambda match: "(%s)(" % match.group(1), code)
+    return _C_FUNCTIONAL_CAST.sub(lambda match: "(%s)(" % match.group(1), c_complex_constructors(code))
+
+
+def c_complex_constructors(code: str) -> str:
+    """Rewrite every two-component complex construction in a hand-written body to its C builder.
+
+    :param code: the body, with or without its ``dace::`` complex types renamed.
+    :returns: the body with each ``T(re, im)`` written as ``cpf_complex<bits>(re, im)``; a one-argument
+              construction is a cast, left to :func:`c_cast_native_code`.
+    """
+    pieces, done = [], 0
+    for match in _C_COMPLEX_CONSTRUCTOR.finditer(code):
+        if match.start() < done:
+            continue
+        depth, close = 1, match.end()
+        while close < len(code) and depth:
+            depth += {"(": 1, ")": -1}.get(code[close], 0)
+            close += 1
+        arguments = c_call_arguments(code[match.end() : close - 1]) if depth == 0 else None
+        if arguments is None or len(arguments) != 2:
+            continue
+        builder = C_COMPLEX_CONSTRUCTORS[match.group(1)]
+        pieces += [code[done : match.start()], "%s(%s)" % (builder, ", ".join(map(c_complex_constructors, arguments)))]
+        done = close
+    return "".join(pieces) + code[done:]

@@ -1315,6 +1315,32 @@ CAST_REPARSE_FORMS = {
 }
 
 
+@pytest.mark.parametrize("spelling", ["dace::complex128", "double _Complex"])
+def test_c_builds_a_two_component_complex_construction_from_both_components(spelling):
+    """A BLAS expansion's complex ``alpha`` is ``dace::complex128(1.0, 0.0)``; in C it must stay ``1 + 0i``.
+
+    The cast-expression rewrite alone turns it into ``(double _Complex)(1.0, 0.0)``, the comma operator's ``0.0``:
+    every complex batched product of a C unit was then scaled by zero (qe_vexx_k's ultrasoft terms). The body goes
+    through the whole native-body rewrite, as a library expansion's does.
+    """
+    body = "double _Complex z = %s(2.5, -1.5); out[0] = creal(z) * 10 + cimag(z) + creal(%s(3));" % (spelling, spelling)
+    code = textwrap.dedent("""
+        #include <complex.h>
+        {undef}
+        {builder}
+
+        void probe(double * out)
+        {{
+            {body}
+        }}
+        """).format(
+        undef=cpf_lowering.C_UNDEF_LINE,
+        builder=cpf_lowering.C_INLINE_DEFINITIONS["cpf_complex128"],
+        body=cpf_lowering.rewrite_native_code(body, Dialect.STANDALONE_C),
+    )
+    assert run_probe(code, "complex_construction", Dialect.STANDALONE_C) == 2.5 * 10 - 1.5 + 3
+
+
 @pytest.mark.parametrize("dialect", DIALECTS, ids=DIALECT_IDS)
 def test_a_cast_survives_the_printers_own_reparse(dialect):
     """``sym2cpp`` prints C++ and hands the text back to the PYTHON parser on its way out. A cast is
