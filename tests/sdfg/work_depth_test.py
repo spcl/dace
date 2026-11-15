@@ -15,7 +15,7 @@ from dace.libraries.standard import ArgMax, CountLibraryNode, CShift, FindFirst,
 from dace.libraries.standard.nodes.find_first import INDEX_NAME as FIND_FIRST_INDEX
 from dace.libraries.standard.nodes.state_scan import StateScan, StateScanKind
 from dace.sdfg.performance_evaluation.assumptions import assumption_relations
-from dace.sdfg.performance_evaluation.helpers import get_uuid
+from dace.sdfg.performance_evaluation.helpers import get_static_symbols, get_uuid
 from dace.sdfg.performance_evaluation.work_depth import (
     analyze_sdfg,
     count_arithmetic_ops_code,
@@ -689,6 +689,25 @@ def test_an_unknown_transcendental_cost_model_is_refused():
             count_arithmetic_ops_code("exp(x)")
 
 
+def test_an_access_node_ordered_by_an_empty_tasklet_is_not_assigned_by_it() -> None:
+    """An empty tasklet that only orders (``__x_order -> x`` over an empty memlet, as inlining a nest ordered by empty
+    memlets leaves it) assigns nothing: the scalar it orders is no static symbol, and the analysis does not fail."""
+    sdfg = dace.SDFG("ordered_by_an_empty_tasklet")
+    sdfg.add_scalar("x", dace.float64, transient=True)
+    sdfg.add_array("out", [1], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    x = state.add_access("x")
+    state.add_edge(state.add_tasklet("x_order", {}, {}, ""), None, x, None, dace.Memlet())
+    copy = state.add_tasklet("copy", {"i": None}, {"o": None}, "o = i")
+    state.add_edge(x, None, copy, "i", dace.Memlet("x[0]"))
+    state.add_edge(copy, "o", state.add_write("out"), None, dace.Memlet("out[0]"))
+    sdfg.validate()
+
+    static = get_static_symbols(sdfg)
+
+    assert "x" not in static
+
+
 if __name__ == "__main__":
     for test_name in work_depth_test_cases.keys():
         test_work_depth(test_name)
@@ -704,4 +723,5 @@ if __name__ == "__main__":
 
     test_depth_counter_vs_work_counter()
     test_a_map_depth_is_its_deepest_iteration_not_the_map_parameter()
+    test_an_access_node_ordered_by_an_empty_tasklet_is_not_assigned_by_it()
     test_a_map_depth_stops_at_the_last_iteration_a_negative_step_reaches()

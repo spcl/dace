@@ -108,7 +108,8 @@ def get_static_symbols(sdfg: SDFG) -> dict[str, sp.Expr]:
             continue
         edge = containing_state.in_edges(node)[0]
         source = edge.src
-        if edge.data.volume != 1:
+        # An ordering edge writes nothing: the node is not assigned here
+        if edge.data.is_empty() or edge.data.volume != 1:
             continue
 
         if isinstance(source, nodes.Tasklet):
