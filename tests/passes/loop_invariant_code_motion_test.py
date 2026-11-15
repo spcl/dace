@@ -17,7 +17,13 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.cpu_specialization.split_invariant_map_nests import SplitInvariantMapNests
-from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
+from dace.transformation.passes.loop_invariant_code_motion import (
+    LoopInvariantCodeMotion,
+    hoist_loop_region,
+    hoist_map_scope,
+    loop_has_invariant_code,
+    map_has_invariant_code,
+)
 
 N = dace.symbol("N")
 K = dace.symbol("K")
@@ -1643,7 +1649,68 @@ def test_a_constant_inside_a_map_in_a_loop_leaves_through_the_map():
     _run_and_check(sdfg, py_ref, a=np.arange(5.0), outp=np.zeros(5), N=5, K=3)
 
 
+def loop_reading(name: str, written_in_loop: bool) -> tuple[dace.SDFG, LoopRegion]:
+    """``for i: t = A[0]; outp[i] = t``, and ``A[i] = 1`` in the loop too when ``written_in_loop``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("outp", [N], dace.float64)
+    sdfg.add_transient("t", [1], dace.float64)
+    loop = _build_loop(sdfg, "i", "N")
+    body = loop.add_state("body", is_start_block=True)
+    load = body.add_tasklet("ld", {"x": None}, {"y": None}, "y = x")
+    t = body.add_access("t")
+    body.add_edge(body.add_read("A"), None, load, "x", mm.Memlet("A[0]"))
+    body.add_edge(load, "y", t, None, mm.Memlet("t[0]"))
+    if written_in_loop:
+        one = body.add_tasklet("one", {}, {"z": None}, "z = 1.0")
+        body.add_edge(one, "z", body.add_write("A"), None, mm.Memlet("A[i]"))
+    copy = body.add_tasklet("cpy", {"ti": None}, {"o": None}, "o = ti")
+    body.add_edge(t, None, copy, "ti", mm.Memlet("t[0]"))
+    body.add_edge(copy, "o", body.add_write("outp"), None, mm.Memlet("outp[i]"))
+    sdfg.validate()
+    return sdfg, loop
+
+
+def test_the_loop_query_answers_as_the_hoist_does_and_changes_nothing():
+    invariant, loop = loop_reading("licm_query_invariant", written_in_loop=False)
+    aliased, aliased_loop = loop_reading("licm_query_aliased", written_in_loop=True)
+    before = (invariant.to_json(), aliased.to_json())
+
+    answers = (loop_has_invariant_code(loop), loop_has_invariant_code(aliased_loop))
+
+    assert answers == (True, False)
+    assert (invariant.to_json(), aliased.to_json()) == before, "the query must not change the program"
+    assert (hoist_loop_region(loop), hoist_loop_region(aliased_loop)) == (1, 0)
+
+
+def test_the_map_query_answers_as_the_hoist_does_and_changes_nothing():
+    sdfg = dace.SDFG("licm_map_query")
+    sdfg.add_array("a", [1], dace.float64)
+    sdfg.add_array("outp", [N], dace.float64)
+    sdfg.add_transient("t", [1], dace.float64)
+    state = sdfg.add_state("st", is_start_block=True)
+    me, mx = state.add_map("m", {"i": "0:N"})
+    double = state.add_tasklet("dbl", {"x": None}, {"y": None}, "y = 2.0 * x")
+    t = state.add_access("t")
+    copy = state.add_tasklet("cpy", {"ti": None}, {"o": None}, "o = ti")
+    state.add_memlet_path(state.add_read("a"), me, double, dst_conn="x", memlet=mm.Memlet("a[0]"))
+    state.add_edge(double, "y", t, None, mm.Memlet("t[0]"))
+    state.add_edge(t, None, copy, "ti", mm.Memlet("t[0]"))
+    state.add_memlet_path(copy, mx, state.add_write("outp"), src_conn="o", memlet=mm.Memlet("outp[i]"))
+    sdfg.validate()
+    before = sdfg.to_json()
+
+    found = map_has_invariant_code(state, me, me)
+
+    assert found and sdfg.to_json() == before, "the query must not change the program"
+    assert hoist_map_scope(state, me, me) == 1
+    assert not map_has_invariant_code(state, me, me), "after the hoist nothing invariant is left"
+    sdfg.validate()
+
+
 if __name__ == "__main__":
+    test_the_loop_query_answers_as_the_hoist_does_and_changes_nothing()
+    test_the_map_query_answers_as_the_hoist_does_and_changes_nothing()
     test_pure_tasklet_hoisted_from_loop_region()
     test_invariant_load_without_inloop_writer_is_hoisted()
     test_load_with_inloop_writer_is_not_hoisted()

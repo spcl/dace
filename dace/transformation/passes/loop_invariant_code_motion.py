@@ -68,7 +68,7 @@ class LoopInvariantCodeMotion(ppl.Pass):
             loops = [n for n, _p in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
             loops.sort(key=_loop_nesting_depth, reverse=True)
             for loop in loops:
-                made += _hoist_loop_region(loop)
+                made += hoist_loop_region(loop)
 
             # Maps, innermost first per state.
             for sd in sdfg.all_sdfgs_recursive():
@@ -126,7 +126,7 @@ def _map_scope_depth(state: SDFGState, me: nodes.MapEntry) -> int:
 # LoopRegion path
 
 
-def _hoist_loop_region(loop: LoopRegion) -> int:
+def hoist_loop_region(loop: LoopRegion) -> int:
     """Hoist invariant tasklets and whole sub-regions out of one LoopRegion."""
     count = 0
 
@@ -235,14 +235,35 @@ def _hoist_invariant_child_regions(loop: LoopRegion) -> int:
     writes to the parent region, placing them before ``loop``.
     """
     parent = loop.parent_graph
-    if parent is None:
+    hoistable = _hoistable_child_regions(loop)
+    if parent is None or not hoistable:
         return 0
+
+    # Determine the insertion order: preserve the order in which the children
+    # appear along the start-to-end path of ``loop``.
+    order_map = {n: i for i, n in enumerate(loop.bfs_nodes(loop.start_block))}
+    hoistable.sort(key=lambda n: order_map.get(n, 0))
+
+    # Surgery: splice each hoistable child out of ``loop`` and insert it as a
+    # new node in ``parent`` before ``loop``. The chain becomes:
+    #   ... -> h1 -> h2 -> ... -> loop -> ...
+    moved = 0
+    for child in hoistable:
+        moved += _move_region_before(parent, loop, child)
+
+    return moved
+
+
+def _hoistable_child_regions(loop: LoopRegion) -> list[Any]:
+    """The direct children of ``loop`` :func:`_hoist_invariant_child_regions` moves before it; nothing is changed."""
+    if loop.parent_graph is None:
+        return []
 
     variant_syms = _variant_symbols_of_loop(loop)
 
     children = list(loop.nodes())
     if not children:
-        return 0
+        return []
 
     # Build a per-sibling write-set so we can alias-check one child against
     # the others that will remain in the body.
@@ -290,23 +311,7 @@ def _hoist_invariant_child_regions(loop: LoopRegion) -> int:
         if not _region_has_work(ch):
             continue
         hoistable.append(ch)
-
-    if not hoistable:
-        return 0
-
-    # Determine the insertion order: preserve the order in which the children
-    # appear along the start-to-end path of ``loop``.
-    order_map = {n: i for i, n in enumerate(loop.bfs_nodes(loop.start_block))}
-    hoistable.sort(key=lambda n: order_map.get(n, 0))
-
-    # Surgery: splice each hoistable child out of ``loop`` and insert it as a
-    # new node in ``parent`` before ``loop``. The chain becomes:
-    #   ... -> h1 -> h2 -> ... -> loop -> ...
-    moved = 0
-    for child in hoistable:
-        moved += _move_region_before(parent, loop, child)
-
-    return moved
+    return hoistable
 
 
 def _move_region_before(parent: ControlFlowRegion, loop: Any, child: Any) -> int:
@@ -757,11 +762,9 @@ def _hoist_tasklet_to_preheader(
 # Map scope path
 
 
-def hoist_map_scope(state: SDFGState, me: nodes.MapEntry, root: nodes.MapEntry) -> int:
-    """Hoist invariant tasklets out of a Map scope to its enclosing scope. Invariance is judged against ``root``'s
-    scope (``me`` or a map around it): the params of every map from ``me`` up to ``root`` and the data written in
-    ``root``'s scope are variant."""
-    sdfg: SDFG = state.sdfg
+def _map_variance(state: SDFGState, me: nodes.MapEntry, root: nodes.MapEntry) -> tuple[set[str], set[str]] | None:
+    """The symbols and data that are variant for a hoist out of ``me`` judged against ``root``'s scope, or ``None``
+    when that scope has no body."""
     variant_syms: set[str] = set(me.map.params)
     scope = me
     while scope is not root:
@@ -771,7 +774,7 @@ def hoist_map_scope(state: SDFGState, me: nodes.MapEntry, root: nodes.MapEntry) 
     mx = state.exit_node(root)
     inside_nodes = state.all_nodes_between(root, required(mx))
     if inside_nodes is None:
-        return 0
+        return None
 
     # Conservative alias seed: any data written anywhere in this scope, PLUS the
     # arrays the map itself writes. The map's outputs (e.g. ``a[i]``) flow out
@@ -788,16 +791,60 @@ def hoist_map_scope(state: SDFGState, me: nodes.MapEntry, root: nodes.MapEntry) 
     for e in state.out_edges(mx):
         if e.data is not None and e.data.data is not None:
             variant_data.add(e.data.data)
+    return variant_syms, variant_data
+
+
+def hoist_map_scope(state: SDFGState, me: nodes.MapEntry, root: nodes.MapEntry) -> int:
+    """Hoist invariant tasklets out of a Map scope to its enclosing scope. Invariance is judged against ``root``'s
+    scope (``me`` or a map around it): the params of every map from ``me`` up to ``root`` and the data written in
+    ``root``'s scope are variant."""
+    variance = _map_variance(state, me, root)
+    if variance is None:
+        return 0
+    variant_syms, variant_data = variance
 
     count = 0
     while True:
         tasklet = _find_one_map_invariant_tasklet(state, me, variant_syms, variant_data)
         if tasklet is None:
             break
-        if not _hoist_tasklet_out_of_map(state, me, tasklet, sdfg):
+        if not _hoist_tasklet_out_of_map(state, me, tasklet, state.sdfg):
             break
         count += 1
     return count
+
+
+def map_has_invariant_code(state: SDFGState, me: nodes.MapEntry, root: nodes.MapEntry) -> bool:
+    """Whether :func:`hoist_map_scope` finds a tasklet to hoist out of ``me``; nothing is changed."""
+    variance = _map_variance(state, me, root)
+    return variance is not None and _find_one_map_invariant_tasklet(state, me, *variance) is not None
+
+
+def loop_has_invariant_code(loop: LoopRegion) -> bool:
+    """Whether :func:`hoist_loop_region` finds a sub-region or a tasklet to hoist out of ``loop``; nothing is
+    changed."""
+    if _hoistable_child_regions(loop):
+        return True
+    if not loop.nodes():
+        return False
+    variant_syms = _variant_symbols_of_loop(loop)
+    variant_data = _written_data_in_region(loop)
+    region_writers = _region_writer_counts(loop)
+    start = loop.start_block
+    if isinstance(start, SDFGState) and (
+        _find_one_invariant_tasklet(start, variant_syms, variant_data, region_writers) is not None
+    ):
+        return True
+    outside: set[str] | None = None
+    for state in _speculation_states(loop):
+        tasklet = _find_one_invariant_tasklet(state, variant_syms, variant_data, region_writers)
+        if tasklet is None:
+            continue
+        if outside is None:
+            outside = _accessed_outside(loop)
+        if _scalar_private_to_loop(state, tasklet, outside) and _reads_in_bounds(state, tasklet):
+            return True
+    return False
 
 
 def _find_one_map_invariant_tasklet(
