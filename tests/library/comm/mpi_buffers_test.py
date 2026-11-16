@@ -229,22 +229,22 @@ _SIDE_EFFECT_NODES = [
 ]
 
 
-def test_only_synchronizing_nodes_have_side_effects():
-    """Communicator management, synchronization, point-to-point and nonblocking operations keep their place; a
-    blocking collective only computes its outputs."""
-    for node_type in _SIDE_EFFECT_NODES:
-        assert node_type(node_type.__name__.lower()).has_side_effects(None), node_type
-    for node_type in [*_BUFFER_NODES, comm.CommRank, comm.CommSize, comm.CommF2c]:
+def test_every_communication_has_side_effects_and_only_communicator_queries_do_not():
+    """Every rank sees a communication, in the order each rank issues it, so every one keeps its place: a blocking
+    collective too. Only the queries of a communicator (rank, size, handle) are free to move."""
+    for node_type in [*_SIDE_EFFECT_NODES, *_BUFFER_NODES]:
         node = node_type(node_type.__name__.lower())
-        assert not node.has_side_effects(None), node_type
+        assert node.has_side_effects(None) and node.has_ordered_side_effects(None), node_type
         if isinstance(node, NonblockingCommNode):
             node.nonblocking = True
             assert node.has_side_effects(None), node_type
+    for node_type in [comm.CommRank, comm.CommSize, comm.CommF2c]:
+        assert not node_type(node_type.__name__.lower()).has_side_effects(None), node_type
 
 
 @pytest.mark.parametrize("node_type", _BUFFER_NODES)
 @pytest.mark.parametrize("implementation", ["MPI", "NCCL"])
-def test_comm_tasklets_follow_the_side_effects_of_their_node(node_type, implementation: str):
+def test_the_tasklet_a_blocking_collective_expands_to_keeps_its_side_effect(node_type, implementation: str):
     name = f"side_effects_{node_type.__name__.lower()}_{implementation.lower()}"
     storage = dace.StorageType.GPU_Global if implementation == "NCCL" else dace.StorageType.Default
     node = node_type(node_type.__name__.lower())
@@ -259,7 +259,7 @@ def test_comm_tasklets_follow_the_side_effects_of_their_node(node_type, implemen
     out = "x" if node_type is comm.Bcast else "y"  # Bcast is in place
     state.add_edge(node, "_outbuffer", state.add_write(out), None, Memlet(f"{out}[0:4]"))
     expansion = node.implementations[implementation].expansion(node, state, sdfg)
-    assert expansion.side_effects is False
+    assert expansion.side_effects is True
 
 
 def _scalar_reduction_sdfg(name: str, node: dace.nodes.LibraryNode, in_place: bool) -> dace.SDFG:
@@ -511,10 +511,10 @@ if __name__ == "__main__":
     test_an_allreduce_of_one_array_element()
     test_a_gather_into_a_strided_buffer()
     test_a_reduce_into_a_strided_buffer()
-    test_only_synchronizing_nodes_have_side_effects()
+    test_every_communication_has_side_effects_and_only_communicator_queries_do_not()
     for implementation in ("MPI", "NCCL"):
         for node_type in _BUFFER_NODES:
-            test_comm_tasklets_follow_the_side_effects_of_their_node(node_type, implementation)
+            test_the_tasklet_a_blocking_collective_expands_to_keeps_its_side_effect(node_type, implementation)
     test_an_allreduce_of_a_scalar("MPI_SUM", False)
     test_an_allreduce_of_a_scalar("MPI_SUM", True)
     test_an_allreduce_of_a_scalar("avg", False)

@@ -40,7 +40,7 @@ from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.interstate.loop_to_map import control_flow_reads, symbols_assigned_before_use
-from dace.transformation.passes.analysis import canon_stats
+from dace.transformation.passes.analysis import canon_stats, loop_analysis
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     WAVEFRONT_DIAGONAL,
     WAVEFRONT_FRONT,
@@ -303,6 +303,9 @@ class WavefrontSkew(ppl.Pass):
 
     def plan_or_reason(self, outer: LoopRegion, sdfg: SDFG, occurrences: dict) -> Plan | str:
         """The skew of ``outer``, or one sentence saying why it is no wavefront."""
+        effects = loop_analysis.ordered_side_effects(outer)
+        if effects:
+            return f"{effects[0]} has an ordered side effect, which a skew would run out of order"
         body = extract_body(outer, sdfg, occurrences)
         if body is None:
             return "its body is not a nest of loops and maps whose accesses DaCe can model"

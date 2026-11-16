@@ -119,6 +119,9 @@ class LoopFusion(transformation.MultiStateTransformation):
             return False
         if self._shares_symbols(first, second):
             return False
+        # Fused, the two loops' ordered side effects would interleave: all of the first's would no longer run first
+        if loop_analysis.ordered_side_effects(first) and loop_analysis.ordered_side_effects(second):
+            return False
         # Body SHAPE only gates here on "is this a body we know how to read/merge at all" -- a linear
         # chain of blocks (states, ConditionalBlocks, ...) or the indirect-access bridge shape
         # (``_body_chain``). Whether the pair may actually fuse is decided purely by ``_fusion_legal``

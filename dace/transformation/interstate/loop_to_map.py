@@ -1380,6 +1380,8 @@ class Refusal(enum.Enum):
 
     #: The loop is pinned sequential.
     PINNED = enum.auto()
+    #: The body holds a node whose side effect is ordered (a communication, a print): its iterations run in order.
+    ORDERED_SIDE_EFFECT = enum.auto()
     #: The range cannot be analyzed: incomplete or non-integer bounds, a bound reading a container, a range symbol
     #: the body assigns, a step of unknown direction.
     UNANALYZABLE_RANGE = enum.auto()
@@ -2214,6 +2216,11 @@ class LoopLift:
         # ``if cond: parallel else: sequential`` specialization); never parallelize it.
         if self.loop.pinned_sequential:
             return refuse(Refusal.PINNED, "loop is pinned sequential")
+        effects = loop_analysis.ordered_side_effects(self.loop)
+        if effects:
+            return refuse(
+                Refusal.ORDERED_SIDE_EFFECT, f"{effects[0]} has an ordered side effect; iterations run in order"
+            )
 
         # If loop information cannot be determined, fail.
         start = loop_analysis.get_init_assignment(self.loop)

@@ -435,9 +435,10 @@ class CommNode(nodes.LibraryNode):
     # Communication reads host control values (ranks, tags, requests) next to buffers in any memory
     bridges_storage = True
 
-    #: Whether the node acts beyond its outputs (creates or frees communicators, synchronizes, or uses its buffers
-    #: after returning), so transformations must neither remove nor reorder it
-    side_effects = False
+    #: Whether the node acts beyond its outputs, so transformations must neither remove nor reorder it. Every
+    #: communication does: the other ranks see it, in the order each rank issues it. Only the queries of a
+    #: communicator (its rank, its size, its handle) set it false.
+    side_effects = True
 
     def has_side_effects(self, sdfg) -> bool:
         return self.side_effects
@@ -463,9 +464,6 @@ class NonblockingCommNode(CommNode):
         category="Semantics",
         desc="Start the operation and return; a Wait on the _request output completes it",
     )
-
-    def has_side_effects(self, sdfg) -> bool:
-        return self.nonblocking
 
     def validate_nonblocking(self, sdfg: SDFG, state: SDFGState) -> None:
         """

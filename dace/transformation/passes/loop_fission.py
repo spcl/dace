@@ -760,6 +760,8 @@ class LoopFission(ppl.Pass):
 
         :param loop: The loop to judge.
         """
+        if len(loop_analysis.ordered_side_effects(loop)) > 1:
+            return False  # split, one loop would run its side effects before the other's
         if _single_compute_state(loop) is not None:
             return loop_analysis.fixed_iteration_space(loop) and _fissions_after_bridge_rewrite(loop, loop.sdfg)
         return conditional_groups(loop) is not None or _independent_block_groups(loop) is not None
@@ -772,6 +774,8 @@ class LoopFission(ppl.Pass):
         :returns: Whether it split; if not, the graph is unchanged.
         """
         sdfg = loop.sdfg
+        if len(loop_analysis.ordered_side_effects(loop)) > 1:
+            return False  # split, one loop would run its side effects before the other's
         compute = _single_compute_state(loop)
         if compute is not None:
             # Decide without rewriting, then mutate: the bridge rewrite is only sound once the fission

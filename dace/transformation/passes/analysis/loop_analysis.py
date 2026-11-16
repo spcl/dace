@@ -235,6 +235,22 @@ def loop_jumps(loop: LoopRegion) -> list[ControlFlowBlock]:
     return jumps
 
 
+def ordered_side_effects(block: ControlFlowBlock) -> list[str]:
+    """The labels of the nodes in ``block`` (nested SDFGs included) whose side effects are ordered relative to one
+    another: communication, printing, a call into a stateful library. A loop holding one runs its iterations in order,
+    and its side effects stay in one loop in the order they had."""
+    # deferred: ``dace.sdfg.nodes`` imports ``dace.sdfg.state``, which imports this module
+    from dace.sdfg import nodes
+
+    states = [block] if isinstance(block, SDFGState) else list(block.states())
+    return [
+        node.label
+        for state in states
+        for node in state.nodes()
+        if isinstance(node, nodes.CodeNode) and node.has_ordered_side_effects(state.sdfg)
+    ]
+
+
 def enclosing_loops(block: ControlFlowBlock) -> set[LoopRegion]:
     """The loops around ``block``, through nested SDFGs."""
     found: set[LoopRegion] = set()

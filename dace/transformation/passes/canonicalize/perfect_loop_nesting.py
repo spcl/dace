@@ -249,6 +249,13 @@ def parallel_level_diagnostic(loop: LoopRegion, groups: list[list[ControlFlowBlo
     return fused, sum(int(level_parallel(group, loop_var, arrays)) for group in groups)
 
 
+def separates_ordered_side_effects(groups: list[list[ControlFlowBlock]]) -> bool:
+    """Whether ``groups`` puts ordered side effects (:func:`~loop_analysis.ordered_side_effects`) into two loops: one
+    loop would run all of its side effects before the other's, where the iterations interleaved them."""
+    holding = [group for group in groups if any(loop_analysis.ordered_side_effects(block) for block in group)]
+    return len(holding) > 1
+
+
 def distribute_loops(
     sdfg: SDFG,
     diagnostics: list[tuple[str, int, int]] | None = None,
@@ -272,7 +279,7 @@ def distribute_loops(
             if not isinstance(loop, LoopRegion) or loop in refused:
                 continue
             groups = grouping(loop)
-            if groups is None:
+            if groups is None or separates_ordered_side_effects(groups):
                 refused.add(loop)
                 continue
             if diagnostics is not None:
