@@ -458,7 +458,7 @@ def _array_array_binop(
     right_shape = right_arr.shape
 
     (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(
-        left_shape, right_shape, facts=sdfg.facts()
+        left_shape, right_shape, facts=sdfg.facts(), equal_under=visitor.proven_symbol_values()
     )
 
     # Fix for Scalars

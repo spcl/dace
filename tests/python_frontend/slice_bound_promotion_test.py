@@ -308,5 +308,76 @@ def test_a_genuinely_different_extent_is_still_refused():
         larger_source.to_sdfg(simplify=False)
 
 
+
+@dace.program
+def strided_tap_add(out: dace.float64[M], x: dace.float64[N], p: dace.int64):
+    lo = max(0, p)
+    hi = min(N, p + 3)
+    ol_lo = lo * 2 + 1
+    ol_hi = ol_lo + (hi - lo) * 2
+    out[ol_lo:ol_hi:2] = out[ol_lo:ol_hi:2] + x[lo:hi]
+
+
+@dace.program
+def strided_tap_add_in_nested_loops(out: dace.float64[M, 2], x: dace.float64[N, 2], p: dace.int64):
+    for k in range(2):
+        lo = max(0, p - k)
+        hi = min(N, p + 3)
+        ol_lo = lo * 2 + k
+        ol_hi = ol_lo + (hi - lo) * 2
+        for j in range(2):
+            out[ol_lo:ol_hi:2, j] = out[ol_lo:ol_hi:2, j] + x[lo:hi, j]
+
+
+def reference_strided_tap_add(out, x, p):
+    lo, hi = max(0, p), min(len(x), p + 3)
+    out[lo * 2 + 1 : lo * 2 + 1 + (hi - lo) * 2 : 2] += x[lo:hi]
+
+
+def reference_strided_tap_add_in_nested_loops(out, x, p):
+    for k in range(2):
+        lo, hi = max(0, p - k), min(len(x), p + 3)
+        out[lo * 2 + k : lo * 2 + k + (hi - lo) * 2 : 2, :] += x[lo:hi, :]
+
+
+@pytest.mark.parametrize(
+    "program, reference, shape",
+    [
+        (strided_tap_add, reference_strided_tap_add, ()),
+        (strided_tap_add_in_nested_loops, reference_strided_tap_add_in_nested_loops, (2,)),
+    ],
+    ids=["flat", "nested_loops"],
+)
+def test_a_strided_slice_bounded_by_scalar_arithmetic_matches_its_operand(program, reference, shape):
+    """A transposed convolution's tap: ``out[ol_lo:ol_hi:2] += x[lo:hi]`` with ``ol_hi = ol_lo + (hi - lo) * 2``,
+    where ``lo``/``hi`` are scalars (``max``/``min`` results), so every bound is a tasklet's scalar. The slice is
+    sized ``ceiling((ol_hi - ol_lo)/2)`` and the operand ``hi - lo``; the frontend refused them as a shape mismatch
+    until the promoted ``ol_hi`` was proven from the promoted ``ol_lo``, ``hi`` and ``lo``."""
+    n, m, p = 6, 16, 1
+    x = np.arange(1.0, n * int(np.prod(shape)) + 1).reshape((n, *shape)).copy()
+    out = np.zeros((m, *shape))
+    program(out=out, x=x, p=p, N=n, M=m)
+    expected = np.zeros((m, *shape))
+    reference(expected, x, p)
+    assert np.array_equal(out, expected), out
+
+
+@dace.program
+def strided_tap_after_a_leaf_is_rebound(out: dace.float64[M], x: dace.float64[N], p: dace.int64):
+    lo = max(0, p)
+    hi = min(N, p + 3)
+    ol_lo = lo * 2 + 1
+    ol_hi = ol_lo + (hi - lo) * 2
+    hi = hi - 1
+    out[ol_lo:ol_hi:2] = out[ol_lo:ol_hi:2] + x[lo:hi]
+
+
+def test_a_rebound_leaf_does_not_prove_the_extent():
+    """``hi`` changes after ``ol_hi`` read it, so the slice (3 elements) and ``x[lo:hi]`` (2) really differ, and
+    NumPy refuses them; the proof must not match them up."""
+    with pytest.raises(IndexError):
+        strided_tap_after_a_leaf_is_rebound.to_sdfg(simplify=False)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

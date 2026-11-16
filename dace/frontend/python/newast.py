@@ -1366,6 +1366,9 @@ class ProgramVisitor(ExtNodeVisitor):
         self.promoted_symbol_values: dict[symbolic.symbol, tuple[symbolic.SymbolicType, ControlFlowRegion]] = dict()
         #: Promoted symbols some read may have set to another value.
         self.unproven_symbols: set[str] = set()
+        #: Integer scalars a tasklet assigned integer arithmetic over other integer scalars, as that expression of the
+        #: scalars' NAMES, with the scalar leaves and the region it ran in (:meth:`record_scalar_arithmetic`).
+        self.scalar_arithmetic: dict[str, tuple[symbolic.SymbolicType, frozenset[str], ControlFlowRegion]] = dict()
 
         #: The one symbol a computed index (``A[i + 1]``) of each scalar is promoted to, re-assigned at every
         #: promotion (No-View nested SDFGs); a bare scalar and a shape use their version above instead.
@@ -3263,6 +3266,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # The write ends the value the scalar was known to hold, and the version its shape symbol was read from.
         self.symbolic_scalar_values.pop(target_name, None)
         self.shape_promotions.pop(target_name, None)
+        self.forget_scalar_arithmetic(target_name)
         if isinstance(operand, tuple):
             op_name, op_subset = operand
             if op_subset is None:
@@ -3350,7 +3354,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 # A whole-array copy between extents only the caller can relate (an output argument's
                 # own extent symbol against one derived from the inputs) is taken as equal here; the call
                 # site proves it once it binds both (``check_extent_equalities``).
-                unproven = [(s, o) for s, o in zip(ssize, osize) if inequal_symbols(s, o)]
+                unproven = [(s, o) for s, o in zip(ssize, osize) if inequal_symbols(s, o, self.sdfg.facts())]
                 if (
                     unproven
                     and not (indirect_indices or boolarr or op)
@@ -3543,6 +3547,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # An update is a write too: it ends the value the scalar was known to hold, and its shape symbol's version.
         self.symbolic_scalar_values.pop(wtarget_name, None)
         self.shape_promotions.pop(wtarget_name, None)
+        self.forget_scalar_arithmetic(wtarget_name)
         if isinstance(operand, tuple):
             op_name, op_subset = operand
             if op_subset is None:
@@ -3948,6 +3953,7 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Assign(self, node: ast.Assign):
         # Compute first target
         self._visit_assign(node, node.targets[0], None)
+        self.record_scalar_arithmetic(node.targets[0], node.value)
 
         # Then, for other targets make copies
         for target in node.targets[1:]:
@@ -6287,6 +6293,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 written |= bound_names(target)
         for name in written:
             self.shape_promotions.pop(self.variables.get(name, name), None)
+            self.forget_scalar_arithmetic(self.variables.get(name, name))
 
     def nested_in_region(self, defining_region: ControlFlowRegion) -> bool:
         """Whether the current region is ``defining_region`` or nested in it within the same SDFG. Loops in between do
@@ -6298,14 +6305,19 @@ class ProgramVisitor(ExtNodeVisitor):
             region = region.parent_graph
         return True
 
-    def value_holds_here(self, value: symbolic.SymbolicType, defining_region: ControlFlowRegion) -> bool:
+    def value_holds_here(
+        self, value: symbolic.SymbolicType, defining_region: ControlFlowRegion, versions: frozenset[str] = frozenset()
+    ) -> bool:
         """Whether ``value``, bound in ``defining_region``, provably still holds at the current region.
 
         It holds in that region or in a branch nested in it, with no loop in between (a later
         iteration may have rebound it), while none of its symbols is assigned on an interstate edge
-        or as a loop variable.
+        or as a loop variable. The leaf ``versions`` it was proven from are the exception: each is
+        assigned once, ahead of the proof (:meth:`proven_symbol_values`). Such a value also holds
+        across a loop nested in its region: every edge it reads ran before the loop, which assigns
+        none of them.
         """
-        if not self.dominated_by_region(defining_region):
+        if not (self.nested_in_region(defining_region) if versions else self.dominated_by_region(defining_region)):
             return False
         assigned = {name for edge in self.sdfg.all_interstate_edges(recursive=True) for name in edge.data.assignments}
         assigned.update(
@@ -6313,7 +6325,7 @@ class ProgramVisitor(ExtNodeVisitor):
             for loop in self.sdfg.all_control_flow_regions(recursive=True)
             if isinstance(loop, LoopRegion)
         )
-        return not any(str(sym) in assigned for sym in value.free_symbols)
+        return not any(str(sym) in assigned - versions for sym in value.free_symbols)
 
     def proven_symbol_values(self) -> dict[symbolic.symbol, symbolic.SymbolicType]:
         """Promoted symbols that provably equal a symbolic value at the current region.
@@ -6321,12 +6333,97 @@ class ProgramVisitor(ExtNodeVisitor):
         ``n = N; hc[:n, :n] = c`` bounds the store by ``n``'s promoted symbol while ``c`` is sized by
         ``N``. The symbol stays the extent everywhere, so every read of one assignment names the
         same shape; only a store compares its extents through these values.
+
+        A scalar assigned arithmetic over other scalars (:meth:`record_scalar_arithmetic`) is proven
+        here, from its leaves' promoted symbols, once it and all its leaves are promoted -- in
+        whatever order the subscripts promoted them.
         """
-        return {
+        proven = {
             sym: value
             for sym, (value, region) in self.promoted_symbol_values.items()
             if self.value_holds_here(value, region)
         }
+        for scalar in self.scalar_arithmetic:
+            promoted = self.shape_promotions.get(scalar)
+            if promoted is None or promoted[0] in proven or not self.nested_in_region(promoted[1]):
+                continue
+            arithmetic = self.arithmetic_over_versions(scalar)
+            if arithmetic is not None and self.value_holds_here(arithmetic[0], promoted[1], arithmetic[1]):
+                proven[promoted[0]] = arithmetic[0]
+        return proven
+
+    def forget_scalar_arithmetic(self, scalar: str) -> None:
+        """A write to ``scalar`` ends the arithmetic it was assigned and every arithmetic that reads it."""
+        self.scalar_arithmetic.pop(scalar, None)
+        for name in [name for name, (_, leaves, _) in self.scalar_arithmetic.items() if scalar in leaves]:
+            del self.scalar_arithmetic[name]
+
+    def record_scalar_arithmetic(self, target: ast.AST, value: ast.AST) -> None:
+        """Remember ``n = a + (b - c) * s`` over integer scalars ``a``, ``b``, ``c`` as that expression of their names.
+
+        The assignment runs as a tasklet, so the scalar's promoted symbol is opaque: a strided slice
+        ``out[a:n:s]`` sized ``ceiling((n - a)/s)`` cannot be matched against an operand sized
+        ``b - c`` (a transposed convolution's tap). Once it and every leaf are promoted,
+        :meth:`proven_symbol_values` proves the scalar's symbol from the leaves' symbols. Only
+        integer arithmetic over this SDFG's integer scalars, symbols and integer constants is kept,
+        and an assignment that reads its own target is not.
+        """
+        if not isinstance(target, ast.Name) or not isinstance(value, (ast.BinOp, ast.UnaryOp)):
+            return
+        name = self.variables.get(target.id)
+        desc = self.sdfg.arrays.get(name) if isinstance(name, str) else None
+        if not isinstance(desc, data.Scalar) or desc.dtype not in dtypes.INTEGER_TYPES:
+            return
+        for sub in ast.walk(value):
+            if not isinstance(sub, self.SLICE_ARITHMETIC_NODES):
+                return
+            if isinstance(sub, ast.Constant) and not isinstance(sub.value, (int, numpy.integer)):
+                return
+        try:
+            expr = symbolic.pystr_to_symbolic(astutils.unparse(value))
+        except Exception:  # noqa: BLE001 - an unparseable right-hand side is simply not remembered
+            return
+        defined_vars = {**self.variables, **self.scope_vars}
+        repl, leaves = {}, set()
+        for leaf in expr.free_symbols:
+            # Resolved as ``slice_bound_over_promoted_leaves`` resolves a slice bound's leaves.
+            resolved = str(defined_vars.get(str(leaf), str(leaf)))
+            leaf_desc = self.sdfg.arrays.get(resolved)
+            if resolved == name:
+                return
+            if isinstance(leaf_desc, data.Scalar) and leaf_desc.dtype in dtypes.INTEGER_TYPES:
+                repl[leaf] = symbolic.symbol(resolved)
+                leaves.add(resolved)
+            elif leaf_desc is not None or (resolved not in self.sdfg.arrays and resolved in self.scope_arrays):
+                return
+            elif isinstance(self.sdfg.constants.get(resolved), (int, numpy.integer)):
+                repl[leaf] = int(self.sdfg.constants[resolved])
+            elif resolved != str(leaf):
+                return
+            elif not (resolved in self.sdfg.symbols or isinstance(self.globals.get(resolved), symbolic.symbol)):
+                return
+        if leaves:
+            self.scalar_arithmetic[name] = (expr.xreplace(repl), frozenset(leaves), self.cfg_target)
+
+    def arithmetic_over_versions(self, scalar: str) -> tuple[symbolic.SymbolicType, frozenset[str]] | None:
+        """The arithmetic ``scalar`` was assigned, over its leaves' current version symbols, or ``None``.
+
+        Every scalar leaf must be promoted in the version the arithmetic read, so the proof adds no
+        state; the arithmetic itself must still reach the current region. A loop in between
+        does not stop it: one that writes the scalar or a leaf forgets the arithmetic on entry
+        (:meth:`drop_shape_versions_written_in`)."""
+        recorded = self.scalar_arithmetic.get(scalar)
+        if recorded is None or not self.nested_in_region(recorded[2]):
+            return None
+        expr, leaves, _ = recorded
+        repl, versions = {}, set()
+        for leaf in leaves:
+            promoted = self.shape_promotions.get(leaf)
+            if promoted is None or not self.nested_in_region(promoted[1]):
+                return None
+            repl[symbolic.symbol(leaf)] = promoted[0]
+            versions.add(str(promoted[0]))
+        return expr.xreplace(repl), frozenset(versions)
 
     def promote_scalar_to_symbol(self, scalar: str, key: str | None = None) -> symbolic.symbol:
         """

@@ -162,9 +162,20 @@ def broadcast_to(target_shape, operand_shape, facts: symbolic.Facts | None = Non
     return results
 
 
-def broadcast_together(arr1_shape, arr2_shape, unidirectional=False, facts: symbolic.Facts | None = None):
+def broadcast_together(
+    arr1_shape,
+    arr2_shape,
+    unidirectional=False,
+    facts: symbolic.Facts | None = None,
+    equal_under: dict | None = None,
+):
     """numpy broadcasting of two shapes. ``facts`` are those of the SDFG the shapes belong to: two extents are the
-    same dimension when they are equal under them (:func:`~dace.symbolic.inequal_symbols`)."""
+    same dimension when they are equal under them (:func:`~dace.symbolic.inequal_symbols`). ``equal_under`` maps
+    symbols to values they provably hold (the frontend's proven promotions); extents are compared through them and
+    kept as written."""
+
+    def proven(dim):
+        return dim.subs(equal_under) if equal_under and isinstance(dim, sp.Basic) else dim
 
     all_idx_dict, all_idx, a1_idx, a2_idx = {}, [], [], []
 
@@ -176,7 +187,7 @@ def broadcast_together(arr1_shape, arr2_shape, unidirectional=False, facts: symb
     for i, (dim1, dim2) in enumerate(itertools.zip_longest(reversed(arr1_shape), reversed(arr2_shape))):
         all_idx.append(get_idx(i))
 
-        if not symbolic.inequal_symbols(dim1, dim2, facts):
+        if not symbolic.inequal_symbols(proven(dim1), proven(dim2), facts):
             a1_idx.append(get_idx(i))
             a2_idx.append(get_idx(i))
 
