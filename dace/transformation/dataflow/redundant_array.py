@@ -2566,7 +2566,8 @@ class RedundantMapReadCopy(pm.SingleStateTransformation):
             return None
         if any(n.data == root.data and is_written(graph, n) for n in graph.data_nodes()):
             return None
-        for out_edge in graph.out_edges(node):
+        # An ordering edge reads nothing: ``apply`` keeps it from the entry, whatever it orders
+        for out_edge in (e for e in graph.out_edges(node) if not e.data.is_empty()):
             for leaf in graph.memlet_tree(out_edge).leaves():
                 if isinstance(leaf.dst, nodes.NestedSDFG):
                     if not reads_only_through_states_and_assignments(leaf.dst, leaf.dst_conn):

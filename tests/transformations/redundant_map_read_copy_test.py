@@ -127,8 +127,39 @@ def test_a_copy_of_a_container_the_scope_writes_is_kept():
     assert "t" in sdfg.arrays
 
 
+def test_an_ordering_edge_from_the_copy_into_a_nested_sdfg_keeps_the_fold():
+    """A nested SDFG ordered after the copy by an empty edge reads nothing through it: the copy still folds (the
+    check asked the nest whether it only reads connector ``None`` and raised), and the nest stays ordered."""
+    sdfg = staged_gather()
+    state = sdfg.start_state
+    sdfg.add_array("flag", [K], dace.float64)
+    t = next(n for n in state.data_nodes() if n.data == "t")
+    outer_entry = state.entry_node(t)
+    body = dace.SDFG("mark_row")
+    body.add_symbol("n", dace.int64)
+    body.add_array("flag", [K], dace.float64)
+    inner = body.add_state()
+    mark = inner.add_tasklet("mark", {}, {"f"}, "f = 1.0")
+    inner.add_edge(mark, "f", inner.add_write("flag"), None, dace.Memlet("flag[n]"))
+    nest = state.add_nested_sdfg(body, set(), {"flag"}, symbol_mapping={"n": "n", "K": "K"})
+    state.add_nedge(t, nest, dace.Memlet())
+    state.add_memlet_path(
+        nest, state.exit_node(outer_entry), state.add_write("flag"), src_conn="flag", memlet=dace.Memlet("flag[0:K]")
+    )
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(RedundantMapReadCopy) == 1
+    sdfg.validate()
+    assert [e.data.is_empty() for e in state.in_edges(nest)] == [True]
+    rng = np.random.default_rng(0)
+    src, idx, out, flag = rng.random((3, 7)), rng.integers(0, 7, 7), np.zeros((3, 7)), np.zeros(3)
+    sdfg(src=src, idx=idx, out=out, flag=flag, K=3, M=7)
+    assert np.allclose(out, src[:, idx]) and np.all(flag == 1.0)
+
+
 if __name__ == "__main__":
     test_a_read_only_staging_copy_in_a_map_is_folded()
     test_a_copy_of_a_container_the_scope_writes_is_kept()
     test_an_ordering_edge_out_of_the_folded_copy_stays_an_ordering_edge()
     test_a_staging_copy_read_by_a_nested_sdfg_is_folded()
+    test_an_ordering_edge_from_the_copy_into_a_nested_sdfg_keeps_the_fold()
