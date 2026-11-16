@@ -44,9 +44,11 @@ from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     UNKNOWN,
     WAVEFRONT_FRONT,
     AnnotateLoopKinds,
+    is_scratch,
     loop_header_names,
     parallel_hint,
     proven_carrying_access,
+    witnessed_carrying_access,
 )
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.parallelization.wavefront.skew import WavefrontSkew
@@ -327,6 +329,54 @@ def test_a_reduction_map_names_its_operator_and_accumulator_not_independence():
     first = parallel_hint(state, entry, []).splitlines()[0]
     assert first == REDUCTION.format(reductions="+ into s")
     assert "independent" not in first.split(";")[0]
+
+
+def test_a_witness_skips_a_nested_argument_that_is_the_callers_scratch():
+    """TSVC ``s118`` after the CPU team is hoisted: the outer loop sits in a nested SDFG, and the accumulator ``s`` the
+    loop privatized is the caller's transient, passed in as an argument. Every iteration writes ``s`` before it reads
+    it, so a conflict on ``s`` is no dependence; the witness must name the real one, through ``a``."""
+
+    @dace.program
+    def body(a: dace.float64[N], s: dace.float64[1]):
+        for i in range(1, N):
+            s[0] = a[i]
+            s[0] = s[0] + a[i - 1]
+            a[i] = s[0]
+
+    inner = body.to_sdfg(simplify=True)
+    outer = dace.SDFG("cpf_witness_scratch")
+    outer.add_array("a", [N], dace.float64)
+    outer.add_array("s", [1], dace.float64, transient=True)
+    init = outer.add_state("init", is_start_block=True)
+    zero = init.add_tasklet("zero", {}, {"out"}, "out = 0.0")
+    init.add_edge(zero, "out", init.add_write("s"), None, dace.Memlet("s[0]"))
+    state = outer.add_state_after(init)
+    call = state.add_nested_sdfg(inner, {"a": None, "s": None}, {"a": None, "s": None}, {"N": "N"})
+    state.add_edge(state.add_read("a"), None, call, "a", dace.Memlet("a[0:N]"))
+    state.add_edge(state.add_read("s"), None, call, "s", dace.Memlet("s[0]"))
+    state.add_edge(call, "a", state.add_write("a"), None, dace.Memlet("a[0:N]"))
+    state.add_edge(call, "s", state.add_write("s"), None, dace.Memlet("s[0]"))
+    outer.validate()
+    (loop,) = loops_of(inner)
+    assert is_scratch(inner, "s") and not is_scratch(inner, "a")
+    found = witnessed_carrying_access(loop)
+    assert found is not None and found.startswith("RAW on a["), found
+
+
+def test_a_read_its_own_iteration_rewrites_is_no_raw():
+    """``t`` is an argument the loop reuses: each iteration stores ``t[0]`` and then loads it. Two iterations conflict
+    on ``t[0]``, but the load sees its own iteration's store, so the carried dependence is storage reuse (WAR or
+    WAW), not a RAW."""
+
+    @dace.program
+    def reuse(a: dace.float64[N], b: dace.float64[N], t: dace.float64[1]):
+        for i in range(N):
+            t[0] = a[i]
+            b[i] = t[0]
+
+    (loop,) = loops_of(reuse.to_sdfg(simplify=False))
+    found = witnessed_carrying_access(loop)
+    assert found is not None and not found.startswith("RAW") and "t[0]" in found, found
 
 
 def test_a_multi_dimensional_map_names_every_loop_it_renders_as():

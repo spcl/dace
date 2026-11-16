@@ -583,14 +583,38 @@ def size_symbols(sdfg: SDFG) -> set[str]:
     return (shapes | (bounds - elsewhere)) - assigned - counters - set(sdfg.constants)
 
 
+def is_scratch(sdfg: SDFG, name: str) -> bool:
+    """Whether container ``name`` of ``sdfg`` is scratch: a transient here, or an argument of a nested SDFG that every
+    caller binds to scratch.
+
+    Outlining (``HoistParallelRegion``, a nested SDFG the frontend made) turns a caller's transient -- a scalar a loop
+    privatized, the accumulator of a reduction -- into an argument of the nested SDFG. It is still the caller's
+    scratch: a conflict on it proves no order, any more than on a transient declared in place.
+    """
+    desc = sdfg.arrays.get(name)
+    if desc is None:
+        return False
+    if desc.transient:
+        return True
+    node, state = sdfg.parent_nsdfg_node, sdfg.parent
+    if node is None or not isinstance(state, SDFGState) or node not in state.nodes():
+        return False
+    outer = [state.memlet_path(e)[0].src for e in state.in_edges(node) if e.dst_conn == name]
+    outer += [state.memlet_path(e)[-1].dst for e in state.out_edges(node) if e.src_conn == name]
+    if not outer or not all(isinstance(n, nodes.AccessNode) for n in outer):
+        return False
+    return all(is_scratch(state.sdfg, n.data) for n in outer)
+
+
 def witnessed_carrying_access(loop: LoopRegion) -> str | None:
     """``RAW on A[k, j] (witness: N=3, k=0 and k=1)`` when the solver finds two iterations of ``loop`` that touch
     one element of an argument array, choosing values for array sizes only.
 
     Every access involved runs on every iteration (no branch, no early exit, counted loops only), and its index
     and bounds name only iterators and sizes, so the witness is an execution of the program for that size. A
-    transient is scratch the loop may privatize, so a conflict on one proves no order. A read meeting a write is
-    tried before two writes, since it names the dependence a reader acts on.
+    transient is scratch the loop may privatize, so a conflict on one proves no order (:func:`is_scratch`). A read
+    meeting a write is tried before two writes, since it names the dependence a reader acts on, unless the read's
+    own iteration also writes its element (:func:`rewritten_in_iteration`).
     """
     counter = loop_range(loop, {}) if loop.loop_variable else None
     if counter is None:
@@ -608,12 +632,14 @@ def witnessed_carrying_access(loop: LoopRegion) -> str | None:
     mapping = {name: sympy.sympify(value) for name, value in loop.sdfg.constants.items()}
     sites: list[Site] = []
     region_sites(loop, arrays, mapping, (counter,), sites)
-    sites = [site for site in sites if not loop.sdfg.arrays[site.access.array].transient]
+    sites = [site for site in sites if not is_scratch(loop.sdfg, site.access.array)]
     sizes = size_symbols(loop.sdfg)
     pairs = [(w, o) for w in sites if w.access.write for o in sites if o.access.array == w.access.array]
     pairs.sort(key=lambda pair: pair[1].access.write)
     for write, other in pairs:
         for first, second in ((write, other), (other, write)):
+            if first.access.write and not second.access.write and rewritten_in_iteration(second, sites):
+                continue
             with canon_stats.timed("z3", loop):
                 found = smt_dependence.find_conflict_witness(
                     first.access.index, second.access.index, first.iters, second.iters, sizes, outer=tuple(outer)
@@ -621,6 +647,26 @@ def witnessed_carrying_access(loop: LoopRegion) -> str | None:
             if found is not None:
                 return conflict_label(first, second, found, counter[0])
     return None
+
+
+def rewritten_in_iteration(read: Site, sites: list[Site]) -> bool:
+    """Whether some write of the same iteration stores the very element ``read`` loads.
+
+    Then the read may see that write rather than an earlier iteration's, so a conflict with an earlier write is no
+    RAW: ``t[0] = a[i]; b[i] = t[0]`` reuses ``t`` and carries only a WAW, which the write pairs still find. The
+    sites carry no order, so a write after the read counts too; an in-place update ``s[0] = s[0] + x`` is then
+    named by its WAW, which holds as well."""
+    return any(
+        site.access.write
+        and site.access.array == read.access.array
+        and site.iters == read.iters
+        and len(site.access.index) == len(read.access.index)
+        and all(
+            sympy.simplify(sympy.sympify(a) - sympy.sympify(b)) == 0
+            for a, b in zip(site.access.index, read.access.index)
+        )
+        for site in sites
+    )
 
 
 def site_text(site: Site) -> str:
