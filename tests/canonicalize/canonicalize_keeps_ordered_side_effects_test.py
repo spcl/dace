@@ -8,7 +8,7 @@ receives, which reorders the exchange and can deadlock. ``LoopToMap``, the loop 
 ``LoopFusion`` and ``WavefrontSkew`` now each refuse what would move such a node."""
 
 import numpy as np
-from mpi4py import MPI
+import pytest
 
 import dace
 from dace.libraries.comm.nodes.node import CommNode
@@ -22,6 +22,9 @@ from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.loop_fission import LoopFission
 from dace.transformation.passes.parallelization.wavefront.skew import WavefrontSkew
 from dace.transformation.passes.parallelization.wavefront.statements import occurrence_index
+
+# The machine-learning CI job collects every module and has no MPI
+MPI = pytest.importorskip("mpi4py.MPI")
 
 K = dace.symbol("K", dtype=dace.int64)
 N = dace.symbol("N")
