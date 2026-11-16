@@ -26,6 +26,22 @@ def test_a_low_precision_array_keeps_its_type_against_integer_sizes(dtype):
     assert transients and all(t == dtype for t in transients.values()), transients
 
 
+@pytest.mark.parametrize("dtype", [dace.float16, dace.bfloat16])
+def test_a_low_precision_array_times_an_integer_array_promotes_as_float16_does(dtype):
+    """``bfloat16 * int64`` has no promotion in ``ml_dtypes``, and the frontend raised ``DTypePromotionError`` on
+    HB's hinge_loss (bf16 predictions times int64 labels). bfloat16 promotes as float16 does: to float64 here."""
+
+    @dace.program
+    def product(a: dtype[N], b: dace.int64[N], c: dace.float64[N]):
+        c[:] = a * b
+
+    sdfg = product.to_sdfg(simplify=False)
+    transients = {name: desc.dtype for name, desc in sdfg.arrays.items() if desc.transient}
+    assert transients and all(t == dace.float64 for t in transients.values()), transients
+
+
 if __name__ == "__main__":
     for dtype in (dace.float16, dace.bfloat16, dace.float32):
         test_a_low_precision_array_keeps_its_type_against_integer_sizes(dtype)
+    for dtype in (dace.float16, dace.bfloat16):
+        test_a_low_precision_array_times_an_integer_array_promotes_as_float16_does(dtype)

@@ -267,7 +267,17 @@ def representative_num(dtype: dtypes.typeclass | Number) -> Number:
 def np_result_type(nptypes):
     # Fix for np.result_type returning platform-dependent types,
     # e.g. np.longlong
-    restype = np.result_type(*nptypes)
+    try:
+        restype = np.result_type(*nptypes)
+    except np.exceptions.DTypePromotionError:
+        # ml_dtypes defines no promotion of bfloat16 with numpy's integers (``bfloat16 * int64``). It promotes as
+        # float16, the other 16-bit float, does, and stays bfloat16 where float16 would stay float16.
+        bf16 = np.dtype(ml_dtypes.bfloat16)
+        if not any(np.dtype(t) == bf16 for t in nptypes):
+            raise
+        restype = np.result_type(*(np.float16 if np.dtype(t) == bf16 else t for t in nptypes))
+        if restype == np.float16:
+            restype = bf16
     if restype.type not in dtypes.dtype_to_typeclass().keys():
         for k in dtypes.dtype_to_typeclass().keys():
             if k == restype.type:
