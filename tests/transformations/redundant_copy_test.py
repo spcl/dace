@@ -1026,6 +1026,42 @@ def test_an_ordering_edge_into_a_slice_folded_as_a_view_orders_its_producer():
     assert np.array_equal(a, expected)
 
 
+def test_a_copy_ordered_behind_a_write_through_a_view_of_its_target_is_kept():
+    """``tmp = 1`` and ``A[0:4] = C`` through a view ``V``, then ``A = tmp``, which an empty memlet orders behind the
+    view write. The map writing ``tmp`` already runs before the view write (it also produces ``C``): folded into
+    ``A`` it would write ``A`` first and the view write would win, ``A[0:4] = 5`` instead of ``1``."""
+    sdfg = dace.SDFG("copy_behind_a_view_write_of_its_target")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_transient("tmp", [8], dace.float64)
+    sdfg.add_transient("C", [8], dace.float64)
+    sdfg.add_view("V", [4], dace.float64)
+    state = sdfg.add_state()
+    tmp = state.add_access("tmp")
+    c = state.add_access("C")
+    entry, exit_node = state.add_map("both", {"i": "0:8"})
+    both = state.add_tasklet("both", {}, {"o", "c"}, "o = 1.0\nc = 5.0")
+    state.add_nedge(entry, both, dace.Memlet())
+    state.add_memlet_path(both, exit_node, tmp, src_conn="o", memlet=dace.Memlet("tmp[i]"))
+    state.add_memlet_path(both, exit_node, c, src_conn="c", memlet=dace.Memlet("C[i]"))
+    view_entry, view_exit = state.add_map("through_view", {"j": "0:4"})
+    move = state.add_tasklet("move", {"c"}, {"v"}, "v = c")
+    view = state.add_access("V")
+    state.add_memlet_path(c, view_entry, move, dst_conn="c", memlet=dace.Memlet("C[j]"))
+    state.add_memlet_path(move, view_exit, view, src_conn="v", memlet=dace.Memlet("V[j]"))
+    state.add_edge(view, "views", state.add_access("A"), None, dace.Memlet("A[0:4]"))
+    state.add_nedge(view_exit, tmp, dace.Memlet())
+    out = state.add_write("A")
+    state.add_edge(tmp, None, out, None, dace.Memlet("tmp[0:8] -> [0:8]"))
+    sdfg.validate()
+
+    assert not RedundantArray.can_be_applied_to(sdfg, in_array=tmp, out_array=out)
+    sdfg.apply_transformations_repeated(RedundantArray)
+    sdfg.validate()
+    a = np.zeros(8)
+    sdfg(A=a)
+    assert np.array_equal(a, np.ones(8))
+
+
 if __name__ == "__main__":
     test_reshaping_with_redundant_arrays()
     test_a_converting_copy_after_an_exact_store_folds()
@@ -1061,3 +1097,4 @@ if __name__ == "__main__":
     test_a_copy_that_converts_the_element_type_is_kept(False)
     test_an_ordering_edge_out_of_the_copied_array_moves_to_its_target()
     test_an_ordering_edge_into_a_slice_folded_as_a_view_orders_its_producer()
+    test_a_copy_ordered_behind_a_write_through_a_view_of_its_target_is_kept()

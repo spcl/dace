@@ -510,7 +510,7 @@ class RedundantArray(pm.SingleStateTransformation):
             return False
         # An ordering in-edge holds in_array's producers back, and they write out_array after the removal: a producer
         # that already runs before the edge's source cannot be put after it, so its write would overtake the edge
-        # source's access to out_array's container
+        # source's access to out_array's container, also one through a view
         guards = {graph.entry_node(e.src) or e.src for e in graph.in_edges(in_array) if not e.data.is_empty()}
         others = [n for n in graph.data_nodes() if n.data == out_array.data and n is not out_array]
         for order in graph.in_edges(in_array):
@@ -518,7 +518,12 @@ class RedundantArray(pm.SingleStateTransformation):
                 order.data.is_empty()
                 and any(g is not order.src and nx.has_path(graph.nx, g, order.src) for g in guards)
                 and any(
-                    n is order.src or nx.has_path(graph.nx, n, order.src) or graph.edges_between(order.src, n)
+                    n is order.src
+                    or nx.has_path(graph.nx, n, order.src)
+                    or any(
+                        isinstance(e.dst, nodes.AccessNode) and sdutil.get_last_view_node(graph, e.dst) is n
+                        for e in graph.out_edges(order.src)
+                    )
                     for n in others
                 )
             ):
