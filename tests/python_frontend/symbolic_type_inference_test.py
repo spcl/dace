@@ -34,6 +34,14 @@ def test_an_integer_expression_stays_integral_at_the_degenerate_point():
     assert sym_type(N - 1, SYMBOLS) == dace.int64
 
 
+def test_an_integer_expression_dividing_by_zero_at_every_point_is_integral():
+    """``C // 4 // (C // 4 // G)`` divides by zero wherever ``C < 4 * G``, so at both representative points
+    (shufflenet's channel split); integers in, integer out."""
+    C, G = symbolic.symbol("C"), symbolic.symbol("G")
+    split = symbolic.int_floor(symbolic.int_floor(C, 4), symbolic.int_floor(symbolic.int_floor(C, 4), G))
+    assert sym_type(split, {"C": dace.int64, "G": dace.int64}) == dace.int64
+
+
 def test_the_frontend_parses_a_grid_spacing():
     """The shape this arrived as: a spacing computed from the grid extent, at program scope."""
     N = dace.symbol("N", dtype=dace.int64, positive=True)
@@ -54,4 +62,5 @@ def test_the_frontend_parses_a_grid_spacing():
 if __name__ == "__main__":
     test_a_float_over_a_symbolic_sum_infers_a_float()
     test_an_integer_expression_stays_integral_at_the_degenerate_point()
+    test_an_integer_expression_dividing_by_zero_at_every_point_is_integral()
     test_the_frontend_parses_a_grid_spacing()

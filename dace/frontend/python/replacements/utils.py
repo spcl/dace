@@ -301,9 +301,15 @@ def representative_value(expr: sp.Basic, symbols: Mapping[str, dtypes.typeclass]
         try:
             value = eval(astutils.unparse(expr.subs(substitutions)), dict(SYM_TYPE_NAMESPACE))
         except ZeroDivisionError:
-            if offset == points[-1]:
-                raise
-            continue
+            if offset != points[-1]:
+                continue
+            # Every point divides by zero (``N // 4 // (N // 4 // G)`` is ``x // 0`` while ``N < 4 * G``). Integer
+            # symbols and integer literals make an integer at any point that evaluates, so that is the type.
+            if all(isinstance(representative_num(symbols[s.name]), Integral) for s in expr.free_symbols) and all(
+                number.is_integer for number in expr.atoms(sp.Number)
+            ):
+                return 0
+            raise
         if not isinstance(value, float) or math.isfinite(value):
             return value
     return value
