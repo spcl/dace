@@ -41,6 +41,23 @@ from dace.sdfg.narrowing import as_map_entry
 from dace.sdfg.state import ControlFlowRegion
 
 
+def order_after_writeback(state: SDFGState, arr_node: nodes.AccessNode, after_map) -> None:
+    """Order every access to ``arr_node``'s container that followed the map behind the in-state writeback into
+    ``arr_node``: the map's WCR wrote the slot before it ended, the writeback copy only runs once the map has. A write
+    happens where its producer runs, so the producers are ordered; an access inside a scope through its outermost
+    entry."""
+    behind, scope = set(state.bfs_nodes(arr_node)), state.scope_dict()
+    for n in after_map:
+        if not isinstance(n, nodes.AccessNode) or n.data != arr_node.data or n in behind:
+            continue
+        for target in [e.src for e in state.in_edges(n) if not e.data.is_empty()] or [n]:
+            while scope[target] is not None:
+                target = scope[target]
+            if target not in behind and arr_node not in state.bfs_nodes(target):
+                state.add_nedge(arr_node, target, mm.Memlet())
+                behind |= set(state.bfs_nodes(target))
+
+
 def privatize_reduction_accumulator(
     state: SDFGState, map_exit: nodes.MapExit, wcr_edge: MultiConnectorEdge[mm.Memlet]
 ) -> bool:
@@ -186,6 +203,7 @@ def privatize_reduction_accumulator(
             None,
             mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))),
         )
+        order_after_writeback(state, arr_node, after_map)
         return True
 
     # Cross-state pattern (no in-state init): init state BEFORE the
@@ -211,6 +229,7 @@ def privatize_reduction_accumulator(
             None,
             mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))),
         )
+        order_after_writeback(state, arr_node, after_map)
         return True
     if state.degree(arr_node) == 0:
         state.remove_node(arr_node)

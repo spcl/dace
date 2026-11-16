@@ -459,6 +459,37 @@ def test_a_write_after_the_map_is_no_seed():
     assert s[0] == 14.0
 
 
+def test_a_write_after_the_map_through_its_own_node_follows_the_writeback():
+    """``s[0] += x[i]`` beside ``t[i] = x[i]``, then ``s[0] = 100 * t[1]`` through another node of ``s``, which
+    follows the map through ``t`` alone. The in-state writeback of the scalar is ordered before that write, which
+    wins as it did: ``s[0] = 200``, not the sum ``36`` copied back last."""
+    sdfg = dace.SDFG("privatize_later_write_through_own_node")
+    sdfg.add_array("x", [8], dace.float64)
+    sdfg.add_array("s", [2], dace.float64)
+    sdfg.add_transient("t", [8], dace.float64)
+    state = sdfg.add_state()
+    summed, copied = state.add_access("s"), state.add_access("t")
+    _, _, map_exit = state.add_mapped_tasklet(
+        "reduce_and_copy",
+        dict(i="0:8"),
+        {"a": dace.Memlet("x[i]")},
+        "o = a\nc = a",
+        {"o": dace.Memlet("s[0]", wcr="lambda a, b: a + b"), "c": dace.Memlet("t[i]")},
+        external_edges=True,
+        output_nodes={"s": summed, "t": copied},
+    )
+    late, overwritten = state.add_tasklet("late", {"v"}, {"o"}, "o = 100 * v"), state.add_access("s")
+    state.add_edge(copied, None, late, "v", dace.Memlet("t[1]"))
+    state.add_edge(late, "o", overwritten, None, dace.Memlet("s[0]"))
+    wcr_edge = next(e for e in state.in_edges(map_exit) if e.data.wcr is not None)
+    assert privatize_reduction_accumulator(state, map_exit, wcr_edge)
+    sdfg.validate()
+    assert late in set(state.bfs_nodes(summed)), "the later write must follow the writeback into s"
+    s = np.zeros(2)
+    sdfg(x=np.arange(1.0, 9.0), s=s)
+    assert s[0] == 200.0
+
+
 if __name__ == "__main__":
     test_array_slot_dot_product_privatized()
     test_two_reductions_get_unique_scalar_names()
@@ -469,3 +500,4 @@ if __name__ == "__main__":
     test_two_maps_reducing_into_one_slot_in_one_state_keep_both_sums()
     test_a_map_nest_reducing_into_one_slot_accumulates_into_the_scalar()
     test_a_write_after_the_map_is_no_seed()
+    test_a_write_after_the_map_through_its_own_node_follows_the_writeback()
