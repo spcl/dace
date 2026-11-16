@@ -12,6 +12,7 @@ from typing import Any
 import sympy as sp
 
 from dace import symbolic
+from dace.config import Config
 from dace.optionals import required
 from dace.sdfg.analysis.cfg import collect_enclosing_conditions  # noqa: F401 -- re-exported
 
@@ -28,7 +29,8 @@ except Exception:
 
 
 def has_z3() -> bool:
-    return _HAS_Z3
+    """Whether the solver may be asked: z3 is importable and ``optimizer.canonicalization.smt`` holds."""
+    return _HAS_Z3 and Config.get_bool("optimizer", "canonicalization", "smt")
 
 
 # Solver budget in z3 resource units, not milliseconds: a wall-clock limit lets machine load flip

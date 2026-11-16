@@ -141,6 +141,16 @@ required:
                             Bounds the wrapping-modulo peel to 1..peel_limit iterations
                             (0 disables). Seeds ``BestEffortLoopPeeling.peel_limit``.
 
+                    smt:
+                        type: bool
+                        default: true
+                        title: Use the SMT solver
+                        description: >
+                            Let canonicalization ask z3 (dependence level three, guarded loops, and the
+                            solver-checked steps of loop fission, anti-dependence renaming, array facts and
+                            scan lifting). False runs every pass as if z3 were not installed, for an ablation.
+                            Read on every query.
+
                     gpu_coarsen_factor:
                         type: int
                         default: 4

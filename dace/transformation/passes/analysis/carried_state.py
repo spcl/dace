@@ -62,7 +62,7 @@ def proves_equal(lhs: Any, rhs: Any) -> bool:
 
 def proves_gf2_affine(loop: LoopRegion, step: StepSlice) -> int | None:
     """The state's width when ``step`` is GF(2)-affine with a data-independent linear part, else ``None``."""
-    if not smt_body.HAS_Z3:
+    if not smt_body.has_z3():
         return None
     sdfg = loop.sdfg
     kind = smt_region.value_type(sdfg.arrays, sdfg.symbols, step.symbol)

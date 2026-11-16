@@ -31,8 +31,6 @@ from dace.frontend.python import astutils
 from dace.optionals import required
 from dace.transformation.passes.analysis.smt_dependence import has_z3, z3
 
-HAS_Z3 = has_z3()
-
 #: Encoding width. Wide enough that a body masking to 8, 16 or 32 bits never overflows into it.
 DEFAULT_WIDTH = 64
 
@@ -232,7 +230,7 @@ def encode_body(
     :param signed: C semantics on signed integers instead of Python semantics on non-negative ones.
     :returns: the environment after the body, or ``None`` if any construct is unsupported.
     """
-    if not HAS_Z3:
+    if not has_z3():
         return None
     try:
         module = ast.parse(astutils._remove_outer_indentation(code))

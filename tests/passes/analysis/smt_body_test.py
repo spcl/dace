@@ -10,7 +10,7 @@ import pytest
 
 from dace.transformation.passes.analysis import smt_body
 
-pytestmark = pytest.mark.skipif(not smt_body.HAS_Z3, reason="needs z3")
+pytestmark = pytest.mark.skipif(not smt_body.has_z3(), reason="needs z3")
 
 WIDTH = 64
 
