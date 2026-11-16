@@ -2207,7 +2207,19 @@ def relax_int_floor(expr: SymbolicType) -> SymbolicType:
     if not isinstance(expr, sympy.Basic):
         return expr
     expr = expr.replace(int_floor, lambda x, y: sympy.floor(x / y))
-    return expr.replace(int_ceil, lambda x, y: sympy.ceiling(x / y))
+    expr = expr.replace(int_ceil, lambda x, y: sympy.ceiling(x / y))
+    # floor(floor(x) / n) is floor(x / n) for every positive integer n: ``h // 2 // 2`` and ``h // 4`` are one extent.
+    return expr.replace(lambda node: floor_of_floor(node) is not None, floor_of_floor)
+
+
+def floor_of_floor(expr: sympy.Basic) -> sympy.Expr | None:
+    """``floor(x / n)`` for ``expr`` of the form ``floor(floor(x) / n)`` with ``n`` a positive integer, else ``None``."""
+    if not isinstance(expr, sympy.floor):
+        return None
+    coeff, inner = expr.args[0].as_coeff_Mul()
+    if isinstance(inner, sympy.floor) and coeff.is_Rational and coeff.p == 1 and coeff.q > 0:
+        return sympy.floor(inner.args[0] * coeff)
+    return None
 
 
 class fma(DaceFunction):

@@ -95,6 +95,14 @@ def test_relax_int_floor_hands_the_solver_a_head_it_can_invert():
     assert str(relax_int_floor(pystr_to_symbolic("int_ceil(h, 2)"))) == "ceiling(h/2)"
 
 
+def test_a_floor_of_a_floor_by_an_integer_is_one_floor():
+    """``h // 2 // 2`` and ``h // 4`` size one tensor of a U-Net's encoder; ``h // 2 // 3`` still differs from
+    ``h // 2``."""
+    assert not symbolic.inequal_symbols(pystr_to_symbolic("(h // 2) // 2"), pystr_to_symbolic("h // 4"))
+    assert str(symbolic.relax_int_floor(pystr_to_symbolic("((h // 2) // 2) // 3"))) == "floor(h/12)"
+    assert symbolic.inequal_symbols(pystr_to_symbolic("(h // 2) // 3"), pystr_to_symbolic("h // 2"))
+
+
 @pytest.mark.parametrize("text", ["N - 1 < M", "i + 2*j", "x ^ 2", "min(a, b)", "a\n+ b", "True", "3.5e-3"])
 @pytest.mark.parametrize("evaluate", [None, True, False])
 def test_string_parse_on_the_shared_namespace_matches_sympify(text: str, evaluate: bool | None) -> None:
@@ -162,4 +170,5 @@ if __name__ == "__main__":
     test_and_or_of_two_symbolic_booleans_keep_both_operands()
     test_floordiv_on_a_symbol_is_int_floor()
     test_relax_int_floor_hands_the_solver_a_head_it_can_invert()
+    test_a_floor_of_a_floor_by_an_integer_is_one_floor()
     test_a_strided_thread_block_extent_overapproximates_to_its_full_tile()
