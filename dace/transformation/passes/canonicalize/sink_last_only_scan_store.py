@@ -96,9 +96,10 @@ def _store_source(state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> nodes.A
     return src
 
 
-def _last_subset(subset: Range, loop_var: str, end) -> Range | None:
+def _last_subset(subset: Range | None, loop_var: str, end) -> Range | None:
     """``subset`` with ``loop_var := end`` if it is a point indexed by ``loop_var`` in exactly one dimension."""
-    if subset.num_elements() != 1:
+    # A memlet that names its source carries no destination subset
+    if subset is None or subset.num_elements() != 1:
         return None
     axis = None
     for k, (b, e, s) in enumerate(subset.ranges):

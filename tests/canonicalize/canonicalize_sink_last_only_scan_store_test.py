@@ -96,8 +96,39 @@ def test_accumulator_written_after_the_store_is_refused():
     assert _apply(_acc_written_after_store.to_sdfg(simplify=True)) == 0
 
 
+def _store_named_by_its_source() -> dace.SDFG:
+    """``scan[i] = acc`` with the memlet naming ``acc``, so it carries no subset of ``scan``."""
+    sdfg = dace.SDFG("sink_last_store_named_by_source")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
+    sdfg.add_array("scan", [N], dace.float64, transient=True)
+    sdfg.add_array("acc", [1], dace.float64, transient=True)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("add", {"x", "s"}, {"o"}, "o = s + x")
+    acc_in, acc = body.add_read("acc"), body.add_access("acc")
+    body.add_edge(body.add_read("a"), None, tasklet, "x", dace.Memlet("a[i]"))
+    body.add_edge(acc_in, None, tasklet, "s", dace.Memlet("acc[0]"))
+    body.add_edge(tasklet, "o", acc, None, dace.Memlet("acc[0]"))
+    body.add_nedge(acc, body.add_write("scan"), dace.Memlet(data="acc", subset="0"))
+    tail = sdfg.add_state_after(loop, "tail")
+    tail.add_nedge(tail.add_read("scan"), tail.add_write("out"), dace.Memlet("scan[N - 1]", other_subset="0"))
+    return sdfg
+
+
+def test_store_memlet_naming_its_source_is_refused():
+    sdfg = _store_named_by_its_source()
+    sdfg.validate()
+    body = next(s for s in sdfg.states() if s.label == "body")
+    store = next(e for e in body.edges() if isinstance(e.dst, dace.nodes.AccessNode) and e.dst.data == "scan")
+    assert store.data.get_dst_subset(store, body) is None
+    assert _apply(sdfg) == 0
+
+
 if __name__ == "__main__":
     test_scans_read_at_last_keep_one_store_and_the_sequential_order()
     test_scan_read_at_another_index_is_refused()
     test_scan_read_in_the_loop_is_refused()
     test_accumulator_written_after_the_store_is_refused()
+    test_store_memlet_naming_its_source_is_refused()
