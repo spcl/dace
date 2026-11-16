@@ -8,8 +8,8 @@ tile-shape register transients. Handles binary/unary/ITE/masked-write/reduction 
 over Tile/Scalar/Symbol operands.
 """
 
-import copy
 import ast
+import copy
 import re
 from enum import Enum
 from typing import Any, NamedTuple

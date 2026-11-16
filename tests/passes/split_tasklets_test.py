@@ -13,7 +13,7 @@ import pytest
 
 import dace
 from dace.transformation.passes.canonicalize import canonicalize
-from dace.transformation.passes.split_tasklets import SplitTasklets, to_ssa
+from dace.transformation.passes.split_tasklets import SplitTasklets, is_typed_literal, to_ssa
 
 # Format: (expression, expected_num_statements_after_split)
 # One case per ASTSplitter branch / operator family: Compare, Constant- and Name-RHS assignment,
@@ -164,8 +164,8 @@ def count_operators(expr: str):
         elif isinstance(node, ast.Compare):
             num_ops += len(node.ops)
 
-        # Function calls (count as one operator per call)
-        elif isinstance(node, ast.Call):
+        # Function calls (count as one operator per call); a typed literal (``dace.float64(1)``) is an operand
+        elif isinstance(node, ast.Call) and not is_typed_literal(node):
             num_ops += 1
 
     return num_ops, num_assignments
