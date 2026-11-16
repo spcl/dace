@@ -52,6 +52,14 @@ def real_part_of_complex(z: dace.complex128[N], out: dace.float64[N]):
     out[:] = np.real(z) + np.imag(z)
 
 
+@dace.program
+def adaptive_pool_bounds(x: dace.float32[N, D], y: dace.float32[N]):
+    for oy in range(1):
+        lo = int(np.floor(oy * N / 1))
+        hi = int(np.ceil((oy + 1) * N / 1))
+        y[lo:hi] = x[lo:hi, 0]
+
+
 def test_a_python_value_keeps_the_array_float32():
     assert array_dtypes(python_value_scale) == {dace.float32}
 
@@ -72,6 +80,12 @@ def test_a_complex_argument_of_a_real_result_is_not_cast():
     sdfg = real_part_of_complex.to_sdfg(simplify=False)
     codes = [node.code.as_string for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.Tasklet)]
     assert codes and not any("float64" in code for code in codes), codes
+
+
+def test_numpy_math_of_a_symbolic_quotient_is_typed():
+    """``np.floor(oy * N / 1)`` has a float coefficient (``1.0*N*oy``), which the symbol table alone cannot type;
+    an adaptive average pool's window bounds are spelled so."""
+    adaptive_pool_bounds.to_sdfg(simplify=False).validate()
 
 
 def test_math_sqrt_of_an_integer_is_not_truncated():
@@ -97,5 +111,6 @@ if __name__ == "__main__":
     test_a_numpy_scalar_stays_strong()
     test_a_declared_scalar_keeps_its_dtype()
     test_a_complex_argument_of_a_real_result_is_not_cast()
+    test_numpy_math_of_a_symbolic_quotient_is_typed()
     test_math_sqrt_of_an_integer_is_not_truncated()
     test_a_python_value_computes_what_numpy_computes()

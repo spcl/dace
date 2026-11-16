@@ -64,7 +64,7 @@ def typing_operands(visitor: ProgramVisitor, sdfg: SDFG, operands: Sequence[Any]
         if isinstance(operand, str) and operand in sdfg.arrays:
             numbers.append(python_number_like(sdfg.arrays[operand].dtype))
         elif symbolic.issymbolic(operand):
-            numbers.append(python_number_like(symbolic.symtype(operand, symbols)))
+            numbers.append(python_number_like(sym_type(operand, symbols)))
         else:
             numbers.append(operand)
     return numbers
