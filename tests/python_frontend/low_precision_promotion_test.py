@@ -2,6 +2,7 @@
 """Arithmetic on a low-precision float keeps its type against an integer size, as NumPy's weak promotion does
 for ``float16`` (and ``ml_dtypes`` does for ``bfloat16``)."""
 
+import numpy as np
 import pytest
 
 import dace
@@ -56,6 +57,21 @@ def test_a_python_float_does_not_widen_a_low_precision_array(dtype):
     assert transients and all(t == dtype for t in transients.values()), transients
 
 
+@pytest.mark.parametrize("dtype", [dace.float16, dace.bfloat16, dace.float32])
+def test_a_python_float_branch_of_where_does_not_widen_a_low_precision_array(dtype):
+    """``np.where(x < 0, x, 1.0)`` came out ``float64``: the literal branch counted as a strong float64 operand.
+    NumPy keeps ``x``'s type (a weak Python float, NEP 50), and HB's conv2d_gelu_gap then passed a double into a
+    helper declared in the run precision."""
+
+    @dace.program
+    def clamp_to_one(a: dtype[N], b: dtype[N]):
+        b[:] = np.where(a < 0, a, 1.0)
+
+    sdfg = clamp_to_one.to_sdfg(simplify=False)
+    floats = {name: desc.dtype for name, desc in sdfg.arrays.items() if desc.transient and desc.dtype != dace.bool}
+    assert floats and all(t == dtype for t in floats.values()), floats
+
+
 if __name__ == "__main__":
     for dtype in (dace.float16, dace.bfloat16, dace.float32):
         test_a_low_precision_array_keeps_its_type_against_integer_sizes(dtype)
@@ -63,3 +79,5 @@ if __name__ == "__main__":
         test_a_low_precision_array_times_an_integer_array_promotes_as_float16_does(dtype)
     for dtype in (dace.float16, dace.bfloat16, dace.float32):
         test_a_python_float_does_not_widen_a_low_precision_array(dtype)
+    for dtype in (dace.float16, dace.bfloat16, dace.float32):
+        test_a_python_float_branch_of_where_does_not_widen_a_low_precision_array(dtype)

@@ -5,6 +5,7 @@ NumPy's Indexing Routines and Sorting, Searching, and Counting Functions.
 """
 
 from collections.abc import Mapping
+from numbers import Number
 
 from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, subsets, symbolic
 from dace.frontend.common import op_repository as oprepo
@@ -96,8 +97,13 @@ def _array_array_where(
     left_type = branch_type(left_operand, left_arr, visitor.symbol_types())
     right_type = branch_type(right_operand, right_arr, visitor.symbol_types())
 
-    # Implicit Python coversion implemented as casting
-    arguments = [cond_arr, left_arr or left_type, right_arr or right_type]
+    # Implicit Python coversion implemented as casting. A Python number branch is a weak operand (NEP 50):
+    # ``where(c, x, 1.0)`` keeps ``x``'s float type, as NumPy does.
+    arguments = [
+        cond_arr,
+        left_arr or (left_operand if isinstance(left_operand, Number) else left_type),
+        right_arr or (right_operand if isinstance(right_operand, Number) else right_type),
+    ]
     tasklet_args = [
         "__incond",
         "__in1" if left_arr else branch_code(left_operand),
