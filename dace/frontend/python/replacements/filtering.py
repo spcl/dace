@@ -275,3 +275,38 @@ def _array_array_select(
                 right_operand_node = nd
 
     return out_operand
+
+
+def sort_along(
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis: int | None, order: object, argsort: bool
+) -> str:
+    """``numpy.sort`` / ``numpy.argsort`` of ``a`` along ``axis`` as one Sort library node, stable (``kind`` only
+    picks NumPy's algorithm; the sorted keys are the same, and ties keep their order). ``axis=None`` sorts a 1-D
+    array; NumPy flattens a wider one first, which is refused."""
+    from dace.libraries.sort.nodes import Sort  # Avoid import loop
+
+    if order is not None:
+        raise ValueError("numpy.sort and numpy.argsort with order= (structured fields) are not supported")
+    desc = sdfg.arrays[a]
+    ndim = len(desc.shape)
+    if axis is None:
+        if ndim != 1:
+            raise ValueError("numpy.sort/argsort with axis=None flattens the array first, which is not supported")
+        axis = 0
+    if not -ndim <= axis < ndim:
+        raise ValueError(f"axis {axis} is out of bounds for an array of dimension {ndim}")
+    out, out_desc = pv.add_temp_transient(desc.shape, dtypes.int64 if argsort else desc.dtype, desc.storage)
+    node = Sort("argsort" if argsort else "sort", axis=axis % ndim, argsort=argsort)
+    state.add_edge(state.add_read(a), None, node, "_keys_in", Memlet.from_array(a, desc))
+    state.add_edge(node, "_out", state.add_write(out), None, Memlet.from_array(out, out_desc))
+    return out
+
+
+@oprepo.replaces("numpy.sort")
+def _numpy_sort(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=-1, kind=None, order=None) -> str:
+    return sort_along(pv, sdfg, state, a, axis, order, argsort=False)
+
+
+@oprepo.replaces("numpy.argsort")
+def _numpy_argsort(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=-1, kind=None, order=None) -> str:
+    return sort_along(pv, sdfg, state, a, axis, order, argsort=True)
