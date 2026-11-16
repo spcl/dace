@@ -1223,9 +1223,10 @@ class StateFusionExtended(StateFusion):
             # If not source node, try to connect every memlet-intersecting candidate
             # A second-state source read that only an ordering edge keeps from being a source here
             held_read = not source_node and second_state.in_degree(node) == 0
-            if held_read and node.data in bound:
+            if held_read and node.data in bound and not nx.has_path(first_state._nx, bound[node.data], node):
                 # Every source read of one container reads its value at the state boundary: the instance a sibling read
-                # already took, also when this one is held behind an ordering edge
+                # already took, also when this one is held behind an ordering edge; one its holder follows would close a
+                # cycle, and the read is ordered behind it below instead
                 n = bound[node.data]
                 sdutil.change_edge_src(first_state, node, n)
                 sdutil.change_edge_dest(first_state, node, n)

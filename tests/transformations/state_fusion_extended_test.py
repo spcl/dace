@@ -2481,6 +2481,59 @@ def test_a_held_read_and_its_duplicate_read_the_same_instance():
         np.testing.assert_array_equal(out[name], ref[name])
 
 
+def build_container_read_twice_one_read_held_behind_a_reader_of_its_value(held_read_first: bool) -> SDFG:
+    """``first``: ``X = P; R = X + Q``; ``second``: ``Q = 2 * X`` and ``Z = 3 * X`` through two source reads of ``X``.
+    The write of ``Q`` holds its read of ``X`` behind ``first``'s read of ``Q``, which follows the only ``X``.
+    ``held_read_first`` adds the held read's map first, which decides the order fusion meets the two reads in."""
+    sdfg = SDFG(f"sfx_held_read_behind_its_instance_{int(held_read_first)}")
+    for name in ("P", "Q", "X", "R", "Z"):
+        sdfg.add_array(name, [4], dtypes.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    x1 = first.add_access("X")
+    first.add_mapped_tasklet(
+        "w1",
+        {"i": "0:4"},
+        {"a": Memlet("P[i]")},
+        "b = a",
+        {"b": Memlet("X[i]")},
+        output_nodes={"X": x1},
+        external_edges=True,
+    )
+    first.add_mapped_tasklet(
+        "w2",
+        {"i": "0:4"},
+        {"a": Memlet("X[i]"), "c": Memlet("Q[i]")},
+        "b = a + c",
+        {"b": Memlet("R[i]")},
+        input_nodes={"X": x1},
+        external_edges=True,
+    )
+    second = sdfg.add_state_after(first, "second")
+    reads = [("u1", "b = 2 * a", "Q[i]"), ("u2", "b = 3 * a", "Z[i]")]
+    for label, code, written in reads if held_read_first else reversed(reads):
+        second.add_mapped_tasklet(
+            label, {"i": "0:4"}, {"a": Memlet("X[i]")}, code, {"b": Memlet(written)}, external_edges=True
+        )
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_held_read_whose_holder_follows_the_bound_instance_fuses_without_a_cycle():
+    """The read of ``X`` behind ``first``'s read of ``Q`` cannot merge with the only ``X``, which that read follows:
+    the merge closed a cycle and fusion raised when the other read of ``X`` bound that instance first. In either
+    order the states fuse and compute what they computed."""
+    for held_read_first in (True, False):
+        sdfg = build_container_read_twice_one_read_held_behind_a_reader_of_its_value(held_read_first)
+        fused = copy.deepcopy(sdfg)
+        assert fused.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True}) == 1
+        fused.validate()
+        arrays = dict(P=np.arange(4.0), Q=np.ones(4), X=np.zeros(4), R=np.zeros(4), Z=np.zeros(4))
+        ref = _run(sdfg, "ref", **arrays)
+        out = _run(fused, "fused", **arrays)
+        for name in arrays:
+            np.testing.assert_array_equal(out[name], ref[name])
+
+
 if __name__ == "__main__":
     test_aggressive_fusion_orders_only_the_first_writer_the_overwrite_overlaps()
     test_a_read_after_the_overwrite_follows_every_first_writer_it_overlaps()
@@ -2538,3 +2591,4 @@ if __name__ == "__main__":
     test_a_container_both_states_write_is_ordered_by_its_write_write_edge()
     test_two_reads_of_one_container_bind_to_its_one_writer()
     test_a_held_read_and_its_duplicate_read_the_same_instance()
+    test_a_held_read_whose_holder_follows_the_bound_instance_fuses_without_a_cycle()
