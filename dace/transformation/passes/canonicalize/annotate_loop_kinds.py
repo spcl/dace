@@ -32,7 +32,8 @@ from typing import Any, NamedTuple
 
 import sympy
 
-from dace import SDFG, data, symbolic
+from dace import SDFG, data, dtypes, symbolic
+from dace.frontend.operations import detect_reduction_type
 from dace.memlet import Memlet
 from dace.optionals import required
 from dace.ordered import OrderedSet
@@ -58,6 +59,24 @@ PARALLEL = (
     "parallel -- the iterations are independent\n"
     "settled: proven, no need to re-check; focus: schedule, tiling, vectorization, fusion, data layout"
 )
+
+#: The class line of a Map that accumulates into a container through a WCR edge: its iterations are not
+#: independent, they reduce, and the operator and the accumulator are the evidence. ``{reductions}`` reads
+#: ``+ into s``, joined by ``and``.
+REDUCTION = "parallel -- reduction: {reductions}; every other access is independent"
+
+#: The operator a reduction line names, by ``dtypes.ReductionType``; any other type is named by its member name.
+REDUCTION_SYMBOLS = {
+    dtypes.ReductionType.Sum: "+",
+    dtypes.ReductionType.Product: "*",
+    dtypes.ReductionType.Min: "min",
+    dtypes.ReductionType.Max: "max",
+    dtypes.ReductionType.Logical_And: "&&",
+    dtypes.ReductionType.Logical_Or: "||",
+    dtypes.ReductionType.Bitwise_And: "&",
+    dtypes.ReductionType.Bitwise_Or: "|",
+    dtypes.ReductionType.Bitwise_Xor: "^",
+}
 
 #: Added under a multi-dimensional Map's class line: the rendering writes one nested ``for`` per dimension and
 #: the comment only above the outermost, so the inner ones are named here.
@@ -702,13 +721,29 @@ def map_names(state: SDFGState, entry: nodes.MapEntry) -> set[str]:
     return names
 
 
+def map_reductions(state: SDFGState, entry: nodes.MapEntry) -> list[str]:
+    """``+ into s`` for every container the map accumulates into through a WCR edge leaving its exit, in name order."""
+    found: OrderedSet[str] = OrderedSet()
+    for edge in state.out_edges(state.exit_node(entry)):
+        if edge.data.is_empty() or edge.data.wcr is None:
+            continue
+        kind = detect_reduction_type(edge.data.wcr)
+        symbol = REDUCTION_SYMBOLS.get(kind, kind.name.lower())
+        found.add(f"{symbol} into {edge.data.data}")
+    return sorted(found)
+
+
 def parallel_hint(state: SDFGState, entry: nodes.MapEntry, traps: list[tuple[str, set[str]]]) -> str:
-    """``PARALLEL``, naming the entry traps whose symbols the map's element accesses use."""
-    relied = sorted({held for held, names in traps if names & map_names(state, entry)})
-    if not relied:
-        return PARALLEL
+    """``PARALLEL``, or ``REDUCTION`` for a map that accumulates, naming the entry traps whose symbols the map's
+    element accesses use."""
     first, rest = PARALLEL.split("\n", 1)
-    return f"{first}{ASSUMES.format(predicates=' and '.join(relied))}\n{rest}"
+    reductions = map_reductions(state, entry)
+    if reductions:
+        first = REDUCTION.format(reductions=" and ".join(reductions))
+    relied = sorted({held for held, names in traps if names & map_names(state, entry)})
+    if relied:
+        first += ASSUMES.format(predicates=" and ".join(relied))
+    return f"{first}\n{rest}"
 
 
 @xf.explicit_cf_compatible

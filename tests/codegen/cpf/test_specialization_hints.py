@@ -38,12 +38,14 @@ from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     MAP_DIMENSIONS,
     NO_COUNTER,
     PARALLEL,
+    REDUCTION,
     SEQUENTIAL_PINNED,
     SEQUENTIAL_PROVEN,
     UNKNOWN,
     WAVEFRONT_FRONT,
     AnnotateLoopKinds,
     loop_header_names,
+    parallel_hint,
     proven_carrying_access,
 )
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
@@ -303,6 +305,28 @@ def test_a_parallel_map_says_it_is_parallel():
     is free, which is the first thing a reader specializing the code needs to know."""
     rendered = comment_lines(named(scaling_sdfg("cpf_kind_parallel")))
     assert "// " + PARALLEL.splitlines()[0] in rendered
+
+
+def test_a_reduction_map_names_its_operator_and_accumulator_not_independence():
+    """A map that accumulates into ``s`` through a WCR edge has iterations that all update ``s``: they are not
+    independent, they reduce. The class line must say so and name the operator and the accumulator, or an agent that
+    rewrites the loop under "the iterations are independent" can drop the reduction (CPF paper review, Figure 4)."""
+    sdfg = dace.SDFG("cpf_kind_reduction")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("s", [1], dace.float64)
+    state = sdfg.add_state()
+    state.add_mapped_tasklet(
+        "accumulate",
+        {"j": "0:N"},
+        {"inp": dace.Memlet("a[j]")},
+        "out = inp",
+        {"out": dace.Memlet("s[0]", wcr="lambda x, y: x + y")},
+        external_edges=True,
+    )
+    entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry))
+    first = parallel_hint(state, entry, []).splitlines()[0]
+    assert first == REDUCTION.format(reductions="+ into s")
+    assert "independent" not in first.split(";")[0]
 
 
 def test_a_multi_dimensional_map_names_every_loop_it_renders_as():
