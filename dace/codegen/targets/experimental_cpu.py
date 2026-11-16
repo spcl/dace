@@ -359,9 +359,9 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
     def emit_provenance(self, node, cfg, state_id, callsite_stream) -> None:
         """Write the ``// <original library node>`` line CPF recorded for an expansion, once per
-        description per unit. A no-op outside standalone rendering, and under ``HintDetail.KINDS``."""
+        description per unit. A no-op outside standalone rendering, and under any detail but ``HintDetail.PROOFS``."""
         record = cpf_lowering.describe(node.guid)
-        if record is None or cpf_lowering.hint_detail() is cpf_lowering.HintDetail.KINDS:
+        if record is None or cpf_lowering.hint_detail() is not cpf_lowering.HintDetail.PROOFS:
             return
         origin, description = record
         if origin in self._emitted_provenance:
@@ -432,8 +432,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
     def emit_tasklet_body_block(self, callsite_stream, cfg, state_id, node, inner_body, postamble, has_locals) -> None:
         self.emit_provenance(node, cfg, state_id, callsite_stream)
-        # The label is a DaCe name, not a verdict: the kinds rendering carries none
-        label = "" if cpf_lowering.hint_detail() is cpf_lowering.HintDetail.KINDS else "  // %s" % node.label
+        # The label is a DaCe name, not a verdict: only the proofs rendering carries it
+        label = "  // %s" % node.label if cpf_lowering.hint_detail() is cpf_lowering.HintDetail.PROOFS else ""
         # A connector-free single-statement tasklet collapses onto one brace-free line; anything with
         # locals keeps its own ``{ }`` so a declaration cannot leak into the map body.
         if not has_locals and self._single_statement_body(node):

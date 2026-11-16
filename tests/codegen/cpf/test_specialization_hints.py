@@ -902,6 +902,30 @@ def test_the_two_variants_render_the_same_code():
     assert strip(render(sdfg, hints="kinds").code) == strip(render(sdfg, hints="proofs").code)
 
 
+def test_the_none_rendering_has_no_loop_comment_and_the_same_code():
+    """The comments-ablation variant: every comment line of the ``none`` rendering is a section label the kinds
+    rendering carries too (no class word, no reasoning, no tasklet label), and the code is that of ``proofs``."""
+
+    @dace.program
+    def three_kinds(a: dace.float64[N, N], c: dace.float64[N], k: dace.int64):
+        for i in range(1, N):
+            for j in range(N):
+                a[i, j] = a[i - 1, j] + 1.0
+        for i in range(N):
+            c[i] = c[i - k] + 1.0
+
+    sdfg = three_kinds.to_sdfg(simplify=True)
+    sdfg.name = "cpf_hints_none"
+    canonicalize(sdfg)
+    none, kinds, proofs = (render(sdfg, hints=detail).code for detail in ("none", "kinds", "proofs"))
+    words = ("// par", "// seq", "// unknown")
+    assert not [line for line in comment_lines(none) if line in words], none
+    assert [line for line in comment_lines(kinds) if line not in words] == comment_lines(none), none
+    assert not [line for line in none.splitlines() if "//" in line and line.split("//")[0].strip()], none
+    strip = lambda code: [line.split("  //")[0] for line in code.splitlines() if not line.strip().startswith("//")]
+    assert strip(none) == strip(proofs)
+
+
 def test_an_unknown_hint_detail_is_refused():
     with pytest.raises(ValueError):
         render(scaling_sdfg("cpf_kinds_refused"), hints="some")

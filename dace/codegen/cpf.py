@@ -1721,12 +1721,13 @@ def render(
                 ``AUTO`` is the widest one the host executes.
     :param hints: ``'proofs'`` (the default) comments every loop and map with its whole hint -- class, reason,
                   proof or witness, advice -- and every expansion with the library node it came from;
-                  ``'kinds'`` writes one ``// par``, ``// seq`` or ``// unknown`` per loop and map and nothing else.
+                  ``'kinds'`` writes one ``// par``, ``// seq`` or ``// unknown`` per loop and map and nothing else;
+                  ``'none'`` writes no loop comment at all (same code).
     :returns: the :class:`Rendering`.
     :raises NotImplementedError: if the SDFG needs anything the dialect's units cannot hold; the
                                  message names the construct.
     :raises RuntimeError: if a finished unit is not self-contained, or does not compile.
-    :raises ValueError: if ``language`` is neither, if ``hints`` is neither ``'proofs'`` nor ``'kinds'``, or if
+    :raises ValueError: if ``language`` is neither, if ``hints`` is not ``'proofs'``, ``'kinds'`` or ``'none'``, or if
                         ``signature`` does not fit the entry
                         (see :class:`EntrySignature`).
     """
@@ -1888,7 +1889,7 @@ def cpf(
               ``void <sdfg.name>(<arglist>)`` in C, whose ABI is the same.
     :raises NotImplementedError: if the SDFG needs anything a single host unit cannot hold; the
                                  message names the construct.
-    :raises ValueError: if ``language`` is neither, if ``hints`` is neither ``'proofs'`` nor ``'kinds'``, or if
+    :raises ValueError: if ``language`` is neither, if ``hints`` is not ``'proofs'``, ``'kinds'`` or ``'none'``, or if
                         ``signature`` does not fit the entry
                         (see :class:`EntrySignature`).
     """

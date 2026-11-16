@@ -190,6 +190,8 @@ class HintDetail(enum.Enum):
     PROOFS = "proofs"
     #: The class alone, one word: ``par``, ``seq`` or ``unknown``. Nothing else is written as a comment.
     KINDS = "kinds"
+    #: No hint at all: the code of :attr:`PROOFS`, without its loop comments (the comments-ablation variant).
+    NONE = "none"
 
 
 #: A hint's class prefix (``annotate_loop_kinds.CLASS_PREFIXES``) -> the one word :attr:`HintDetail.KINDS` writes.
@@ -236,11 +238,12 @@ def hint_comment(hint: str | None, indent: str = "") -> str:
     already, so emitting it there would be noise in code nobody reads.
 
     Under :attr:`HintDetail.KINDS` only the class word is written, and a hint naming no class writes nothing.
+    Under :attr:`HintDetail.NONE` nothing is written.
 
     Multi-line hints stay multi-line. The alternatives a hint describes are per-device and do not
     read as one sentence: ``CPU: ... / GPU: ...`` is the shape, one line each.
     """
-    if not hint or not standalone():
+    if not hint or not standalone() or _hint_detail is HintDetail.NONE:
         return ""
     if _hint_detail is HintDetail.KINDS:
         word = kind_word(hint)
