@@ -373,5 +373,13 @@ def test_the_sympy_spelling_of_round_is_typed():
         assert type_inference.infer_expr_type(spelling, {"x": dtypes.float64}) == dtypes.typeclass(int), spelling
 
 
+def test_infinity_and_nan_are_typed_as_float():
+    """paged_attention's ``qk_max = -np.inf`` becomes an interstate assignment that sympy spells ``-inf``, and
+    typing the name ``inf`` raised ``data type 'inf' not understood`` during simplification."""
+    assert type_inference.infer_expr_type("-inf", {}) == dtypes.float64
+    assert type_inference.infer_expr_type("nan", {}) == dtypes.float64
+    assert type_inference.infer_expr_type("True", {}) == dtypes.bool_
+
+
 if __name__ == "__main__":
     unittest.main()

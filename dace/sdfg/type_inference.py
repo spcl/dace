@@ -72,6 +72,9 @@ _py2c_reserved = {
     "nan": "NAN",
 }
 
+#: The Python value each reserved name spells; ``None`` has no type.
+_py2c_reserved_values = {"True": True, "False": False, "inf": float("inf"), "nan": float("nan")}
+
 _py2c_typeconversion = {
     "uint": dace.dtypes.typeclass(np.uint32),
     "int": dace.dtypes.typeclass(int),
@@ -412,7 +415,8 @@ def _JoinedStr(t, symbols, inferred_symbols):
 
 def _Name(t, symbols, inferred_symbols):
     if t.id in _py2c_reserved:
-        return dtypes.typeclass(np.result_type(t.id))
+        value = _py2c_reserved_values.get(t.id)
+        return None if value is None else dtypes.typeclass(type(value))
     else:
         # check if this name is a python type, it is in defined_symbols or in local symbols.
         # If yes, take the type
