@@ -9,6 +9,7 @@ over Tile/Scalar/Symbol operands.
 """
 
 import copy
+import ast
 import re
 from enum import Enum
 from typing import Any, NamedTuple
@@ -370,6 +371,22 @@ class ConditionalWriteMatch(NamedTuple):
     cond_arg: str
     val_arg: str
     val_is_symbol: bool
+
+
+def python_ternary(rhs: str) -> tuple[str, str, str] | None:
+    """``(cond, then, else)`` of a right-hand side that is one Python ``then if cond else else``, else ``None``."""
+    try:
+        value = ast.parse(rhs, mode="eval").body
+    except SyntaxError:
+        return None
+    if not isinstance(value, ast.IfExp):
+        return None
+    return ast.unparse(value.test), ast.unparse(value.body), ast.unparse(value.orelse)
+
+
+def expression_names(expr: str) -> set[str]:
+    """The identifiers an expression reads."""
+    return {node.id for node in ast.walk(ast.parse(expr, mode="eval")) if isinstance(node, ast.Name)}
 
 
 class IteMatch(NamedTuple):
@@ -1105,6 +1122,16 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                         return IteMatch(out_conn, match.group(1), t, e, False, False, True)
         # ITE(cond, t, e) function form: 3-in-conn and the 2-in-conn-with-symbol cases.
         rhs = body[len(f"{out_conn} = ") :].strip()
+        ternary = python_ternary(rhs)
+        if ternary is not None:
+            # ``x if c else <literal>``: a Python ternary with a literal or Symbol arm (numpy.where with a Python number
+            # branch), weighed like the ITE form. An arm reading a connector inside an expression is not an operand.
+            if any(arg not in in_conns and set(in_conns) & expression_names(arg) for arg in ternary):
+                return None
+            cond_arg, t_arg, e_arg = ternary
+            return IteMatch(
+                out_conn, cond_arg, t_arg, e_arg, t_arg not in in_conns, e_arg not in in_conns, cond_arg not in in_conns
+            )
         if rhs.startswith("(") and rhs.endswith(")"):
             rhs = rhs[1:-1].strip()
         prefix = "ITE("

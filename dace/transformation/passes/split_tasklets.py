@@ -112,6 +112,8 @@ class ASTSplitter:
             return t
 
         elif isinstance(node, ast.Call):
+            if is_typed_literal(node):
+                return ast.unparse(node)
             func = self.visit(node.func)
             args = [self.visit(arg) for arg in node.args]
             t = self.temp()
@@ -175,6 +177,23 @@ class ASTSplitter:
             return t
 
         return ast.unparse(node)
+
+
+def is_typed_literal(node: ast.Call) -> bool:
+    """``dace.float16(0.0)``: a dtype applied to a number literal. It is a typed literal, not an operation, so it
+    stays inline -- split out, it becomes a scalar the vectorizer must broadcast instead of an immediate operand."""
+    func = node.func
+    return (
+        isinstance(func, ast.Attribute)
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "dace"
+        and isinstance(vars(dace.dtypes).get(func.attr), dace.dtypes.typeclass)
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, (int, float))
+        and not isinstance(node.args[0].value, bool)
+    )
 
 
 def branch_assignments(branch: list[ast.stmt]) -> dict[str, ast.expr] | None:

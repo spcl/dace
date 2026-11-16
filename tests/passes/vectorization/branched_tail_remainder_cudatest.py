@@ -375,10 +375,9 @@ def test_branched_tail_where_literal_arm_typed_not_bare_double():
     fp16 precision before it reaches codegen -- not left as a bare (C++ ``double``) literal.
 
     Two lowerings see this literal, and both must stay fp16:
-      * the vectorized (tiled) interior converts the blend to a ``TileITE`` lib node, whose
-        Symbol arm is cast to the output dtype INLINE at expansion -- unaffected by this fix,
-        checked here as ``expr_t == '0.0'``: still the bare literal, still exempt (its own
-        expansion casts it, see ``TileITE.pure_tasklet``);
+      * the vectorized (tiled) interior converts the blend to a ``TileITE`` lib node whose
+        Symbol arm is the literal the frontend typed as a weak operand, ``dace.float16(0.0)``,
+        inline (no scalar materialized for it) and not cast again by ``CastScalarIteLiteralArms``;
       * the non-divisible extent's scalar remainder (1022 @ W=2) leaves an ``ITE(...)`` tasklet
         that never becomes a ``TileITE`` -- codegen's generic Python-tasklet translation has no
         casting logic of its own, so a leftover bare literal reaches nvcc as
@@ -396,7 +395,7 @@ def test_branched_tail_where_literal_arm_typed_not_bare_double():
     ites = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileITE)]
     assert len(ites) == 1, f"expected exactly one TileITE for the tiled interior; got {len(ites)}"
     ite = ites[0]
-    assert ite.kind_t == "Symbol" and ite.expr_t == "0.0", (
+    assert ite.kind_t == "Symbol" and ite.expr_t == "dace.float16(0.0)", (
         f"tiled-interior TileITE Symbol arm changed unexpectedly: kind_t={ite.kind_t!r} expr_t={ite.expr_t!r} "
         "-- CastScalarIteLiteralArms must not touch an arm a TileITE will claim"
     )
@@ -412,8 +411,8 @@ def test_branched_tail_where_literal_arm_typed_not_bare_double():
 
     sdfg.expand_library_nodes()
     cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
-    # ``ITE(c, t, e)`` is emitted as the conditional operator ``((c) ? (t) : (e))``.
-    ite_calls = [line.strip() for line in cu.splitlines() if ") ? (" in line]
+    # The ternary is emitted as the conditional operator ``c ? t : e``.
+    ite_calls = [line.strip() for line in cu.splitlines() if " ? " in line]
     assert ite_calls, "expected a scalar-remainder ITE ternary in the generated CUDA source"
     for line in ite_calls:
         assert "dace::float16(0.0)" in line, f"literal ITE arm not typed to fp16: {line!r}"

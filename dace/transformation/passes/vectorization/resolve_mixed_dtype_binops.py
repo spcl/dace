@@ -57,6 +57,17 @@ def _cast_name(dtype: dtypes.typeclass) -> str:
     return dtypes.TYPECLASS_TO_STRING[dtype].split("::")[-1]
 
 
+def casts_to(expr: ast.expr, dtype: dtypes.typeclass) -> bool:
+    """Whether ``expr`` is already a cast call to ``dtype``, spelled ``float16(..)`` or ``dace.float16(..)``."""
+    if not (isinstance(expr, ast.Call) and len(expr.args) == 1 and not expr.keywords):
+        return False
+    func = expr.func
+    name = func.id if isinstance(func, ast.Name) else None
+    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "dace":
+        name = func.attr
+    return name == _cast_name(dtype)
+
+
 def ite_operands(tasklet: nodes.Tasklet) -> tuple[str, list[str], str | None] | None:
     """If ``tasklet`` is a ternary blend -- the Python ``_o = _t if _c else _e`` form or the
     ``_o = ITE(_c, _t, _e)`` call form ``SplitTasklets`` emits for a same-write-set if/else --
@@ -498,7 +509,7 @@ class CastScalarIteLiteralArms(ppl.Pass):
         in_conns = OrderedSet(tasklet.in_connectors)
         changed = False
         for arm, set_arm in slots:
-            if isinstance(arm, ast.Name) and arm.id in in_conns:
+            if (isinstance(arm, ast.Name) and arm.id in in_conns) or casts_to(arm, out_dt):
                 continue
             # Bare (undotted) spelling -- ``float16(0.0)``, not ``dace.float16(0.0)`` -- the one
             # form ``cppunparse``'s tasklet-body translator special-cases to ``dace::<type>(...)``
