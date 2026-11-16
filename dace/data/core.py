@@ -900,7 +900,20 @@ class ContainerArray(Array):
 
 @make_properties
 class Stream(Data):
-    """Stream (or stream array) data descriptor."""
+    """Stream (or stream array) data descriptor.
+
+    A copy out of a stream pops elements in FIFO order. A non-dynamic copy blocks until it has popped
+    the whole destination subset. A dynamic copy does not block: it pops up to that many elements, as
+    many as are queued, possibly none. Its count goes to the edge leaving the stream access node
+    through the out-connector :attr:`NUM_POPPED_CONNECTOR`, if there is one.
+    """
+
+    #: Out-connector of a stream access node that carries the element count of a dynamic copy out of it.
+    NUM_POPPED_CONNECTOR = "num_popped"
+
+    #: Set by GPU code generation (not serialized): device code pops this stream while tasks may push
+    #: to it, so it is a ``dace::GPUQueue``, in which every push is visible on its own.
+    device_queue: bool = False
 
     # Properties
     offset = ListProperty(element_type=sp.Basic, category="Memory")
@@ -1012,6 +1025,9 @@ class Stream(Data):
     def as_arg(self, with_types=True, for_call=False, name=None):
         if not with_types or for_call:
             return name
+        if self.device_queue:
+            block = ", true" if self.storage == dtypes.StorageType.GPU_Shared else ""
+            return f"dace::GPUQueue<{self.dtype.ctype}{block}> {name}"
         if self.storage in [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared]:
             return "dace::GPUStream<{}, {}> {}".format(
                 str(self.dtype.ctype),

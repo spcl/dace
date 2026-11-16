@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 A Python runner for DaCe tasklets. Used to execute  ``with dace.tasklet``
 statements.
@@ -7,6 +7,9 @@ statements.
 import ast
 import copy
 import inspect
+import textwrap
+from collections.abc import Callable
+from types import CodeType
 from typing import Any
 
 from dace.frontend.python import astutils
@@ -52,6 +55,22 @@ def get_tasklet_ast(stack_depth=2, frame=None) -> ast.With:
 
 def _copy_location(newnode, node):
     return ast.fix_missing_locations(ast.copy_location(newnode, node))
+
+
+# A write of a whole container: a push if it is a stream (a ``deque``), an assignment to all its elements otherwise
+_WHOLE_WRITE = "T.append(V) if isinstance(T, __import__('collections').deque) else T.__setitem__(slice(None), V)"
+
+
+def _write_whole(target: ast.Name, value: ast.AST, node: ast.AST) -> ast.stmt:
+    """Returns the statement that writes ``value`` to all of ``target``, or pushes it if ``target`` is a stream."""
+    statement = ast.parse(_WHOLE_WRITE).body[0]
+    for name in ast.walk(statement):
+        if isinstance(name, ast.Name) and name.id == "T":
+            name.id = target.id
+    call = statement.value
+    call.body.args[0] = value  # T.append(V)
+    call.orelse.args[1] = copy.deepcopy(value)  # T.__setitem__(slice(None), V)
+    return _copy_location(statement, node)
 
 
 class TaskletRewriter(astutils.ExtNodeTransformer):
@@ -141,11 +160,14 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
             result: ast.Subscript = node
             result.value = node.value.func
 
-        # If memlet is just an array name, add "[:]"
-        if isinstance(result, ast.Name):
-            result = ast.parse(f"{result.id}[:]").body[0].value
-
         return result, dynamic, wcr
+
+    @staticmethod
+    def _all_of(memlet: ast.AST) -> ast.AST:
+        """A memlet that is just a container name stands for all of it: ``A[:]``."""
+        if isinstance(memlet, ast.Name):
+            return ast.parse(f"{memlet.id}[:]").body[0].value
+        return memlet
 
     # Visit and transform memlet expressions
     def visit_TopLevelExpr(self, node):
@@ -153,6 +175,7 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
             if isinstance(node.value.op, ast.LShift):
                 # Obtain memlet metadata and clean AST node from memlet syntax
                 cleaned_right, dynamic, _ = self._clean_memlet(node.value.right)
+                cleaned_right = self._all_of(cleaned_right)
 
                 # Replace "a << A[i]" with "a = A[i]" at the beginning
                 if not dynamic:
@@ -170,7 +193,10 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
                 cleaned_right, dynamic, wcr = self._clean_memlet(node.value.right)
 
                 # Replace "a >> A[i]" with "A[i] = a" at the end
-                if not dynamic:
+                if not dynamic and wcr is None and isinstance(cleaned_right, ast.Name):
+                    self.post_statements.append(_write_whole(cleaned_right, node.value.left, node))
+                elif not dynamic:
+                    cleaned_right = self._all_of(cleaned_right)
                     rhs = node.value.left
                     if wcr is not None:
                         # If WCR is involved, change expression to include
@@ -182,7 +208,7 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
                     self.post_statements.append(_copy_location(ast.Assign(targets=[lhs], value=rhs), node))
                 elif wcr is not None:
                     # Replace Assignments with lambda every time
-                    self.wcr_replacements[rname(node.value.left)] = (cleaned_right, wcr)
+                    self.wcr_replacements[rname(node.value.left)] = (self._all_of(cleaned_right), wcr)
                 else:
                     # In-place replacement
                     self.assign_replacements[rname(node.value.left)] = cleaned_right
@@ -204,7 +230,10 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
         result = []
         rhs = self.visit(node.value)
         for target in node.targets:
-            if isinstance(target, ast.Name) and target.id in self.assign_replacements:
+            if isinstance(target, ast.Name) and isinstance(self.assign_replacements.get(target.id), ast.Name):
+                # Every assignment writes all of the container, or pushes to the stream
+                result.append(_write_whole(self.assign_replacements[target.id], rhs, node))
+            elif isinstance(target, ast.Name) and target.id in self.assign_replacements:
                 # Replace assignment
                 newtarget = copy.deepcopy(self.assign_replacements[target.id])
                 newtarget.ctx = ast.Store()
@@ -235,13 +264,36 @@ def run_tasklet(tasklet_ast: ast.With, filename: str, gvars: dict[str, Any], lva
     :param gvars: Globals defined at the calling point of the tasklet.
     :param lvars: Locals defined at the calling point of the tasklet.
     """
+    exec(compile_tasklet(tasklet_ast, filename), gvars, lvars)
+
+
+def compile_tasklet(tasklet_ast: ast.With, filename: str) -> CodeType:
+    """
+    Transforms a tasklet given by its AST into Python code, and compiles it.
+
+    :param tasklet_ast: AST of the "with dace.tasklet" statement.
+    :param filename: The originating filename of the tasklet, used for debuggers to attach to.
+    :return: The code object, to run with the variables of the tasklet's scope.
+    """
     # Transform the decorated AST into working Python code (annotated with
     # the correct line locations so that debugging works)
     runnable_ast = TaskletRewriter().rewrite_tasklet(tasklet_ast)
-    mod = ast.fix_missing_locations(runnable_ast)
+    return compile(ast.fix_missing_locations(runnable_ast), filename, "exec")
 
-    # Compile the transformed AST
-    codeobj = compile(mod, filename, "exec")
 
-    # Run tasklet
-    exec(codeobj, gvars, lvars)
+class TaskletFunction:
+    """The body of a function, run as a tasklet: the body of ``@dace.map`` or ``@dace.consume`` outside of programs,
+    whose memlets are as in ``with dace.tasklet``."""
+
+    def __init__(self, function: Callable[..., Any]):
+        lines, first_line = inspect.getsourcelines(function)
+        definition = ast.parse(textwrap.dedent("".join(lines))).body[0]
+        ast.increment_lineno(definition, first_line - 1)
+        tasklet_ast = ast.copy_location(ast.With(items=[], body=definition.body), definition)
+        self.code = compile_tasklet(tasklet_ast, inspect.getsourcefile(function) or "<tasklet>")
+        self.globals = function.__globals__
+        self.closure = inspect.getclosurevars(function).nonlocals
+        self.parameters = list(inspect.signature(function).parameters)
+
+    def __call__(self, *arguments: Any) -> None:
+        exec(self.code, self.globals, {**self.closure, **dict(zip(self.parameters, arguments))})

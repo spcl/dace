@@ -1,7 +1,9 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 
 import dace
+
+_ = np.s_  # Ranges of decorated maps outside of programs: _[0:N] is slice(0, N)
 
 
 def test_simple():
@@ -103,6 +105,81 @@ def test_dynamic_output_wcr():
     assert B[0] == expected
 
 
+def test_push_to_stream():
+    """A write of a whole stream pushes, with or without a dynamic memlet."""
+    S = dace.define_stream(dace.int32)
+    with dace.tasklet:
+        s >> S
+        s = 5
+    with dace.tasklet:
+        d >> S(-1)
+        d = 6
+        d = 7
+    assert list(S) == [5, 6, 7]
+
+
+def test_whole_array_write():
+    """A write of a whole array, which is not a stream, sets all of its elements."""
+    B = np.zeros(3)
+    with dace.tasklet:
+        b >> B
+        b = 2
+    assert np.array_equal(B, [2, 2, 2])
+
+
+def test_decorated_map():
+    A = np.arange(12.0).reshape(3, 4)
+    B = np.zeros((3, 4))
+
+    @dace.map(_[0:3, 0:4])
+    def doubled(i, j):
+        a << A[i, j]
+        b >> B[i, j]
+        b = 2 * a
+
+    assert np.array_equal(B, 2 * A)
+
+
+def test_decorated_mapscope():
+    B = np.zeros(5)
+
+    @dace.mapscope(_[0:5])
+    def squares(i):
+        B[i] = i * i
+
+    assert np.array_equal(B, np.arange(5) ** 2)
+
+
+def test_decorated_consume():
+    """The body of a consume scope is a tasklet that pushes to the stream it consumes."""
+    S = dace.define_stream(dace.int32)
+    S.append(10)
+    res = np.zeros(1)
+
+    @dace.consume(S, 4)
+    def fibonacci(elem, p):
+        sout >> S(-1)
+        val >> res(-1, lambda a, b: a + b)
+        if elem == 1:
+            val = 1
+        elif elem > 1:
+            sout = elem - 1
+            sout = elem - 2
+
+    assert res[0] == 55
+
+
+def test_decorated_consumescope():
+    S = dace.stream([3, 1, 2])
+    seen = np.zeros(4)
+
+    @dace.consumescope(S, 2)
+    def visit(elem, p):
+        seen[elem] = p + 1
+
+    assert np.array_equal(seen, [0, 2, 1, 1])  # Popped as 2, 1, 3 by processing elements 0, 1, 0
+
+
 if __name__ == "__main__":
     test_simple()
     test_locals()
@@ -111,3 +188,9 @@ if __name__ == "__main__":
     test_nested_range()
     test_dynamic_output()
     test_dynamic_output_wcr()
+    test_push_to_stream()
+    test_whole_array_write()
+    test_decorated_map()
+    test_decorated_mapscope()
+    test_decorated_consume()
+    test_decorated_consumescope()

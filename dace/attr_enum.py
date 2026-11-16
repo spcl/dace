@@ -169,6 +169,11 @@ class ExtensibleAttributeEnum(Enum, metaclass=_ExtensibleAttributeEnumMeta):
 
         return obj
 
+    @property
+    def is_template(self) -> bool:
+        """True if this member is a template that can be instantiated by calling it with the attribute values."""
+        return self._is_template
+
     def __call__(self, **kwargs):
         if not self._is_template:
             raise TypeError(f"{self._name_} is not a template and cannot be called")

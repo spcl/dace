@@ -2,13 +2,14 @@
 import copy
 
 import numpy as np
+import pytest
 
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate import LoopToMap
-from dace.transformation.passes import ScalarToSymbolPromotion, SymbolPropagation
+from dace.transformation.passes import ConstantPropagation, ScalarToSymbolPromotion, SymbolPropagation
 
 
 def _count_loops(sdfg: dace.SDFG):
@@ -397,6 +398,42 @@ def test_a_container_value_does_not_reach_a_state():
     assert out[0] == 42, out
 
 
+@pytest.mark.parametrize("pass_type", [SymbolPropagation, ConstantPropagation])
+def test_a_data_bound_symbol_does_not_reach_a_nested_state(pass_type):
+    """A nested SDFG symbol that the parent binds to a container (``{'n': 'idx'}``) is that container once the nested
+    SDFG is inlined. A value naming it may not be folded into a state, or the inlined subset would name the container."""
+    inner = dace.SDFG("data_bound_inner")
+    inner.add_symbol("n", dace.int32)
+    inner.add_symbol("t", dace.int32)
+    inner.add_array("a", [20], dace.float64)
+    inner.add_array("b", [1], dace.float64)
+    init = inner.add_state("init", is_start_block=True)
+    use = inner.add_state_after(init, "use", assignments={"t": "n"})
+    tasklet = use.add_tasklet("copy", {"inp"}, {"out"}, "out = inp")
+    read_edge = use.add_edge(use.add_read("a"), None, tasklet, "inp", dace.Memlet("a[t]"))
+    use.add_edge(tasklet, "out", use.add_write("b"), None, dace.Memlet("b[0]"))
+
+    sdfg = dace.SDFG("data_bound_outer")
+    sdfg.add_scalar("idx", dace.int32)
+    sdfg.add_array("A", [20], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    state = sdfg.add_state()
+    call = state.add_nested_sdfg(inner, {"a"}, {"b"}, {"n": "idx"})
+    state.add_edge(state.add_read("A"), None, call, "a", dace.Memlet("A[0:20]"))
+    state.add_edge(call, "b", state.add_write("B"), None, dace.Memlet("B[0]"))
+    sdfg.validate()
+
+    pass_type().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert {str(s) for s in read_edge.data.subset.free_symbols} == {"t"}, read_edge.data
+    assert any("t" in e.data.assignments for e in inner.all_interstate_edges())
+
+    A = np.arange(20, dtype=np.float64)
+    B = np.zeros(1, dtype=np.float64)
+    sdfg(A=A, B=B, idx=np.int32(5))
+    assert B[0] == 5.0, B
+
+
 def test_cloudsc_kidia_kfdia_promote_then_propagate():
     """CloudSC subset: scalar arguments ``kidia`` / ``kfdia`` used as the
     inclusive horizontal loop bound ``range(kidia, kfdia + 1)`` across several
@@ -633,6 +670,8 @@ if __name__ == "__main__":
     test_multiple_edge_assignments()
     test_deeply_nested_sdfg()
     test_scalars()
+    test_a_data_bound_symbol_does_not_reach_a_nested_state(SymbolPropagation)
+    test_a_data_bound_symbol_does_not_reach_a_nested_state(ConstantPropagation)
     test_cloudsc_kidia_kfdia_promote_then_propagate()
     test_carried_index_symbol_not_propagated_stale()
     test_dead_iedge_assignment_eliminated_after_substitution()

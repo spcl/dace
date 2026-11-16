@@ -1,3 +1,5 @@
+import numpy as np
+
 import dace
 
 
@@ -58,5 +60,28 @@ def test_print_tasklet_between_map_exits():
     sdfg.compile()
 
 
+def test_nested_subscript_with_floor_division():
+    N = dace.symbol("N")
+
+    @dace.program
+    def nested(idx: dace.int32[N, 4], table: dace.int32[100], out: dace.int32[N * 4]):
+        for p in dace.map[0:1]:
+            with dace.tasklet:
+                ix << idx[:, :]
+                tb << table[:]
+                o >> out[:]
+                for i in range(N * 4):
+                    o[i] = tb[ix[i // 4, i % 4]]
+
+    n = 5
+    rng = np.random.default_rng(0)
+    idx = rng.integers(0, 100, size=(n, 4)).astype(np.int32)
+    table = rng.integers(0, 1000, size=100).astype(np.int32)
+    out = np.zeros(n * 4, dtype=np.int32)
+    nested(idx=idx, table=table, out=out, N=n)
+    assert np.array_equal(out, table[idx.reshape(-1)])
+
+
 if __name__ == "__main__":
     test_print_tasklet_between_map_exits()
+    test_nested_subscript_with_floor_division()

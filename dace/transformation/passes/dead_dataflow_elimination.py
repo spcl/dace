@@ -100,6 +100,22 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                 if self._is_node_dead(node, sdfg, state, dead_nodes, no_longer_used, access_sets[state]):
                     dead_nodes.append(node)
 
+            # Data that a live view writes to stays (the view writes through it). It precedes the view in the
+            # backward traversal, so the view's liveness is only known now (and a view of a view revives the next).
+            revived = True
+            while revived:
+                revived = False
+                for node in dead_nodes:
+                    if isinstance(node, nodes.AccessNode) and any(
+                        isinstance(e.src, nodes.AccessNode)
+                        and isinstance(sdfg.arrays[e.src.data], data.View)
+                        and e.src not in dead_nodes
+                        for e in state.in_edges(node)
+                    ):
+                        dead_nodes.remove(node)
+                        revived = True
+                        break
+
             # Scope exit nodes are only dead if their corresponding entry nodes are
             live_nodes = set()
             for node in dead_nodes:

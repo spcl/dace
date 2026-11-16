@@ -944,6 +944,70 @@ def test_promoted_transient_stays_out_of_the_signature():
         assert out[0] == expected
 
 
+def test_promoted_indirection_keeps_write_conflict_resolution():
+    """An indexed update whose index is a symbol becomes a memlet to the element, which stays a dynamic update."""
+    sdfg = dace.SDFG("indexed_update")
+    sdfg.add_array("A", [4], dace.int32)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", dict(i="0:8"))
+    tasklet = state.add_tasklet("update", {}, {"out"}, "out[i % 4] = 1")
+    state.add_nedge(me, tasklet, dace.Memlet())
+    update = dace.Memlet("A[0:4]", wcr="lambda a, b: a + b")
+    update.dynamic = True
+    state.add_memlet_path(tasklet, mx, state.add_write("A"), src_conn="out", memlet=update)
+
+    scalar_to_symbol.remove_symbol_indirection(sdfg)
+    sdfg.validate()
+    (edge,) = state.out_edges(tasklet)
+    assert "out" not in tasklet.out_connectors  # The subscript became the memlet's subset
+    assert edge.data.wcr is not None and edge.data.dynamic
+
+    A = np.zeros(4, dtype=np.int32)
+    sdfg(A=A)
+    assert np.array_equal(A, [2, 2, 2, 2])
+
+
+def test_promoted_scalar_renames_symbolic_uses_in_nested_sdfg():
+    """A promoted scalar that a nested SDFG takes as data, and passes by name (in the symbol mapping of an SDFG nested
+    further) as a symbol: the mapping refers to the promoted symbol."""
+    # Innermost: h[offset + i] = i
+    body = dace.SDFG("body")
+    body.add_symbol("offset", dace.int64)
+    body.add_symbol("i", dace.int64)
+    body.add_array("h", [20], dace.int64)
+    bstate = body.add_state()
+    t = bstate.add_tasklet("store", {}, {"o"}, "o = i")
+    bstate.add_edge(t, "o", bstate.add_write("h"), None, dace.Memlet("h[offset + i]"))
+
+    # Middle: takes ``start`` as data, and passes it to the body as its symbol ``offset``
+    middle = dace.SDFG("middle")
+    middle.add_scalar("start", dace.int64)
+    middle.add_array("h", [20], dace.int64)
+    mstate = middle.add_state()
+    me, mx = mstate.add_map("loop", dict(i="0:3"))
+    node = mstate.add_nested_sdfg(body, {}, {"h"}, symbol_mapping={"offset": "start", "i": "i"})
+    mstate.add_nedge(me, node, dace.Memlet())
+    mstate.add_memlet_path(node, mx, mstate.add_write("h"), src_conn="h", memlet=dace.Memlet("h[start:start + 3]"))
+
+    # Outer: the scalar, promotable and named differently from the middle's connector
+    sdfg = dace.SDFG("promote_into_symbol_mapping")
+    sdfg.add_array("h", [20], dace.int64)
+    sdfg.add_scalar("first", dace.int64, transient=True)
+    state = sdfg.add_state()
+    t = state.add_tasklet("compute", {}, {"o"}, "o = 8")
+    first = state.add_access("first")
+    state.add_edge(t, "o", first, None, dace.Memlet("first[0]"))
+    node = state.add_nested_sdfg(middle, {"start"}, {"h"})
+    state.add_edge(first, None, node, "start", dace.Memlet("first[0]"))
+    state.add_edge(node, "h", state.add_write("h"), None, dace.Memlet("h[0:20]"))
+
+    assert scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {}) == {"first"}
+    sdfg.validate()
+    h = np.zeros(20, np.int64)
+    sdfg(h=h)
+    assert list(h[8:11]) == [0, 1, 2]
+
+
 if __name__ == "__main__":
     test_find_promotable()
     test_promote_simple()
@@ -980,3 +1044,5 @@ if __name__ == "__main__":
     test_promote_widened_loop_index()
     test_do_not_promote_unwritten_transient()
     test_promoted_transient_stays_out_of_the_signature()
+    test_promoted_indirection_keeps_write_conflict_resolution()
+    test_promoted_scalar_renames_symbolic_uses_in_nested_sdfg()

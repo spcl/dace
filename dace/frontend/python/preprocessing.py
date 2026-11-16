@@ -15,6 +15,7 @@ import sympy
 
 import dace
 from dace import data, dtypes, symbolic, utils
+from dace.attr_enum import ExtensibleAttributeEnum
 from dace.config import Config
 from dace.frontend.python import astutils
 from dace.frontend.python.common import DaceSyntaxError, SDFGClosure, SDFGConvertible, StringLiteral
@@ -772,7 +773,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                 return node
 
             always_inline = is_always_inline(global_func)
-            if self.resolve_functions or always_inline:
+            if self.resolve_functions or always_inline or is_value_type(global_func):
                 global_val = astutils.evalnode(node, self.globals)
             else:
                 global_val = node
@@ -791,8 +792,13 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         if global_val is not node:
             # Without this check, casts don't generate code
             if not isinstance(global_val, dtypes.typeclass):
+                # Values that are not literals (e.g., attribute enum members) are kept in the globals
                 newnode = self.global_value_to_node(
-                    global_val, parent_node=node, qualname=astutils.unparse(node), recurse=True
+                    global_val,
+                    parent_node=node,
+                    qualname=astutils.unparse(node.func if is_value_type(global_func) else node),
+                    recurse=True,
+                    keep_object=is_value_type(global_func),
                 )
                 if newnode is not None:
                     return newnode
@@ -1305,6 +1311,16 @@ class ExpressionInliner(ast.NodeTransformer):
         return _convert_to_ast(contents)
 
 
+def is_value_type(func: Any) -> bool:
+    """
+    Returns True if ``func`` constructs an immutable value from constants, such as an attribute enum template
+    (e.g., ``dace.StorageType.GPU_Shared``), so that calls to it can be evaluated at parse time.
+
+    :param func: The evaluated callee.
+    """
+    return isinstance(func, ExtensibleAttributeEnum) and func.is_template
+
+
 class CallTreeResolver(ast.NodeVisitor):
     def __init__(self, closure: SDFGClosure, globals: dict[str, Any]) -> None:
         self.closure = closure
@@ -1603,6 +1619,46 @@ class MPIResolver(ast.NodeTransformer):
         return node
 
 
+class ConsumeLoopConverter(ast.NodeTransformer):
+    """Rewrites a consume loop into the consume scope it stands for.
+
+    ``for element, pe in dace.consume(S, num_pes, ...): body`` becomes ``@dace.consumescope(S, num_pes, ...)``
+    ``def consume_S(element, pe): body``.
+    Runs after ``ModuleResolver``, so that the iterator reads ``dace.consume`` under any import name.
+    """
+
+    def visit_For(self, node: ast.For) -> ast.AST:
+        node = self.generic_visit(node)
+        if not isinstance(node.iter, ast.Call) or astutils.rname(node.iter.func) != "dace.consume":
+            return node
+        if node.orelse:
+            raise DaceSyntaxError(None, node, "A consume loop cannot have an else clause")
+        if not isinstance(node.target, ast.Tuple) or len(node.target.elts) != 2:
+            raise DaceSyntaxError(
+                None, node, "A consume loop iterates over an element and a processing element index: for x, pe in ..."
+            )
+        element, pe = node.target.elts
+        if not isinstance(element, ast.Name) or not isinstance(pe, ast.Name):
+            raise DaceSyntaxError(None, node, "The targets of a consume loop must be names")
+        stream = node.iter.args[0] if node.iter.args else None
+        label = f"consume_{stream.id}" if isinstance(stream, ast.Name) else f"consume_{node.lineno}"
+        decorator = ast.Call(
+            func=ast.Attribute(value=ast.Name(id="dace", ctx=ast.Load()), attr="consumescope", ctx=ast.Load()),
+            args=node.iter.args,
+            keywords=node.iter.keywords,
+        )
+        arguments = ast.arguments(
+            posonlyargs=[],
+            args=[ast.arg(arg=element.id), ast.arg(arg=pe.id)],
+            kwonlyargs=[],
+            kw_defaults=[],
+            defaults=[],
+        )
+        function = ast.FunctionDef(name=label, args=arguments, body=node.body, decorator_list=[decorator], returns=None)
+        function.type_params = []
+        return ast.copy_location(ast.fix_missing_locations(ast.copy_location(function, node)), node)
+
+
 class ModuloConverter(ast.NodeTransformer):
     """Rewrites Python's ``a % b`` to ``PyMod(a, b)``, since a bare ``%`` in an SDFG is C's."""
 
@@ -1654,6 +1710,7 @@ def preprocess_dace_program(
     src_ast = StructTransformer(global_vars).visit(src_ast)
 
     src_ast = ModuleResolver(modules).visit(src_ast)
+    src_ast = ConsumeLoopConverter().visit(src_ast)
     # Convert modules after resolution
     for mod, modval in modules.items():
         if mod == "builtins":
@@ -1753,6 +1810,9 @@ def preprocess_dace_program(
 
     # Filter remaining global variables according to type and scoping rules
     program_globals = {k: v for k, v in global_vars.items() if k not in argtypes}
+
+    # Objects kept by the resolver (``keep_object``) live only in the resolved globals
+    program_globals.update({k: v for k, v in resolved.items() if k not in global_vars})
 
     # Fill in data descriptors from closure arrays
     argtypes.update({arrname: v[1] for arrname, v in closure_resolver.closure.closure_arrays.items()})

@@ -36,7 +36,7 @@ class stream_array(Generic[T]):
 
     @property
     def shape(self):
-        return self.shape
+        return self.descriptor.shape
 
     def __getitem__(self, key) -> deque[T]:
         return self.queue_array.__getitem__(key)
@@ -60,11 +60,13 @@ def define_local_scalar(dtype=dtypes.float32):
     return ndarray([1], dtype=dtype)
 
 
-def define_stream(dtype=dtypes.float32, buffer_size=1):
+def define_stream(dtype: dtypes.typeclass | type[T] = dtypes.float32, buffer_size=1) -> deque[T]:
     """Defines a local stream in a DaCe program."""
-    return define_streamarray([1], dtype=dtype, buffer_size=buffer_size)
+    return stream()
 
 
-def define_streamarray(dimensions, dtype=dtypes.float32, buffer_size=1):
+def define_streamarray(
+    dimensions, dtype: dtypes.typeclass | type[T] = dtypes.float32, buffer_size=1
+) -> stream_array[T]:
     """Defines a local stream array in a DaCe program."""
     return stream_array(dtype, dimensions)

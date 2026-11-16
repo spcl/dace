@@ -10,6 +10,7 @@ from dace import SDFG, SDFGState, properties
 from dace import data as dt
 from dace.frontend.python import astutils
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
@@ -184,9 +185,10 @@ def nested_sdfg_shape_symbols(state: SDFGState) -> set[str]:
     return names
 
 
-def reads_data(value, owner: SDFG) -> bool:
-    """``value`` names a data container of ``owner``."""
-    return bool(free_symbol_names(value) & set(owner.arrays))
+def reads_data(value, owner: SDFG, data_bound: set[str] = frozenset()) -> bool:
+    """``value`` names a data container of ``owner``, or one of its ``data_bound`` symbols."""
+    names = free_symbol_names(value)
+    return bool(names & owner.arrays.keys() or names & data_bound)
 
 
 @dataclass(unsafe_hash=True)
@@ -218,7 +220,10 @@ class SymbolPropagation(ppl.Pass):
         self._opaque_scalars: dict[SDFG, set[str]] = {}
         # Views are seen as pointers. Descriptors do not change until the fixed point is reached.
         self._view_names: dict[SDFG, set[str]] = {}
+        # Symbols an enclosing SDFG binds to data stand for that data in a state
+        self._data_bound: dict[SDFG, set[str]] = {}
         for sd in sdfg.all_sdfgs_recursive():
+            self._data_bound[sd] = sdutil.data_bound_symbols(sd)
             self._opaque_scalars[sd] = opaque_scalar_names(sd)
             self._view_names[sd] = {name for name, desc in sd.arrays.items() if isinstance(desc, dt.View)}
 
@@ -588,7 +593,10 @@ class SymbolPropagation(ppl.Pass):
         state_subs = new_in_syms
         if isinstance(cfg_blk, SDFGState):
             pinned = nested_sdfg_shape_symbols(cfg_blk)
-            state_subs = {s: v for s, v in new_in_syms.items() if s not in pinned and not reads_data(v, cfg_blk.sdfg)}
+            data_bound = self._data_bound.get(cfg_blk.sdfg, set())
+            state_subs = {
+                s: v for s, v in new_in_syms.items() if s not in pinned and not reads_data(v, cfg_blk.sdfg, data_bound)
+            }
 
         changed = True
         iters = 0
