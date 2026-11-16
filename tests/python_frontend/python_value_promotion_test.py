@@ -47,6 +47,11 @@ def declared_scalar_offset(x: dace.float32[N], y: dace.float32[N]):
     y[:] = x + i
 
 
+@dace.program
+def real_part_of_complex(z: dace.complex128[N], out: dace.float64[N]):
+    out[:] = np.real(z) + np.imag(z)
+
+
 def test_a_python_value_keeps_the_array_float32():
     assert array_dtypes(python_value_scale) == {dace.float32}
 
@@ -59,6 +64,14 @@ def test_a_declared_scalar_keeps_its_dtype():
     """``dace.define_local_scalar(dace.int32)`` is a NumPy ``int32``, not a Python int, even once assigned ``0``:
     ``float32 + int32`` is ``float64``."""
     assert dace.float64 in array_dtypes(declared_scalar_offset)
+
+
+def test_a_complex_argument_of_a_real_result_is_not_cast():
+    """Only an integer or boolean argument computes in the floating-point result type: ``np.real`` of a complex
+    is real, and casting the complex to ``double`` does not compile."""
+    sdfg = real_part_of_complex.to_sdfg(simplify=False)
+    codes = [node.code.as_string for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.Tasklet)]
+    assert codes and not any("float64" in code for code in codes), codes
 
 
 def test_math_sqrt_of_an_integer_is_not_truncated():
@@ -83,5 +96,6 @@ if __name__ == "__main__":
     test_a_python_value_keeps_the_array_float32()
     test_a_numpy_scalar_stays_strong()
     test_a_declared_scalar_keeps_its_dtype()
+    test_a_complex_argument_of_a_real_result_is_not_cast()
     test_math_sqrt_of_an_integer_is_not_truncated()
     test_a_python_value_computes_what_numpy_computes()

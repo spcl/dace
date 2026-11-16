@@ -63,7 +63,7 @@ def simple_call(
         restype = inparr.dtype
     # A floating-point result of an integer or boolean computes in floating point (``sqrt(N)``); in C++ the
     # integer argument would pick dace::math's integer overload and truncate.
-    cast = restype in dtypes.FLOAT_TYPES and inparr.dtype not in dtypes.FLOAT_TYPES
+    cast = restype in dtypes.FLOAT_TYPES and (inparr.dtype == dtypes.bool_ or inparr.dtype in dtypes.INTEGER_TYPES)
     convert = f"dace.{restype.to_string()}" if cast else ""
     outname, outarr = sdfg.add_temp_transient_like(inparr, name=pv.get_target_name())
     outarr.dtype = restype
