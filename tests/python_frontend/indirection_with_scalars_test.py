@@ -103,9 +103,61 @@ def test_submatrix():
     assert np.allclose(A, expected)
 
 
+def test_scalar_index_in_map():
+    """A scalar that a map indexes with is an input of the map body, which assigns it to a symbol: the map body does
+    not read it as a symbol of its own."""
+    W = dc.symbol("W")
+
+    @dc.program
+    def scalar_index_in_map(index: dc.int64, a: dc.float64[4, W], b: dc.float64[4, W]):
+        for column in dc.map[0:W]:
+            b[index, column] = a[index, column] + 1
+
+    sdfg = scalar_index_in_map.to_sdfg(simplify=False)
+    sdfg.validate()
+    sdfg.simplify()
+    sdfg.validate()
+    a = np.random.rand(4, 8)
+    b = np.zeros((4, 8))
+    sdfg(index=2, a=a, b=b, W=8)
+    assert np.allclose(b[2], a[2] + 1)
+    assert not b[[0, 1, 3]].any()
+
+
+def test_scalar_argument_index_in_map_of_callee():
+    """A map parameter given to a callee as a scalar argument of another name, which a map of the callee indexes
+    with: once the callee is simplified and inlined, its maps still index with the value of the argument."""
+    W = dc.symbol("W")
+
+    @dc.program
+    def body(index, a, b, c):
+        c[index] = 0
+        for column in dc.map[0:W]:
+            b[index, column] = a[index, column] + 1
+        c[index] = c[index] + 1
+
+    @dc.program
+    def scalar_argument_index_in_map_of_callee(a: dc.float64[4, W], b: dc.float64[4, W], c: dc.float64[4]):
+        for row in dc.map[0:4]:
+            body(row, a, b, c)
+
+    sdfg = scalar_argument_index_in_map_of_callee.to_sdfg(simplify=False)
+    sdfg.validate()
+    sdfg.simplify()
+    sdfg.validate()
+    a = np.random.rand(4, 8)
+    b = np.zeros((4, 8))
+    c = np.zeros(4)
+    sdfg(a=a, b=b, c=c, W=8)
+    assert np.allclose(b, a + 1)
+    assert np.array_equal(c, np.ones(4))
+
+
 if __name__ == "__main__":
     test_toplevel_scalar_indirection()
     test_nested_scalar_indirection()
     test_array_element_scalar_indirection()
     test_array_element_scalar_indirection_in_map()
     test_submatrix()
+    test_scalar_index_in_map()
+    test_scalar_argument_index_in_map_of_callee()

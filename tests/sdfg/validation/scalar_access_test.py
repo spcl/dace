@@ -27,6 +27,39 @@ def test_a_scalar_connector_at_the_end_of_a_map_path_is_a_host_dereference():
         sdfg.validate()
 
 
+def test_a_memlet_subset_may_not_read_a_scalar():
+    """A subset is symbolic: a scalar in it is read as a symbol, which it is not."""
+    sdfg = dace.SDFG("memlet_subset_reads_scalar")
+    sdfg.add_scalar("index", dace.int64)
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    state = sdfg.add_state()
+    state.add_nedge(state.add_read("A"), state.add_write("B"), dace.Memlet("A[index] -> [0]"))
+    with pytest.raises(dace.sdfg.InvalidSDFGEdgeError, match="uses data containers"):
+        sdfg.validate()
+
+
+def test_a_symbol_mapping_may_not_read_a_scalar():
+    """A symbol of a nested SDFG is constant in it, and a scalar may change: the symbol mapping may not read one."""
+    nested = dace.SDFG("nested")
+    nested.add_symbol("i", dace.int64)
+    nested.add_array("A", [4], dace.float64)
+    nested_state = nested.add_state()
+    tasklet = nested_state.add_tasklet("set", {}, {"out"}, "out = 1.0")
+    nested_state.add_edge(tasklet, "out", nested_state.add_write("A"), None, dace.Memlet("A[i]"))
+
+    sdfg = dace.SDFG("symbol_mapping_reads_scalar")
+    sdfg.add_scalar("index", dace.int64)
+    sdfg.add_array("A", [4], dace.float64)
+    state = sdfg.add_state()
+    node = state.add_nested_sdfg(nested, {}, {"A"}, symbol_mapping={"i": "index"})
+    state.add_edge(node, "A", state.add_write("A"), None, dace.Memlet("A[0:4]"))
+    with pytest.raises(dace.sdfg.InvalidSDFGNodeError, match="reads data containers"):
+        sdfg.validate()
+
+
 if __name__ == "__main__":
     test_a_pointer_connector_at_the_end_of_a_map_path_is_not_a_host_dereference()
     test_a_scalar_connector_at_the_end_of_a_map_path_is_a_host_dereference()
+    test_a_memlet_subset_may_not_read_a_scalar()
+    test_a_symbol_mapping_may_not_read_a_scalar()
