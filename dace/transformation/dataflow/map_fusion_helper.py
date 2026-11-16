@@ -759,7 +759,12 @@ def anti_dependences(
         if edge.data.is_empty() or edge.data.data is None:
             continue
         found = (
-            [e.dst for e in state.out_edges(edge.dst) if not e.data.is_empty()]
+            # The Map's own exit leaves with the fusion: a copy out of the node reads at the node
+            [
+                edge.dst if isinstance(e.dst, nodes.ExitNode) else e.dst
+                for e in state.out_edges(edge.dst)
+                if not e.data.is_empty()
+            ]
             if isinstance(edge.dst, nodes.AccessNode)
             else []
         )
@@ -774,7 +779,12 @@ def anti_dependences(
         if edge.data.is_empty() or edge.data.data not in readers:
             continue
         found = (
-            [e.src for e in state.in_edges(edge.src) if not e.data.is_empty()]
+            # The Map's own entry leaves with the fusion: a copy into the node writes at the node
+            [
+                edge.src if isinstance(e.src, nodes.EntryNode) else e.src
+                for e in state.in_edges(edge.src)
+                if not e.data.is_empty()
+            ]
             if isinstance(edge.src, nodes.AccessNode)
             else []
         )
