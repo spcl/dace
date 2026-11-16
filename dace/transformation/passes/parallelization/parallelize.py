@@ -22,6 +22,8 @@ class Parallelize(ppl.Pipeline):
     :param constraints: Version loops parallel under a constraint (:class:`ParallelizeUnderConstraint`).
     :param scatters: Guard scatters by a conflict check (:class:`ScatterToGuardedMaps`).
     :param assume_guards: Assume every constraint and scatter check holds: emit the parallel map only.
+    :param wavefront: Rescue loops refused on a carried dependence by the wavefront skew. Off, they stay sequential
+                      loops, and no sibling chain is held back, since nothing would rescue it.
     """
 
     CATEGORY: str = "Optimization Preparation"
@@ -33,6 +35,7 @@ class Parallelize(ppl.Pipeline):
         constraints: bool = False,
         scatters: bool = False,
         assume_guards: bool = False,
+        wavefront: bool = True,
     ):
         # avoid an import cycle
         from dace.transformation.passes.parallelization.contracts.guarded_scatter import ScatterToGuardedMaps
@@ -40,10 +43,10 @@ class Parallelize(ppl.Pipeline):
         from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
         from dace.transformation.passes.parallelization.wavefront.skew import WavefrontSkew
 
-        lift = ParallelizeLoops(propagate=False, hold_sibling_chains=hold_sibling_chains)
+        lift = ParallelizeLoops(propagate=False, hold_sibling_chains=hold_sibling_chains and wavefront)
         # A loop refused on a scratch buffer only lifts with the buffer expanded per iteration
         lift.expand_buffers = True
-        passes: list[ppl.Pass] = [lift, WavefrontSkew(target=target)]
+        passes: list[ppl.Pass] = [lift, WavefrontSkew(target=target)] if wavefront else [lift]
         if constraints:
             passes.append(ParallelizeUnderConstraint(assume_constraint=assume_guards))
         if scatters:

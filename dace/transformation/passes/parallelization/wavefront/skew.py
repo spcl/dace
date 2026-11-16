@@ -297,41 +297,47 @@ class WavefrontSkew(ppl.Pass):
     # Analysis
 
     def plan(self, outer: LoopRegion, sdfg: SDFG, occurrences: dict) -> Plan | None:
+        """The skew of ``outer``, or ``None`` when it is no wavefront (:meth:`plan_or_reason` says why)."""
+        found = self.plan_or_reason(outer, sdfg, occurrences)
+        return found if isinstance(found, Plan) else None
+
+    def plan_or_reason(self, outer: LoopRegion, sdfg: SDFG, occurrences: dict) -> Plan | str:
+        """The skew of ``outer``, or one sentence saying why it is no wavefront."""
         body = extract_body(outer, sdfg, occurrences)
         if body is None:
-            return None
+            return "its body is not a nest of loops and maps whose accesses DaCe can model"
         if is_time_step_loop(body):
-            return None  # a loop over kernel invocations stays sequential
+            return "a time-step loop: its iterator indexes nothing, so its iterations run in order"
         for st in body.statements:
             if isinstance(st.block, LoopRegion) and any(
                 isinstance(r, LoopRegion) and r.loop_variable and emitted_here(r)
                 for r in [st.block, *st.block.all_control_flow_regions(recursive=True)]
             ):
-                return None
+                return "a loop inside it is a wavefront already"
         unsafe = body.assigned
         # A symbol one instance hands to the next is a dependence the access model does not see
         if unsafe and symbols_assigned_before_use(outer, body.u) is None:
-            return None
+            return "a symbol one iteration assigns is read by the next"
         if (free_names(body.u_lo) | free_names(body.u_hi)) & (unsafe | {body.u}):
-            return None
+            return "its bounds read what its body assigns, or its own iterator"
         if any((free_names(st.lo) | free_names(st.hi)) & (unsafe | {st.var}) for st in body.statements):
-            return None
+            return "an inner loop's bounds read what the body assigns, or that loop's own iterator"
         facts = SymbolResolver().facts_at(outer)
         extents = [(body.u_lo, body.u_hi)] + [(st.lo, st.hi) for st in body.statements if st.kind == "loop"]
         # A front is at most as wide as the shorter axis: a SMALL or short literal axis leaves nothing to share
         if any(symbolic.is_small_extent(hi - lo + 1, facts) for lo, hi in extents):
-            return None
+            return "an axis is too short for a wavefront to share any work"
         written = {acc.data for st in body.statements for acc in st.accesses if acc.write}
         if written & control_flow_reads(outer):
-            return None
+            return "its body writes what the control flow around it reads"
 
         # The facts inside ``outer``: the SDFG's, plus the relations its context establishes
         sdfg_facts = facts
         deps = Dependences(body, sdfg_facts)
         if not deps.complete or not all(deps.snapshot_safe(snap) for snap in body.snapshots):
-            return None
+            return "its dependences are not exact, or a snapshot of its reads is not safe"
         if deps.schedule_legal((1, 0), {}) or deps.outer_parallel():
-            return None  # an axis is already parallel: LoopToMap reaches it
+            return "an axis is already parallel at a fixed outer iteration: LoopToMap reaches it"
 
         found = self.pick_schedule(deps)
         guard_params: list[str] = []
@@ -351,7 +357,7 @@ class WavefrontSkew(ppl.Pass):
                             guard_params, deps = trial, trial_deps
                     found = self.pick_schedule(deps)
         if found is None:
-            return None
+            return "no skew puts every dependence on a later diagonal"
         tau, shifts = found
 
         tiles = self.plan_tiles(body, deps, shifts)
@@ -361,11 +367,11 @@ class WavefrontSkew(ppl.Pass):
                 cons = statement_domain(body, st, shifts.get(st.order, 0), 0)
                 bounds = None if cons is None else skew_bounds(cons, tau)
                 if bounds is None:
-                    return None
+                    return "a statement's skewed bounds are not affine"
                 fronts[st.order] = bounds
         read_after = names_read_outside(outer, sdfg)
         if ({body.u} | {st.var for st in body.statements} | body.assigned) & read_after:
-            return None
+            return "an iterator or a symbol the nest assigns is read after the loop"
         return Plan(body, tau, shifts, guard_params, tiles, fronts)
 
     def pick_schedule(self, deps: Dependences) -> tuple[tuple[int, int], dict[int, int]] | None:

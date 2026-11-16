@@ -887,10 +887,12 @@ def derive_parallelism(
     interchange_carry_with_map: bool,
     target: str,
     validate: bool = False,
+    wavefront: bool = True,
 ) -> Stages:
     """LoopToMap, rescue the loops it refused, LoopToMap again, guarded and reduction loops, wavefront skew.
 
     :param validate: Whether the pipeline validates its result; best-effort peeling then validates its own once.
+    :param wavefront: Whether the last :class:`Parallelize` skews loops refused on a carried dependence into wavefronts.
     """
     label = DERIVE_PARALLELISM
     s: Stages = [(label, SymbolSSA())]
@@ -992,7 +994,7 @@ def derive_parallelism(
     if target == "gpu":
         s += [(label, ppl.Pipeline([ReorderStateForLoopFusion()]))]
     s += [(label, FuseLoops())]
-    s += [(label, Parallelize(target=target, hold_sibling_chains=False))]
+    s += [(label, Parallelize(target=target, hold_sibling_chains=False, wavefront=wavefront))]
     # The time loop a wavefront skew made keeps the skew's name until here
     s += [(label, UniqueLoopIterators())]
     return s
@@ -1141,10 +1143,12 @@ def build_stages(
     lift_copy: bool = True,
     semantic_lifting: bool = True,
     validate: bool = False,
+    wavefront: bool = True,
 ) -> Stages:
     """Build the canonicalization recipe: the paper's phases in order (see the section comment above).
 
     :param validate: The pipeline's ``validate``, for the units that validate their own rewrite only when asked.
+    :param wavefront: Skew loops refused on a carried dependence into wavefronts (see :func:`derive_parallelism`).
 
     :returns: ``(label, pass)`` pairs in run order, fresh instances each call.
     """
@@ -1161,6 +1165,7 @@ def build_stages(
         interchange_carry_with_map,
         target,
         validate,
+        wavefront,
     )
     s += recompose(lift, lift_copy, target)
     s += finish()
@@ -1403,6 +1408,12 @@ class CanonicalizationPipeline(ppl.Pass):
         desc="Distribute a loop over its data-independent statement groups (PerfectLoopNesting) so "
         "each statement parallelizes on its own axes. On by default.",
     )
+    wavefront = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="Skew loops refused on a carried dependence into wavefronts (WavefrontSkew). Off, they stay sequential "
+        "loops, for a caller that applies the skew itself. On by default.",
+    )
 
     assume_parallel_guards = properties.Property(
         dtype=bool,
@@ -1453,6 +1464,7 @@ class CanonicalizationPipeline(ppl.Pass):
         semantic_lifting: bool = True,
         dump_dir: str | None = None,
         stages: Sequence[str] | None = None,
+        wavefront: bool = True,
     ) -> None:
         if target not in TARGET_DEFAULTS:
             raise ValueError(f"target must be one of {sorted(TARGET_DEFAULTS)}; got {target!r}")
@@ -1478,6 +1490,7 @@ class CanonicalizationPipeline(ppl.Pass):
         self.lift_copy = lift_copy
         self.semantic_lifting = semantic_lifting
         self.stages = list(stages) if stages is not None else None
+        self.wavefront = wavefront
         self._specialize_constants = specialize_constants or {}
 
     def modifies(self) -> ppl.Modifies:
@@ -1507,6 +1520,7 @@ class CanonicalizationPipeline(ppl.Pass):
             lift_copy=self.lift_copy,
             semantic_lifting=self.semantic_lifting,
             validate=self.validate,
+            wavefront=self.wavefront,
         )
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
@@ -1614,6 +1628,7 @@ def canonicalize(
     stages: Sequence[str] | None = None,
     nonnegative_symbols: Iterable[str] | None = None,
     stats: dict | str | None = None,
+    wavefront: bool = True,
 ) -> SDFG:
     """Canonicalize ``sdfg`` in place and return it.
 
@@ -1682,6 +1697,8 @@ def canonicalize(
     :param stats: Record which stage settled each loop and the time spent, in total and inside Z3 and isl
                   (:mod:`~dace.transformation.passes.analysis.canon_stats`): a dict is filled with the record, a
                   path gets it appended as one JSON line. ``None`` (default) records nothing.
+    :param wavefront: Skew the loops left sequential on a carried dependence into wavefronts (default ``True``).
+                      ``False`` leaves them sequential loops, for a caller that decides the skew itself.
     :returns: The same ``sdfg`` instance, canonicalized.
     """
     arguments = (
@@ -1701,6 +1718,7 @@ def canonicalize(
         semantic_lifting,
         dump_dir,
         stages,
+        wavefront,
     )
     if stats is None:
         return canonicalize_recorded(sdfg, nonnegative_symbols, *arguments)
@@ -1750,6 +1768,7 @@ def canonicalize_under_authority(
     semantic_lifting: bool,
     dump_dir: str | None,
     stages: Sequence[str] | None = None,
+    wavefront: bool = True,
 ) -> SDFG:
     """The body of :func:`canonicalize`, run with the SDFG's symbol dtypes already in scope."""
     CanonicalizationPipeline(
@@ -1769,6 +1788,7 @@ def canonicalize_under_authority(
         semantic_lifting=semantic_lifting,
         dump_dir=dump_dir,
         stages=stages,
+        wavefront=wavefront,
     ).apply_pass(sdfg, {})
     # The guard stage runs last, so nothing cleans up after it: on kernels whose old entry was
     # empty it leaves a redundant empty state between guard and body, which a second canonicalize
