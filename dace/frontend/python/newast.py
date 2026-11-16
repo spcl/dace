@@ -6390,42 +6390,22 @@ class ProgramVisitor(ExtNodeVisitor):
         integer arithmetic over this SDFG's integer scalars, symbols and integer constants is kept,
         and an assignment that reads its own target is not.
         """
-        if not isinstance(target, ast.Name) or not isinstance(value, (ast.BinOp, ast.UnaryOp)):
+        if not isinstance(target, ast.Name):
             return
         name = self.variables.get(target.id)
         desc = self.sdfg.arrays.get(name) if isinstance(name, str) else None
         if not isinstance(desc, data.Scalar) or desc.dtype not in dtypes.INTEGER_TYPES:
             return
-        for sub in ast.walk(value):
-            if not isinstance(sub, self.SLICE_ARITHMETIC_NODES):
-                return
-            if isinstance(sub, ast.Constant) and not isinstance(sub.value, (int, numpy.integer)):
-                return
-        try:
-            expr = symbolic.pystr_to_symbolic(astutils.unparse(value))
-        except Exception:  # noqa: BLE001 - an unparseable right-hand side is simply not remembered
+        arithmetic = self.integer_arithmetic(value)
+        if arithmetic is None or not arithmetic[1] or name in arithmetic[1].values():
             return
-        defined_vars = {**self.variables, **self.scope_vars}
-        repl, leaves = {}, set()
-        for leaf in expr.free_symbols:
-            # Resolved as ``slice_bound_over_promoted_leaves`` resolves a slice bound's leaves.
-            resolved = str(defined_vars.get(str(leaf), str(leaf)))
-            leaf_desc = self.sdfg.arrays.get(resolved)
-            if resolved == name:
-                return
-            if isinstance(leaf_desc, data.Scalar) and leaf_desc.dtype in dtypes.INTEGER_TYPES:
-                repl[leaf] = symbolic.symbol(resolved)
-                leaves.add(resolved)
-            elif leaf_desc is not None or (resolved not in self.sdfg.arrays and resolved in self.scope_arrays):
-                return
-            elif isinstance(self.sdfg.constants.get(resolved), (int, numpy.integer)):
-                repl[leaf] = int(self.sdfg.constants[resolved])
-            elif resolved != str(leaf):
-                return
-            elif not (resolved in self.sdfg.symbols or isinstance(self.globals.get(resolved), symbolic.symbol)):
-                return
-        if leaves:
-            self.scalar_arithmetic[name] = (expr.xreplace(repl), frozenset(leaves), self.cfg_target)
+        expr, scalars, constants = arithmetic
+        repl = {leaf: symbolic.symbol(scalar) for leaf, scalar in scalars.items()}
+        self.scalar_arithmetic[name] = (
+            expr.xreplace({**repl, **constants}),
+            frozenset(scalars.values()),
+            self.cfg_target,
+        )
 
     def arithmetic_over_versions(self, scalar: str) -> tuple[symbolic.SymbolicType, frozenset[str]] | None:
         """The arithmetic ``scalar`` was assigned, over its leaves' current version symbols, or ``None``.
@@ -6506,8 +6486,9 @@ class ProgramVisitor(ExtNodeVisitor):
             self.unproven_symbols.add(str(sym))
         return sym
 
-    #: AST nodes a slice bound may be built from and still be read as plain integer arithmetic.
-    SLICE_ARITHMETIC_NODES = (
+    #: AST nodes a slice bound, a shape or a scalar assignment may be built from and still be read as plain integer
+    #: arithmetic. ``//`` reads as ``int_floor``, which is Python's floor division on integers.
+    INTEGER_ARITHMETIC_NODES = (
         ast.Expression,
         ast.Name,
         ast.Load,
@@ -6517,38 +6498,30 @@ class ProgramVisitor(ExtNodeVisitor):
         ast.Add,
         ast.Sub,
         ast.Mult,
+        ast.FloorDiv,
         ast.USub,
         ast.UAdd,
     )
 
-    def slice_bound_over_promoted_leaves(self, node: ast.AST):
-        """A COMPOUND slice bound such as ``pad + N`` as one symbolic expression whose scalar
-        leaves are promoted individually, or ``None`` to fall back to materializing it.
-
-        Visiting the expression instead evaluates it into a scalar transient and promotes THAT to
-        a single opaque symbol, which loses the arithmetic: ``buf[pad : pad + N] = x`` then sizes
-        its target ``__sym_buf_slice - __sym_pad``. That is ``N``, but no consumer can see it, so
-        the frontend rejects the copy as a shape mismatch even though the extents are identical.
-        Promoting ``pad`` alone and keeping ``+ N`` symbolic makes the extent literally ``N``.
-
-        Refuses anything that is not integer arithmetic over names already in scope -- a call, a
-        subscript, a float, a name that is an array rather than a scalar -- so the fallback still
-        handles every shape it handled before.
+    def integer_arithmetic(self, node: ast.AST) -> tuple[sympy.Expr, dict, dict] | None:
+        """``node`` as integer arithmetic over this SDFG's integer scalars, symbols and integer constants: the
+        expression, its scalar leaves (leaf -> the SDFG scalar's name) and its constant leaves (leaf -> value), or
+        ``None`` when anything else appears -- a call, a subscript, a float, an array, a name only ``visit`` maps.
         """
         if not isinstance(node, (ast.BinOp, ast.UnaryOp)):
             return None  # a bare name or constant already promotes exactly; leave that path alone
         for sub in ast.walk(node):
-            if not isinstance(sub, self.SLICE_ARITHMETIC_NODES):
+            if not isinstance(sub, self.INTEGER_ARITHMETIC_NODES):
                 return None
             if isinstance(sub, ast.Constant) and not isinstance(sub.value, (int, numpy.integer)):
                 return None
         try:
             expr = symbolic.pystr_to_symbolic(astutils.unparse(node))
-        except Exception:  # noqa: BLE001 - an unparseable bound simply falls back
+        except Exception:  # noqa: BLE001 - an unparseable expression is simply not arithmetic
             return None
 
         defined_vars = {**self.variables, **self.scope_vars}
-        repl = {}
+        scalars, constants = {}, {}
         for leaf in sorted(expr.free_symbols, key=str):
             name = str(leaf)
             # ``variables`` maps symbols onto themselves as well as data onto their descriptors, so
@@ -6565,21 +6538,40 @@ class ProgramVisitor(ExtNodeVisitor):
             if isinstance(desc, data.Scalar):
                 if desc.dtype not in dtypes.INTEGER_TYPES:
                     return None
-                repl[leaf] = self.promote_scalar_to_symbol(resolved)
+                scalars[leaf] = resolved
             elif desc is not None:
-                return None  # an array cannot be a bound
+                return None  # an array is no integer
             elif isinstance(self.sdfg.constants.get(resolved), (int, numpy.integer)):
-                repl[leaf] = int(self.sdfg.constants[resolved])
+                constants[leaf] = int(self.sdfg.constants[resolved])
             elif resolved != name:
                 return None  # the source name is not the SDFG name; only ``visit`` knows the mapping
-            elif name in self.sdfg.symbols or isinstance(self.globals.get(name), symbolic.symbol):
-                continue  # already a symbol of this SDFG -- keep it as written
-            else:
+            elif not (name in self.sdfg.symbols or isinstance(self.globals.get(name), symbolic.symbol)):
                 return None
+        return expr, scalars, constants
+
+    def slice_bound_over_promoted_leaves(self, node: ast.AST):
+        """A COMPOUND slice bound such as ``pad + N`` as one symbolic expression whose scalar
+        leaves are promoted individually, or ``None`` to fall back to materializing it.
+
+        Visiting the expression instead evaluates it into a scalar transient and promotes THAT to
+        a single opaque symbol, which loses the arithmetic: ``buf[pad : pad + N] = x`` then sizes
+        its target ``__sym_buf_slice - __sym_pad``. That is ``N``, but no consumer can see it, so
+        the frontend rejects the copy as a shape mismatch even though the extents are identical.
+        Promoting ``pad`` alone and keeping ``+ N`` symbolic makes the extent literally ``N``.
+
+        Refuses anything that is not integer arithmetic over names already in scope -- a call, a
+        subscript, a float, a name that is an array rather than a scalar -- so the fallback still
+        handles every shape it handled before.
+        """
+        arithmetic = self.integer_arithmetic(node)
         # Nothing to promote means the bound is pure symbol arithmetic, which the fallback already
         # handles correctly -- and handles in the scope's own symbol instances rather than in ones
         # minted from the source text. Only the scalar case is this method's business.
-        return expr.subs(repl) if repl else None
+        if arithmetic is None or not arithmetic[1]:
+            return None
+        expr, scalars, constants = arithmetic
+        repl = {leaf: self.promote_scalar_to_symbol(scalar) for leaf, scalar in scalars.items()}
+        return expr.subs({**repl, **constants})
 
     def _parse_subscript_slice(self, s: ast.AST, multidim: bool = False) -> Any | tuple[Any | str | symbolic.symbol]:
         """Parses the slice attribute of an ast.Subscript node.

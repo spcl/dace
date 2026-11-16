@@ -308,7 +308,6 @@ def test_a_genuinely_different_extent_is_still_refused():
         larger_source.to_sdfg(simplify=False)
 
 
-
 @dace.program
 def strided_tap_add(out: dace.float64[M], x: dace.float64[N], p: dace.int64):
     lo = max(0, p)
@@ -370,6 +369,24 @@ def strided_tap_after_a_leaf_is_rebound(out: dace.float64[M], x: dace.float64[N]
     ol_hi = ol_lo + (hi - lo) * 2
     hi = hi - 1
     out[ol_lo:ol_hi:2] = out[ol_lo:ol_hi:2] + x[lo:hi]
+
+
+@dace.program
+def floor_div_shape_over_a_scalar(x: dace.float64[M], p: dace.int64):
+    n = max(1, p)
+    a = np.ones(((n + 2 - 3) // 1 + 1,))
+    x[:n] = a
+
+
+def test_a_shape_with_floor_division_over_a_scalar_keeps_its_arithmetic():
+    """squeezenet sizes a helper's output ``(n_iter + 2 * 1 - 3) // 1 + 1``: with ``//`` outside the integer
+    arithmetic the shape became one opaque symbol, and the helper call could not relate it to ``n_iter``."""
+    m = 6
+    x = np.zeros(m)
+    floor_div_shape_over_a_scalar(x=x, p=4, M=m)
+    expected = np.zeros(m)
+    expected[:4] = 1.0
+    assert np.array_equal(x, expected), x
 
 
 def test_a_rebound_leaf_does_not_prove_the_extent():

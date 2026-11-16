@@ -12,14 +12,19 @@ from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor, broadcast_together
 
 
-def branch_type(operand, arr: data.Data | None, symbols: Mapping[str, dtypes.typeclass]) -> dtypes.typeclass:
-    """dtype of one ``numpy.where`` branch: the array's own, else the scalar's.
+def branch_argument(
+    operand, arr: data.Data | None, symbols: Mapping[str, dtypes.typeclass]
+) -> data.Data | Number | dtypes.typeclass:
+    """One ``numpy.where`` branch as ``result_type`` weighs it: the array; a Python number as itself, a weak operand
+    (NEP 50: ``where(c, x, 1.0)`` keeps ``x``'s float type); else the scalar's dtype.
 
     A symbolic scalar (``2 * N``) reaches here as a sympy expression, whose Python ``type()`` --
     ``sympy.Mul`` and friends -- is in no dtype map.
     """
     if arr is not None:
-        return arr.dtype
+        return arr
+    if isinstance(operand, Number):
+        return operand
     if symbolic.issymbolic(operand):
         return symbolic.symtype(operand, symbols)
     return dtypes.dtype_to_typeclass(type(operand))
@@ -94,15 +99,11 @@ def _array_array_where(
     except KeyError:
         right_arr = None
 
-    left_type = branch_type(left_operand, left_arr, visitor.symbol_types())
-    right_type = branch_type(right_operand, right_arr, visitor.symbol_types())
-
-    # Implicit Python coversion implemented as casting. A Python number branch is a weak operand (NEP 50):
-    # ``where(c, x, 1.0)`` keeps ``x``'s float type, as NumPy does.
+    # Implicit Python coversion implemented as casting
     arguments = [
         cond_arr,
-        left_arr or (left_operand if isinstance(left_operand, Number) else left_type),
-        right_arr or (right_operand if isinstance(right_operand, Number) else right_type),
+        branch_argument(left_operand, left_arr, visitor.symbol_types()),
+        branch_argument(right_operand, right_arr, visitor.symbol_types()),
     ]
     tasklet_args = [
         "__incond",
