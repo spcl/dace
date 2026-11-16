@@ -4,7 +4,7 @@ from typing import cast
 import pytest
 import sympy
 
-from dace import dtypes, symbolic
+from dace import dtypes, symbolic, symbolic_facts
 from dace.symbolic_facts import (
     Facts,
     InconsistentAssumptionsError,
@@ -142,6 +142,27 @@ def test_min_and_max_are_split_into_cases():
     assert ask(Relation(RelationKind.LE, ZERO, sympy.Min(N, K)), only_n) is Truth.UNKNOWN
 
 
+def test_an_unknown_case_ends_the_case_split():
+    """Once one case of a ``Min`` is unknown the answer is unknown: ten independent extrema are not split into all
+    1024 combinations of their arguments."""
+    terms = [sympy.Min(symbolic.symbol(f"a{k}"), symbolic.symbol(f"b{k}")) for k in range(10)]
+    original = symbolic_facts.prove
+    calls = 0
+
+    def counted(query: Relation, facts: Facts) -> Truth:
+        nonlocal calls
+        calls += 1
+        return original(query, facts)
+
+    symbolic_facts.prove = counted
+    try:
+        answer = ask(Relation(RelationKind.LE, ZERO, sympy.Add(*terms)), Facts.none())
+    finally:
+        symbolic_facts.prove = original
+    assert answer is Truth.UNKNOWN
+    assert calls <= 2 * len(terms) + 1
+
+
 def test_an_extremum_only_inside_a_division_is_asked_without_cases():
     """``ceil(N / max(ceil(N / M), 2))``, a chunk count: generalizing the outer division takes the ``Max`` with it."""
     chunks = cast(sympy.Expr, symbolic.int_ceil(N, sympy.Max(symbolic.int_ceil(N, M), 2)))
@@ -269,6 +290,7 @@ if __name__ == "__main__":
     test_int_ceil_bounds()
     test_mod_of_iterator_is_bounded()
     test_min_and_max_are_split_into_cases()
+    test_an_unknown_case_ends_the_case_split()
     test_tiled_range_bounds_the_index()
     test_contradicting_predicates_raise()
     test_contradicting_relations_raise()

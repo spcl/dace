@@ -689,6 +689,9 @@ def by_cases(expr: sympy.Expr, kind: RelationKind, extremum: sympy.Expr, facts: 
         except InconsistentAssumptionsError:
             continue  # The argument is never the extremum
         truths.add(ask(Relation(kind, sympy.Integer(0), cast(sympy.Expr, expr.xreplace({extremum: arg}))), case_facts))
+        # An unknown case, or two cases that disagree, decide the answer: the remaining cases cannot change it
+        if Truth.UNKNOWN in truths or len(truths) > 1:
+            return Truth.UNKNOWN
     return truths.pop() if len(truths) == 1 else Truth.UNKNOWN
 
 
