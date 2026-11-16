@@ -1374,6 +1374,10 @@ class ProgramVisitor(ExtNodeVisitor):
         #: The shape symbol each scalar's current version was promoted to, with the region its assignment ran in.
         #: A write to the scalar drops it, so every shape sized from one value shares one symbol.
         self.shape_promotions: dict[str, tuple[symbolic.symbol, ControlFlowRegion]] = dict()
+        #: Scalars whose last assignment was a Python value -- a Python number, a symbolic expression, or arithmetic
+        #: over such values (``scale = 1.0 / math.sqrt(D)``). NumPy holds a Python float there, which is weak under
+        #: NEP 50, so a dtype these meet takes the other operand's (:meth:`holds_python_value`).
+        self.weak_scalars: set[str] = set()
         #: Integer scalars whose last assignment was a symbolic value, with the region it ran in.
         self.symbolic_scalar_values: dict[str, tuple[symbolic.SymbolicType, ControlFlowRegion]] = dict()
         #: Promoted symbols every read so far provably set to a symbolic value, with the region it holds in.
@@ -3281,6 +3285,16 @@ class ProgramVisitor(ExtNodeVisitor):
         self.symbolic_scalar_values.pop(target_name, None)
         self.shape_promotions.pop(target_name, None)
         self.forget_scalar_arithmetic(target_name)
+        self.weak_scalars.discard(target_name)
+        if (
+            op is None
+            and boolarr is None
+            and not indirect_indices
+            and not isinstance(operand, tuple)
+            and isinstance(self.sdfg.arrays.get(target_name), data.Scalar)
+            and self.holds_python_value(operand)
+        ):
+            self.weak_scalars.add(target_name)
         if isinstance(operand, tuple):
             op_name, op_subset = operand
             if op_subset is None:
@@ -3571,6 +3585,7 @@ class ProgramVisitor(ExtNodeVisitor):
             wtarget_array = self.sdfg.arrays[wtarget_name]
             wtarget_subset = subsets.Range.from_array(wtarget_array)
         # An update is a write too: it ends the value the scalar was known to hold, and its shape symbol's version.
+        self.weak_scalars.discard(wtarget_name)
         self.symbolic_scalar_values.pop(wtarget_name, None)
         self.shape_promotions.pop(wtarget_name, None)
         self.forget_scalar_arithmetic(wtarget_name)
@@ -6374,6 +6389,14 @@ class ProgramVisitor(ExtNodeVisitor):
                 proven[promoted[0]] = arithmetic[0]
         return proven
 
+    def holds_python_value(self, operand) -> bool:
+        """Whether ``operand`` is a Python value under NEP 50: a Python number (not a NumPy scalar), a symbolic
+        expression, or a scalar that holds one (:attr:`weak_scalars`). Such an operand is weak: it takes the dtype
+        of the operand it meets."""
+        if isinstance(operand, str):
+            return operand in self.weak_scalars
+        return symbolic.issymbolic(operand) or (isinstance(operand, Number) and not isinstance(operand, numpy.generic))
+
     def proof_facts(self) -> symbolic.Facts:
         """:meth:`facts` for comparing extents through :meth:`proven_symbol_values`: the integer scalars recorded
         arithmetic reads are integers, since a leaf not promoted stands for its own value there."""
@@ -6382,6 +6405,7 @@ class ProgramVisitor(ExtNodeVisitor):
         if leaves <= facts.integers:
             return facts
         return symbolic.Facts(facts.known(), facts.integers | leaves, facts.small, facts.parameters, facts.assumed)
+
     def forget_scalar_arithmetic(self, scalar: str) -> None:
         """A write to ``scalar`` ends the arithmetic it was assigned and every arithmetic that reads it."""
         self.scalar_arithmetic.pop(scalar, None)

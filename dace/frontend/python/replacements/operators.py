@@ -31,6 +31,35 @@ numpy_version = np.lib.NumpyVersion(np.__version__)
 MODULO_CALLS = ("PyMod", "FtnMod", "FtnModulo")
 
 
+def python_number_like(dtype: dtypes.typeclass) -> bool | int | float | complex:
+    """A Python number of ``dtype``'s kind, which ``result_type`` weighs as a weak operand (NEP 50)."""
+    if dtype == dtypes.bool_:
+        return True
+    if dtype in dtypes.INTEGER_TYPES:
+        return 1
+    if dtype in (dtypes.complex64, dtypes.complex128):
+        return 1j
+    return 1.0
+
+
+def typing_operand(visitor: ProgramVisitor, sdfg: SDFG, operand: Any) -> Any:
+    """What ``result_type`` weighs for one operand: a scalar holding a Python value
+    (:meth:`~dace.frontend.python.newast.ProgramVisitor.holds_python_value`) as a Python number of its kind, any
+    other container as its descriptor, a constant or a symbol as itself."""
+    if not (isinstance(operand, str) and operand in sdfg.arrays):
+        return operand
+    if visitor.holds_python_value(operand):
+        return python_number_like(sdfg.arrays[operand].dtype)
+    return sdfg.arrays[operand]
+
+
+def mark_python_value(visitor: ProgramVisitor, result: str, *operands: Any) -> str:
+    """Records ``result`` as holding a Python value when every operand does: arithmetic over Python values is one."""
+    if all(visitor.holds_python_value(operand) for operand in operands):
+        visitor.weak_scalars.add(result)
+    return result
+
+
 def _unop(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     """Implements a general element-wise array unary operator."""
     arr1 = sdfg.arrays[op1]
@@ -71,7 +100,9 @@ def _makeunop(op, opcode):
     @oprepo.replaces_operator("Scalar", op)
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2=None):
         scalar1 = sdfg.arrays[op1]
-        restype, _ = result_type([scalar1], op, symbols=visitor.symbol_types())
+        restype, _ = result_type([typing_operand(visitor, sdfg, op1)], op, symbols=visitor.symbol_types())
+        if visitor.holds_python_value(op1):
+            restype = scalar1.dtype
         op2 = visitor.get_target_name()
         op2, scalar2 = sdfg.add_scalar(op2, restype, transient=True, find_new_name=True)
         tasklet = state.add_tasklet(f"_{op}_", {"__in"}, {"__out"}, f"__out = {opcode} __in")
@@ -79,7 +110,7 @@ def _makeunop(op, opcode):
         node2 = state.add_write(op2)
         state.add_edge(node1, None, tasklet, "__in", Memlet.from_array(op1, scalar1))
         state.add_edge(tasklet, "__out", node2, None, Memlet.from_array(op2, scalar2))
-        return op2
+        return mark_python_value(visitor, op2, op1)
 
     @oprepo.replaces_operator("NumConstant", op)
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: Number, op2=None):
@@ -187,10 +218,13 @@ def result_type(
             # promotion, matching the NumPy reference (where ``i`` is a Python int).
             # Non-integer symbols keep their strong type, and so does an integer symbol among integers only
             # (restored below): weakening it there narrows ``j * N`` to a narrower integer operand's type.
+            # A floating-point symbol is a Python float, weak the same way (``x * (1.0 / N)`` keeps ``x``'s type).
             sym_dtype = arg_type
             if np.issubdtype(sym_dtype.type, np.integer):
                 weak_integer_symbols[len(dtypes_for_result_np2)] = sym_dtype.type
                 dtypes_for_result_np2.append(1)
+            elif np.issubdtype(sym_dtype.type, np.floating):
+                dtypes_for_result_np2.append(1.0)
             else:
                 dtypes_for_result_np2.append(sym_dtype.type)
         elif isinstance(arg, dtypes.typeclass):
@@ -443,7 +477,7 @@ def _array_array_binop(
     right_type = right_arr.dtype
 
     # Implicit Python coversion implemented as casting
-    arguments = [left_arr, right_arr]
+    arguments = [typing_operand(visitor, sdfg, left_operand), typing_operand(visitor, sdfg, right_operand)]
     tasklet_args = ["__in1", "__in2"]
     restype, casting = result_type(arguments, operator, symbols=visitor.symbol_types())
     left_cast = casting[0]
@@ -685,7 +719,7 @@ def _scalar_scalar_binop(
     right_type = right_scal.dtype
 
     # Implicit Python coversion implemented as casting
-    arguments = [left_scal, right_scal]
+    arguments = [typing_operand(visitor, sdfg, left_operand), typing_operand(visitor, sdfg, right_operand)]
     tasklet_args = ["__in1", "__in2"]
     restype, casting = result_type(arguments, operator, symbols=visitor.symbol_types())
     left_cast = casting[0]
@@ -714,7 +748,7 @@ def _scalar_scalar_binop(
     state.add_edge(n2, None, tasklet, "__in2", Memlet.from_array(right_operand, right_scal))
     state.add_edge(tasklet, "__out", n3, None, Memlet.from_array(out_operand, out_scal))
 
-    return out_operand
+    return mark_python_value(visitor, out_operand, left_operand, right_operand)
 
 
 def _scalar_const_binop(
@@ -729,52 +763,7 @@ def _scalar_const_binop(
     """
     Operands are a Scalar and a Constant
     """
-
-    if left_operand in sdfg.arrays:
-        left_scal = sdfg.arrays[left_operand]
-        storage = left_scal.storage
-        right_scal = None
-        arguments = [left_scal, right_operand]
-        tasklet_args = ["__in1", f"({str(right_operand)})"]
-    else:
-        left_scal = None
-        right_scal = sdfg.arrays[right_operand]
-        storage = right_scal.storage
-        arguments = [left_operand, right_scal]
-        tasklet_args = [f"({str(left_operand)})", "__in2"]
-
-    restype, casting = result_type(arguments, operator, symbols=visitor.symbol_types())
-    left_cast = casting[0]
-    right_cast = casting[1]
-
-    if left_cast is not None:
-        tasklet_args[0] = "{c}({o})".format(c=str(left_cast).replace("::", "."), o=tasklet_args[0])
-    if right_cast is not None:
-        tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace("::", "."), o=tasklet_args[1])
-
-    out_operand = visitor.get_target_name()
-    out_operand, out_scal = sdfg.add_scalar(out_operand, restype, transient=True, storage=storage, find_new_name=True)
-
-    if left_scal:
-        inp_conn = {"__in1"}
-        n1 = state.add_read(left_operand)
-    else:
-        inp_conn = {"__in2"}
-        n2 = state.add_read(right_operand)
-    tasklet = state.add_tasklet(
-        f"_{operator}_",
-        inp_conn,
-        {"__out"},
-        binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
-    )
-    n3 = state.add_write(out_operand)
-    if left_scal:
-        state.add_edge(n1, None, tasklet, "__in1", Memlet.from_array(left_operand, left_scal))
-    else:
-        state.add_edge(n2, None, tasklet, "__in2", Memlet.from_array(right_operand, right_scal))
-    state.add_edge(tasklet, "__out", n3, None, Memlet.from_array(out_operand, out_scal))
-
-    return out_operand
+    return _scalar_value_binop(visitor, sdfg, state, left_operand, right_operand, operator, opcode, str)
 
 
 def _scalar_sym_binop(
@@ -789,56 +778,42 @@ def _scalar_sym_binop(
     """
     Operands are a Scalar and a Symbol
     """
+    return _scalar_value_binop(visitor, sdfg, state, left_operand, right_operand, operator, opcode, astutils.unparse)
 
-    if left_operand in sdfg.arrays:
-        left_scal = sdfg.arrays[left_operand]
-        left_type = left_scal.dtype
-        storage = left_scal.storage
-        right_scal = None
-        right_type = sym_type(right_operand, visitor.symbol_types())
-        arguments = [left_scal, right_operand]
-        tasklet_args = ["__in1", f"({astutils.unparse(right_operand)})"]
-    else:
-        left_scal = None
-        left_type = sym_type(left_operand, visitor.symbol_types())
-        right_scal = sdfg.arrays[right_operand]
-        right_type = right_scal.dtype
-        storage = right_scal.storage
-        arguments = [left_operand, right_scal]
-        tasklet_args = [f"({astutils.unparse(left_operand)})", "__in2"]
 
+def _scalar_value_binop(
+    visitor: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    left_operand: Any,
+    right_operand: Any,
+    operator: str,
+    opcode: str,
+    spell: Callable[[Any], str],
+) -> str:
+    """A Scalar and a value (a constant or a symbol, which ``spell`` writes into the tasklet), one of each side."""
+    scalar_on_left = isinstance(left_operand, str) and left_operand in sdfg.arrays
+    scalar = left_operand if scalar_on_left else right_operand
+    scal = sdfg.arrays[scalar]
+    connector = "__in1" if scalar_on_left else "__in2"
+    value = right_operand if scalar_on_left else left_operand
+    tasklet_args = [connector, f"({spell(value)})"] if scalar_on_left else [f"({spell(value)})", connector]
+    arguments = [typing_operand(visitor, sdfg, left_operand), typing_operand(visitor, sdfg, right_operand)]
     restype, casting = result_type(arguments, operator, symbols=visitor.symbol_types())
-    left_cast = casting[0]
-    right_cast = casting[1]
-
-    if left_cast is not None:
-        tasklet_args[0] = "{c}({o})".format(c=str(left_cast).replace("::", "."), o=tasklet_args[0])
-    if right_cast is not None:
-        tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace("::", "."), o=tasklet_args[1])
+    for position, cast in enumerate(casting[:2]):
+        if cast is not None:
+            tasklet_args[position] = "{c}({o})".format(c=str(cast).replace("::", "."), o=tasklet_args[position])
 
     out_operand = visitor.get_target_name()
-    out_operand, out_scal = sdfg.add_scalar(out_operand, restype, transient=True, storage=storage, find_new_name=True)
-
-    if left_scal:
-        inp_conn = {"__in1"}
-        n1 = state.add_read(left_operand)
-    else:
-        inp_conn = {"__in2"}
-        n2 = state.add_read(right_operand)
-    tasklet = state.add_tasklet(
-        f"_{operator}_",
-        inp_conn,
-        {"__out"},
-        binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
+    out_operand, out_scal = sdfg.add_scalar(
+        out_operand, restype, transient=True, storage=scal.storage, find_new_name=True
     )
-    n3 = state.add_write(out_operand)
-    if left_scal:
-        state.add_edge(n1, None, tasklet, "__in1", Memlet.from_array(left_operand, left_scal))
-    else:
-        state.add_edge(n2, None, tasklet, "__in2", Memlet.from_array(right_operand, right_scal))
-    state.add_edge(tasklet, "__out", n3, None, Memlet.from_array(out_operand, out_scal))
-
-    return out_operand
+    tasklet = state.add_tasklet(
+        f"_{operator}_", {connector}, {"__out"}, binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1])
+    )
+    state.add_edge(state.add_read(scalar), None, tasklet, connector, Memlet.from_array(scalar, scal))
+    state.add_edge(tasklet, "__out", state.add_write(out_operand), None, Memlet.from_array(out_operand, out_scal))
+    return mark_python_value(visitor, out_operand, left_operand, right_operand)
 
 
 def binop_tasklet_code(left: str, opcode: str, right: str) -> str:

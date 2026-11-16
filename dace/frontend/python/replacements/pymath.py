@@ -3,6 +3,7 @@
 Contains replacements of Python mathematical operations.
 """
 
+import math
 from collections.abc import Mapping
 from numbers import Integral, Number
 from typing import Any
@@ -16,51 +17,42 @@ from dace.frontend.python.replacements.utils import ProgramVisitor, complex_to_s
 COMPLEX_TYPES = (dtypes.complex64, dtypes.complex128)
 
 
-@oprepo.replaces("exp")
-@oprepo.replaces("dace.exp")
-@oprepo.replaces("numpy.exp")
-@oprepo.replaces("math.exp")
-def _exp(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
-    return simple_call(pv, sdfg, state, input, "exp")
+#: The C math functions a call maps onto one-to-one, by the names that reach them.
+TRANSCENDENTALS = ("exp", "sin", "cos", "sqrt", "log", "log10")
 
 
-@oprepo.replaces("sin")
-@oprepo.replaces("dace.sin")
-@oprepo.replaces("numpy.sin")
-@oprepo.replaces("math.sin")
-def _sin(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
-    return simple_call(pv, sdfg, state, input, "sin")
+def transcendental(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: Any, func: str, python: bool) -> Any:
+    """``func(input)``: float64 for an integer or boolean input, as NumPy and Python give (``math.sqrt(N)`` was typed
+    like ``N`` and truncated). ``python`` is the ``math`` module's spelling, which returns a Python float: folded for a
+    number, and a Python value (weak, NEP 50) for an operand holding one."""
+    if python and isinstance(input, Number) and not isinstance(input, np.generic):
+        return vars(math)[func](input)
+    dtype = operand_dtype(sdfg, input, pv.symbol_types())
+    restype = dtypes.float64 if dtype == dtypes.bool_ or dtype in dtypes.INTEGER_TYPES else None
+    result = simple_call(pv, sdfg, state, input, func, restype)
+    if python and pv.holds_python_value(input):
+        pv.weak_scalars.add(result)
+    return result
 
 
-@oprepo.replaces("cos")
-@oprepo.replaces("dace.cos")
-@oprepo.replaces("numpy.cos")
-@oprepo.replaces("math.cos")
-def _cos(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
-    return simple_call(pv, sdfg, state, input, "cos")
+def register_transcendental(func: str) -> None:
+    """``math.<func>`` and the bare name (what ``from math import <func>`` binds) are Python's; ``numpy.<func>`` and
+    ``dace.<func>`` are NumPy's."""
+
+    def python_call(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: Any):
+        return transcendental(pv, sdfg, state, input, func, True)
+
+    def numpy_call(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: Any):
+        return transcendental(pv, sdfg, state, input, func, False)
+
+    for name in (f"math.{func}", func):
+        oprepo.replaces(name)(python_call)
+    for name in (f"dace.{func}", *([f"numpy.{func}"] if func != "log10" else [])):
+        oprepo.replaces(name)(numpy_call)
 
 
-@oprepo.replaces("sqrt")
-@oprepo.replaces("dace.sqrt")
-@oprepo.replaces("numpy.sqrt")
-@oprepo.replaces("math.sqrt")
-def _sqrt(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
-    return simple_call(pv, sdfg, state, input, "sqrt")
-
-
-@oprepo.replaces("log")
-@oprepo.replaces("dace.log")
-@oprepo.replaces("numpy.log")
-@oprepo.replaces("math.log")
-def _log(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
-    return simple_call(pv, sdfg, state, input, "log")
-
-
-@oprepo.replaces("log10")
-@oprepo.replaces("dace.log10")
-@oprepo.replaces("math.log10")
-def _log10(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
-    return simple_call(pv, sdfg, state, input, "log10")
+for transcendental_name in TRANSCENDENTALS:
+    register_transcendental(transcendental_name)
 
 
 @oprepo.replaces("math.floor")
