@@ -78,8 +78,44 @@ def test_vectorize_map_refuses_a_map_inside_another():
         VectorizeMap(VectorizeConfig(widths=(4,)), state, inner_entry).apply_pass(sdfg, {})
 
 
+@dace.program
+def absolute_then_square(x: dace.float64[N], y: dace.float64[N], z: dace.float64[N]):
+    for i in dace.map[0:N]:
+        if x[i] > 0:
+            y[i] = x[i]
+        else:
+            y[i] = -x[i]
+    for i in dace.map[0:N]:
+        z[i] = x[i] * x[i]
+
+
+def test_vectorize_map_tiles_a_map_whose_body_branches():
+    # The body's nested SDFG holds a conditional, so the vectorizer fuses states inside the nest VectorizeMap made;
+    # what encloses that nest is the program's, not the vectorizer's
+    sdfg = absolute_then_square.to_sdfg(simplify=True)
+    ((state, branchy),) = [
+        (s, n)
+        for n, s in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.MapEntry)
+        and s.entry_node(n) is None
+        and {e.data.data for e in s.out_edges(s.exit_node(n))} == {"y"}
+    ]
+
+    nest = VectorizeMap(VectorizeConfig(widths=(4,), target_isa=ISA.SCALAR), state, branchy).apply_pass(sdfg, {})
+
+    sdfg.validate()
+    assert tile_nodes_in(nest.sdfg) > 0, "the branching map was not vectorized"
+    assert tile_nodes_in(sdfg) == tile_nodes_in(nest.sdfg), "a tile op landed outside the named map"
+    x = np.random.default_rng(0).random(SIZE) - 0.5
+    y, z = np.zeros(SIZE), np.zeros(SIZE)
+    sdfg(x=x, y=y, z=z, N=SIZE)
+    np.testing.assert_allclose(y, np.abs(x), rtol=0)
+    np.testing.assert_allclose(z, x * x, rtol=0)
+
+
 if __name__ == "__main__":
     for width in (4, 8):
         for isa in (ISA.SCALAR, ISA.AUTO):
             test_vectorize_map_tiles_the_named_map_and_leaves_the_other_scalar(width, isa)
     test_vectorize_map_refuses_a_map_inside_another()
+    test_vectorize_map_tiles_a_map_whose_body_branches()

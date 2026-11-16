@@ -288,17 +288,20 @@ def control_flow_regions(sdfg: dace.SDFG) -> list[ControlFlowRegion]:
     return list(sdfg.all_control_flow_regions(recursive=True))
 
 
-def in_map_body(sdfg: dace.SDFG, cache: dict[dace.SDFG, bool]) -> bool:
-    """Whether ``sdfg`` is nested, at any depth, inside a map scope.
+def in_map_body(sdfg: dace.SDFG, top: dace.SDFG, cache: dict[dace.SDFG, bool]) -> bool:
+    """Whether ``sdfg`` is nested, at any depth below ``top``, inside a map scope.
 
     :param sdfg: The SDFG to test.
+    :param top: The SDFG the pass runs on: what encloses it is not the pass's, so the walk stops there.
     :param cache: Memo of earlier answers, shared across calls.
-    :returns: ``True`` iff some enclosing NestedSDFG node sits in a map scope.
+    :returns: ``True`` iff some NestedSDFG node between ``top`` and ``sdfg`` sits in a map scope.
     """
     if sdfg not in cache:
         node = sdfg.parent_nsdfg_node
-        cache[sdfg] = node is not None and (
-            sdfg.parent.entry_node(node) is not None or in_map_body(sdfg.parent.sdfg, cache)
+        cache[sdfg] = (
+            sdfg is not top
+            and node is not None
+            and (sdfg.parent.entry_node(node) is not None or in_map_body(sdfg.parent.sdfg, top, cache))
         )
     return cache[sdfg]
 
@@ -331,7 +334,7 @@ def state_fusion_extended_to_fixpoint(sdfg: dace.SDFG) -> int:
         match = None
         for region_index in range(resume, len(regions)):
             region = regions[region_index]
-            if not in_map_body(region.sdfg, body_cache):
+            if not in_map_body(region.sdfg, sdfg, body_cache):
                 continue
             digraph = collapse_multigraph_to_nx(region)
             cfg_id = -1
@@ -377,7 +380,12 @@ def state_fusion_extended_to_fixpoint(sdfg: dace.SDFG) -> int:
         survivor = first if first in region.nodes() else second
         touched = [first, second, survivor, *region.predecessors(survivor), *region.successors(survivor)]
         enclosing = region.sdfg
-        while enclosing.parent_nsdfg_node is not None and isinstance(enclosing.parent, dace.SDFGState):
+        # the states enclosing ``sdfg`` are not in ``regions``: the walk stops at the SDFG the pass runs on
+        while (
+            enclosing is not sdfg
+            and enclosing.parent_nsdfg_node is not None
+            and isinstance(enclosing.parent, dace.SDFGState)
+        ):
             state = enclosing.parent
             touched.append(state)
             resume = min(resume, regions.index(state.parent_graph))
