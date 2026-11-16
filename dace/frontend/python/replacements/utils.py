@@ -264,20 +264,30 @@ def representative_num(dtype: dtypes.typeclass | Number) -> Number:
         return nptype(ml_dtypes.finfo(nptype_class).resolution)
 
 
+def operand_dtype(operand) -> np.dtype | None:
+    """The numpy dtype of a :func:`np_result_type` operand, or ``None`` for a weak Python scalar."""
+    if isinstance(operand, (type, np.dtype)):
+        return np.dtype(operand)
+    if isinstance(operand, np.generic):
+        return operand.dtype
+    return None
+
+
 def np_result_type(nptypes):
-    # Fix for np.result_type returning platform-dependent types,
-    # e.g. np.longlong
-    try:
-        restype = np.result_type(*nptypes)
-    except np.exceptions.DTypePromotionError:
-        # ml_dtypes defines no promotion of bfloat16 with numpy's integers (``bfloat16 * int64``). It promotes as
-        # float16, the other 16-bit float, does, and stays bfloat16 where float16 would stay float16.
-        bf16 = np.dtype(ml_dtypes.bfloat16)
-        if not any(np.dtype(t) == bf16 for t in nptypes):
-            raise
-        restype = np.result_type(*(np.float16 if np.dtype(t) == bf16 else t for t in nptypes))
+    # ml_dtypes' bfloat16 is numpy kind ``V``, so numpy promotes it with no integer (``bfloat16 * int64`` raises) and
+    # widens it against a weak Python float (``1.0 + bfloat16`` is float64). It promotes as float16, the other
+    # 16-bit float, does (NEP 50 keeps ``float16 + 1.0`` float16), and stays bfloat16 where float16 would stay
+    # float16. Next to a real float16 the substitute would hide a promotion, so it is not made there.
+    bf16 = np.dtype(ml_dtypes.bfloat16)
+    kinds = [operand_dtype(t) for t in nptypes]
+    if bf16 in kinds and np.dtype(np.float16) not in kinds:
+        restype = np.result_type(*(np.float16 if kind == bf16 else t for t, kind in zip(nptypes, kinds)))
         if restype == np.float16:
             restype = bf16
+    else:
+        # Fix for np.result_type returning platform-dependent types,
+        # e.g. np.longlong
+        restype = np.result_type(*nptypes)
     if restype.type not in dtypes.dtype_to_typeclass().keys():
         for k in dtypes.dtype_to_typeclass().keys():
             if k == restype.type:

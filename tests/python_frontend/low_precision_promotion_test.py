@@ -40,8 +40,26 @@ def test_a_low_precision_array_times_an_integer_array_promotes_as_float16_does(d
     assert transients and all(t == dace.float64 for t in transients.values()), transients
 
 
+@pytest.mark.parametrize("dtype", [dace.float16, dace.bfloat16, dace.float32])
+def test_a_python_float_does_not_widen_a_low_precision_array(dtype):
+    """``1.0 / (1.0 + np.exp(-x))`` on a bf16 array came out ``float64``: numpy widens ml_dtypes' bfloat16 against a
+    weak Python float, and HB's dist_mlp_tp then passed a double into a helper declared bf16. A Python scalar keeps
+    a low-precision float's type, as NEP 50 does for float16."""
+
+    @dace.program
+    def sigmoid(a: dtype[N], b: dtype[N]):
+        d = 1.0 + a
+        b[:] = 1.0 / d
+
+    sdfg = sigmoid.to_sdfg(simplify=False)
+    transients = {name: desc.dtype for name, desc in sdfg.arrays.items() if desc.transient}
+    assert transients and all(t == dtype for t in transients.values()), transients
+
+
 if __name__ == "__main__":
     for dtype in (dace.float16, dace.bfloat16, dace.float32):
         test_a_low_precision_array_keeps_its_type_against_integer_sizes(dtype)
     for dtype in (dace.float16, dace.bfloat16):
         test_a_low_precision_array_times_an_integer_array_promotes_as_float16_does(dtype)
+    for dtype in (dace.float16, dace.bfloat16, dace.float32):
+        test_a_python_float_does_not_widen_a_low_precision_array(dtype)
