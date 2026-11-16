@@ -4548,6 +4548,13 @@ class ProgramVisitor(ExtNodeVisitor):
             folded = self.slice_bound_over_promoted_leaves(arg)
             if folded is not None:
                 return folded
+        elif isinstance(arg, (ast.Tuple, ast.List)) and any(isinstance(element, ast.Call) for element in arg.elts):
+            # A call inside the literal (``np.concatenate((np.zeros_like(x), y))``) is its result, not a list of it
+            elements = [
+                self._parse_function_arg(element) if isinstance(element, ast.Call) else self.visit(element)
+                for element in arg.elts
+            ]
+            return tuple(elements) if isinstance(arg, ast.Tuple) else elements
         # Obtain a string representation
         result = self.visit(arg)
         if isinstance(result, (list, tuple)) and len(result) == 1:
