@@ -3368,7 +3368,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 # A whole-array copy between extents only the caller can relate (an output argument's
                 # own extent symbol against one derived from the inputs) is taken as equal here; the call
                 # site proves it once it binds both (``check_extent_equalities``).
-                unproven = [(s, o) for s, o in zip(ssize, osize) if inequal_symbols(s, o, self.sdfg.facts())]
+                unproven = [(s, o) for s, o in zip(ssize, osize) if inequal_symbols(s, o, self.proof_facts())]
                 if (
                     unproven
                     and not (indirect_indices or boolarr or op)
@@ -6357,8 +6357,8 @@ class ProgramVisitor(ExtNodeVisitor):
         same shape; only a store compares its extents through these values.
 
         A scalar assigned arithmetic over other scalars (:meth:`record_scalar_arithmetic`) is proven
-        here, from its leaves' promoted symbols, once it and all its leaves are promoted -- in
-        whatever order the subscripts promoted them.
+        here once it is promoted, over its leaves' promoted symbols or, for a leaf not promoted, the leaf
+        itself (:meth:`arithmetic_over_versions`).
         """
         proven = {
             sym: value
@@ -6374,6 +6374,14 @@ class ProgramVisitor(ExtNodeVisitor):
                 proven[promoted[0]] = arithmetic[0]
         return proven
 
+    def proof_facts(self) -> symbolic.Facts:
+        """:meth:`facts` for comparing extents through :meth:`proven_symbol_values`: the integer scalars recorded
+        arithmetic reads are integers, since a leaf not promoted stands for its own value there."""
+        facts = self.facts()
+        leaves = frozenset(leaf for _, names, _ in self.scalar_arithmetic.values() for leaf in names)
+        if leaves <= facts.integers:
+            return facts
+        return symbolic.Facts(facts.known(), facts.integers | leaves, facts.small, facts.parameters, facts.assumed)
     def forget_scalar_arithmetic(self, scalar: str) -> None:
         """A write to ``scalar`` ends the arithmetic it was assigned and every arithmetic that reads it."""
         self.scalar_arithmetic.pop(scalar, None)
@@ -6385,8 +6393,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         The assignment runs as a tasklet, so the scalar's promoted symbol is opaque: a strided slice
         ``out[a:n:s]`` sized ``ceiling((n - a)/s)`` cannot be matched against an operand sized
-        ``b - c`` (a transposed convolution's tap). Once it and every leaf are promoted,
-        :meth:`proven_symbol_values` proves the scalar's symbol from the leaves' symbols. Only
+        ``b - c`` (a transposed convolution's tap). Once it is promoted,
+        :meth:`proven_symbol_values` proves the scalar's symbol from its leaves. Only
         integer arithmetic over this SDFG's integer scalars, symbols and integer constants is kept,
         and an assignment that reads its own target is not.
         """
@@ -6410,9 +6418,13 @@ class ProgramVisitor(ExtNodeVisitor):
     def arithmetic_over_versions(self, scalar: str) -> tuple[symbolic.SymbolicType, frozenset[str]] | None:
         """The arithmetic ``scalar`` was assigned, over its leaves' current version symbols, or ``None``.
 
-        Every scalar leaf must be promoted in the version the arithmetic read, so the proof adds no
-        state; the arithmetic itself must still reach the current region. A loop in between
-        does not stop it: one that writes the scalar or a leaf forgets the arithmetic on entry
+        A promoted leaf reads as its version symbol, so the proof adds no state. A leaf not promoted
+        here stays the symbol of its own name: every write to a scalar forgets each arithmetic that
+        reads it, so all recorded arithmetic names the same value of that leaf and two of them
+        compare exactly through it (a transposed convolution's ``iy0 = iy_lo`` against ``oy_hi =
+        oy_lo + (iy_hi - iy_lo) * s`` when only ``iy0``, ``iy1`` and ``oy_lo`` are ever promoted). The
+        arithmetic itself must still reach the current region. A loop in between does not stop it:
+        one that writes the scalar or a leaf forgets the arithmetic on entry
         (:meth:`drop_shape_versions_written_in`)."""
         recorded = self.scalar_arithmetic.get(scalar)
         if recorded is None or not self.nested_in_region(recorded[2]):
@@ -6421,10 +6433,9 @@ class ProgramVisitor(ExtNodeVisitor):
         repl, versions = {}, set()
         for leaf in leaves:
             promoted = self.shape_promotions.get(leaf)
-            if promoted is None or not self.nested_in_region(promoted[1]):
-                return None
-            repl[symbolic.symbol(leaf)] = promoted[0]
-            versions.add(str(promoted[0]))
+            if promoted is not None and self.nested_in_region(promoted[1]):
+                repl[symbolic.symbol(leaf)] = promoted[0]
+                versions.add(str(promoted[0]))
         return expr.xreplace(repl), frozenset(versions)
 
     def promote_scalar_to_symbol(self, scalar: str, key: str | None = None) -> symbolic.symbol:

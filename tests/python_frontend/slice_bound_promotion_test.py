@@ -396,5 +396,32 @@ def test_a_rebound_leaf_does_not_prove_the_extent():
         strided_tap_after_a_leaf_is_rebound.to_sdfg(simplify=False)
 
 
+
+@dace.program
+def strided_tap_through_aliased_bounds(out: dace.float64[M], x: dace.float64[N], p: dace.int64, s: dace.int64):
+    lo = max(0, p)
+    hi = min(N, p + 3)
+    ol_lo = lo * s + 1
+    ol_hi = ol_lo + (hi - lo) * s
+    i0 = lo + 0
+    i1 = hi + 0
+    out[ol_lo:ol_hi:s] = out[ol_lo:ol_hi:s] + x[i0:i1]
+
+
+def test_a_strided_slice_matches_an_operand_bounded_by_aliases_of_unpromoted_scalars():
+    """A transposed convolution's tap helper returns its bounds, so the operand reads ``x[i0:i1]`` with ``i0 = lo``
+    and ``i1 = hi`` while ``lo`` and ``hi`` themselves are never promoted. Each unpromoted leaf stands for its own
+    value in every recorded arithmetic, so ``ceiling((ol_hi - ol_lo)/s)`` still meets ``i1 - i0``, with ``s``
+    a runtime stride."""
+    n, m, p, stride = 6, 16, 1, 3
+    x = np.arange(1.0, n + 1)
+    out = np.zeros(m)
+    strided_tap_through_aliased_bounds(out=out, x=x, p=p, s=stride, N=n, M=m)
+    expected = np.zeros(m)
+    lo, hi = max(0, p), min(n, p + 3)
+    expected[lo * stride + 1 : lo * stride + 1 + (hi - lo) * stride : stride] += x[lo:hi]
+    assert np.array_equal(out, expected), out
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
