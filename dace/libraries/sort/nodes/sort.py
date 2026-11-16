@@ -22,7 +22,9 @@ ROW_IN, ROW_OUT = "__keys", "__row_out"
 ROW_HEADERS = "#include <algorithm>\n#include <cmath>\n#include <numeric>\n#include <vector>\n"
 
 
-def operand_descriptors(node: "Sort", state: dace.SDFGState, sdfg: dace.SDFG) -> tuple[dace.data.Array, dace.data.Array]:
+def operand_descriptors(
+    node: "Sort", state: dace.SDFGState, sdfg: dace.SDFG
+) -> tuple[dace.data.Array, dace.data.Array]:
     """The input and output descriptors, validated: same shape, the output typed as the keys (or ``int64`` for
     ``argsort``), and ``axis`` within the rank."""
     in_edge = next(e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME)
@@ -30,7 +32,9 @@ def operand_descriptors(node: "Sort", state: dace.SDFGState, sdfg: dace.SDFG) ->
     keys = sdfg.arrays[in_edge.data.data]
     out = sdfg.arrays[out_edge.data.data]
     if len(keys.shape) != len(out.shape) or not 0 <= node.axis < len(keys.shape):
-        raise ValueError(f"Sort {node.label}: axis {node.axis} of a rank-{len(keys.shape)} input into rank {len(out.shape)}")
+        raise ValueError(
+            f"Sort {node.label}: axis {node.axis} of a rank-{len(keys.shape)} input into rank {len(out.shape)}"
+        )
     want = dtypes.int64 if node.argsort else keys.dtype
     if out.dtype != want:
         raise ValueError(f"Sort {node.label}: output dtype {out.dtype}, expected {want}")
@@ -44,10 +48,7 @@ def row_code(dtype: dtypes.typeclass, n: str, in_stride: str, out_stride: str, a
         less = "return a < b || (std::isnan(b) && !std::isnan(a));"
     else:
         less = "return a < b;"
-    head = (
-        f"const long long __n = {n};\n"
-        f"auto __less = [](const {ctype}& a, const {ctype}& b) {{ {less} }};\n"
-    )
+    head = f"const long long __n = {n};\nauto __less = [](const {ctype}& a, const {ctype}& b) {{ {less} }};\n"
     if argsort:
         return head + (
             "std::vector<long long> __order(__n);\n"
@@ -83,7 +84,9 @@ class ExpandCPU(ExpandTransformation):
         rows = {f"__s{d}": f"0:{sym2cpp(extent)}" for d, extent in enumerate(keys.shape) if d != node.axis}
         n = keys.shape[node.axis]
         row = ", ".join(f"0:{n}" if d == node.axis else f"__s{d}" for d in range(len(keys.shape)))
-        code = row_code(keys.dtype, sym2cpp(n), sym2cpp(keys.strides[node.axis]), sym2cpp(out.strides[node.axis]), node.argsort)
+        code = row_code(
+            keys.dtype, sym2cpp(n), sym2cpp(keys.strides[node.axis]), sym2cpp(out.strides[node.axis]), node.argsort
+        )
         if rows:
             tasklet, _, _ = body.add_mapped_tasklet(
                 f"{node.label}_row",
@@ -96,15 +99,19 @@ class ExpandCPU(ExpandTransformation):
             )
         else:
             # A 1-D input is one row: no map around it
-            tasklet = body.add_tasklet(
-                node.label, {ROW_IN}, {ROW_OUT}, code, language=dtypes.Language.CPP
-            )
+            tasklet = body.add_tasklet(node.label, {ROW_IN}, {ROW_OUT}, code, language=dtypes.Language.CPP)
             body.add_edge(
-                body.add_read(INPUT_CONNECTOR_NAME), None, tasklet, ROW_IN,
+                body.add_read(INPUT_CONNECTOR_NAME),
+                None,
+                tasklet,
+                ROW_IN,
                 dace.Memlet(f"{INPUT_CONNECTOR_NAME}[{row}]"),
             )
             body.add_edge(
-                tasklet, ROW_OUT, body.add_write(OUTPUT_CONNECTOR_NAME), None,
+                tasklet,
+                ROW_OUT,
+                body.add_write(OUTPUT_CONNECTOR_NAME),
+                None,
                 dace.Memlet(f"{OUTPUT_CONNECTOR_NAME}[{row}]"),
             )
         tasklet.code_global = dace.properties.CodeBlock(ROW_HEADERS, dtypes.Language.CPP)
