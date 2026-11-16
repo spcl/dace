@@ -139,6 +139,20 @@ def spell_extent_as_source(sdfg: SDFG, target: Any, source: Any, mapping: dict[s
     owner.pop(name, None)
 
 
+def storing_subscript(target: ast.Subscript) -> ast.Subscript:
+    """The subscript of a store target whose ``value`` is the container the store writes.
+
+    A chain of plain indices (``a[i][j] = v``) writes ``a`` itself: the innermost subscript. A sliced inner subscript
+    (``a[:, :n][k] = v``) is a view of ``a``, and the store writes THROUGH it: the subscript right outside it, whose
+    value is that view. Taking the innermost one there dropped the slice and wrote ``a[k]`` whole."""
+    subscript = target
+    while isinstance(subscript.value, ast.Subscript):
+        if any(isinstance(n, ast.Slice) for n in ast.walk(subscript.value.slice)):
+            return subscript
+        subscript = subscript.value
+    return subscript
+
+
 def bound_names(target: ast.AST) -> set[str]:
     """The names an assignment target writes: ``a[i:n] = ...`` writes ``a``, never the ``i`` or ``n`` it is indexed by."""
     if isinstance(target, ast.Name):
@@ -3365,8 +3379,14 @@ class ProgramVisitor(ExtNodeVisitor):
                     unproven = []
 
                 if indirect_indices or boolarr or len(ssize) != len(osize) or unproven or op:
+                    # NumPy strips leading size-1 axes off a stored value (``a[:, 0:1, :] = b`` with ``b`` of shape
+                    # ``(1, 1, n)``); the stripped axes are read at their start
+                    op_size = op_subset.size()
+                    stripped = 0
+                    while len(op_size) - stripped > len(squeezed) and op_size[stripped] == 1:
+                        stripped += 1
                     _, all_idx_tuples, _, _, inp_idx = broadcast_to(
-                        squeezed.size(), op_subset.size(), self.sdfg.facts()
+                        squeezed.size(), op_size[stripped:], self.sdfg.facts()
                     )
 
                     idx = iter(i for i, _ in all_idx_tuples)
@@ -3378,7 +3398,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     inp_idx = inp_idx.split(",")
                     # create a fake subset that would be the input subset broadcasted to the correct size
                     missing_dimensions = squeezed.ranges[: len(all_idx_tuples) - len(inp_idx)]
-                    op_dimensions = op_subset.ranges
+                    op_dimensions = op_subset.ranges[stripped:]
 
                     fake_subset = dace.subsets.Range(missing_dimensions + op_dimensions)
 
@@ -3396,7 +3416,13 @@ class ProgramVisitor(ExtNodeVisitor):
                     idx_and_subset = reversed(list(zip(reversed(inp_idx), reversed(fake_subset))))
 
                     inp_memlet = Memlet(
-                        "{a}[{s}]".format(a=op_name, s=",".join([f"{idx} + {s}" for idx, (s, _, _) in idx_and_subset]))
+                        "{a}[{s}]".format(
+                            a=op_name,
+                            s=",".join(
+                                [str(start) for start, _, _ in op_subset.ranges[:stripped]]
+                                + [f"{idx} + {s}" for idx, (s, _, _) in idx_and_subset]
+                            ),
+                        )
                     )
                     out_memlet = Memlet(f"{target_name}[{target_index}]")
                     map_range = {
@@ -4080,16 +4106,15 @@ class ProgramVisitor(ExtNodeVisitor):
 
             if name in defined_vars:
                 # Handle complex object assignment (e.g., A.flat[:])
-                if isinstance(target, ast.Subscript):  # In case of nested subscripts, find the root AST node
-                    last_subscript = target
-                    # Find the first non-subscript target
-                    while isinstance(last_subscript.value, ast.Subscript):
-                        last_subscript = last_subscript.value
+                if isinstance(target, ast.Subscript):  # In case of nested subscripts, find the stored container
+                    last_subscript = storing_subscript(target)
                 if isinstance(target, ast.Subscript) and not isinstance(last_subscript.value, ast.Name):
                     store_target = astutils.copy_tree(last_subscript.value)
-                    for n in ast.walk(store_target):  # Recursively make attributes into stores
-                        if hasattr(n, "ctx"):
-                            n.ctx = ast.Store()
+                    # An attribute becomes a store; a sliced subscript is read as the view it aliases
+                    if not isinstance(store_target, ast.Subscript):
+                        for n in ast.walk(store_target):  # Recursively make attributes into stores
+                            if hasattr(n, "ctx"):
+                                n.ctx = ast.Store()
                     true_name = self.visit(store_target)
                     # Refresh defined variables and arrays
                     defined_vars = {**self.variables, **self.scope_vars}
@@ -4276,11 +4301,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 if isinstance(target, ast.Name):
                     true_target.id = true_name
                 elif isinstance(target, ast.Subscript):
-                    # In case of nested subscripts, find the root AST node
-                    last_subscript = true_target
-                    # Find the first non-subscript target and modify its value to the new name
-                    while isinstance(last_subscript.value, ast.Subscript):
-                        last_subscript = last_subscript.value
+                    # In case of nested subscripts, find the stored container and modify it to the new name
+                    last_subscript = storing_subscript(true_target)
                     last_subscript.value = ast.copy_location(
                         ast.Name(id=true_name, ctx=ast.Store()), last_subscript.value
                     )
