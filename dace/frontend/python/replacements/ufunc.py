@@ -1641,7 +1641,7 @@ def implement_ufunc(
 
     :return: List of output datanames
     """
-    from dace.frontend.python.replacements.operators import fold_symbolic_operator, result_type, typing_operand
+    from dace.frontend.python.replacements.operators import fold_symbolic_operator, result_type, typing_operands
 
     # Flatten arguments
     args = _flatten_args(args)
@@ -1672,7 +1672,7 @@ def implement_ufunc(
 
     # Infer result type
     result_type, casting = result_type(
-        [typing_operand(visitor, sdfg, arg) for arg in inputs],
+        typing_operands(visitor, sdfg, inputs),
         ufunc_impl["operator"],
         symbols=visitor.symbol_types(),
     )
@@ -2159,7 +2159,7 @@ def implement_ufunc_outer(
 
     :return: List of output datanames
     """
-    from dace.frontend.python.replacements.operators import result_type, typing_operand
+    from dace.frontend.python.replacements.operators import result_type, typing_operands
 
     # Flatten arguments
     args = _flatten_args(args)
@@ -2238,7 +2238,7 @@ def implement_ufunc_outer(
 
     # Infer result type
     result_type, casting = result_type(
-        [typing_operand(visitor, sdfg, arg) for arg in inputs],
+        typing_operands(visitor, sdfg, inputs),
         ufunc_impl["operator"],
         symbols=visitor.symbol_types(),
     )

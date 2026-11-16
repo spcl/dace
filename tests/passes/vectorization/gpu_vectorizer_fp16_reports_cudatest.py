@@ -62,7 +62,9 @@ def vadv_with_an_fp16_field(
 ):
     """``vadv``, verbatim from the report, with ``u_pos`` in float16 -- the field that sends the
     vectorizer down the tile path. ``dtr_stage`` is the constant the reference uses (3 / 20)."""
-    dtr_stage = 3.0 / 20.0
+    # A NumPy scalar, as the reference computes: a Python float is weak (NEP 50) and would round dtr_stage * u_pos to
+    # float16.
+    dtr_stage = np.float64(3.0 / 20.0)
 
     ccol = np.ndarray((I, J, K), dtype=utens_stage.dtype)
     dcol = np.ndarray((I, J, K), dtype=utens_stage.dtype)

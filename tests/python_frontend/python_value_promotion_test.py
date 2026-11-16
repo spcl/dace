@@ -40,12 +40,25 @@ def math_sqrt_of_an_integer(x: dace.float64[N], y: dace.float64[N]):
     y[:] = x * math.sqrt(D)
 
 
+@dace.program
+def declared_scalar_offset(x: dace.float32[N], y: dace.float32[N]):
+    i = dace.define_local_scalar(dtype=dace.int32)
+    i = 0
+    y[:] = x + i
+
+
 def test_a_python_value_keeps_the_array_float32():
     assert array_dtypes(python_value_scale) == {dace.float32}
 
 
 def test_a_numpy_scalar_stays_strong():
     assert dace.float64 in array_dtypes(numpy_scalar_scale)
+
+
+def test_a_declared_scalar_keeps_its_dtype():
+    """``dace.define_local_scalar(dace.int32)`` is a NumPy ``int32``, not a Python int, even once assigned ``0``:
+    ``float32 + int32`` is ``float64``."""
+    assert dace.float64 in array_dtypes(declared_scalar_offset)
 
 
 def test_math_sqrt_of_an_integer_is_not_truncated():
@@ -69,5 +82,6 @@ def test_a_python_value_computes_what_numpy_computes():
 if __name__ == "__main__":
     test_a_python_value_keeps_the_array_float32()
     test_a_numpy_scalar_stays_strong()
+    test_a_declared_scalar_keeps_its_dtype()
     test_math_sqrt_of_an_integer_is_not_truncated()
     test_a_python_value_computes_what_numpy_computes()

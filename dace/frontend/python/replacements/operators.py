@@ -53,6 +53,23 @@ def typing_operand(visitor: ProgramVisitor, sdfg: SDFG, operand: Any) -> Any:
     return sdfg.arrays[operand]
 
 
+def typing_operands(visitor: ProgramVisitor, sdfg: SDFG, operands: Sequence[Any]) -> list[Any]:
+    """:func:`typing_operand` of each operand; when every operand is a Python value, each is a Python number of its
+    kind, symbols included, so the result is Python's (``idx % stride`` is ``int64``, not the loop symbol's dtype)."""
+    if not all(visitor.holds_python_value(operand) for operand in operands):
+        return [typing_operand(visitor, sdfg, operand) for operand in operands]
+    symbols = visitor.symbol_types()
+    numbers = []
+    for operand in operands:
+        if isinstance(operand, str) and operand in sdfg.arrays:
+            numbers.append(python_number_like(sdfg.arrays[operand].dtype))
+        elif symbolic.issymbolic(operand):
+            numbers.append(python_number_like(symbolic.symtype(operand, symbols)))
+        else:
+            numbers.append(operand)
+    return numbers
+
+
 def mark_python_value(visitor: ProgramVisitor, result: str, *operands: Any) -> str:
     """Records ``result`` as holding a Python value when every operand does: arithmetic over Python values is one."""
     if all(visitor.holds_python_value(operand) for operand in operands):
@@ -100,7 +117,7 @@ def _makeunop(op, opcode):
     @oprepo.replaces_operator("Scalar", op)
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2=None):
         scalar1 = sdfg.arrays[op1]
-        restype, _ = result_type([typing_operand(visitor, sdfg, op1)], op, symbols=visitor.symbol_types())
+        restype, _ = result_type(typing_operands(visitor, sdfg, [op1]), op, symbols=visitor.symbol_types())
         if visitor.holds_python_value(op1):
             restype = scalar1.dtype
         op2 = visitor.get_target_name()
@@ -477,7 +494,7 @@ def _array_array_binop(
     right_type = right_arr.dtype
 
     # Implicit Python coversion implemented as casting
-    arguments = [typing_operand(visitor, sdfg, left_operand), typing_operand(visitor, sdfg, right_operand)]
+    arguments = typing_operands(visitor, sdfg, [left_operand, right_operand])
     tasklet_args = ["__in1", "__in2"]
     restype, casting = result_type(arguments, operator, symbols=visitor.symbol_types())
     left_cast = casting[0]
@@ -492,7 +509,7 @@ def _array_array_binop(
     right_shape = right_arr.shape
 
     (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(
-        left_shape, right_shape, facts=visitor.proof_facts(), equal_under=visitor.proven_symbol_values()
+        left_shape, right_shape, facts=visitor.proof_facts(), equal_under=visitor.proven_symbol_values(stand_ins=True)
     )
 
     # Fix for Scalars
@@ -719,7 +736,7 @@ def _scalar_scalar_binop(
     right_type = right_scal.dtype
 
     # Implicit Python coversion implemented as casting
-    arguments = [typing_operand(visitor, sdfg, left_operand), typing_operand(visitor, sdfg, right_operand)]
+    arguments = typing_operands(visitor, sdfg, [left_operand, right_operand])
     tasklet_args = ["__in1", "__in2"]
     restype, casting = result_type(arguments, operator, symbols=visitor.symbol_types())
     left_cast = casting[0]
@@ -798,7 +815,7 @@ def _scalar_value_binop(
     connector = "__in1" if scalar_on_left else "__in2"
     value = right_operand if scalar_on_left else left_operand
     tasklet_args = [connector, f"({spell(value)})"] if scalar_on_left else [f"({spell(value)})", connector]
-    arguments = [typing_operand(visitor, sdfg, left_operand), typing_operand(visitor, sdfg, right_operand)]
+    arguments = typing_operands(visitor, sdfg, [left_operand, right_operand])
     restype, casting = result_type(arguments, operator, symbols=visitor.symbol_types())
     for position, cast in enumerate(casting[:2]):
         if cast is not None:

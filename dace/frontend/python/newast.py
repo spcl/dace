@@ -9,7 +9,7 @@ import sys
 import time
 import warnings
 from collections import OrderedDict
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from numbers import Number
 from os import path
@@ -1374,9 +1374,9 @@ class ProgramVisitor(ExtNodeVisitor):
         #: The shape symbol each scalar's current version was promoted to, with the region its assignment ran in.
         #: A write to the scalar drops it, so every shape sized from one value shares one symbol.
         self.shape_promotions: dict[str, tuple[symbolic.symbol, ControlFlowRegion]] = dict()
-        #: Scalars whose last assignment was a Python value -- a Python number, a symbolic expression, or arithmetic
-        #: over such values (``scale = 1.0 / math.sqrt(D)``). NumPy holds a Python float there, which is weak under
-        #: NEP 50, so a dtype these meet takes the other operand's (:meth:`holds_python_value`).
+        #: Scalars holding a Python value -- a Python number, a symbolic expression, or arithmetic over such values
+        #: (``scale = 1.0 / math.sqrt(D)``) -- since a Python value created them. NumPy holds a Python float there,
+        #: which is weak under NEP 50, so a dtype these meet takes the other operand's (:meth:`holds_python_value`).
         self.weak_scalars: set[str] = set()
         #: Integer scalars whose last assignment was a symbolic value, with the region it ran in.
         self.symbolic_scalar_values: dict[str, tuple[symbolic.SymbolicType, ControlFlowRegion]] = dict()
@@ -3285,13 +3285,16 @@ class ProgramVisitor(ExtNodeVisitor):
         self.symbolic_scalar_values.pop(target_name, None)
         self.shape_promotions.pop(target_name, None)
         self.forget_scalar_arithmetic(target_name)
+        # A scalar a Python value created stays weak while it is assigned Python values; a declared one
+        # (``dace.define_local_scalar(dace.int32)``) keeps its dtype, as a NumPy scalar would.
+        was_weak = target_name in self.weak_scalars
         self.weak_scalars.discard(target_name)
         if (
-            op is None
+            was_weak
+            and op is None
             and boolarr is None
             and not indirect_indices
             and not isinstance(operand, tuple)
-            and isinstance(self.sdfg.arrays.get(target_name), data.Scalar)
             and self.holds_python_value(operand)
         ):
             self.weak_scalars.add(target_name)
@@ -3382,7 +3385,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 # A whole-array copy between extents only the caller can relate (an output argument's
                 # own extent symbol against one derived from the inputs) is taken as equal here; the call
                 # site proves it once it binds both (``check_extent_equalities``).
-                unproven = [(s, o) for s, o in zip(ssize, osize) if inequal_symbols(s, o, self.proof_facts())]
+                unproven = self.unproven_extents(ssize, osize, proven)
                 if (
                     unproven
                     and not (indirect_indices or boolarr or op)
@@ -4252,6 +4255,9 @@ class ProgramVisitor(ExtNodeVisitor):
                         else:
                             ttype = rtype
                         true_name, new_data = self.sdfg.add_scalar(true_name, ttype, transient=True, find_new_name=True)
+                        if not dtype:
+                            # Bound to a Python value with no declared dtype: a Python variable
+                            self.weak_scalars.add(true_name)
                     self.variables[name] = true_name
                     defined_vars[name] = true_name
                 if (
@@ -6364,7 +6370,7 @@ class ProgramVisitor(ExtNodeVisitor):
         )
         return not any(str(sym) in assigned - versions for sym in value.free_symbols)
 
-    def proven_symbol_values(self) -> dict[symbolic.symbol, symbolic.SymbolicType]:
+    def proven_symbol_values(self, stand_ins: bool = False) -> dict[symbolic.symbol, symbolic.SymbolicType]:
         """Promoted symbols that provably equal a symbolic value at the current region.
 
         ``n = N; hc[:n, :n] = c`` bounds the store by ``n``'s promoted symbol while ``c`` is sized by
@@ -6372,8 +6378,9 @@ class ProgramVisitor(ExtNodeVisitor):
         same shape; only a store compares its extents through these values.
 
         A scalar assigned arithmetic over other scalars (:meth:`record_scalar_arithmetic`) is proven
-        here once it is promoted, over its leaves' promoted symbols or, for a leaf not promoted, the leaf
-        itself (:meth:`arithmetic_over_versions`).
+        here once it is promoted, over its leaves' promoted symbols. With ``stand_ins``, a leaf not
+        promoted stands for itself (:meth:`arithmetic_over_versions`): its name is no symbol of the SDFG,
+        so such values only compare extents and never enter a memlet.
         """
         proven = {
             sym: value
@@ -6384,7 +6391,7 @@ class ProgramVisitor(ExtNodeVisitor):
             promoted = self.shape_promotions.get(scalar)
             if promoted is None or promoted[0] in proven or not self.nested_in_region(promoted[1]):
                 continue
-            arithmetic = self.arithmetic_over_versions(scalar)
+            arithmetic = self.arithmetic_over_versions(scalar, stand_ins)
             if arithmetic is not None and self.value_holds_here(arithmetic[0], promoted[1], arithmetic[1]):
                 proven[promoted[0]] = arithmetic[0]
         return proven
@@ -6396,6 +6403,19 @@ class ProgramVisitor(ExtNodeVisitor):
         if isinstance(operand, str):
             return operand in self.weak_scalars
         return symbolic.issymbolic(operand) or (isinstance(operand, Number) and not isinstance(operand, numpy.generic))
+
+    def unproven_extents(
+        self, sizes: Sequence[symbolic.SymbolicType], others: Sequence[symbolic.SymbolicType], proven: Mapping
+    ) -> list[tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
+        """The pairs of ``sizes`` and ``others`` not provably equal, after ``proven`` already replaced what a memlet
+        may name and :meth:`proven_symbol_values` with stand-ins the rest."""
+        stand_in = {sym: value for sym, value in self.proven_symbol_values(stand_ins=True).items() if sym not in proven}
+        facts = self.proof_facts()
+
+        def proved(size: symbolic.SymbolicType) -> symbolic.SymbolicType:
+            return size.xreplace(stand_in) if stand_in and symbolic.issymbolic(size) else size
+
+        return [(s, o) for s, o in zip(sizes, others) if inequal_symbols(proved(s), proved(o), facts)]
 
     def proof_facts(self) -> symbolic.Facts:
         """:meth:`facts` for comparing extents through :meth:`proven_symbol_values`: the integer scalars recorded
@@ -6439,11 +6459,13 @@ class ProgramVisitor(ExtNodeVisitor):
             self.cfg_target,
         )
 
-    def arithmetic_over_versions(self, scalar: str) -> tuple[symbolic.SymbolicType, frozenset[str]] | None:
+    def arithmetic_over_versions(
+        self, scalar: str, stand_ins: bool
+    ) -> tuple[symbolic.SymbolicType, frozenset[str]] | None:
         """The arithmetic ``scalar`` was assigned, over its leaves' current version symbols, or ``None``.
 
         A promoted leaf reads as its version symbol, so the proof adds no state. A leaf not promoted
-        here stays the symbol of its own name: every write to a scalar forgets each arithmetic that
+        here gives ``None``, or with ``stand_ins`` stays the symbol of its own name: every write to a scalar forgets each arithmetic that
         reads it, so all recorded arithmetic names the same value of that leaf and two of them
         compare exactly through it (a transposed convolution's ``iy0 = iy_lo`` against ``oy_hi =
         oy_lo + (iy_hi - iy_lo) * s`` when only ``iy0``, ``iy1`` and ``oy_lo`` are ever promoted). The
@@ -6460,6 +6482,8 @@ class ProgramVisitor(ExtNodeVisitor):
             if promoted is not None and self.nested_in_region(promoted[1]):
                 repl[symbolic.symbol(leaf)] = promoted[0]
                 versions.add(str(promoted[0]))
+            elif not stand_ins:
+                return None
         return expr.xreplace(repl), frozenset(versions)
 
     def promote_scalar_to_symbol(self, scalar: str, key: str | None = None) -> symbolic.symbol:

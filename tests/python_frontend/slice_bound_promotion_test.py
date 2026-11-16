@@ -396,7 +396,6 @@ def test_a_rebound_leaf_does_not_prove_the_extent():
         strided_tap_after_a_leaf_is_rebound.to_sdfg(simplify=False)
 
 
-
 @dace.program
 def strided_tap_through_aliased_bounds(out: dace.float64[M], x: dace.float64[N], p: dace.int64, s: dace.int64):
     lo = max(0, p)
@@ -420,6 +419,27 @@ def test_a_strided_slice_matches_an_operand_bounded_by_aliases_of_unpromoted_sca
     expected = np.zeros(m)
     lo, hi = max(0, p), min(n, p + 3)
     expected[lo * stride + 1 : lo * stride + 1 + (hi - lo) * stride : stride] += x[lo:hi]
+    assert np.array_equal(out, expected), out
+
+
+@dace.program
+def update_at_a_scalar_offset(out: dace.float64[M, N], x: dace.float64[N], p: dace.int64):
+    t = p - 1
+    for _ in range(1, N):
+        out[t, :] += x
+
+
+def test_a_store_index_names_no_scalar_its_proof_read():
+    """ICON's ``t = ntnd - 1`` indexes every tendency store. ``ntnd`` stands for itself only while extents are
+    compared: a memlet naming it reads a container as a symbol, which a nested SDFG reports missing."""
+    sdfg = update_at_a_scalar_offset.to_sdfg(simplify=False)
+    named = {str(sym) for state in sdfg.states() for edge in state.edges() for sym in edge.data.free_symbols}
+    assert not named & set(sdfg.arrays), named
+    n, m, p = 4, 3, 2
+    out, x = np.zeros((m, n)), np.arange(1.0, n + 1)
+    update_at_a_scalar_offset(out=out, x=x, p=p, M=m, N=n)
+    expected = np.zeros((m, n))
+    expected[p - 1] = (n - 1) * x
     assert np.array_equal(out, expected), out
 
 
