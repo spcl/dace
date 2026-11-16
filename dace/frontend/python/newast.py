@@ -169,6 +169,31 @@ def extent_mismatch(pairs: list[tuple[Any, Any]]) -> str:
     return f"could not broadcast input array from extents [{sources}] into extents [{targets}]"
 
 
+def asserted_relations(test: ast.expr) -> list[symbolic.Relation] | None:
+    """The symbol relations an ``assert`` states: comparisons joined by ``and``, ``a % b == 0`` read as ``b`` divides
+    ``a``; ``None`` for any other test."""
+    if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And):
+        parts = [asserted_relations(value) for value in test.values]
+        return None if any(part is None for part in parts) else [r for part in parts for r in part]
+    try:
+        condition = pystr_to_symbolic(astutils.unparse(test))
+    except (TypeError, SyntaxError, sympy.SympifyError):
+        return None
+    found = []
+    for part in condition.args if isinstance(condition, sympy.And) else (condition,):
+        relation = symbolic.comparison_relation(part)
+        if relation is None and isinstance(part, (sympy.Eq, sympy.Ne)):
+            kind = symbolic.RelationKind.EQ if isinstance(part, sympy.Eq) else symbolic.RelationKind.NE
+            if kind is symbolic.RelationKind.EQ and isinstance(part.lhs, sympy.Mod) and part.rhs == 0:
+                relation = symbolic.Relation(symbolic.RelationKind.DIVIDES, part.lhs.args[1], part.lhs.args[0])
+            else:
+                relation = symbolic.Relation(kind, part.lhs, part.rhs)
+        if relation is None:
+            return None
+        found.append(relation)
+    return found
+
+
 def check_extent_equalities(pv: "ProgramVisitor", node: ast.Call, sdfg: SDFG, mapping: dict[str, Any]) -> None:
     """Proves the extent equalities the callee ``sdfg`` deferred, under this call's symbol ``mapping``.
     What the caller still cannot prove is deferred to its own caller, or refused at the top level."""
@@ -178,7 +203,7 @@ def check_extent_equalities(pv: "ProgramVisitor", node: ast.Call, sdfg: SDFG, ma
             e.subs({s: pystr_to_symbolic(str(mapping[s.name])) for s in e.free_symbols if s.name in mapping})
             for e in pair
         ]
-        if inequal_symbols(*bound):
+        if inequal_symbols(*bound, pv.facts()):
             unproven.append(tuple(bound))
         # Unproven here means proven by an enclosing caller or refused below; either way it is taken.
         spell_extent_as_source(origin, *pair, mapping if origin is sdfg else {})
@@ -513,7 +538,6 @@ DISALLOWED_STMTS = [
 # Extra AST node types that are disallowed after preprocessing
 _DISALLOWED_STMTS = DISALLOWED_STMTS + [
     "Global",
-    "Assert",
     "Print",
     "Nonlocal",
     "Raise",
@@ -978,8 +1002,8 @@ class TaskletTransformer(ExtNodeTransformer):
         self.variables = variables
         self.accesses = accesses
 
-        # Disallow keywords
-        for stmt in _DISALLOWED_STMTS:
+        # Disallow keywords; a tasklet has no symbols to assert relations of
+        for stmt in (*_DISALLOWED_STMTS, "Assert"):
             setattr(self, "visit_" + stmt, lambda n: _disallow_stmt(self, n))
 
     def parse_tasklet(self, tasklet_ast: TaskletType, name: str | None = None):
@@ -3125,6 +3149,23 @@ class ProgramVisitor(ExtNodeVisitor):
                 return True
             node = node.parent_graph
         return False
+
+    def visit_Assert(self, node: ast.Assert):
+        """A runtime ``assert`` over the program's symbols (``h % 16 == 0``, ``k <= n``) is a symbol relation: the
+        proofs use it, and the call checks it. Any other runtime assertion is skipped, as before."""
+        # Every operand a symbol; a call's function (preprocessing spells ``%`` as ``PyMod``) is no operand
+        functions = {id(call.func) for call in ast.walk(node.test) if isinstance(call, ast.Call)}
+        names = {n.id for n in ast.walk(node.test) if isinstance(n, ast.Name) and id(n) not in functions}
+        relations = (
+            asserted_relations(node.test) if names <= self.sdfg.symbols.keys() - self.sdfg.arrays.keys() else None
+        )
+        if relations is None:
+            warnings.warn(
+                f"Runtime assertion at line {node.lineno} could not be checked in DaCe program, skipping check."
+            )
+            return
+        for relation in relations:
+            self.sdfg.add_symbol_relation(relation)
 
     def visit_Break(self, node: ast.Break):
         if not self._has_loop_ancestor(self.cfg_target):

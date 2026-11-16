@@ -1118,7 +1118,11 @@ class DaceProgram(pycommon.SDFGConvertible):
 
             # Extents an assignment took as equal are proven by the caller; a top-level program has none.
             if newast.NESTED_PROGRAM_CALLS.get() == 0:
-                unproven = newast.pop_extent_equalities(sdfg)
+                unproven = [
+                    (pair, origin)
+                    for pair, origin in newast.pop_extent_equalities(sdfg)
+                    if symbolic.inequal_symbols(*pair, sdfg.facts())
+                ]
                 if unproven:
                     raise IndexError(newast.extent_mismatch([pair for pair, _ in unproven]))
 

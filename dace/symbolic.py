@@ -5498,7 +5498,8 @@ def inequal_symbols(a: sympy.Expr | Any, b: sympy.Expr | Any, facts: Facts | Non
 
     :param facts: The facts of the scope the expressions belong to. A registry symbol is a bare name, so the
                   integrality and sign that let ``ceiling((S*hi - S*lo + 1)/S)`` cancel against ``hi - lo + 1``
-                  come from them; without them the comparison knows nothing of either.
+                  come from them, and so do the relations that equate what simplification cannot; without them the
+                  comparison knows nothing of either.
     """
     if to_sympy is not None:
         converted_a = to_sympy(a)
@@ -5520,6 +5521,7 @@ def inequal_symbols(a: sympy.Expr | Any, b: sympy.Expr | Any, facts: Facts | Non
     if not isinstance(a, sympy.Expr) or not isinstance(b, sympy.Expr):
         return a != b
     else:
+        given = (a, b)
         a, b = (relax_int_floor(x) for x in equalize_symbols(a, b))
         difference = a - b
         if facts is not None:
@@ -5534,7 +5536,10 @@ def inequal_symbols(a: sympy.Expr | Any, b: sympy.Expr | Any, facts: Facts | Non
         # as `ceiling` and `floor`, if the symbol assumptions allow it.
         # We subtract and compare to zero according to the SymPy documentation
         # (https://docs.sympy.org/latest/tutorial/gotchas.html).
-        return difference.simplify() != 0
+        if difference.simplify() == 0:
+            return False
+        # The scope's relations may still equate them: 2 * (h // 16) is h // 8 where 16 divides h
+        return facts is None or not holds(Relation(RelationKind.EQ, *given), facts)
 
 
 def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> bool | None:

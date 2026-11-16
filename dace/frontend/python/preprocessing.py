@@ -965,6 +965,12 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         return self.generic_visit(node)
 
     def visit_Assert(self, node: ast.Assert) -> Any:
+        # A test over symbols holds or not per call: the program visitor reads it as a relation
+        if any(
+            isinstance(name, ast.Name) and symbolic.issymbolic(self.globals.get(name.id))
+            for name in ast.walk(node.test)
+        ):
+            return node
         # Try to evaluate assertion statically
         try:
             global_val = astutils.evalnode(node.test, self.globals)
@@ -983,10 +989,8 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                 f"Assertion failed statically at line {node.lineno} during compilation of DaCe program" + msg
             )
         except SyntaxError:
-            warnings.warn(
-                f"Runtime assertion at line {node.lineno} could not be checked in DaCe program, skipping check."
-            )
-        return None
+            # A runtime assertion: the program visitor reads one over symbols as a relation, and skips any other
+            return node
 
     def visit_Raise(self, node: ast.Raise) -> Any:
         warnings.warn(f"Runtime exception at line {node.lineno} is not supported and will be skipped.")
