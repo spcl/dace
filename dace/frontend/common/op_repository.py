@@ -35,6 +35,7 @@ class Replacements:
     _ufunc_rep: dict[str, MethodType] = {}
     _method_rep: dict[tuple[str, str], MethodType] = {}
     _attr_rep: dict[tuple[str, str], MethodType] = {}
+    window_outputs_of: dict[str, tuple[int, ...]] = {}
 
     @staticmethod
     def get(name: str):
@@ -42,6 +43,14 @@ class Replacements:
         if name not in Replacements._rep:
             return None
         return Replacements._rep[name]
+
+    @staticmethod
+    def window_outputs(name: str) -> tuple[int, ...] | None:
+        """
+        Returns the positions of the arguments that a replacement registered with :func:`replaces_windows` writes, or
+        ``None`` if the function does not take windows.
+        """
+        return Replacements.window_outputs_of.get(name)
 
     @staticmethod
     def getop(class_or_name: str | type, optype: str, otherclass: str | type | None = None):
@@ -95,6 +104,25 @@ def replaces(func: Callable[..., tuple[str]], name: str):
     :param name: Full name (pydoc-compliant, including package) of function to replace.
     """
     Replacements._rep[name] = func
+    return func
+
+
+@paramdec
+def replaces_windows(func: Callable[..., tuple[str]], name: str, outputs: tuple[int, ...] = ()):
+    """Registers a replacement for a function whose array slices it wires itself.
+
+    An argument of the form ``A[i:i + 8]`` reaches the replacement as the pair ``(container, subset)`` instead of
+    a copy of the slice, where ``container`` is the data container of the SDFG the call is parsed into and
+    ``subset`` the range of it that the slice names. The arguments at the positions in ``outputs`` are written by
+    the replacement.
+
+    :param func: A function that receives a ProgramVisitor, an SDFG, an SDFGState, and the original function
+                 arguments.
+    :param name: Full name (pydoc-compliant, including package) of function to replace.
+    :param outputs: Positions of the arguments the function writes.
+    """
+    Replacements._rep[name] = func
+    Replacements.window_outputs_of[name] = tuple(outputs)
     return func
 
 

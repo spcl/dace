@@ -1436,48 +1436,6 @@ def concurrent_subgraphs(graph):
     return [ScopeSubgraphView(graph, [n for n in all_nodes if n in sg], None) for sg in subgraphs]
 
 
-def separate_maps(state, dfg, schedule):
-    """Separates the given ScopeSubgraphView into subgraphs with and without
-    maps of the given schedule type. The function assumes that the given
-    ScopeSubgraph view does not contain any concurrent segments (i.e. pass
-    it through concurrent_subgraphs first). Only top level maps will be
-    accounted for, if the desired schedule occurs in another (undesired)
-    map, it will be ignored.
-
-    Returns a list with the subgraph views in order of the original DFG.
-    ScopeSubgraphViews for the parts with maps, StateSubgraphViews for the
-    parts without maps."""
-
-    from dace import nodes
-    from dace.sdfg.scope import StateSubgraphView
-
-    sorted_nodes = list(dfs_topological_sort(dfg, dfg.source_nodes()[0]))
-    nodes_to_skip = [dfg.source_nodes()[0], dfg.sink_nodes()[0]]
-    result = []
-
-    current = []
-    for node in sorted_nodes:
-        if node in nodes_to_skip:
-            continue
-        if isinstance(node, nodes.MapEntry):
-            if node.map.schedule == schedule:
-                result.append(StateSubgraphView(state, current))
-                result.append(state.scope_subgraph(node))
-                nodes_to_skip += result[-1].nodes()
-                current = []
-            else:
-                temp_nodes = state.scope_subgraph(node).nodes()
-                nodes_to_skip += temp_nodes
-                current += temp_nodes
-        else:
-            current.append(node)
-
-    if len(current) > 0:
-        result.append(StateSubgraphView(state, current))
-
-    return result
-
-
 def _transients_in_scope(sdfg, outer_scope, scope_dict, include_nested):
     scopes = [outer_scope.entry]
     transients = set()
@@ -1863,7 +1821,12 @@ def distributed_compile(sdfg: SDFG | None, comm, *, validate: bool = True) -> cs
     return func
 
 
-def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> set[SDFGState]:
+def is_empty_state(block: ControlFlowBlock) -> bool:
+    """Whether ``block`` is a state without nodes; any other block (a region, a return) is not empty."""
+    return isinstance(block, SDFGState) and block.number_of_nodes() == 0
+
+
+def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> set[ControlFlowBlock]:
     """
     From the given state, return the next set of states that are reachable
     in the SDFG, skipping empty states. Traversal stops at the non-empty
@@ -1881,13 +1844,11 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> set[SDFGState]:
     # Traverse children until states are not empty
     for succ in state.parent_graph.successors(state):
         result |= set(
-            dfs_conditional(
-                state.parent_graph, sources=[succ], condition=lambda parent, _: parent.number_of_nodes() == 0
-            )
+            dfs_conditional(state.parent_graph, sources=[succ], condition=lambda parent, _: is_empty_state(parent))
         )
 
     # Filter out empty states
-    result = {s for s in result if not s.number_of_nodes() == 0}
+    result = {s for s in result if not is_empty_state(s)}
 
     return result
 
@@ -2445,11 +2406,22 @@ def get_control_flow_block_dominators(
         #   dominator of that loop or conditional.
         # - If the immediate dominator is any other control flow region, change the immediate dominator to be the
         #   immediate dominator of that region's end / exit - or a virtual one if no single one exists.
+        roots: set[ControlFlowBlock] = set()
         for k in idom.keys():
             if k.parent_graph is not sdfg and k is k.parent_graph.start_block:
-                next_dom = idom[k.parent_graph]
-                while next_dom.parent_graph is not sdfg and next_dom is next_dom.parent_graph.start_block:
-                    next_dom = idom[next_dom.parent_graph]
+                region = k.parent_graph
+                next_dom = idom[region]
+                while (
+                    next_dom.parent_graph is not sdfg
+                    and next_dom is next_dom.parent_graph.start_block
+                    and next_dom not in roots
+                ):
+                    region = next_dom.parent_graph
+                    next_dom = idom[region]
+                # A region that starts the SDFG is the root: its first block becomes the root instead
+                if next_dom is region and not isinstance(region, (LoopRegion, ConditionalBlock)):
+                    roots.add(k)
+                    next_dom = k
                 idom[k] = next_dom
         changed = True
         while changed:
@@ -2500,16 +2472,27 @@ def get_control_flow_block_dominators(
 
         # Compute the transitive relationship of immediate postdominators, similar to how it works for immediate
         # dominators, but inverse.
+        roots: set[ControlFlowBlock] = set()
         for k in ipostdom.keys():
             if k.parent_graph is not sdfg and (
                 k is sinks_per_cfg[k.parent_graph] or isinstance(k.parent_graph, ConditionalBlock)
             ):
-                next_pdom = ipostdom[k.parent_graph]
-                while next_pdom.parent_graph is not sdfg and (
-                    next_pdom is sinks_per_cfg[next_pdom.parent_graph]
-                    or isinstance(next_pdom.parent_graph, ConditionalBlock)
+                region = k.parent_graph
+                next_pdom = ipostdom[region]
+                while (
+                    next_pdom.parent_graph is not sdfg
+                    and (
+                        next_pdom is sinks_per_cfg[next_pdom.parent_graph]
+                        or isinstance(next_pdom.parent_graph, ConditionalBlock)
+                    )
+                    and next_pdom not in roots
                 ):
-                    next_pdom = ipostdom[next_pdom.parent_graph]
+                    region = next_pdom.parent_graph
+                    next_pdom = ipostdom[region]
+                # A region that ends the SDFG is the root: its last block becomes the root instead
+                if next_pdom is region and not isinstance(region, (LoopRegion, ConditionalBlock)):
+                    roots.add(k)
+                    next_pdom = k
                 ipostdom[k] = next_pdom
         changed = True
         while changed:

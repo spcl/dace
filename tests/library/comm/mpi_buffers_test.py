@@ -438,7 +438,7 @@ def test_waitall_statuses_are_a_stack_array_of_the_request_count():
     sdfg.expand_library_nodes(recursive=False)
     code = sdfg.generate_code()[0].clean_code
     assert "MPI_Status _s[n];" in code  # A variable-length array
-    assert "MPI_Waitall(n, _request, _s);" in code
+    assert "MPI_Waitall(n, req, _s);" in code  # The request array is passed directly
 
 
 def _allreduce_within_sdfg(name: str, out: str) -> dace.SDFG:
