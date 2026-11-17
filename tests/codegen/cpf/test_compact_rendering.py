@@ -10,7 +10,7 @@ import pytest
 
 import dace
 from dace import cpf_lowering
-from dace.codegen.cpf import CONTRACT_LINES, EntrySignature, Rendering, render
+from dace.codegen.cpf import CONTRACT_LINES, EntrySignature, Rendering, compact_blocks, render
 from dace.sdfg.state import LoopRegion
 from tests.codegen.cpf.conftest import assert_matches, assert_standalone, build_standalone, call_standalone
 
@@ -242,6 +242,81 @@ def test_an_array_zeroed_on_each_allocation_keeps_its_own_allocation():
     assert_matches({"out": 3 * a}, {"out": out}, name)
 
 
+GROUPING_ONLY = """void f(double *a, int n)
+{
+    a[0] = 1.0;
+    {
+
+        a[1] = 2.0;
+        {
+            if (n > 2) {
+                a[2] = 3.0;
+            }
+        }
+
+    }
+}"""
+
+
+def test_a_block_that_only_groups_loses_its_braces_and_blank_lines():
+    assert compact_blocks(GROUPING_ONLY) == (
+        "void f(double *a, int n)\n{\n    a[0] = 1.0;\n    a[1] = 2.0;\n    if (n > 2) {\n        a[2] = 3.0;\n    }\n}"
+    )
+
+
+KEPT_BLOCKS = {
+    "a declaration": "x = 1;\n{\n    double t;\n    t = 2.0;\n}",
+    "a qualified declaration": "x = 1;\n{\n    const int64_t n = 4;\n}",
+    "a pointer declaration": "x = 1;\n{\n    double* restrict p = q;\n}",
+    "a for body": "for (i = 0; i < n; i += 1)\n{\n    x = i;\n}",
+    "an else body": "if (c) {\n    x = 1;\n} else\n{\n    x = 2;\n}",
+    "an OpenMP structured block": "x = 1;\n#pragma omp parallel\n{\n    f();\n}",
+    "a trailing directive": "x = 1;\n{\n    f();\n    #pragma omp barrier\n}",
+    "a label": "x = 1;\n{\n    done:\n    x = 2;\n}",
+    "a wrapped statement": "x = 1;\n{\n    f(a,\n      b);\n}",
+}
+
+
+@pytest.mark.parametrize("text", list(KEPT_BLOCKS.values()), ids=list(KEPT_BLOCKS))
+def test_a_block_that_scopes_or_is_a_body_keeps_its_braces(text):
+    code = "void f(void)\n{\n" + text + "\n}"
+    assert compact_blocks(code) == code
+
+
+def test_braces_in_comments_and_literals_do_not_pair():
+    code = "void f(void)\n{\n    x = 1;\n    {\n        s = \"}\"; // {\n        c = '{'; /* } */\n    }\n}"
+    assert compact_blocks(code) == "void f(void)\n{\n    x = 1;\n    s = \"}\"; // {\n    c = '{'; /* } */\n}"
+
+
+def test_blank_lines_between_definitions_collapse_to_one():
+    assert compact_blocks("int a;\n\n\n\nint b;\n") == "int a;\n\nint b;\n"
+
+
+@dace.program
+def cpf_compact_branches(a: dace.float64[N], b: dace.float64[N], flag: dace.int64):
+    if flag > 0:
+        for i in dace.map[0:N]:
+            b[i] = a[i] * 2.0
+    else:
+        for i in dace.map[0:N]:
+            b[i] = a[i] + 3.0
+
+
+@pytest.mark.parametrize("language", ["c++", "c"])
+def test_a_compacted_unit_has_no_blank_line_in_a_body_and_computes_the_same(language):
+    name = f"cpf_compact_blocks_{'cpp' if language == 'c++' else 'c'}"
+    result = rendered(cpf_compact_branches, name, language)
+    entry = result.code[result.code.index(f"{name}(") :]
+    assert not [line for line in entry.splitlines() if not line.strip()], entry
+    assert_standalone(result.code, name, language=language)
+    library = build_standalone(result.code, name, language=language)
+    a = np.random.default_rng(3).random(17)
+    for flag, expected in ((1, a * 2.0), (0, a + 3.0)):
+        args = {"a": a, "b": np.zeros(17), "N": 17, "flag": flag}
+        call_standalone(library, result.sdfg, args)
+        assert_matches({"b": expected}, {"b": args["b"]}, name)
+
+
 if __name__ == "__main__":
     test_a_loop_comment_is_its_class_and_reason_and_the_header_says_what_the_class_means("c++")
     test_a_loop_comment_is_its_class_and_reason_and_the_header_says_what_the_class_means("c")
@@ -256,3 +331,10 @@ if __name__ == "__main__":
     test_the_workspace_is_carved_at_a_running_offset_taken_once_per_call("c++")
     test_the_workspace_is_carved_at_a_running_offset_taken_once_per_call("c")
     test_an_array_zeroed_on_each_allocation_keeps_its_own_allocation()
+    test_a_block_that_only_groups_loses_its_braces_and_blank_lines()
+    for text in KEPT_BLOCKS.values():
+        test_a_block_that_scopes_or_is_a_body_keeps_its_braces(text)
+    test_braces_in_comments_and_literals_do_not_pair()
+    test_blank_lines_between_definitions_collapse_to_one()
+    test_a_compacted_unit_has_no_blank_line_in_a_body_and_computes_the_same("c++")
+    test_a_compacted_unit_has_no_blank_line_in_a_body_and_computes_the_same("c")
