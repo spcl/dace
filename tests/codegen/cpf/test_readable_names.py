@@ -87,7 +87,7 @@ def test_an_iterator_skips_the_letters_the_arguments_hold(language):
 
 def team_sdfg(name: str) -> dace.SDFG:
     """An outer map over two parts calls a nested SDFG whose two maps cover the part's half of ``N`` with the same
-    compound bounds, written over a symbol ``__part`` that the outer map parameter ``__p`` binds."""
+    compound bounds, written over a symbol ``__part`` that the outer map parameter ``__t0`` binds."""
     inner = dace.SDFG("nested_sdfg")
     inner.add_symbol("__part", dace.int64)
     for array in ("a", "b", "c"):
@@ -115,8 +115,8 @@ def team_sdfg(name: str) -> dace.SDFG:
     for array in ("a", "b", "c"):
         sdfg.add_array(array, [N], dace.float64)
     state = sdfg.add_state("main")
-    node = state.add_nested_sdfg(inner, {"a": None}, {"b": None, "c": None}, {"__part": "__p", "N": "N"})
-    entry, exit_ = state.add_map("team", {"__p": "0:2"})
+    node = state.add_nested_sdfg(inner, {"a": None}, {"b": None, "c": None}, {"__part": "__t0", "N": "N"})
+    entry, exit_ = state.add_map("team", {"__t0": "0:2"})
     state.add_memlet_path(state.add_read("a"), entry, node, dst_conn="a", memlet=dace.Memlet("a[0:N]"))
     for array in ("b", "c"):
         state.add_memlet_path(node, exit_, state.add_write(array), src_conn=array, memlet=dace.Memlet(f"{array}[0:N]"))

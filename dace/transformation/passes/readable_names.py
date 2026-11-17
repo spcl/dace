@@ -4,7 +4,8 @@
 Each SDFG of the tree renders as one C function, so names only have to be unique per SDFG. Generated names (those
 starting with ``_``) are renamed; names the program spelled are kept, and so are the top-level arguments (the ABI):
 
-* loop iterators and map parameters become ``i, j, k, ...`` by nesting depth (``__dace_tile`` becomes ``tile``);
+* loop iterators and map parameters become ``i, j, k, ...`` by nesting depth (``__dace_tile`` becomes ``tile``,
+  ``__c`` becomes ``c``);
 * a nested SDFG's symbol or container bound to a plain name of its parent takes that name;
 * other generated containers and symbols drop their underscores and pass prefixes (``__gather0_o`` -> ``gather0``);
 * a map bound that several maps of a nested SDFG repeat is assigned once to ``lo`` / ``hi`` at its start;
@@ -94,8 +95,13 @@ def function_stem(name: str) -> str:
     return container_stem(stem) if stem else "body"
 
 
-def iteration_name(depth: int, avoid: OrderedSet[str]) -> str:
-    """The letter for nesting ``depth``, or the next free one, or a numbered letter."""
+def iteration_name(depth: int, avoid: OrderedSet[str], old: str) -> str:
+    """The name ``old`` stands for (``__dace_tile`` -> ``tile``, ``__c`` -> ``c``, else ``c1``), or else the letter
+    for nesting ``depth``, the next free one, or a numbered letter."""
+    stripped = old.lstrip("_")
+    preferred = PREFERRED.get(old) or (stripped if len(stripped) == 1 and stripped.isalpha() else None)
+    if preferred is not None:
+        return next(name for name in (preferred, *(f"{preferred}{n}" for n in range(1, 100))) if is_free(name, avoid))
     order = LETTERS[depth:] + LETTERS[:depth]
     for suffix in ("", *map(str, range(1, 100))):
         for letter in order:
@@ -157,10 +163,12 @@ def bare_name(value: object) -> str | None:
 class FunctionRenamer:
     """Renames the names of one SDFG, which renders as one function."""
 
-    def __init__(self, sdfg: SDFG, parent: tuple[SDFGState, nodes.NestedSDFG] | None):
+    def __init__(self, sdfg: SDFG, parent: tuple[SDFGState, nodes.NestedSDFG] | None, outer_symbols: OrderedSet[str]):
         self.sdfg = sdfg
         self.parent = parent
         self.taken = function_namespace(sdfg)
+        #: Symbols of the enclosing SDFGs: validation refuses a scope that binds one of them anywhere below.
+        self.outer_symbols = outer_symbols
         #: Container and symbol renames, valid in the whole function.
         self.names: dict[str, str] = {}
         #: Each renamed scope with the iteration renames visible in it.
@@ -239,7 +247,9 @@ class FunctionRenamer:
                 inner_table = {**table, **block.new_symbols(table)}
                 name = block.loop_variable
                 if name and is_generated(name):
-                    own[name] = iteration_name(len(enclosing), self.taken | OrderedSet(enclosing))
+                    own[name] = iteration_name(
+                        len(enclosing), self.taken | self.outer_symbols | OrderedSet(enclosing), name
+                    )
                     self.rename_loop(block, name, own[name], inner_table.get(name))
                     inner_table[own[name]] = inner_table.pop(name, None)
                 self.record(block, visible, own)
@@ -266,11 +276,6 @@ class FunctionRenamer:
                     replace_properties_dict(desc, repl)
         for state in loop.states():
             rename_strings(StateSubgraphView(state, state.nodes()), repl)
-        if old in sdfg.symbols:
-            declared = sdfg.symbols[old]
-            sdfg.remove_symbol(old)
-            if new not in sdfg.symbols:
-                sdfg.add_symbol(new, declared)
 
     def rename_maps(
         self, state: SDFGState, enclosing: list[str], visible: dict[str, str], table: dict[str, object]
@@ -298,12 +303,8 @@ class FunctionRenamer:
             own: dict[str, str] = {}
             for param in entry.map.params:
                 if is_generated(param):
-                    avoid = self.taken | OrderedSet(names) | OrderedSet(own.values())
-                    preferred = PREFERRED.get(param)
-                    if preferred is not None and is_free(preferred, avoid):
-                        own[param] = preferred
-                    else:
-                        own[param] = iteration_name(len(names), avoid)
+                    avoid = self.taken | self.outer_symbols | OrderedSet(names) | OrderedSet(own.values())
+                    own[param] = iteration_name(len(names), avoid, param)
                 names.append(own.get(param, param))
             depth[entry] = names
             seen[entry] = {**outer_visible, **own}
@@ -374,12 +375,13 @@ def hoistable(expr: object, invariant: OrderedSet[str]) -> bool:
     return all(str(s) in invariant for s in expr.free_symbols)
 
 
-def rename_tree(sdfg: SDFG, parent: tuple[SDFGState, nodes.NestedSDFG] | None) -> None:
-    FunctionRenamer(sdfg, parent).run()
+def rename_tree(sdfg: SDFG, parent: tuple[SDFGState, nodes.NestedSDFG] | None, outer_symbols: OrderedSet[str]) -> None:
+    FunctionRenamer(sdfg, parent, outer_symbols).run()
+    inner_symbols = outer_symbols | OrderedSet(sdfg.symbols)
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nodes.NestedSDFG):
-                rename_tree(node.sdfg, (state, node))
+                rename_tree(node.sdfg, (state, node), inner_symbols)
 
 
 def name_functions(sdfg: SDFG) -> None:
@@ -411,6 +413,6 @@ class ReadableNames(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, object]) -> None:
-        rename_tree(sdfg, None)
+        rename_tree(sdfg, None, OrderedSet())
         name_functions(sdfg)
         sdfg.reset_cfg_list()
