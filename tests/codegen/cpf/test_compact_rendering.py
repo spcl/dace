@@ -13,6 +13,7 @@ from dace import cpf_lowering
 from dace.codegen.cpf import CONTRACT_LINES, EntrySignature, Rendering, render
 from tests.codegen.cpf.conftest import assert_matches, assert_standalone, build_standalone, call_standalone
 
+M = dace.symbol("M")
 N = dace.symbol("N")
 
 
@@ -77,9 +78,70 @@ def test_no_statement_carries_its_tasklet_name(language):
     run_scatter(result, name, language)
 
 
+def broadcast_rows_sdfg(name: str, extent: str = "N") -> dace.SDFG:
+    """``b[i, j] = a[i, j] + 1`` over an ``M x <extent>`` grid whose input repeats one row: ``a`` has row stride 0."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", ["M", extent], dace.float64, strides=[0, 1])
+    sdfg.add_array("b", ["M", extent], dace.float64)
+    state = sdfg.add_state()
+    state.add_mapped_tasklet(
+        "plus_one",
+        {"i": "0:M", "j": f"0:{extent}"},
+        {"x": dace.Memlet("a[i, j]")},
+        "y = x + 1.0",
+        {"y": dace.Memlet("b[i, j]")},
+        external_edges=True,
+    )
+    return sdfg
+
+
+def index_helper(code: str, array: str) -> str:
+    (helper,) = [line for line in code.splitlines() if re.search(rf"\binline int64_t {array}_idx\(", line)]
+    return helper
+
+
+def run_broadcast_rows(result: Rendering, name: str, language: str, extent: str = "N") -> None:
+    m, n = 5, 7
+    row = np.random.default_rng(1).random(n)
+    args = {"a": row, "b": np.zeros((m, n)), "M": m, extent: n}
+    call_standalone(build_standalone(result.code, name, language=language), result.sdfg, args)
+    assert_matches({"b": np.tile(row + 1.0, (m, 1))}, {"b": args["b"]}, name)
+
+
+@pytest.mark.parametrize("language", ["c++", "c"])
+def test_an_index_helper_names_its_indices_i0_i1_on_one_line(language):
+    name = f"cpf_compact_idx_names_{'cpp' if language == 'c++' else 'c'}"
+    result = render(broadcast_rows_sdfg(name), language=language)
+    assert re.search(r"\bb_idx\(int64_t i0, int64_t i1, int64_t N\) \{ return .*; \}$", index_helper(result.code, "b"))
+    assert "__d" not in result.code
+    run_broadcast_rows(result, name, language)
+
+
+@pytest.mark.parametrize("language", ["c++", "c"])
+def test_an_index_helper_takes_only_the_indices_its_body_reads(language):
+    name = f"cpf_compact_idx_unused_{'cpp' if language == 'c++' else 'c'}"
+    result = render(broadcast_rows_sdfg(name), language=language)
+    helper = index_helper(result.code, "a")
+    assert re.search(r"\ba_idx\(int64_t i1\) \{ return i1; \}$", helper), helper
+    assert re.search(r"\ba\[a_idx\(\w+\)\]", result.code), result.code
+    run_broadcast_rows(result, name, language)
+
+
+def test_an_extent_named_like_an_index_keeps_the_helper_indices_apart():
+    name = "cpf_compact_idx_clash"
+    result = render(broadcast_rows_sdfg(name, extent="i1"), language="c")
+    assert re.search(r"\bb_idx\(int64_t __d0, int64_t __d1, int64_t i1\)", index_helper(result.code, "b"))
+    run_broadcast_rows(result, name, "c", extent="i1")
+
+
 if __name__ == "__main__":
     test_a_loop_comment_is_its_class_and_reason_and_the_header_says_what_the_class_means("c++")
     test_a_loop_comment_is_its_class_and_reason_and_the_header_says_what_the_class_means("c")
     test_a_hint_stored_with_the_generic_sentence_renders_without_it()
     test_no_statement_carries_its_tasklet_name("c++")
     test_no_statement_carries_its_tasklet_name("c")
+    test_an_index_helper_names_its_indices_i0_i1_on_one_line("c++")
+    test_an_index_helper_names_its_indices_i0_i1_on_one_line("c")
+    test_an_index_helper_takes_only_the_indices_its_body_reads("c++")
+    test_an_index_helper_takes_only_the_indices_its_body_reads("c")
+    test_an_extent_named_like_an_index_keeps_the_helper_indices_apart()
