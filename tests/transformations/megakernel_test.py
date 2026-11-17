@@ -3,6 +3,7 @@
 host-side sizing, the grid barriers between dependent stages, and the fused kernel itself."""
 
 import copy
+import re
 import sys
 from pathlib import Path
 
@@ -290,7 +291,8 @@ def test_a_stencil_time_loop_is_one_cooperative_launch_with_two_grid_syncs(progr
         code = "\n".join(obj.clean_code for obj in fused.generate_code())
     assert code.count("LaunchCooperativeKernel(") == 1 and "LaunchKernel(" not in code
     assert code.count("cooperative_groups::this_grid().sync();") == 2
-    assert code.count("for (int64_t __mk_g = __mk_tid;") == 2
+    # The flat index is as wide as the iteration space needs (int for an int32 extent)
+    assert len(re.findall(r"for \((int|int64_t) __mk_g = __mk_tid;", code)) == 2
 
 
 @pytest.mark.gpu

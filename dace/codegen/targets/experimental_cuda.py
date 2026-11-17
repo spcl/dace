@@ -1300,7 +1300,7 @@ class KernelSpec:
             m.schedule == dtypes.ScheduleType.GPU_ThreadBlock
             for m, _ in gpu_scope_maps_recursive(kernel_parent_state.scope_subgraph(kernel_map_entry))
         )
-        # A cooperative grid must fit the device as launched, so it is never padded over chiplets
+        # A cooperative grid must fit the device as launched, so it is never padded over chiplets nor folded
         self.chiplets: int = (
             1
             if kernel_map_entry.map.cooperative
@@ -1310,7 +1310,10 @@ class KernelSpec:
             kernel_map_entry, list(self.grid_dims), self.chiplets
         )
         self.grid_dims, self.grid_folded = fold_grid_x(
-            cudaCodeGen.backend, list(self.grid_dims), list(self.block_dims), self.chiplets == 1
+            cudaCodeGen.backend,
+            list(self.grid_dims),
+            list(self.block_dims),
+            self.chiplets == 1 and not kernel_map_entry.map.cooperative,
         )
         self.index_types: dict[str, dtypes.typeclass] = common.gpu_map_index_types(
             sdfg,

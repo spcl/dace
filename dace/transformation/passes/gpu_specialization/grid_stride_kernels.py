@@ -190,12 +190,14 @@ class GridStrideKernels(ppl.Pass):
         # nodes.
         from dace.codegen.python.dialects.cuda_tile_cpp import is_tile_kernel
 
-        # A CUDA Tile C++ kernel launches one tile block per iteration, with no threads to stride
+        # A CUDA Tile C++ kernel launches one tile block per iteration, with no threads to stride. A cooperative
+        # kernel is persistent already: it strides over the range its launch sized (MegaKernelOptimization).
         kernels = [
             (n, s)
             for n, s in sdfg.all_nodes_recursive()
             if isinstance(n, nodes.MapEntry)
             and n.map.schedule == dtypes.ScheduleType.GPU_Device
+            and not n.map.cooperative
             and not is_tile_kernel(s, n)
         ]
         strided = hinted = 0
