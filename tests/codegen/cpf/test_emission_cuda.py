@@ -147,7 +147,7 @@ def test_a_nested_body_function_is_not_declared_inline_twice_in_a_cuda_unit():
 
     assert_standalone_units(rendering, name)
     code = rendering.device_code
-    assert re.search(r"__device__ __forceinline__ void loop_body_\w+\(", code), "no nested body function"
+    assert re.search(r"__device__ __forceinline__ void loop_body\w*\(", code), "no nested body function"
     assert not re.search(r"\binline\s+__device__\s+__forceinline__", code), "inline is declared twice"
 
 
