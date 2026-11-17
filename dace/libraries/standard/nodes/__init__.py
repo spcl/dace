@@ -17,3 +17,4 @@ from .scan import Scan, ScanOp
 from .state_scan import StateScan
 from .symmetrize import Symmetrize
 from .sync import Sync, SyncScope
+from .compute_persistent_kernel_range import ComputePersistentKernelRange

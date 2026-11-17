@@ -4461,7 +4461,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 if in_persistent:
                     # If already in a #pragma omp parallel, no need to use it twice
                     map_header += "#pragma omp for"
-                    # TODO(later): barriers and map_header += " nowait"
+                    if node.map.omp_nowait:
+                        map_header += " nowait"
                 elif not range_private:
                     # A range-privatized map opens its region and partitions its loops in its prelude.
                     map_header += "#pragma omp parallel for"
@@ -4478,8 +4479,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         "omp_get_max_threads()))"
                     )
 
-            # OpenMP schedule properties
-            if not in_persistent and not range_private:
+            # OpenMP schedule properties, also on a worksharing loop inside a persistent team
+            if not range_private:
                 if node.map.omp_schedule != dtypes.OMPScheduleType.Default:
                     schedule = " schedule("
                     if node.map.omp_schedule == dtypes.OMPScheduleType.Static:
@@ -4501,6 +4502,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     schedule += ")"
                     map_header += schedule
 
+            if not in_persistent and not range_private:
                 if node.map.omp_num_threads > 0:
                     map_header += f" num_threads({node.map.omp_num_threads})"
 
