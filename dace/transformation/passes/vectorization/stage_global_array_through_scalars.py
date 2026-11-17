@@ -531,28 +531,41 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
                 and e.data.data == array_name
             ]
         for edge in edges:
+            state.remove_edge(edge)
             if direction == "drain":
-                in_conn, prefix = edge.dst_conn, "IN_"
-                out_conn = "OUT_" + in_conn[len("IN_") :] if in_conn and in_conn.startswith("IN_") else None
-                state.remove_edge(edge)
-                if in_conn and in_conn in scope_node.in_connectors:
-                    scope_node.remove_in_connector(in_conn)
-                if out_conn and out_conn in scope_node.out_connectors:
-                    for outer in list(state.out_edges(scope_node)):
-                        if outer.src_conn == out_conn:
-                            state.remove_edge(outer)
-                    scope_node.remove_out_connector(out_conn)
+                StageGlobalArrayThroughScalars._drop_scope_path(state, scope_node, edge.dst_conn, downstream=True)
             else:
-                out_conn = edge.src_conn
-                in_conn = "IN_" + out_conn[len("OUT_") :] if out_conn and out_conn.startswith("OUT_") else None
-                state.remove_edge(edge)
-                if out_conn and out_conn in scope_node.out_connectors:
-                    scope_node.remove_out_connector(out_conn)
-                if in_conn and in_conn in scope_node.in_connectors:
-                    for outer in list(state.in_edges(scope_node)):
-                        if outer.dst_conn == in_conn:
-                            state.remove_edge(outer)
-                    scope_node.remove_in_connector(in_conn)
+                StageGlobalArrayThroughScalars._drop_scope_path(state, scope_node, edge.src_conn, downstream=False)
+
+    @staticmethod
+    def _drop_scope_path(
+        state: "dace.SDFGState", scope_node: dace.nodes.Node, conn: str | None, *, downstream: bool
+    ) -> None:
+        # The bridge's old path through ``scope_node`` at ``conn`` (its IN_ connector going downstream, its OUT_ one
+        # going upstream), and on through every enclosing scope node of the same chain: an outer map's pair is as
+        # orphaned as the inner one once the inner one is gone.
+        mine, theirs = ("IN_", "OUT_") if downstream else ("OUT_", "IN_")
+        if (
+            not isinstance(scope_node, (dace.nodes.EntryNode, dace.nodes.ExitNode))
+            or not conn
+            or not conn.startswith(mine)
+        ):
+            return
+        other = theirs + conn[len(mine) :]
+        if downstream:
+            scope_node.remove_in_connector(conn)
+            onward = [e for e in state.out_edges(scope_node) if e.src_conn == other]
+        else:
+            scope_node.remove_out_connector(conn)
+            onward = [e for e in state.in_edges(scope_node) if e.dst_conn == other]
+        if downstream and other in scope_node.out_connectors:
+            scope_node.remove_out_connector(other)
+        if not downstream and other in scope_node.in_connectors:
+            scope_node.remove_in_connector(other)
+        for edge in onward:
+            state.remove_edge(edge)
+            nxt, nxt_conn = (edge.dst, edge.dst_conn) if downstream else (edge.src, edge.src_conn)
+            StageGlobalArrayThroughScalars._drop_scope_path(state, nxt, nxt_conn, downstream=downstream)
 
     # Driver
     def _apply(self, sdfg: SDFG) -> int:

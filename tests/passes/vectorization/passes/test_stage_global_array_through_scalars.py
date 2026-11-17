@@ -690,6 +690,52 @@ def test_rmw_chain_in_map_body_drains_only_the_final_hop(k: int):
     numpy.testing.assert_allclose(a_vec, a_ref, rtol=RTOL, atol=ATOL, err_msg="staging dropped part of the RMW chain")
 
 
+def nested_map_bridge_sdfg(name: str, n: int) -> dace.SDFG:
+    """``A[i] = B[i] + 1`` then ``D[i] = A[i] * 2`` through a GLOBAL ``A`` node, inside a map over ``i`` that an outer
+    one-iteration map encloses: the old ``A`` drain crosses both exits (the anti-dependence prologue of s1244)."""
+    sdfg = dace.SDFG(name)
+    for arr in "ABD":
+        sdfg.add_array(arr, (n,), dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    outer_entry, outer_exit = state.add_map("outer", {"o": "0:1"})
+    inner_entry, inner_exit = state.add_map("inner", {"i": f"0:{n}"})
+    b_in = state.add_access("B")
+    state.add_edge(b_in, None, outer_entry, "IN_B", dace.Memlet(f"B[0:{n}]"))
+    state.add_edge(outer_entry, "OUT_B", inner_entry, "IN_B", dace.Memlet(f"B[0:{n}]"))
+    for node in (outer_entry, inner_entry):
+        node.add_in_connector("IN_B")
+        node.add_out_connector("OUT_B")
+    seed = state.add_tasklet("seed", {"_in"}, {"_out"}, "_out = _in + 1.0")
+    state.add_edge(inner_entry, "OUT_B", seed, "_in", dace.Memlet("B[i]"))
+    bridge = state.add_access("A")
+    state.add_edge(seed, "_out", bridge, None, dace.Memlet("A[i]"))
+    twice = state.add_tasklet("twice", {"_in"}, {"_out"}, "_out = _in * 2.0")
+    state.add_edge(bridge, None, twice, "_in", dace.Memlet("A[i]"))
+    for arr, src, conn in (("A", bridge, None), ("D", twice, "_out")):
+        state.add_edge(src, conn, inner_exit, f"IN_{arr}", dace.Memlet(f"{arr}[i]"))
+        state.add_edge(inner_exit, f"OUT_{arr}", outer_exit, f"IN_{arr}", dace.Memlet(f"{arr}[0:{n}]"))
+        state.add_edge(outer_exit, f"OUT_{arr}", state.add_access(arr), None, dace.Memlet(f"{arr}[0:{n}]"))
+        for node in (inner_exit, outer_exit):
+            node.add_in_connector(f"IN_{arr}")
+            node.add_out_connector(f"OUT_{arr}")
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_bridge_drained_through_nested_maps_leaves_no_stale_path():
+    """Restaging a bridge whose drain crosses two map exits removes the old path through BOTH, not the inner hop
+    alone: the outer exit kept a dangling ``IN_`` connector and a stale write of ``A``."""
+    n = 8
+    B = numpy.arange(n, dtype=numpy.float64)
+    staged = nested_map_bridge_sdfg("nested_map_bridge_staged", n)
+    assert StageGlobalArrayThroughScalars().apply_pass(staged, {}), "the bridge is stageable"
+    staged.validate()
+    A, D = numpy.zeros(n), numpy.zeros(n)
+    staged(A=A, B=B, D=D)
+    numpy.testing.assert_allclose(A, B + 1.0, rtol=RTOL, atol=ATOL)
+    numpy.testing.assert_allclose(D, 2.0 * (B + 1.0), rtol=RTOL, atol=ATOL)
+
+
 # The cloudsc-pattern (zqlhs / zsolqb reuse) tests live separately in
 # ``test_stage_global_array_cloudsc.py``.
 
@@ -729,10 +775,6 @@ def test_a_copy_out_of_the_bridge_reads_the_staged_value():
     assert numpy.array_equal(A, b + 1)
     assert numpy.array_equal(C, 2 * (b + 1))
     assert numpy.array_equal(D, 3 * (b + 1))
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-q"])
 
 
 def _build_flat_nsdfg_offset_chain(name: str) -> dace.SDFG:
@@ -806,3 +848,23 @@ def test_a_flat_nsdfg_read_only_subset_keeps_a_source():
     a = numpy.array([1.0, 2.0, 3.0, 4.0])
     sdfg(a=a)
     numpy.testing.assert_allclose(a, [2.0, 4.0, 3.0, 4.0], rtol=RTOL, atol=ATOL)
+
+
+if __name__ == "__main__":
+    test_disjoint_constant_dim_is_case_a_structure()
+    test_disjoint_constant_dim_is_case_a_numerics()
+    test_disjoint_multidim_offsets_is_case_a_numerics()
+    test_identical_subset_is_case_b_structure()
+    test_identical_subset_is_case_b_numerics()
+    test_overlapping_multidim_subset_is_case_b_numerics()
+    test_multidim_global_disjoint_species_numerics()
+    test_intervening_global_write_is_refused()
+    test_transient_bridge_is_refused()
+    test_wcr_store_edge_is_refused()
+    test_no_pattern_is_noop()
+    test_pass_is_idempotent_case_a()
+    test_rmw_chain_in_map_body_drains_only_the_final_hop(1)
+    test_rmw_chain_in_map_body_drains_only_the_final_hop(3)
+    test_a_bridge_drained_through_nested_maps_leaves_no_stale_path()
+    test_a_copy_out_of_the_bridge_reads_the_staged_value()
+    test_a_flat_nsdfg_read_only_subset_keeps_a_source()
