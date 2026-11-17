@@ -69,9 +69,10 @@ from dace.transformation.transformation import ExpandTransformation
 # Connector names exposed for library-node builders.
 INPUT_CONNECTOR_NAME = "_scan_in"
 OUTPUT_CONNECTOR_NAME = "_scan_out"
-#: Optional scalar input. When wired, the expansion emits an inclusive scan
+#: Optional seed input. When wired, the expansion emits an inclusive scan
 #: with an initial accumulator value (``out[k] = init OP in[0] OP ... OP in[k]``),
-#: which lets the LoopToScan rewrite skip its separate seed-add Map.
+#: which lets the LoopToScan rewrite skip its separate seed-add Map. At ``stride = S > 1``
+#: it carries ``S`` values, one per residue class: class ``k`` starts at ``init[k] OP in[k]``.
 INIT_CONNECTOR_NAME = "_scan_init"
 
 #: Second input array, wired only when ``op is ScanOp.AFFINE``: the per-element
@@ -176,8 +177,8 @@ _OP_TO_IDENTITY_CPP = {
 
 def _validate_chain(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int):
     """Resolve and validate one chain's in/out/init edges; raise on any wiring/shape/dtype
-    mismatch. ``_scan_init`` is optional; when present it must be a single scalar /
-    length-1 edge whose dtype matches the input array's element type.
+    mismatch. ``_scan_init`` is optional; when present it holds one seed (``stride`` seeds when strided)
+    whose dtype matches the output array's element type.
     """
     in_conn, out_conn, init_conn = in_connector(chain), out_connector(chain), init_connector(chain)
     in_edges = [e for e in state.in_edges(node) if e.dst_conn == in_conn]
@@ -935,14 +936,17 @@ class ExpandSequential(ExpandTransformation):
             if node.exclusive:
                 raise NotImplementedError("Scan(pure): exclusive with stride > 1 is not supported.")
             # Outer loop over residue classes ``_k in [0, s)``; inner sequential scan.
-            # Initialise the accumulator from the first valid input in each class so we
-            # don't need a per-op identity literal (matches the residue-class oracle).
+            # Initialise the accumulator from the class's seed and first input, or from the first
+            # input alone, so no per-op identity literal is needed (matches the residue-class oracle).
+            first = f"{INPUT_CONNECTOR_NAME}[_k]"
+            if _has_init(node):
+                first = _combine_expr(node.op, ctype, f"{INIT_CONNECTOR_NAME}[_k]", first)
             body = (
                 f"{{ long _s = (long)({stride_expr}); long _n = (long)({n_expr});\n"
                 f"  if (_s <= 0) std::abort();\n"
                 f"  for (long _k = 0; _k < _s; ++_k) {{\n"
                 f"      if (_k >= _n) continue;\n"
-                f"      {ctype} _acc = {INPUT_CONNECTOR_NAME}[_k];\n"
+                f"      {ctype} _acc = {first};\n"
                 f"      {OUTPUT_CONNECTOR_NAME}[_k] = _acc;\n"
                 f"      for (long _j = _k + _s; _j < _n; _j += _s) {{\n"
                 f"          _acc = {combined};\n"
@@ -1046,8 +1050,9 @@ def chain_seed(node: "Scan", chain: int) -> str:
 
 
 def residue_classes(nsdfg: dace.SDFG, node: "Scan", acc: str, n: str) -> LoopRegion:
-    """The strided scan: one independent chain per residue class of the position modulo the stride. A scalar
-    op seeds each class from its first element, the affine one from its ``_scan_init`` entry or zero."""
+    """The strided scan: one independent chain per residue class of the position modulo the stride. Each class
+    enters at its ``_scan_init`` entry when one is wired; otherwise a scalar op seeds it from its first element
+    and the affine one from zero."""
     stride = symbolic.symstr(node.stride)
     classes = LoopRegion(
         "classes",
@@ -1056,7 +1061,7 @@ def residue_classes(nsdfg: dace.SDFG, node: "Scan", acc: str, n: str) -> LoopReg
         f"{CLASS_INDEX} = 0",
         f"{CLASS_INDEX} = {CLASS_INDEX} + 1",
     )
-    if node.op is ScanOp.AFFINE:
+    if node.op is ScanOp.AFFINE or _has_init(node):
         seed = seed_state(nsdfg, 0, acc, "init" if _has_init(node) else "0", CLASS_INDEX)
         chain_blocks(classes, [seed, position_loop(nsdfg, node, 0, acc, (CLASS_INDEX, n, stride))])
         return classes
@@ -1194,11 +1199,10 @@ class ExpandCPU(ExpandTransformation):
             refuse_widening(node, in_desc, out_desc, "stride > 1")
             if node.exclusive:
                 raise NotImplementedError("Scan: ``exclusive=True`` with ``stride > 1`` is not yet supported.")
-            if _has_init(node):
-                raise NotImplementedError("Scan: ``_scan_init`` with ``stride > 1`` is not yet supported.")
+            seeds = f", {INIT_CONNECTOR_NAME}" if _has_init(node) else ""
             call = (
                 f"::dace::scan::strided_inclusive_{suffix}("
-                f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, ({n_expr}), ({stride_expr}));"
+                f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, ({n_expr}), ({stride_expr}){seeds});"
             )
         elif node.exclusive:
             seed = _identity_expr(node, out_desc)

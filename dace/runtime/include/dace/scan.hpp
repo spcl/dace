@@ -475,7 +475,7 @@ inline void strided_scan_unrolled(It first, OutIt out, long n, Seed seed, Op op)
   T acc[S] = {};
   const long head = (S < n) ? S : n;
   for (long k = 0; k < head; ++k) {
-    acc[k] = seed(first[k]);
+    acc[k] = seed(k, first[k]);
     out[k] = acc[k];
   }
   long j = S;
@@ -497,7 +497,7 @@ template <typename It, typename OutIt, typename Seed, typename Op>
 inline void strided_scan_block(It first, OutIt out, long n, long s, long k0, long k1, Seed seed, Op op) {
   if (k0 >= k1) return;
   const long head = (k1 < n) ? k1 : n;
-  for (long j = k0; j < head; ++j) out[j] = seed(first[j]);
+  for (long j = k0; j < head; ++j) out[j] = seed(j, first[j]);
   for (long base = s; base < n; base += s) {
     const long hi = (base + k1 < n) ? base + k1 : n;
     for (long j = base + k0; j < hi; ++j) out[j] = op(out[j - s], first[j]);
@@ -635,8 +635,9 @@ inline void rows_scan(It first, OutIt out, long lo, long hi, long s, T* off, Op 
 // ROWS: the full rows are cut into per-thread row blocks, tiled so a block is still in L2 when it is
 // rescanned; each block folds to one total per class, a prefix over the team's totals seeds every
 // block, and the ragged last row runs after the region. ``identity`` is OP's neutral element.
-template <long S, typename It, typename OutIt, typename T, typename Op>
-inline void strided_scan_rows_of(It first, OutIt out, long n, long stride, T identity, Op op, long threads) {
+template <long S, typename It, typename OutIt, typename T, typename Init, typename Seed, typename Op>
+inline void strided_scan_rows_of(It first, OutIt out, long n, long stride, T identity, Init init, Seed seed, Op op,
+                                 long threads) {
   constexpr long line = classes_per_line<T>();
   // S > 0 fixes the stride at compile time, so the per-row class loops unroll into registers.
   const long s = S > 0 ? S : stride;
@@ -653,7 +654,7 @@ inline void strided_scan_rows_of(It first, OutIt out, long n, long stride, T ide
     T* off = carry + pitch;
     const long per = block_span(rows, team, s * static_cast<long>(sizeof(T)));
     const long tile = per * team;
-    for (long k = 0; k < s; ++k) carry[k] = identity;
+    for (long k = 0; k < s; ++k) carry[k] = init(k);
     for (long base = 0; base < rows; base += tile) {
       const long end = (base + tile < rows) ? base + tile : rows;
       const long lo = (base + me * per < end) ? base + me * per : end;
@@ -671,35 +672,37 @@ inline void strided_scan_rows_of(It first, OutIt out, long n, long stride, T ide
 #pragma omp barrier
     }
   }
-  for (long j = rows * s; j < n; ++j) out[j] = (j < s) ? first[j] : op(out[j - s], first[j]);
+  for (long j = rows * s; j < n; ++j) out[j] = (j < s) ? seed(j, first[j]) : op(out[j - s], first[j]);
 }
 
-template <typename It, typename OutIt, typename T, typename Op>
-inline void strided_scan_rows(It first, OutIt out, long n, long s, T identity, Op op, long threads) {
+template <typename It, typename OutIt, typename T, typename Init, typename Seed, typename Op>
+inline void strided_scan_rows(It first, OutIt out, long n, long s, T identity, Init init, Seed seed, Op op,
+                              long threads) {
   switch (s) {
     case 2:
-      return strided_scan_rows_of<2>(first, out, n, s, identity, op, threads);
+      return strided_scan_rows_of<2>(first, out, n, s, identity, init, seed, op, threads);
     case 3:
-      return strided_scan_rows_of<3>(first, out, n, s, identity, op, threads);
+      return strided_scan_rows_of<3>(first, out, n, s, identity, init, seed, op, threads);
     case 4:
-      return strided_scan_rows_of<4>(first, out, n, s, identity, op, threads);
+      return strided_scan_rows_of<4>(first, out, n, s, identity, init, seed, op, threads);
     case 5:
-      return strided_scan_rows_of<5>(first, out, n, s, identity, op, threads);
+      return strided_scan_rows_of<5>(first, out, n, s, identity, init, seed, op, threads);
     case 6:
-      return strided_scan_rows_of<6>(first, out, n, s, identity, op, threads);
+      return strided_scan_rows_of<6>(first, out, n, s, identity, init, seed, op, threads);
     case 7:
-      return strided_scan_rows_of<7>(first, out, n, s, identity, op, threads);
+      return strided_scan_rows_of<7>(first, out, n, s, identity, init, seed, op, threads);
     case 8:
-      return strided_scan_rows_of<8>(first, out, n, s, identity, op, threads);
+      return strided_scan_rows_of<8>(first, out, n, s, identity, init, seed, op, threads);
     default:
-      return strided_scan_rows_of<0>(first, out, n, s, identity, op, threads);
+      return strided_scan_rows_of<0>(first, out, n, s, identity, init, seed, op, threads);
   }
 }
 #endif
 
-// seed opens a residue class (identity OP first element); op extends it.
-template <typename It, typename OutIt, typename T, typename Seed, typename Op>
-inline void strided_scan(It first, OutIt out, long n, long s, T identity, Seed seed, Op op) {
+// seed(k, x) opens residue class k at its first element x, init(k) is the value it enters with (seed(k, x) ==
+// op(init(k), x)), and op extends it.
+template <typename It, typename OutIt, typename T, typename Init, typename Seed, typename Op>
+inline void strided_scan(It first, OutIt out, long n, long s, T identity, Init init, Seed seed, Op op) {
   if (s <= 0) std::abort();
 #ifdef _OPENMP
   const long threads = static_cast<long>(team_size());
@@ -709,13 +712,14 @@ inline void strided_scan(It first, OutIt out, long n, long s, T identity, Seed s
       strided_scan_classes(first, out, n, s, seed, op, choice.team);
       return;
     case strided_plan::ROWS:
-      strided_scan_rows(first, out, n, s, identity, op, choice.team);
+      strided_scan_rows(first, out, n, s, identity, init, seed, op, choice.team);
       return;
     case strided_plan::SEQUENTIAL:
       break;
   }
 #else
   (void)identity;
+  (void)init;
 #endif
   strided_scan_sequential(first, out, n, s, seed, op);
 }
@@ -726,34 +730,84 @@ template <typename It, typename OutIt>
 inline void strided_inclusive_sum(It first, OutIt out, long n, long s) {
   using T = typename std::iterator_traits<It>::value_type;
   if (s == 1 && n >= detail::PARALLEL_MIN_ELEMENTS) return inclusive_sum(first, first + n, out);
+  const T identity = T(0);
   detail::strided_scan(
-      first, out, n, s, T(0), [](const T& x) { return T(0) + x; }, [](const T& a, const T& b) { return a + b; });
+      first, out, n, s, identity, [identity](long) { return identity; },
+      [](long, const T& x) { return T(0) + x; }, [](const T& a, const T& b) { return a + b; });
+}
+
+// Class k enters at seeds[k]: out[k] = seeds[k] OP in[k].
+template <typename It, typename OutIt, typename SIt>
+inline void strided_inclusive_sum(It first, OutIt out, long n, long s, SIt seeds) {
+  using T = typename std::iterator_traits<It>::value_type;
+  if (s == 1 && n >= detail::PARALLEL_MIN_ELEMENTS) return inclusive_sum(first, first + n, out, static_cast<T>(seeds[0]));
+  const auto op = [](const T& a, const T& b) { return a + b; };
+  detail::strided_scan(
+      first, out, n, s, T(0), [seeds](long k) { return static_cast<T>(seeds[k]); },
+      [seeds, op](long k, const T& x) { return op(static_cast<T>(seeds[k]), x); }, op);
 }
 
 template <typename It, typename OutIt>
 inline void strided_inclusive_product(It first, OutIt out, long n, long s) {
   using T = typename std::iterator_traits<It>::value_type;
   if (s == 1 && n >= detail::PARALLEL_MIN_ELEMENTS) return inclusive_product(first, first + n, out);
+  const T identity = T(1);
   detail::strided_scan(
-      first, out, n, s, T(1), [](const T& x) { return T(1) * x; }, [](const T& a, const T& b) { return a * b; });
+      first, out, n, s, identity, [identity](long) { return identity; },
+      [](long, const T& x) { return T(1) * x; }, [](const T& a, const T& b) { return a * b; });
+}
+
+// Class k enters at seeds[k]: out[k] = seeds[k] OP in[k].
+template <typename It, typename OutIt, typename SIt>
+inline void strided_inclusive_product(It first, OutIt out, long n, long s, SIt seeds) {
+  using T = typename std::iterator_traits<It>::value_type;
+  if (s == 1 && n >= detail::PARALLEL_MIN_ELEMENTS) return inclusive_product(first, first + n, out, static_cast<T>(seeds[0]));
+  const auto op = [](const T& a, const T& b) { return a * b; };
+  detail::strided_scan(
+      first, out, n, s, T(1), [seeds](long k) { return static_cast<T>(seeds[k]); },
+      [seeds, op](long k, const T& x) { return op(static_cast<T>(seeds[k]), x); }, op);
 }
 
 template <typename It, typename OutIt>
 inline void strided_inclusive_min(It first, OutIt out, long n, long s) {
   using T = typename std::iterator_traits<It>::value_type;
   if (s == 1 && n >= detail::PARALLEL_MIN_ELEMENTS) return inclusive_min(first, first + n, out);
+  const T identity = detail::min_identity<T>();
   detail::strided_scan(
-      first, out, n, s, detail::min_identity<T>(), [](const T& x) { return x; },
-      [](const T& a, const T& b) { return std::min<T>(a, b); });
+      first, out, n, s, identity, [identity](long) { return identity; },
+      [](long, const T& x) { return x; }, [](const T& a, const T& b) { return std::min<T>(a, b); });
+}
+
+// Class k enters at seeds[k]: out[k] = seeds[k] OP in[k].
+template <typename It, typename OutIt, typename SIt>
+inline void strided_inclusive_min(It first, OutIt out, long n, long s, SIt seeds) {
+  using T = typename std::iterator_traits<It>::value_type;
+  if (s == 1 && n >= detail::PARALLEL_MIN_ELEMENTS) return inclusive_min(first, first + n, out, static_cast<T>(seeds[0]));
+  const auto op = [](const T& a, const T& b) { return std::min<T>(a, b); };
+  detail::strided_scan(
+      first, out, n, s, detail::min_identity<T>(), [seeds](long k) { return static_cast<T>(seeds[k]); },
+      [seeds, op](long k, const T& x) { return op(static_cast<T>(seeds[k]), x); }, op);
 }
 
 template <typename It, typename OutIt>
 inline void strided_inclusive_max(It first, OutIt out, long n, long s) {
   using T = typename std::iterator_traits<It>::value_type;
   if (s == 1 && n >= detail::PARALLEL_MIN_ELEMENTS) return inclusive_max(first, first + n, out);
+  const T identity = detail::max_identity<T>();
   detail::strided_scan(
-      first, out, n, s, detail::max_identity<T>(), [](const T& x) { return x; },
-      [](const T& a, const T& b) { return std::max<T>(a, b); });
+      first, out, n, s, identity, [identity](long) { return identity; },
+      [](long, const T& x) { return x; }, [](const T& a, const T& b) { return std::max<T>(a, b); });
+}
+
+// Class k enters at seeds[k]: out[k] = seeds[k] OP in[k].
+template <typename It, typename OutIt, typename SIt>
+inline void strided_inclusive_max(It first, OutIt out, long n, long s, SIt seeds) {
+  using T = typename std::iterator_traits<It>::value_type;
+  if (s == 1 && n >= detail::PARALLEL_MIN_ELEMENTS) return inclusive_max(first, first + n, out, static_cast<T>(seeds[0]));
+  const auto op = [](const T& a, const T& b) { return std::max<T>(a, b); };
+  detail::strided_scan(
+      first, out, n, s, detail::max_identity<T>(), [seeds](long k) { return static_cast<T>(seeds[k]); },
+      [seeds, op](long k, const T& x) { return op(static_cast<T>(seeds[k]), x); }, op);
 }
 
 // First-order linear recurrence: out[k] = c[k]*out[k-1] + d[k] over k in [0, n), entered
