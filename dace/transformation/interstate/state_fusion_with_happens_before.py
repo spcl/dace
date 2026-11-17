@@ -466,6 +466,16 @@ class StateFusionExtended(StateFusion):
             second_scoped = {n.data for n in second_state.data_nodes() if second_scope[n] is not None} - second_top
             if second_scoped & (top_writes | scoped_writes):
                 return False
+            # A scoped node only empty edges enter reads memory inside the scope; a top-level node of its container
+            # (one after the scope, say) orders nothing before it (jfnk_bratu's ``Q[0] = -F / beta`` read ``beta``
+            # inside its map before the fused ``beta = sqrt(s)`` wrote it).
+            second_scoped_memory_reads = {
+                n.data
+                for n in second_state.data_nodes()
+                if second_scope[n] is not None and all(e.data.is_empty() for e in second_state.in_edges(n))
+            }
+            if second_scoped_memory_reads & (top_writes | scoped_writes):
+                return False
             first_top = {n.data for n in first_state.data_nodes() if first_scope[n] is None}
             first_scoped_reads = {
                 n.data for n in first_state.data_nodes() if first_scope[n] is not None and is_read(first_state, n)

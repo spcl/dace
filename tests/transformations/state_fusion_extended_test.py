@@ -2576,6 +2576,46 @@ def test_a_held_read_whose_holder_follows_the_bound_instance_fuses_without_a_cyc
             np.testing.assert_array_equal(out[name], ref[name])
 
 
+def scoped_memory_read_after_a_write() -> tuple[SDFG, dace.SDFGState]:
+    """``beta = sqrt(s)``, then ``q[i] = f[i] / beta`` reading ``beta`` through a node inside the map that only an
+    empty edge from the entry enters, then ``g[0] = beta`` at the top level after the map (jfnk_bratu's GMRES start)."""
+    sdfg = SDFG("sfe_scoped_memory_read")
+    sdfg.add_array("f", [8], dace.float64)
+    sdfg.add_array("q", [8], dace.float64)
+    sdfg.add_array("g", [1], dace.float64)
+    sdfg.add_scalar("s", dace.float64)
+    sdfg.add_scalar("beta", dace.float64, transient=True)
+    first = sdfg.add_state("first", is_start_block=True)
+    root = first.add_tasklet("root", {"x"}, {"y"}, "y = sqrt(x)")
+    first.add_edge(first.add_read("s"), None, root, "x", Memlet("s[0]"))
+    first.add_edge(root, "y", first.add_write("beta"), None, Memlet("beta[0]"))
+    second = sdfg.add_state_after(first, "second")
+    entry, exit_ = second.add_map("scale", {"i": "0:8"})
+    inner = second.add_access("beta")
+    div = second.add_tasklet("div", {"a", "b"}, {"c"}, "c = a / b")
+    second.add_nedge(entry, inner, Memlet())
+    second.add_edge(inner, None, div, "b", Memlet("beta[0]"))
+    second.add_memlet_path(second.add_read("f"), entry, div, dst_conn="a", memlet=Memlet("f[i]"))
+    second.add_memlet_path(div, exit_, second.add_write("q"), src_conn="c", memlet=Memlet("q[i]"))
+    after = second.add_access("beta")
+    second.add_nedge(exit_, after, Memlet())
+    copy_ = second.add_tasklet("copy", {"x"}, {"y"}, "y = x")
+    second.add_edge(after, None, copy_, "x", Memlet("beta[0]"))
+    second.add_edge(copy_, "y", second.add_write("g"), None, Memlet("g[0]"))
+    sdfg.validate()
+    return sdfg, second
+
+
+def test_a_read_inside_a_scope_is_ordered_after_the_first_state_write_or_not_fused():
+    sdfg, _ = scoped_memory_read_after_a_write()
+    sdfg.apply_transformations_repeated(StateFusionExtended)
+    for state in sdfg.states():
+        writer = next((n for n in state.nodes() if isinstance(n, dnodes.Tasklet) and n.label == "root"), None)
+        reader = next((n for n in state.nodes() if isinstance(n, dnodes.Tasklet) and n.label == "div"), None)
+        if writer is not None and reader is not None:
+            assert nx.has_path(state.nx, writer, reader), "the read of beta inside the map runs before its write"
+
+
 if __name__ == "__main__":
     test_aggressive_fusion_orders_only_the_first_writer_the_overwrite_overlaps()
     test_a_read_after_the_overwrite_follows_every_first_writer_it_overlaps()
@@ -2635,3 +2675,4 @@ if __name__ == "__main__":
     test_two_reads_of_one_container_bind_to_its_one_writer()
     test_a_held_read_and_its_duplicate_read_the_same_instance()
     test_a_held_read_whose_holder_follows_the_bound_instance_fuses_without_a_cycle()
+    test_a_read_inside_a_scope_is_ordered_after_the_first_state_write_or_not_fused()
