@@ -76,6 +76,7 @@ from dace.sdfg.state import (
     LoopRegion,
     SDFGState,
     SymbolResolver,
+    block_writes,
     is_written,
 )
 from dace.transformation import pass_pipeline as ppl
@@ -426,7 +427,7 @@ class LoopToScan(ppl.Pass):
                     if not (info.inner_loop is not None and self._inner_loop_parallelizable(info.inner_loop, owner))
                 ]
             for info in par_infos:
-                _rewrite(par_region, par_loop, info, owner)
+                rewrite_scan_loop(par_region, par_loop, info, owner, self.target == "cpu")
 
         if stride_guard_is_statically_dischargeable(infos, sdfg.facts()) and _lift_proven_doall_to_map(loop, sdfg):
             return
@@ -561,7 +562,7 @@ class LoopToScan(ppl.Pass):
                 continue
             # Multi-slot shape (several independent scans on distinct constant
             # slots of one carrier -- ``acc[0,i]``, ``acc[1,i]``, ...): the shared
-            # body can't go through the per-info ``_rewrite`` path (ambiguous
+            # body can't go through the per-info ``rewrite_scan_loop`` path (ambiguous
             # write lookup). Route it to the dedicated multi-slot rewrite, or
             # leave it sequential if it isn't a clean forward-flat slot set.
             if infos and _is_multi_slot(infos):
@@ -611,7 +612,7 @@ class LoopToScan(ppl.Pass):
 
                 def rewrite_all(region: ControlFlowRegion) -> None:
                     for info in infos:
-                        _rewrite(region, loop, info, owner)
+                        rewrite_scan_loop(region, loop, info, owner, self.target == "cpu")
 
                 _lift_nonempty(parent, loop, owner, rewrite_all)
                 count += len(infos)
@@ -1187,7 +1188,7 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
 
     # The multi-slot shape (several matched scan recurrences on the SAME carrier
     # array at distinct constant slots -- ``acc[0, i]``, ``acc[1, i]``, ...) is
-    # refused on the default per-info ``_rewrite`` path: that path's write lookup
+    # refused on the default per-info ``rewrite_scan_loop`` path: that path's write lookup
     # is ambiguous with several carrier writes in one body. Callers that want the
     # dedicated :func:`_rewrite_multi_slot` (which reroutes each slot to its own
     # delta buffer and emits a per-slot Scan + seed-add) pass
@@ -3572,7 +3573,53 @@ def _emit_delta_buf_zero_init(
     )
 
 
-def _rewrite(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sdfg: SDFG):
+class ScanSource(NamedTuple):
+    """The container a scan reads its input from directly, and the span it reads."""
+
+    name: str
+    subset: subsets.Range
+
+
+def direct_scan_source(loop: LoopRegion, info: _Scan, sdfg: SDFG) -> ScanSource | None:
+    """The scan input, when the scan can read it in place instead of from a ``_scan_in`` copy.
+
+    It can when the delta is a plain unit-stride read ``src[i + d]`` of a contiguous 1-D array that no state of
+    ``loop`` writes, reaching the scan-update tasklet through copies only, and the tasklet's result reaches the
+    carried write through copies only: then ``src[start + d : start + d + trip]`` already holds the delta
+    sequence, and nothing changes it between the loop and the scan.
+    """
+    if info.literal_delta is not None or info.delta_in_conn is None or info.inner_loop is not None:
+        return None
+    if _in_conditional_branch(info.body_state):
+        return None
+    state, tasklet = info.body_state, required(info.scan_update_tasklet)
+    delta_edges = [e for e in state.in_edges(tasklet) if e.dst_conn == info.delta_in_conn]
+    chain = _collect_output_chain(state, tasklet, info.out_conn)
+    if len(delta_edges) != 1 or not chain or chain[-1] is not _find_carried_write_an(state, info.out_name):
+        return None
+    name, subset = _resolve_input(state, delta_edges[0])
+    if name is None or name == info.out_name or subset is None:
+        return None
+    desc = sdfg.arrays[name]
+    if type(desc) is not data.Array or len(desc.shape) != 1 or desc.strides[0] != 1 or desc.may_alias:
+        return None
+    if block_writes(loop, name):
+        return None
+    begin, end, step = subset.ranges[0]
+    # the loop variable as ``begin`` spells it: symbol identity includes the dtype
+    loop_vars = [sym for sym in symbolic.pystr_to_symbolic(begin).free_symbols if str(sym) == loop.loop_variable]
+    if step != 1 or symbolic.simplify(begin - end) != 0 or len(loop_vars) != 1:
+        return None
+    offset = symbolic.simplify(begin - loop_vars[0])
+    if any(str(sym) == loop.loop_variable for sym in offset.free_symbols):
+        return None
+    first = symbolic.simplify(info.iter_start + offset)
+    return ScanSource(name, subsets.Range([(first, symbolic.simplify(info.iter_end + offset), 1)]))
+
+
+def rewrite_scan_loop(
+    parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sdfg: SDFG, per_class_seeds: bool = True
+):
     """Rewrite ``loop`` into a chain via in-place body mutation.
 
     The body is always mutated to write the per-iteration delta to a 1-D transient
@@ -3594,10 +3641,15 @@ def _rewrite(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sdfg: SDF
       ``[trip, inner_size]``; the post-loop emits a ``Map`` over the inner loop's
       iterator wrapping the 1-D ``Scan`` along the outer axis (vector scan).
 
+    When the delta is a plain read of an array the loop does not write (:func:`direct_scan_source`), the
+    direct-write scan reads that array in place: no ``_scan_in`` copy and no fold state. A residue-class scan then
+    takes its seeds on ``_scan_init``, which only the CPU expansions accept, hence ``per_class_seeds``.
+
     :param parent: CFG owning ``loop``.
     :param loop: The matched scan loop.
     :param info: Matcher output describing the scan-update tasklet, axes, and offsets.
     :param sdfg: SDFG owning ``loop``.
+    :param per_class_seeds: whether the scan may take one seed per residue class.
     """
     if info.inner_loop is not None:
         _rewrite_nested(parent, loop, info, sdfg)
@@ -3606,6 +3658,18 @@ def _rewrite(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sdfg: SDF
 
     out_desc = sdfg.arrays[info.out_name]
     trip = _trip(info.iter_start, info.iter_end, SymbolResolver().facts_at(parent))
+    source = direct_scan_source(loop, info, sdfg) if _can_emit_direct_write(info, out_desc) else None
+    if source is not None and (info.scan_stride == 1 or per_class_seeds):
+        state = info.body_state
+        _disconnect_carry_chain(state, required(info.scan_update_tasklet), info.carry_in_conn, info.carry_anchor)
+        _drop_carried_write(state, required(_find_carried_write_an(state, info.out_name)))
+        s_scan = parent.add_state(loop.label + "_scan")
+        for e in list(parent.out_edges(loop)):
+            parent.remove_edge(e)
+            parent.add_edge(s_scan, e.dst, e.data)
+        parent.add_edge(loop, s_scan, dace.InterstateEdge())
+        emit_direct_write_scan(s_scan, sdfg, info, source, trip, seeds_in_place=True)
+        return
     delta_buf, _ = sdfg.add_array(
         f"{_DELTA_BUF_PREFIX}{info.out_name}", [trip], out_desc.dtype, transient=True, find_new_name=True
     )
@@ -3655,7 +3719,9 @@ def _rewrite(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sdfg: SDF
         for e in out_edges:
             parent.remove_edge(e)
             parent.add_edge(s_scan, e.dst, e.data)
-        _emit_scan_with_init_direct(s_scan, sdfg, info, delta_buf, trip)
+        emit_direct_write_scan(
+            s_scan, sdfg, info, ScanSource(delta_buf, subsets.Range([(0, trip - 1, 1)])), trip, False
+        )
     else:
         scan_buf, _ = sdfg.add_array(
             f"{_SCAN_BUF_PREFIX}{info.out_name}", [trip], out_desc.dtype, transient=True, find_new_name=True
@@ -3673,7 +3739,7 @@ def _is_multi_slot(matched: list[_Scan]) -> bool:
     """``True`` when several matched scans write DISTINCT constant slots of the
     SAME carrier array (``acc[0,i]``, ``acc[1,i]``, ... -- the cloudsc ``pfsqrf``
     flat shape). The multi-array case (one info per distinct array) is not
-    multi-slot and stays on the per-info :func:`_rewrite` path.
+    multi-slot and stays on the per-info :func:`rewrite_scan_loop` path.
     """
     per_array: dict[str, int] = {}
     for s in matched:
@@ -3694,9 +3760,9 @@ def _rewrite_multi_slot(parent: ControlFlowRegion, loop: LoopRegion, matched: li
     """Lift several INDEPENDENT prefix scans that share one loop body but write
     distinct constant slots of the same carrier (``acc[r, i] = acc[r, i-1] +
     delta[r, i]`` for ``r = 0..4``; TSVC ``scan_multi_5carry`` / cloudsc
-    ``pfsqrf``). The single per-info :func:`_rewrite` path can't handle this --
+    ``pfsqrf``). The single per-info :func:`rewrite_scan_loop` path can't handle this --
     :func:`_find_carried_write_an` is ambiguous with several carrier writes in
-    one body, and chaining ``_rewrite`` reroutes the shared loop's out-edges
+    one body, and chaining ``rewrite_scan_loop`` reroutes the shared loop's out-edges
     once per slot. Instead: mutate every slot's write to its OWN 1-D delta buffer
     in place (severing that slot's carry), leaving a single carry-free delta-build
     loop; then emit ONE multi-chain ``Scan`` after it -- one chain per slot, all in
@@ -4074,7 +4140,7 @@ def _scan_op_expression(op) -> str:
 def _can_emit_direct_write(info: _Scan, out_desc) -> bool:
     """Whether the scan output can be written straight into ``out`` -- skipping
     the ``_scan_out`` transient and the seed-add Map -- via
-    :func:`_emit_scan_with_init_direct`. Requires a 1-D output array, no
+    :func:`emit_direct_write_scan`. Requires a 1-D output array, no
     other-axis indices, AND forward iteration (``coef == 1``) so the write subset
     ``out[start + k_w : start + k_w + trip]`` is a contiguous range walked in
     iter order.
@@ -4092,8 +4158,10 @@ def _can_emit_direct_write(info: _Scan, out_desc) -> bool:
     return len(out_desc.shape) == 1 and not info.other_indices and info.coef == 1
 
 
-def _emit_scan_with_init_direct(state: SDFGState, sdfg: SDFG, info: _Scan, delta_buf: str, trip: Any):
-    """1-D direct-write path: Scan reads ``delta_buf`` and writes the inclusive
+def emit_direct_write_scan(
+    state: SDFGState, sdfg: SDFG, info: _Scan, source: ScanSource, trip: Any, seeds_in_place: bool
+):
+    """1-D direct-write path: Scan reads ``source`` and writes the inclusive
     result directly into ``out[start + k_w : start + k_w + trip]`` -- neither a
     ``_scan_out`` transient nor a seed-add Map.
 
@@ -4104,18 +4172,18 @@ def _emit_scan_with_init_direct(state: SDFGState, sdfg: SDFG, info: _Scan, delta
     array as both read and write source within one state which the read/write subset
     pair satisfies but is harder to reason about for downstream cleanup.
 
-    At ``scan_stride == S > 1`` there is one seed per residue class and the libnode's
-    ``_scan_init`` is single-valued (and unsupported with ``stride > 1``), so no init
-    connector is wired at all: :func:`_emit_seed_fold` has already folded each class's
-    seed into that class's delta head in a preceding state, which leaves the libnode's
-    strided output exactly the sequence the sequential loop stores. The write subset is
-    the same contiguous range either way -- the ``S`` classes interleave within it.
+    At ``scan_stride == S > 1`` there is one seed per residue class. Reading the ``_scan_in``
+    copy, no init connector is wired: :func:`_emit_seed_fold` has already folded each class's
+    seed into that class's delta head in a preceding state. Reading the source in place, the
+    ``S`` seed slots ``out[start + k_r : start + k_w]`` ride ``_scan_init`` instead. Either way
+    the libnode's strided output is exactly the sequence the sequential loop stores. The write
+    subset is the same contiguous range -- the ``S`` classes interleave within it.
     """
     out_desc = sdfg.arrays[info.out_name]
     write_start = symbolic.simplify(info.iter_start + info.k_w)
     write_end = symbolic.simplify(write_start + trip - 1)
 
-    delta_read = state.add_read(delta_buf)
+    delta_read = state.add_read(source.name)
     out_write = state.add_write(info.out_name)
     node = Scan(name=f"{state.label}_op", op=info.op, exclusive=False)
     node.stride = info.scan_stride
@@ -4143,12 +4211,18 @@ def _emit_scan_with_init_direct(state: SDFGState, sdfg: SDFG, info: _Scan, delta
         state.add_edge(
             seed_an, None, node, INIT_CONNECTOR_NAME, mm.Memlet(data=seed_name, subset=subsets.Range([(0, 0, 1)]))
         )
+    elif seeds_in_place:
+        seeds_start = symbolic.simplify(info.iter_start + info.k_r)
+        node.add_in_connector(INIT_CONNECTOR_NAME)
+        state.add_edge(
+            state.add_read(info.out_name),
+            None,
+            node,
+            INIT_CONNECTOR_NAME,
+            mm.Memlet(data=info.out_name, subset=subsets.Range([(seeds_start, write_start - 1, 1)])),
+        )
     state.add_edge(
-        delta_read,
-        None,
-        node,
-        INPUT_CONNECTOR_NAME,
-        mm.Memlet(data=delta_buf, subset=subsets.Range([(0, trip - 1, 1)])),
+        delta_read, None, node, INPUT_CONNECTOR_NAME, mm.Memlet(data=source.name, subset=copy.deepcopy(source.subset))
     )
     state.add_edge(
         node,
@@ -4403,7 +4477,7 @@ def _emit_seed_fold(state: SDFGState, sdfg: SDFG, info: _Scan, delta_buf: str, t
       are array constants there). :func:`_emit_seed_add` then degenerates to a copy.
     * **forward strided direct write** (``coef == 1``, ``S > 1``): the seed slot is
       ``out[iter_start + k_r + _k]``, i.e. the ``S`` slots immediately below the scan's
-      write range. :func:`_emit_scan_with_init_direct` then needs no init connector.
+      write range. :func:`emit_direct_write_scan` then needs no init connector.
 
     The ``min(S, trip)`` clamp matters when the loop runs FEWER iterations than the
     stride: only the first ``trip`` classes have any iteration at all, and
@@ -4542,7 +4616,7 @@ def _emit_multi_chain_scan(state: SDFGState, sdfg: SDFG, group: list[tuple], tri
     instead of the seed-add's ``seed OP (d0 OP d1 OP ...)``.
 
     Each seed rides its own scalar transient so the state keeps a clean ``out`` read ->
-    seed scalar -> init connector path (see :func:`_emit_scan_with_init_direct`). The
+    seed scalar -> init connector path (see :func:`emit_direct_write_scan`). The
     seed slots sit strictly below every chain's write range, and the slots occupy
     distinct constant ``other_indices``, so no chain can observe another's write.
     """
@@ -4794,7 +4868,7 @@ def _emit_scalar_carry_scan(
 
     The seed is read into a per-instance scalar transient to keep the libnode's
     init-connector edge a clean Scalar memlet (the same pattern
-    :func:`_emit_scan_with_init_direct` uses). An exclusive scan runs unseeded and the
+    :func:`emit_direct_write_scan` uses). An exclusive scan runs unseeded and the
     out-write adds the seed (:func:`_emit_scalar_carry_out_write`).
     """
     node = Scan(name=f"{state.label}_op", op=info.op, exclusive=info.exclusive)

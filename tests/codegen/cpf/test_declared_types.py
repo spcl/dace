@@ -130,13 +130,13 @@ def test_a_persistent_region_thread_id_is_the_int_openmp_returns(language):
     assert thread_ids.min() >= 0 and thread_ids.max() < (os.cpu_count() or 1)
 
 
-def test_a_strided_scan_renders_as_parallel_residue_classes_with_no_deduced_type():
+def test_a_strided_scan_renders_as_a_blocked_parallel_scan_with_no_deduced_type():
     # Past the small-extent bound: a scan over a few literal elements runs single-core.
     arr_in = np.random.default_rng(0).random(257)
     sdfg = strided_min_scan(arr_in.size)
     rendering = render(sdfg, language="c++")
     assert DEDUCED.search(rendering.code) is None, rendering.code
-    assert "#pragma omp parallel for\n" in rendering.code and "cpf_r < cpf_s" in rendering.code, rendering.code
+    assert "#pragma omp for schedule(static)\n" in rendering.code and "cpf_c < cpf_te" in rendering.code, rendering.code
     arr_out = np.zeros_like(arr_in)
     run(rendering, sdfg.name, "c++", {"arr_in": arr_in, "arr_out": arr_out})
     expected = np.empty_like(arr_in)

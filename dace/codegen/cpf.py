@@ -67,6 +67,7 @@ from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.passes.analysis.analysis import has_wcr_in_edge
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
 from dace.transformation.passes.canonicalize.finalize import blas_addresses
+from dace.transformation.passes.readable_names import ReadableNames
 from dace.transformation.passes.scalar_fission import AccessIndex, MustDefinition, SubsetAccesses, edge_subset
 from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
 
@@ -923,6 +924,8 @@ def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) ->
     AnnotateLoopKinds().apply_pass(sdfg, {})
     # Before the demotion: a buffer every call shares must reach the entry first.
     lift_persistent_transients(sdfg)
+    # Last change to the graph, after every pass that matches a name and before the persistent set is named.
+    ReadableNames().apply_pass(sdfg, {})
     persistent = tuple(
         name for name, desc in sdfg.arrays.items() if desc.transient and desc.lifetime in LIFETIME_DEMOTIONS
     )
@@ -1928,8 +1931,10 @@ def render_unit(
                     carve, workspace_bytes = plan_workspace(prepared, signature.workspace)
                 # What the workspace does not hold of the persistent buffers stays allocated across calls.
                 held = {name: prepared.arrays[name] for name in persistent if name not in carve}
+                # ``ReadableNames`` gave every nested SDFG its function name; ``hash`` would add id suffixes.
                 with (
                     set_temporary("compiler", "lineinfo", value="none"),
+                    set_temporary("compiler", "unique_functions", value="unique_name"),
                     fftw3.single_threaded_planner(),
                     cpf_lowering.workspace_carve_scope(signature.workspace if carve else "", carve),
                     cpf_lowering.persistent_static_scope(held),

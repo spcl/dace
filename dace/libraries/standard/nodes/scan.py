@@ -69,9 +69,10 @@ from dace.transformation.transformation import ExpandTransformation
 # Connector names exposed for library-node builders.
 INPUT_CONNECTOR_NAME = "_scan_in"
 OUTPUT_CONNECTOR_NAME = "_scan_out"
-#: Optional scalar input. When wired, the expansion emits an inclusive scan
+#: Optional seed input. When wired, the expansion emits an inclusive scan
 #: with an initial accumulator value (``out[k] = init OP in[0] OP ... OP in[k]``),
-#: which lets the LoopToScan rewrite skip its separate seed-add Map.
+#: which lets the LoopToScan rewrite skip its separate seed-add Map. At ``stride = S > 1``
+#: it carries ``S`` values, one per residue class: class ``k`` starts at ``init[k] OP in[k]``.
 INIT_CONNECTOR_NAME = "_scan_init"
 
 #: Second input array, wired only when ``op is ScanOp.AFFINE``: the per-element
@@ -176,8 +177,8 @@ _OP_TO_IDENTITY_CPP = {
 
 def _validate_chain(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int):
     """Resolve and validate one chain's in/out/init edges; raise on any wiring/shape/dtype
-    mismatch. ``_scan_init`` is optional; when present it must be a single scalar /
-    length-1 edge whose dtype matches the input array's element type.
+    mismatch. ``_scan_init`` is optional; when present it holds one seed (``stride`` seeds when strided)
+    whose dtype matches the output array's element type.
     """
     in_conn, out_conn, init_conn = in_connector(chain), out_connector(chain), init_connector(chain)
     in_edges = [e for e in state.in_edges(node) if e.dst_conn == in_conn]
@@ -396,34 +397,65 @@ def _is_length_one(node: "Scan", state: dace.SDFGState) -> bool:
     return isinstance(n, sympy.Integer) and int(n) == 1
 
 
-def _degenerate_single_element_tasklet(node: "Scan", in_desc) -> nodes.Tasklet:
-    """Return the single-element degenerate scan tasklet.
+def degenerate_scan_tasklet(node: "Scan", state: dace.SDFGState) -> nodes.Tasklet:
+    """The one-element scan of a scalar op, every chain, as a PYTHON tasklet.
 
-    For an inclusive single-element scan the result is just the input itself; for an
-    exclusive single-element scan the result is the user-supplied identity. Both are
-    expressed as Python tasklets so the codegen handles scalar connector typing
-    naturally (no array indexing, no iterator templates).
+    A statically length-1 subset arrives at the codegen scalar-typed, so the loop and runtime-call
+    shapes would index a scalar. Each chain writes what the N-element loop writes at position 0:
+    inclusive ``init OP in``, or ``in`` when unseeded; exclusive the seed :func:`chain_seed` picks.
     """
-    if node.exclusive:
-        # Treat the identity as a Python literal; the codegen casts via the connector
-        # type (a scalar of ``in_desc.dtype``).
-        seed_py = (
-            node.identity
-            if node.identity is not None
-            else (0 if node.op is ScanOp.SUM else (1 if node.op is ScanOp.PRODUCT else None))
-        )
-        if seed_py is None:
-            raise ValueError(f"Scan op {node.op.value!r} has no universal identity; set ``identity`` explicitly.")
-        code = f"{OUTPUT_CONNECTOR_NAME} = {seed_py}"
-    else:
-        code = f"{OUTPUT_CONNECTOR_NAME} = {INPUT_CONNECTOR_NAME}"
+    inputs: dict[str, None] = {}
+    lines: list[str] = []
+    for chain in range(node.chains):
+        in_conn, out_conn, init_conn = in_connector(chain), out_connector(chain), init_connector(chain)
+        inputs[in_conn] = None
+        init = init_conn
+        init_edge = next((e for e in state.in_edges(node) if e.dst_conn == init_conn), None)
+        if init_edge is not None:
+            inputs[init_conn] = None
+            # a strided seed carries one entry per residue class; position 0 is class 0
+            if not symbolic.equal_valued(1, required(init_edge.data.subset).num_elements()):
+                init = f"{init_conn}[0]"
+        if node.exclusive:
+            seed = chain_seed(node, chain)
+            lines.append(f"{out_conn} = {init if seed == 'init' else seed}")
+        elif init_edge is not None:
+            lines.append(f"{out_conn} = {COMBINE_PY[node.op].format(a=init, x=in_conn)}")
+        else:
+            lines.append(f"{out_conn} = {in_conn}")
     return nodes.Tasklet(
         node.name,
-        inputs={INPUT_CONNECTOR_NAME: None},
-        outputs={OUTPUT_CONNECTOR_NAME: None},
-        code=code,
+        inputs=inputs,
+        outputs={out_connector(c): None for c in range(node.chains)},
+        code="\n".join(lines),
         language=dace.Language.Python,
     )
+
+
+def device_one_element_scan(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> dace.SDFG:
+    """:func:`degenerate_scan_tasklet` in a one-thread kernel: the operands live in device memory, which a host
+    tasklet may not touch. A host-resident seed is copied to the device first."""
+    nsdfg = dace.SDFG(f"{node.label}_one")
+    seeds = nsdfg.add_state(f"{node.label}_seeds")
+    kernel = nsdfg.add_state_after(seeds, f"{node.label}_kernel")
+    tasklet = degenerate_scan_tasklet(node, state)
+    kernel.add_node(tasklet)
+    entry, exit_node = kernel.add_map(f"{node.label}_one", {"scan_one": "0:1"}, schedule=dtypes.ScheduleType.GPU_Device)
+    for edge in state.in_edges(node) + state.out_edges(node):
+        conn = edge.dst_conn if edge.dst is node else edge.src_conn
+        desc = operand_array(nsdfg, conn, edge, sdfg)
+        name = conn
+        if edge.dst is node and desc.storage not in GPU_RESIDENT_STORAGES:
+            name = nsdfg.add_array(
+                f"{conn}_device", desc.shape, desc.dtype, storage=dtypes.StorageType.GPU_Global, transient=True
+            )[0]
+            seeds.add_nedge(seeds.add_read(conn), seeds.add_write(name), Memlet.from_array(conn, desc))
+        whole = Memlet.from_array(name, nsdfg.arrays[name])
+        if edge.dst is node:
+            kernel.add_memlet_path(kernel.add_read(name), entry, tasklet, dst_conn=conn, memlet=whole)
+        else:
+            kernel.add_memlet_path(tasklet, exit_node, kernel.add_write(name), src_conn=conn, memlet=whole)
+    return nsdfg
 
 
 def _identity_expr(node: "Scan", acc_desc) -> str:
@@ -805,7 +837,7 @@ def degenerate_affine_tasklet(node: "Scan") -> nodes.Tasklet:
 
     A statically length-1 subset arrives at the codegen scalar-typed, not as a pointer, so the
     C++ loop shape would index a scalar. The four scalar ops hit the same wall and answer it the
-    same way (:func:`_degenerate_single_element_tasklet`); affine needs its own because the
+    same way (:func:`degenerate_scan_tasklet`); affine needs its own because the
     answer is an expression over two inputs rather than a copy.
     """
     seed = INIT_CONNECTOR_NAME if _has_init(node) else "0"
@@ -874,24 +906,23 @@ def single_block_scan_call(op: ScanOp, exclusive: bool, n_expr: str, seed: str) 
     return f"{fn}({INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, 0L, static_cast<long>({n_expr}), {seed});"
 
 
-#: The trade a Scan records: canonicalization takes the parallel form.
+#: The trade a Scan records: canonicalization takes the parallel form. Facts of the two lowerings only.
 PARALLEL_SCAN_HINT = (
     "parallel scan; canonicalization takes the parallel form.\n"
     "Alternative: a sequential loop over parallel maps.\n"
-    "CPU: the loop is worth trying -- the scan does more work, and the loop "
-    "may already saturate the memory system.\n"
-    "GPU: the scan is usually the better of the two.\n"
-    "Both are correct. Measure before choosing."
+    "CPU: the scan runs blocked over contiguous chunks on every thread of the team -- pass 1 reads the input "
+    "and folds each chunk, pass 2 reads the input again and writes the output; a team of one runs one pass. "
+    "The loop makes one pass over the input and the output, on one thread.\n"
+    "Both are correct."
 )
 
 #: The same trade after a sequential expansion: the emitted scan is one loop.
 SEQUENTIAL_SCAN_HINT = (
     "sequential scan; this expansion runs the recurrence as one loop.\n"
     "Alternative: the parallel scan canonicalization chose.\n"
-    "CPU: the loop is usually the better of the two -- the scan does more work, and the loop "
-    "may already saturate the memory system.\n"
-    "GPU: the parallel scan is usually the better of the two.\n"
-    "Both are correct. Measure before choosing."
+    "CPU: the loop makes one pass over the input and the output, on one thread. The parallel scan runs blocked "
+    "over contiguous chunks on every thread of the team, reading the input twice.\n"
+    "Both are correct."
 )
 
 
@@ -917,9 +948,10 @@ class ExpandSequential(ExpandTransformation):
             return affine_tasklet(node, state, sdfg, out_desc, _resolve_length(node, state, sdfg), parallel=False)
         if node.chains > 1:
             refuse_widening(node, in_desc, out_desc, "chains > 1")
-            return _multi_chain_tasklet(node, state, sdfg, parallel=False)
         if _is_length_one(node, state):
-            return _degenerate_single_element_tasklet(node, in_desc)
+            return degenerate_scan_tasklet(node, state)
+        if node.chains > 1:
+            return _multi_chain_tasklet(node, state, sdfg, parallel=False)
         n_expr = _resolve_length(node, state, sdfg)
         # The ACCUMULATOR's type, which is the output's: a widening scan reads a narrower input.
         ctype = out_desc.dtype.ctype
@@ -935,14 +967,17 @@ class ExpandSequential(ExpandTransformation):
             if node.exclusive:
                 raise NotImplementedError("Scan(pure): exclusive with stride > 1 is not supported.")
             # Outer loop over residue classes ``_k in [0, s)``; inner sequential scan.
-            # Initialise the accumulator from the first valid input in each class so we
-            # don't need a per-op identity literal (matches the residue-class oracle).
+            # Initialise the accumulator from the class's seed and first input, or from the first
+            # input alone, so no per-op identity literal is needed (matches the residue-class oracle).
+            first = f"{INPUT_CONNECTOR_NAME}[_k]"
+            if _has_init(node):
+                first = _combine_expr(node.op, ctype, f"{INIT_CONNECTOR_NAME}[_k]", first)
             body = (
                 f"{{ long _s = (long)({stride_expr}); long _n = (long)({n_expr});\n"
                 f"  if (_s <= 0) std::abort();\n"
                 f"  for (long _k = 0; _k < _s; ++_k) {{\n"
                 f"      if (_k >= _n) continue;\n"
-                f"      {ctype} _acc = {INPUT_CONNECTOR_NAME}[_k];\n"
+                f"      {ctype} _acc = {first};\n"
                 f"      {OUTPUT_CONNECTOR_NAME}[_k] = _acc;\n"
                 f"      for (long _j = _k + _s; _j < _n; _j += _s) {{\n"
                 f"          _acc = {combined};\n"
@@ -1046,8 +1081,9 @@ def chain_seed(node: "Scan", chain: int) -> str:
 
 
 def residue_classes(nsdfg: dace.SDFG, node: "Scan", acc: str, n: str) -> LoopRegion:
-    """The strided scan: one independent chain per residue class of the position modulo the stride. A scalar
-    op seeds each class from its first element, the affine one from its ``_scan_init`` entry or zero."""
+    """The strided scan: one independent chain per residue class of the position modulo the stride. Each class
+    enters at its ``_scan_init`` entry when one is wired; otherwise a scalar op seeds it from its first element
+    and the affine one from zero."""
     stride = symbolic.symstr(node.stride)
     classes = LoopRegion(
         "classes",
@@ -1056,7 +1092,7 @@ def residue_classes(nsdfg: dace.SDFG, node: "Scan", acc: str, n: str) -> LoopReg
         f"{CLASS_INDEX} = 0",
         f"{CLASS_INDEX} = {CLASS_INDEX} + 1",
     )
-    if node.op is ScanOp.AFFINE:
+    if node.op is ScanOp.AFFINE or _has_init(node):
         seed = seed_state(nsdfg, 0, acc, "init" if _has_init(node) else "0", CLASS_INDEX)
         chain_blocks(classes, [seed, position_loop(nsdfg, node, 0, acc, (CLASS_INDEX, n, stride))])
         return classes
@@ -1120,16 +1156,17 @@ class ExpandPure(ExpandTransformation):
             refuse_widening(node, in_desc, out_desc, "op=AFFINE")
             if _is_length_one(node, state):
                 return degenerate_affine_tasklet(node)
-        elif node.chains > 1:
+            return pure_scan_sdfg(node, state, sdfg)
+        if node.chains > 1:
             refuse_widening(node, in_desc, out_desc, "chains > 1")
             if strided:
                 raise NotImplementedError(
                     "Scan: ``chains > 1`` with ``stride > 1`` is not supported; emit one "
                     "Scan libnode per strided chain."
                 )
-        elif _is_length_one(node, state):
-            return _degenerate_single_element_tasklet(node, in_desc)
-        elif strided:
+        if _is_length_one(node, state):
+            return degenerate_scan_tasklet(node, state)
+        if strided:
             refuse_widening(node, in_desc, out_desc, "stride > 1")
             if node.exclusive:
                 raise NotImplementedError("Scan(pure): exclusive with stride > 1 is not supported.")
@@ -1179,12 +1216,13 @@ class ExpandCPU(ExpandTransformation):
                 return degenerate_affine_tasklet(node)
             return affine_tasklet(node, state, sdfg, out_desc, _resolve_length(node, state, sdfg), parallel=True)
         if node.chains > 1:
+            refuse_widening(node, in_desc, out_desc, "chains > 1")
+        if _is_length_one(node, state):
+            return degenerate_scan_tasklet(node, state)
+        if node.chains > 1:
             # K independent chains, ONE ``inscan`` loop == one fork/join. See
             # :func:`_multi_chain_tasklet` for the OpenMP-spec argument.
-            refuse_widening(node, in_desc, out_desc, "chains > 1")
             return _multi_chain_tasklet(node, state, sdfg, parallel=True)
-        if _is_length_one(node, state):
-            return _degenerate_single_element_tasklet(node, in_desc)
         n_expr = _resolve_length(node, state, sdfg)
         suffix = _OP_TO_OMP_SUFFIX[node.op]
         stride_expr = sym2cpp(node.stride)
@@ -1194,11 +1232,10 @@ class ExpandCPU(ExpandTransformation):
             refuse_widening(node, in_desc, out_desc, "stride > 1")
             if node.exclusive:
                 raise NotImplementedError("Scan: ``exclusive=True`` with ``stride > 1`` is not yet supported.")
-            if _has_init(node):
-                raise NotImplementedError("Scan: ``_scan_init`` with ``stride > 1`` is not yet supported.")
+            seeds = f", {INIT_CONNECTOR_NAME}" if _has_init(node) else ""
             call = (
                 f"::dace::scan::strided_inclusive_{suffix}("
-                f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, ({n_expr}), ({stride_expr}));"
+                f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, ({n_expr}), ({stride_expr}){seeds});"
             )
         elif node.exclusive:
             seed = _identity_expr(node, out_desc)
@@ -1545,7 +1582,7 @@ class ExpandCUDA(ExpandTransformation):
     environments: list[type] = []
 
     @staticmethod
-    def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+    def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet | dace.SDFG:
         if not ExpandCUDA.environments:
             from dace.libraries.sort.environments.cub import ScanScratch
 
@@ -1564,7 +1601,7 @@ class ExpandCUDA(ExpandTransformation):
         if not node.exclusive:
             refuse_widening(node, in_desc, out_desc, "the CUDA expansion without an exclusive seed")
         if _is_length_one(node, state):
-            return _degenerate_single_element_tasklet(node, in_desc)
+            return device_one_element_scan(node, state, sdfg)
         n_expr = _resolve_length(node, state, sdfg)
         op_cub = _OP_TO_CUB[node.op]
         stride_expr = sym2cpp(node.stride)
