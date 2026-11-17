@@ -537,6 +537,21 @@ def test_a_map_around_a_state_scan_is_the_kernel_it_runs_in():
     assert scan.schedule == dace.ScheduleType.Sequential
 
 
+def test_a_state_scan_in_a_kernel_takes_the_block_and_keeps_its_states_where_the_lanes_share_them():
+    """Each thread held its own copy of the states, which lanes splitting the scan cannot fill; in global memory, one
+    slice per block, they can."""
+    from dace.transformation.passes.canonicalize import finalize
+
+    sdfg = offloaded_batched_dfa()
+    (scan,) = state_scans(sdfg)
+    (out,) = (edge.data.data for edge, _ in sdfg.all_edges_recursive() if edge.src is scan)
+
+    finalize.finalize_for_target(sdfg, "gpu")
+
+    assert scan.implementation == "CUDA (block)"
+    assert sdfg.arrays[out].storage == dace.StorageType.GPU_Global
+
+
 @pytest.mark.gpu
 def test_a_state_scan_in_a_kernel_runs_on_the_block_and_matches_each_row():
     import cupy  # Only present on GPU runners.

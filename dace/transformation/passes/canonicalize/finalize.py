@@ -303,7 +303,7 @@ def canonicalize_set_fast_implementations(
         # Inside a kernel a node that can run as a BLOCK collective does (``Reduce``, ``Dot``, ``Gemm``,
         # ``Scan``): the kernel gets one block per outer iteration, not a per-thread serial loop.
         if device == dtypes.DeviceType.GPU:
-            block = in_kernel_block_implementation(node, state)
+            block = in_kernel_block_implementation(node, state, share_private_outputs=True)
             if block is not None:
                 node.implementation = block
                 release_kernel_block_size(node, state)
