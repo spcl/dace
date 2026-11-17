@@ -377,6 +377,25 @@ def resolve_gather_deps(idx_shape: Sequence[int | sympy.Basic], widths: Sequence
     return tuple(deps)
 
 
+def index_tile_shape(sdfg: dace.SDFG, memlet: dace.Memlet) -> tuple[int | sympy.Basic, ...]:
+    """The shape of the index tile an ``_idx_<d>`` memlet passes, for :func:`resolve_gather_deps`.
+
+    That is the descriptor's shape when the memlet covers the whole container, else the extents of the window it
+    reads: a pass may bind the connector to a laid-out window of a larger container (``MinimizeTransients``
+    coalesces a copied index tile with its source), and the lanes then read that window.
+
+    :param sdfg: The SDFG that owns the memlet's container.
+    :param memlet: The memlet into the ``_idx_<d>`` connector.
+    :returns: The index tile's shape.
+    """
+    desc = sdfg.arrays[memlet.data]
+    whole = dace.subsets.Range.from_array(desc)
+    # The structural test first: the facts walk runs only for a window
+    if memlet.subset is None or memlet.subset == whole or memlet.subset.covers_precise(whole, sdfg.facts()):
+        return tuple(desc.shape)
+    return tuple(memlet.subset.size())
+
+
 def gather_lane_offset(deps: Sequence[int], widths: Sequence[int], conn: str) -> str:
     """Build the row-major flat lane offset C expression into an ``_idx_<d>`` tile.
 

@@ -28,6 +28,7 @@ from dace.libraries.tileops.lanes import (
     SEQUENTIAL,
     TileLowering,
     gather_lane_offset,
+    index_tile_shape,
     nested_loops,
     offset_via_strides,
     resolve_gather_deps,
@@ -411,10 +412,10 @@ class TileGather(TileOp):
             if conn not in in_e:
                 raise ValueError(f"{self.label}: gather_dims includes {d} but '{conn}' is not connected")
             desc = sdfg.arrays[required(in_e[conn].data.data)]
-            shape = tuple(desc.shape)
+            shape = index_tile_shape(sdfg, in_e[conn].data)
             if resolve_gather_deps(shape, widths) is None:
                 raise ValueError(
-                    f"{self.label}: '_idx_{d}' descriptor shape {shape} is not a Cartesian "
+                    f"{self.label}: '_idx_{d}' index tile shape {shape} is not a Cartesian "
                     f"product of widths {widths} for any sorted subset of tile dims "
                     f"(design section 9.2)"
                 )
@@ -480,7 +481,7 @@ class TileGather(TileOp):
                 for k in self.gather_dims:
                     conn = f"_idx_{k}"
                     edge = next(e for e in state.in_edges(self) if e.dst_conn == conn)
-                    idx_shape = tuple(required(sdfg.arrays[required(edge.data.data)]).shape)
+                    idx_shape = index_tile_shape(sdfg, edge.data)
                     deps_d = resolve_gather_deps(idx_shape, widths)
                     if deps_d is None:
                         raise ValueError(

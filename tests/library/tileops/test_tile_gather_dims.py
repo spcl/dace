@@ -222,12 +222,30 @@ def test_tile_scatter_gather_dims_symmetric():
 # for each lane-dependency pattern.
 
 
-def run_gather_load(src_np, idx_np_per_d, widths, gather_dims, src_dims=None):
-    """Build, expand, compile, and run a TileGather with the given gather setup;
-    return the materialised destination tile as a numpy array."""
+def window_container(shape, offset):
+    """The index array's shape: ``shape`` with its first extent ``offset`` longer."""
+    return (shape[0] + offset, *shape[1:])
+
+
+def window_subset(shape, offset):
+    """The window of ``shape`` at ``offset`` in the first dimension of :func:`window_container`."""
+    return ", ".join([f"{offset}:{offset + shape[0]}", *(f"0:{s}" for s in shape[1:])])
+
+
+def window_values(idx, offset):
+    """``idx`` behind ``offset`` rows no lane reads, as the index array of :func:`window_container`."""
     import numpy as np
 
-    sdfg = dace.SDFG(f"e2e_K{len(widths)}_g{''.join(str(d) for d in gather_dims)}")
+    return np.concatenate([np.full((offset, *idx.shape[1:]), -1, np.int64), idx.astype(np.int64)])
+
+
+def run_gather_load(src_np, idx_np_per_d, widths, gather_dims, src_dims=None, idx_offset=0):
+    """Build, expand, compile, and run a TileGather with the given gather setup;
+    return the materialised destination tile as a numpy array. ``idx_offset`` > 0 binds each index
+    connector to a window, at that offset, of a longer index array (what a coalesced index copy leaves)."""
+    import numpy as np
+
+    sdfg = dace.SDFG(f"e2e_K{len(widths)}_g{''.join(str(d) for d in gather_dims)}_w{idx_offset}")
     add_one_constant(sdfg)
     src_shape = src_np.shape
     sdfg.add_array("Src", src_shape, dace.float64, transient=False)
@@ -237,7 +255,7 @@ def run_gather_load(src_np, idx_np_per_d, widths, gather_dims, src_dims=None):
     # and fail resolution against the real tile width).
     idx_desc = {d: tuple(ONE if s == 1 else s for s in idx_np_per_d[d].shape) for d in gather_dims}
     for d in gather_dims:
-        sdfg.add_array(f"Idx{d}", idx_desc[d], dace.int64, transient=False)
+        sdfg.add_array(f"Idx{d}", window_container(idx_desc[d], idx_offset), dace.int64, transient=False)
     state = sdfg.add_state("s")
     src = state.add_access("Src")
     dst = state.add_access("Dst")
@@ -247,14 +265,14 @@ def run_gather_load(src_np, idx_np_per_d, widths, gather_dims, src_dims=None):
     state.add_edge(node, "_dst", dst, None, Memlet(f"Dst[{', '.join(f'0:{w}' for w in widths)}]"))
     for d in gather_dims:
         idx = state.add_access(f"Idx{d}")
-        idx_subset = ", ".join(f"0:{s}" for s in idx_desc[d])
-        state.add_edge(idx, None, node, f"_idx_{d}", Memlet(f"Idx{d}[{idx_subset}]"))
+        state.add_edge(idx, None, node, f"_idx_{d}", Memlet(f"Idx{d}[{window_subset(idx_desc[d], idx_offset)}]"))
+    sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
     dst_np = np.zeros(widths, dtype=np.float64)
     kwargs = {"Src": src_np.astype(np.float64), "Dst": dst_np}
     for d in gather_dims:
-        kwargs[f"Idx{d}"] = idx_np_per_d[d].astype(np.int64)
+        kwargs[f"Idx{d}"] = window_values(idx_np_per_d[d], idx_offset)
     sdfg(**kwargs)
     return dst_np
 
@@ -287,18 +305,31 @@ def test_e2e_partial_gather_K2():
     np.testing.assert_array_equal(out, expected)
 
 
-def run_scatter_store(src_tile, idx_np_per_d, dst_shape, widths, gather_dims, dst_dims=None, initial_dst=None):
-    """Build, expand, compile, and run a TileScatter with scatter; return the dst array."""
+def test_e2e_gather_through_an_index_window():
+    """An index tile bound to a window of a longer index array: the lanes read the window."""
     import numpy as np
 
-    sdfg = dace.SDFG(f"e2e_store_K{len(widths)}_g{''.join(str(d) for d in gather_dims)}")
+    src = np.arange(32, dtype=np.float64) * 10
+    idx = np.array([3, 7, 1, 5, 2, 6, 0, 4], dtype=np.int64)
+    out = run_gather_load(src, {0: idx}, widths=(8,), gather_dims=(0,), idx_offset=5)
+    np.testing.assert_array_equal(out, src[idx])
+
+
+def run_scatter_store(
+    src_tile, idx_np_per_d, dst_shape, widths, gather_dims, dst_dims=None, initial_dst=None, idx_offset=0
+):
+    """Build, expand, compile, and run a TileScatter with scatter; return the dst array. ``idx_offset`` as in
+    :func:`run_gather_load`."""
+    import numpy as np
+
+    sdfg = dace.SDFG(f"e2e_store_K{len(widths)}_g{''.join(str(d) for d in gather_dims)}_w{idx_offset}")
     add_one_constant(sdfg)
     sdfg.add_array("Src", widths, dace.float64, transient=False)
     sdfg.add_array("Dst", dst_shape, dace.float64, transient=False)
     # Full-K-dim index descriptor (see run_gather_load): length-1 dims -> ONE.
     idx_desc = {d: tuple(ONE if s == 1 else s for s in idx_np_per_d[d].shape) for d in gather_dims}
     for d in gather_dims:
-        sdfg.add_array(f"Idx{d}", idx_desc[d], dace.int64, transient=False)
+        sdfg.add_array(f"Idx{d}", window_container(idx_desc[d], idx_offset), dace.int64, transient=False)
     state = sdfg.add_state("s")
     src = state.add_access("Src")
     dst = state.add_access("Dst")
@@ -308,14 +339,14 @@ def run_scatter_store(src_tile, idx_np_per_d, dst_shape, widths, gather_dims, ds
     state.add_edge(node, "_dst", dst, None, Memlet(f"Dst[{', '.join(f'0:{s}' for s in dst_shape)}]"))
     for d in gather_dims:
         idx = state.add_access(f"Idx{d}")
-        idx_subset = ", ".join(f"0:{s}" for s in idx_desc[d])
-        state.add_edge(idx, None, node, f"_idx_{d}", Memlet(f"Idx{d}[{idx_subset}]"))
+        state.add_edge(idx, None, node, f"_idx_{d}", Memlet(f"Idx{d}[{window_subset(idx_desc[d], idx_offset)}]"))
+    sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
     dst_np = np.zeros(dst_shape, dtype=np.float64) if initial_dst is None else initial_dst.copy()
     kwargs = {"Src": src_tile.astype(np.float64), "Dst": dst_np}
     for d in gather_dims:
-        kwargs[f"Idx{d}"] = idx_np_per_d[d].astype(np.int64)
+        kwargs[f"Idx{d}"] = window_values(idx_np_per_d[d], idx_offset)
     sdfg(**kwargs)
     return dst_np
 
@@ -331,6 +362,18 @@ def test_e2e_1d_scatter_K1():
     expected = np.zeros(32, dtype=np.float64)
     for l in range(W):
         expected[idx[l]] = src_tile[l]
+    np.testing.assert_array_equal(out, expected)
+
+
+def test_e2e_scatter_through_an_index_window():
+    """An index tile bound to a window of a longer index array: the lanes scatter through the window."""
+    import numpy as np
+
+    src_tile = np.arange(8, dtype=np.float64) * 100
+    idx = np.array([3, 7, 1, 5, 2, 6, 0, 4], dtype=np.int64)
+    out = run_scatter_store(src_tile, {0: idx}, dst_shape=(32,), widths=(8,), gather_dims=(0,), idx_offset=5)
+    expected = np.zeros(32)
+    expected[idx] = src_tile
     np.testing.assert_array_equal(out, expected)
 
 
@@ -369,5 +412,7 @@ if __name__ == "__main__":
     test_tile_scatter_gather_dims_symmetric()
     test_e2e_1d_gather_K1()
     test_e2e_partial_gather_K2()
+    test_e2e_gather_through_an_index_window()
     test_e2e_1d_scatter_K1()
+    test_e2e_scatter_through_an_index_window()
     test_e2e_partial_scatter_K2()
