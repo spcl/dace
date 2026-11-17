@@ -99,4 +99,5 @@ if __name__ == "__main__":
     test_reduce_strided_view_gpu()
     test_reduce_sliced_view_gpu()
     test_reduce_strided_view_full_gpu()
+    test_reduce_over_pooling_windows_gpu()
     print("ok")

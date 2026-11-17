@@ -308,7 +308,11 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
             or indirect_write(iedge.data)
         )
         if shared:
-            # A scatter: privatized per block, in shared memory or in the block's slice of a global buffer
+            # A scatter: privatized per block, in shared memory or in the block's slice of a global buffer. The
+            # copy spans ``total_size`` elements and is drained as one flat run, so only a packed accumulator
+            # maps onto it; a strided one (a view ``y[:, i, j, :]``) keeps the per-thread atomics.
+            if not (acc_desc.is_packed_c_strides() or acc_desc.is_packed_fortran_strides()):
+                continue
             copies = block_private_capacities(sdfg, state, scope_entry, iedge.data.data, acc_desc)
             if not copies:
                 continue
