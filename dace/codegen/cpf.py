@@ -203,6 +203,7 @@ LIBRARY_NODE_DESCRIPTIONS: dict[str, str] = {
     "Scatter": "MPI_Scatter: distribute from the root to every rank",
     "ScatterConflictCheck": "scatter conflict check: detect indices written more than once",
     "Send": "MPI_Send: blocking send",
+    "Sort": "sort: stable ascending sort (or argsort) of every row along an axis, NaN last",
     "Solve": "solve the linear system A @ X = B",
     "StateScan": "state scan: a finite-state or linear recurrence run as a parallel prefix over blocks",
     "Stencil": "stencil: apply the given neighbourhood expression at every point",
