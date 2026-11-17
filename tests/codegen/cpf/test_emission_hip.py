@@ -571,6 +571,18 @@ def test_a_matmul_an_offloaded_contraction_expands_to_is_a_hipblas_call():
     assert "hipblas" in rendering.libraries, rendering.libraries
 
 
+def test_a_contraction_reaches_hipblas_on_a_host_with_hiptensor(monkeypatch):
+    """Where hipTENSOR is installed canonicalize picks it for the contraction, and CPF renders no tensor library:
+    the unit must still reach hipBLAS through TTGT's GEMM, not fall back to one kernel of loops."""
+    from dace.libraries.linalg.environments import hiptensor
+
+    monkeypatch.setattr(hiptensor.hipTensor, "is_installed", staticmethod(lambda: True))
+    with dace.config.set_temporary("compiler", "cuda", "backend", value="hip"):
+        rendering = render_gpu(doitgen, "cpf_hip_doitgen_hiptensor")
+    assert_standalone_units(rendering, "cpf_hip_doitgen_hiptensor")
+    assert "hipblas" in rendering.libraries, rendering.libraries
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize(
     ("program", "name"),
