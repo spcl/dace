@@ -51,7 +51,12 @@ def gpu_sdfg(name: str) -> dace.SDFG:
     return sdfg
 
 
-def add_kernel(state: dace.SDFGState, label: str, src: str = "A", dst: str = "A") -> None:
+def add_kernel(
+    state: dace.SDFGState, label: str, src: str = "A", dst: str = "A", latest: dict | None = None
+) -> None:
+    """``dst = src + 1`` as one kernel. With ``latest``, the kernel reads ``src`` through the access node the last
+    kernel wrote it to, so a kernel reading another's output in one state runs after it."""
+    inputs = {src: latest[src]} if latest is not None and src in latest else None
     tasklet, entry, exit_ = state.add_mapped_tasklet(
         label,
         {"i": "0:N"},
@@ -59,9 +64,20 @@ def add_kernel(state: dace.SDFGState, label: str, src: str = "A", dst: str = "A"
         "b = a + 1",
         {"b": dace.Memlet(f"{dst}[i]")},
         schedule=dace.ScheduleType.GPU_Device,
+        input_nodes=inputs,
         external_edges=True,
     )
     entry.map.gpu_block_size = [256, 1, 1]
+    if latest is not None:
+        latest[dst] = state.out_edges(exit_)[0].dst
+
+
+def add_stages(state: dace.SDFGState, kernels: list[tuple[str, str]]) -> None:
+    """The ``(src, dst)`` kernels in order in ``state``, each reading the output of the last one that wrote its
+    input."""
+    latest: dict = {}
+    for idx, (src, dst) in enumerate(kernels):
+        add_kernel(state, f"k{idx}", src, dst, latest)
 
 
 def add_time_loop(sdfg: dace.SDFG, label: str, condition: str = "t < T") -> LoopRegion:
@@ -194,18 +210,14 @@ def top_level_maps(state: dace.SDFGState) -> list[dace.nodes.MapEntry]:
 
 
 def straight(sdfg: dace.SDFG, kernels: list[tuple[str, str]]) -> dace.sdfg.state.ControlFlowRegion:
-    state = sdfg.add_state("stages", is_start_block=True)
-    for idx, (src, dst) in enumerate(kernels):
-        add_kernel(state, f"k{idx}", src, dst)
+    add_stages(sdfg.add_state("stages", is_start_block=True), kernels)
     return sdfg
 
 
 def looped(sdfg: dace.SDFG, kernels: list[tuple[str, str]]) -> dace.sdfg.state.ControlFlowRegion:
     loop = LoopRegion("time", "t < T", "t", "t = 0", "t = t + 1")
     sdfg.add_node(loop, is_start_block=True)
-    state = loop.add_state("stages", is_start_block=True)
-    for idx, (src, dst) in enumerate(kernels):
-        add_kernel(state, f"k{idx}", src, dst)
+    add_stages(loop.add_state("stages", is_start_block=True), kernels)
     return loop
 
 
