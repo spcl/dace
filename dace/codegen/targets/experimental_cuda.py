@@ -661,9 +661,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 )
             if parts is None:
                 return cpp.cpp_array_expr(state.sdfg, edge.data, framecode=self._frame)
-            ptrname, fnname, extra_syms = parts[0], parts[1], parts[3]
             return format_index_access(
-                ptrname, fnname, [str(index) for index in as_range(edge.data.subset).min_element()], extra_syms
+                parts.ptrname,
+                parts.fnname,
+                [str(index) for index in as_range(edge.data.subset).min_element()],
+                parts.extra,
+                parts.kept,
             )
         return assigned_stream_expr(producer)
 

@@ -52,7 +52,6 @@ from dace import cpf_lowering, dtypes, subsets, symbolic, tile_functions
 from dace import data as dt
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
-from dace.codegen.common import sym2cpp
 from dace.config import Config, set_temporary
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.fft.environments import fftw3
@@ -1267,9 +1266,11 @@ class EntrySignature:
 def add_workspace(sdfg: SDFG, workspace: str, size: str) -> None:
     """Add the caller-owned scratch pair to ``sdfg``'s entry, device-resident when any argument is.
 
-    :raises ValueError: if either name is already one of ``sdfg``'s data or symbols.
+    :raises ValueError: if a name it adds -- the pair, or the running offset the entry carves the workspace at --
+                        is already one of ``sdfg``'s data or symbols.
     """
-    taken = [name for name in (workspace, size) if name in sdfg.arrays or name in sdfg.symbols]
+    names = (workspace, size, cpf_lowering.workspace_offset_name(workspace))
+    taken = [name for name in names if name in sdfg.arrays or name in sdfg.symbols]
     if taken:
         raise ValueError(f"CPF cannot add the workspace pair to {sdfg.name}: {taken} already name something in it")
     on_device = any(
@@ -1284,33 +1285,43 @@ def add_workspace(sdfg: SDFG, workspace: str, size: str) -> None:
     )
 
 
-#: Each array a unit places in the workspace starts on this boundary, the alignment its own allocation had.
-WORKSPACE_ALIGNMENT = 64
+def mapped_and_zeroed_data(sdfg: SDFG) -> tuple[OrderedSet[str], OrderedSet[str]]:
+    """The data ``sdfg``'s own states access inside a map, and the data an access node zeroes on allocation."""
+    in_maps: OrderedSet[str] = OrderedSet()
+    zeroed: OrderedSet[str] = OrderedSet()
+    for state in sdfg.states():
+        for node, scope in state.scope_dict().items():
+            if isinstance(node, nodes.AccessNode):
+                if scope is not None:
+                    in_maps.add(node.data)
+                if node.setzero:
+                    zeroed.add(node.data)
+    return in_maps, zeroed
 
 
-def plan_workspace(sdfg: SDFG, workspace: str) -> tuple[dict[str, tuple[dt.Data, str]], str]:
-    """Lay ``sdfg``'s heap transients out in the workspace: ``(carve, workspace_bytes)``.
+def plan_workspace(sdfg: SDFG, workspace: str) -> tuple[dict[str, dt.Data], str]:
+    """Choose ``sdfg``'s heap transients the workspace holds: ``(carve, workspace_bytes)``, in place.
 
-    ``carve`` maps each placed array to its descriptor and its C byte offset; ``workspace_bytes`` is an
-    arithmetic expression over the entry's scalar arguments, an upper bound on the bytes the layout needs
-    (``'0'`` when nothing is placed). An array is placed when the host allocates it once per use, at the
-    entry's level: a top-level host array (``CPU_Heap``, or ``Default``, which the host generator puts
-    there) sized by the arguments alone, unless its lifetime is ``Scope`` and a map touches it -- that one
-    is allocated per iteration, per thread, and keeps its allocation. One the generator keeps on the stack
-    leaves its slot unused. The persistent buffers of nested SDFGs are at the entry by now
-    (:func:`lift_persistent_transients`); the rest of a nested SDFG's arrays keep their allocations.
+    ``carve`` maps each placed array to its descriptor; ``workspace_bytes`` is an arithmetic expression over the
+    entry's scalar arguments, an upper bound on the bytes the arrays need (``'0'`` when nothing is placed). An
+    array is placed when the host allocates it once per use, at the entry's level: a top-level host array
+    (``CPU_Heap``, or ``Default``, which the host generator puts there) sized by the arguments alone, unless its
+    lifetime is ``Scope`` and a map touches it -- that one is allocated per iteration, per thread, and keeps its
+    allocation. One the generator keeps on the stack takes no slot. The persistent buffers of nested SDFGs are
+    at the entry by now (:func:`lift_persistent_transients`); the rest of a nested SDFG's arrays keep their
+    allocations.
+
+    The entry takes each slot at a running offset (:func:`~dace.cpf_lowering.workspace_slot`), which is only
+    sound when every placed array is allocated exactly once per call, so each one's lifetime becomes ``SDFG``:
+    allocated on entry, whichever state or loop body it was allocated in before. Its slot is its own either way,
+    so only an array zeroed on allocation could tell the difference, and that one is not placed unless it
+    already had ``SDFG`` lifetime.
     """
     if sdfg.arrays[workspace].storage is not dtypes.StorageType.Default:
         return {}, "0"
     arguments = set(sdfg.arglist())
-    in_maps = {
-        node.data
-        for state in sdfg.states()
-        for node, scope in state.scope_dict().items()
-        if isinstance(node, nodes.AccessNode) and scope is not None
-    }
-    carve: dict[str, tuple[dt.Data, str]] = {}
-    offset: list[str] = []
+    in_maps, zeroed = mapped_and_zeroed_data(sdfg)
+    carve: dict[str, dt.Data] = {}
     bound: list[symbolic.SymExpr] = []
     for name, desc in sorted(sdfg.arrays.items()):
         if (
@@ -1318,13 +1329,13 @@ def plan_workspace(sdfg: SDFG, workspace: str) -> tuple[dict[str, tuple[dt.Data,
             or type(desc) is not dt.Array
             or desc.storage not in (dtypes.StorageType.CPU_Heap, dtypes.StorageType.Default)
             or (desc.lifetime is dtypes.AllocationLifetime.Scope and name in in_maps)
+            or (desc.lifetime is not dtypes.AllocationLifetime.SDFG and name in zeroed)
             or not {str(s) for s in symbolic.symlist(desc.total_size)} <= arguments
         ):
             continue
-        carve[name] = (desc, " + ".join(offset) or "0")
-        nbytes = f"sizeof({desc.dtype.ctype}) * (size_t)({sym2cpp(desc.total_size)})"
-        offset.append(f"(({nbytes} + {WORKSPACE_ALIGNMENT - 1}) / {WORKSPACE_ALIGNMENT}) * {WORKSPACE_ALIGNMENT}")
-        bound.append(desc.total_size * desc.dtype.bytes + WORKSPACE_ALIGNMENT)
+        desc.lifetime = dtypes.AllocationLifetime.SDFG
+        carve[name] = desc
+        bound.append(desc.total_size * desc.dtype.bytes + cpf_lowering.WORKSPACE_ALIGNMENT)
     return carve, str(sum(bound)) if bound else "0"
 
 
@@ -1416,9 +1427,11 @@ def preamble(
 
 #: What the rendering already did and what is left, ahead of the per-loop verdicts it explains.
 CONTRACT_LINES = [
-    "// Already parallelized, with basic heuristics applied. Every loop names its class first:",
+    "// Already parallelized, with basic heuristics applied. Every loop names its class first, then its reason:",
     "//   parallel, sequential -- settled; their parallelism needs no further reasoning.",
+    f"//     (parallel) {cpf_lowering.SETTLED_PARALLEL}",
     "//   unknown              -- open; the only loops whose parallelism is worth reasoning about.",
+    f"//     (unknown) {cpf_lowering.OPEN_UNKNOWN}",
     "// Spend the effort on heuristic optimizations and restructuring.",
 ]
 
@@ -1475,6 +1488,135 @@ BANNED_C: tuple[tuple[re.Pattern, str], ...] = BANNED + (
     (re.compile(r"\b(?:constexpr|consteval)\b[^;=\n]*\b\w+\s*\([^;]*\)\s*\{"), "a constexpr/consteval function"),
     (re.compile(_C_DECLARED_TYPES + r"\s*&\s*\w+\s*[,)]"), "a C++ reference parameter"),
 )
+
+
+#: A statement line at a block's own level that declares nothing: a comment, a preprocessor line, a brace, a
+#: control or jump statement, or an expression statement (an assignment, a call, an increment). Anything else is
+#: taken to declare -- ``double x;``, ``const int64_t n = ...``, a label, a wrapped line -- and keeps its block.
+NON_DECLARING_LINE = re.compile(
+    r"^(?:$|//|/\*|#|[{}]|(?:if|for|while|do|switch|return|break|continue|goto|else)\b"
+    r"|[*(]|\+\+|--|[A-Za-z_]\w*\s*(?:\[|\(|\.|->|\+\+|--|(?:[-+*/%&|^]|<<|>>)?=(?!=)))"
+)
+
+
+def line_braces(line: str, in_comment: bool) -> tuple[list[str], bool]:
+    """The braces of one line outside comments and literals, and whether a block comment is open at its end."""
+    braces: list[str] = []
+    position = 0
+    while position < len(line):
+        two = line[position : position + 2]
+        if in_comment or two == "/*":
+            closes = line.find("*/", position + (0 if in_comment else 2))
+            if closes < 0:
+                return braces, True
+            in_comment, position = False, closes + 2
+            continue
+        if two == "//":
+            break
+        if line[position] in "\"'":
+            position = closing_quote(line, position)
+        elif line[position] in "{}":
+            braces.append(line[position])
+        position += 1
+    return braces, in_comment
+
+
+def brace_structure(lines: list[str]) -> tuple[list[int], dict[int, int]]:
+    """``(depth, pairs)`` of a C or C++ unit: the brace depth at the start of each line, and each line holding
+    only ``{`` -> the line holding only the ``}`` that closes it. Braces in comments, string and character literals
+    and preprocessor lines are not counted."""
+    depth: list[int] = []
+    pairs: dict[int, int] = {}
+    stack: list[int] = []
+    in_comment = False
+    for number, line in enumerate(lines):
+        depth.append(len(stack))
+        if not in_comment and line.lstrip().startswith("#"):
+            continue
+        braces, in_comment = line_braces(line, in_comment)
+        for brace in braces:
+            if brace == "{":
+                stack.append(number)
+            elif stack:
+                opened = stack.pop()
+                if lines[opened].strip() == "{" and line.strip() == "}":
+                    pairs[opened] = number
+    return depth, pairs
+
+
+def closing_quote(line: str, start: int) -> int:
+    """The position of the quote that closes the literal opening at ``start`` (the line's end if none does)."""
+    position = start + 1
+    while position < len(line) and line[position] != line[start]:
+        position += 2 if line[position] == "\\" else 1
+    return position
+
+
+def code_line(lines: list[str], number: int, step: int) -> str:
+    """The first line from ``number`` on in direction ``step`` that is neither blank nor a ``//`` comment."""
+    while 0 <= number < len(lines):
+        text = lines[number].strip()
+        if text and not text.startswith("//"):
+            return text
+        number += step
+    return ""
+
+
+def is_bare_block(lines: list[str], depth: list[int], opened: int, closed: int) -> bool:
+    """Whether the ``{`` on line ``opened`` and its ``}`` on line ``closed`` enclose a block that only groups: it
+    follows a complete statement (not a ``for``/``if``/``else`` header, a function head or a ``#pragma``, whose
+    body it is), and nothing directly inside it declares, so removing the braces cannot change a name's scope."""
+    before = code_line(lines, opened - 1, -1)
+    if before.startswith("#") or not before.endswith((";", "{", "}")):
+        return False
+    if re.match(r"(?:else|while)\b", code_line(lines, closed + 1, 1)):
+        return False
+    return declares_nothing([lines[n].strip() for n in range(opened + 1, closed) if depth[n] == depth[opened] + 1])
+
+
+def declares_nothing(own: list[str]) -> bool:
+    """Whether the lines at a block's own level declare nothing and end in no directive, which would bind to
+    whatever follows the block once its braces are gone."""
+    if not all(NON_DECLARING_LINE.match(text) for text in own):
+        return False
+    statements = [text for text in own if text and not text.startswith("//")]
+    return not (statements and statements[-1].startswith("#pragma"))
+
+
+def compact_blocks(code: str, indent: str = "    ") -> str:
+    """``code`` without the brace pairs that only group (:func:`is_bare_block`), their contents dedented one level,
+    and without blank lines inside braces; runs of blank lines between top-level definitions become one."""
+    lines = code.split("\n")
+    depth, pairs = brace_structure(lines)
+    dropped, levels = unwrap_plan(lines, depth, pairs)
+    kept: list[str] = []
+    for number, line in enumerate(lines):
+        blank = not line.strip()
+        # A blank line stays only between top-level definitions, one of a run
+        if number in dropped or (blank and (depth[number] > 0 or not kept or not kept[-1])):
+            continue
+        removed = 0
+        while removed < levels[number] and line.startswith(indent):
+            line, removed = line[len(indent) :], removed + 1
+        kept.append("" if blank else line)
+    return "\n".join(kept)
+
+
+def unwrap_plan(lines: list[str], depth: list[int], pairs: dict[int, int]) -> tuple[OrderedSet[int], list[int]]:
+    """The brace lines :func:`compact_blocks` removes, and per line how many removed blocks enclose it."""
+    dropped: OrderedSet[int] = OrderedSet()
+    change = [0] * (len(lines) + 1)
+    for opened, closed in pairs.items():
+        if is_bare_block(lines, depth, opened, closed):
+            dropped.update((opened, closed))
+            change[opened + 1] += 1
+            change[closed] -= 1
+    levels: list[int] = []
+    level = 0
+    for delta in change[: len(lines)]:
+        level += delta
+        levels.append(level)
+    return dropped, levels
 
 
 def verify(code: str, name: str, dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STANDALONE) -> None:
@@ -1822,6 +1964,9 @@ def render_unit(
                         cpf_lowering.device_spell_out(device_body, dialect)
                     )
                 body = cpf_lowering.respell_vendor_namespaces(body)
+                # Last of all: a pure layout change, so every pass above still sees the generator's text.
+                body = compact_blocks(body)
+                device_body = compact_blocks(device_body) if device_body else ""
     code = preamble(body, dialect, frame.environments) + body
     # The device unit repeats the frame's state struct, whose vendor handles and plans need their declarations.
     device_environments = (set(device.environments) | set(frame.environments)) if device is not None else set()

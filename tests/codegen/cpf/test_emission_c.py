@@ -163,13 +163,13 @@ def test_two_dimensional_index_helper_carries_the_stride():
     sdfg, code = render_c(c_transpose_add, "mprc_transpose")
     assert "#pragma omp parallel for" in code
     helper = re.search(
-        r"^static inline int64_t a_idx\((int64_t __d0, int64_t __d1[^)]*)\) "
+        r"^static inline int64_t a_idx\((int64_t i0, int64_t i1[^)]*)\) "
         r"\{ return (.*); \}$",
         code,
         re.MULTILINE,
     )
     assert helper is not None, f"expected a 2-index a_idx function in:\n{code}"
-    assert "__d0" in helper.group(2) and "__d1" in helper.group(2), helper.group(2)
+    assert "i0" in helper.group(2) and "i1" in helper.group(2), helper.group(2)
     assert "#define a_idx" not in code, "the index helper must not also be a macro"
 
     m, n = 12, 20

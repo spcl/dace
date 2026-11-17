@@ -37,6 +37,15 @@ REFERENCE_CORES = 8
 REFERENCE_MIN_WORK_PER_REGION = 256
 REFERENCE_TRANSFER_MIN_ELEMENTS = 262144
 
+#: Iterations per core the collapsed leading axes of a parallel map must provably reach before they stop collapsing
+#: more axes (``DecideCpuParallelAxes``).
+ITERATIONS_PER_THREAD = 4
+
+#: Bounds of a tile of an innermost axis (``StripMineInterchange``). Powers of two, so every SIMD width up to the
+#: lower bound divides a tile and only the last one carries a remainder.
+MIN_TILE = 16
+MAX_TILE = 256
+
 CPU_ROOT = Path("/sys/devices/system/cpu")
 NODE_ROOT = Path("/sys/devices/system/node")
 

@@ -12,7 +12,7 @@ generator emits device tasklets through the shared CPU instance, so this also ap
 import ast
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import numpy
 from pygments.lexers import CppLexer
@@ -225,10 +225,34 @@ def format_index_helper(qualifier: str, ctype: str, fnname: str, parameters: lis
     )
 
 
-def format_index_access(ptrname: str, fnname: str, indices: list[str], extra: list[str]) -> str:
-    """C++ ``ptr[fn(idx.., extra..)]`` access through a registered ``<array>_idx`` index function."""
-    call_args = [sym2cpp(symbolic.pystr_to_symbolic(ix)) for ix in indices] + list(extra)
+class IndexAccess(NamedTuple):
+    """A registered ``<array>_idx`` helper and how to call it: ``kept`` are the positions of the indices it takes,
+    every index unless a CPF helper dropped the ones its body does not read."""
+
+    ptrname: str
+    fnname: str
+    ndim: int
+    extra: list[str]
+    kept: tuple[int, ...]
+
+
+def format_index_access(
+    ptrname: str, fnname: str, indices: list[str], extra: list[str], kept: tuple[int, ...] | None = None
+) -> str:
+    """C++ ``ptr[fn(idx.., extra..)]`` access through a registered ``<array>_idx`` index function, passing the
+    indices at ``kept`` (all of them when ``None``)."""
+    passed = indices if kept is None else [indices[position] for position in kept]
+    call_args = [sym2cpp(symbolic.pystr_to_symbolic(ix)) for ix in passed] + list(extra)
     return "%s[%s(%s)]" % (ptrname, fnname, ", ".join(call_args))
+
+
+def index_parameter_names(ndim: int, extra_names: list[str]) -> list[str]:
+    """The index parameters of an ``<array>_idx`` helper: ``i0, i1, ...`` in a CPF unit, which is read, unless an
+    extent symbol already takes one of those names; ``__d0, __d1, ...`` otherwise."""
+    readable = ["i%d" % position for position in range(ndim)]
+    if cpf_lowering.standalone() and not set(readable) & set(extra_names):
+        return readable
+    return ["__d%d" % position for position in range(ndim)]
 
 
 def flat_offset(indices: list, desc: dt.Data):
@@ -294,6 +318,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         self._stream_file_keys: dict[CodeIOStream, int | str] = {}
         # (base name, signature) -> helper name, so same-named arrays of different shape get distinct helpers.
         self._index_sig_to_name: dict[tuple, str] = {}
+        # Index helper name -> the positions of the indices it takes (IndexAccess.kept).
+        self._index_kept: dict[str, tuple[int, ...]] = {}
         self._size_sig_to_name: dict[tuple, str] = {}
         # Container, symbol and constant names of the whole program, built on the first helper registration.
         self._program_sdfg = sdfg
@@ -419,7 +445,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         super()._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream, codegen)
         self._flush_generated_functions(function_stream, cfg, state_id, node)
 
-    # No tasklet banner or separators: each tasklet line carries a trailing ``// <label>``.
+    # No tasklet banner or separators: outside CPF each tasklet line carries a trailing ``// <label>``.
 
     def tasklet_body_comment(self, node) -> str:
         return ""
@@ -432,8 +458,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
     def emit_tasklet_body_block(self, callsite_stream, cfg, state_id, node, inner_body, postamble, has_locals) -> None:
         self.emit_provenance(node, cfg, state_id, callsite_stream)
-        # The label is a DaCe name, not a verdict: only the proofs rendering carries it
-        label = "  // %s" % node.label if cpf_lowering.hint_detail() is cpf_lowering.HintDetail.PROOFS else ""
+        # The label is a DaCe name, not a verdict: a CPF rendering is read as code and carries none
+        label = "" if cpf_lowering.standalone() else "  // %s" % node.label
         # A connector-free single-statement tasklet collapses onto one brace-free line; anything with
         # locals keeps its own ``{ }`` so a declaration cannot leak into the map body.
         if not has_locals and self._single_statement_body(node):
@@ -676,10 +702,9 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         info = self.array_index_access(sdfg, desc, memlet.data)
         if info is None:
             return self.ptr(memlet.data, desc, sdfg)
-        ptrname, fnname, ndim, extra = info
-        if len(indices) != ndim:
+        if len(indices) != info.ndim:
             return None
-        return format_index_access(ptrname, fnname, indices, extra)
+        return format_index_access(info.ptrname, info.fnname, indices, info.extra, info.kept)
 
     def allocate_array(
         self,
@@ -745,9 +770,9 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         data_name: str | None = None,
     ) -> str:
         # A rendering that places its heap transients in the caller's workspace points into it instead.
-        slot = cpf_lowering.workspace_slot(data_name, nodedesc)
+        slot = cpf_lowering.workspace_slot(alloc_name, data_name, nodedesc, ctype, arrsize)
         if slot is not None:
-            return "%s = (%s *)(%s);\n" % (alloc_name, ctype, slot)
+            return slot
         # The base aligned ``operator new[]``, with the count through an ``<array>_size`` helper when one
         # is worthwhile (_register_size_function).
         count = arrsize
@@ -1088,7 +1113,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             return None
         ndim = len(desc.shape)
         fnname, extra_syms = self._register_index_function(data_name, desc)
-        return (ptrname, fnname, ndim, extra_syms)
+        return IndexAccess(ptrname, fnname, ndim, extra_syms, self._index_kept[fnname])
 
     def _is_value_scalar(self, ptrname: str, desc) -> bool:
         # Plain value (``x``) or pointer (``x[...]``), by the emitted DefinedType; an undeclared name falls
@@ -1116,9 +1141,10 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
     def _register_index_function(self, data_name: str, desc):
         # Register the ``<name>_idx`` helper once per signature; return (name, extra symbol names).
         ndim = len(desc.shape)
-        dim_syms = [symbolic.symbol("__d%d" % i) for i in range(ndim)]
-        flatexpr = flat_offset(dim_syms, desc)
-        extra = sorted((as_basic(flatexpr).free_symbols - set(dim_syms)), key=lambda s: str(s))
+        # Placeholders first: the readable names are chosen once the extent symbols are known.
+        placeholders = [symbolic.symbol("__d%d" % i) for i in range(ndim)]
+        free = as_basic(flat_offset(placeholders, desc)).free_symbols
+        extra = sorted((free - set(placeholders)), key=lambda s: str(s))
         extra_names = [str(s) for s in extra]
 
         base = re.sub(r"\W", "_", data_name)
@@ -1133,8 +1159,15 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         fnname = self.unshadowed_helper_name(fnname, self._index_functions)
         self._index_sig_to_name[key] = fnname
 
+        dim_syms = [symbolic.symbol(name) for name in index_parameter_names(ndim, extra_names)]
+        flatexpr = flat_offset(dim_syms, desc)
         ctype = "int64_t"
-        parameters = [str(d) for d in dim_syms] + list(extra_names)
+        # A CPF helper takes only the indices its body reads (a dimension of stride 0 reads none).
+        kept = tuple(range(ndim))
+        if cpf_lowering.standalone():
+            kept = tuple(position for position in kept if placeholders[position] in free)
+        self._index_kept[fnname] = kept
+        parameters = [str(dim_syms[position]) for position in kept] + list(extra_names)
         self._index_functions[fnname] = format_index_helper(
             index_function_qualifier(), ctype, fnname, parameters, sym2cpp(flatexpr)
         )
@@ -1216,13 +1249,12 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
         info = self.codegen.array_index_access(self.sdfg, desc, name)
         if info is None:
             return self.codegen.ptr(name, desc, self.sdfg)
-        ptrname, fnname, ndim, extra_syms = info
         if not isinstance(node, ast.Subscript):
             return None
         indices = self._index_list(node.slice)
-        if len(indices) != ndim:
+        if len(indices) != info.ndim:
             return None
-        return format_index_access(ptrname, fnname, indices, extra_syms)
+        return format_index_access(info.ptrname, info.fnname, indices, info.extra, info.kept)
 
     def visit_Assign(self, node: ast.Assign) -> ast.AST:
         target_node = node.targets[-1]

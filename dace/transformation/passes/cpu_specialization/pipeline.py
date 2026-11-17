@@ -8,6 +8,27 @@ GPU, a vectorizer and a CPU can all still specialize from. Only here, with the t
 map shapes final, is parallelism given back -- for a scope whose work cannot pay for a
 ``#pragma omp parallel``, or one that would fork a team per outer iteration.
 
+The placement rule every pass below implements a part of, from the loop classes, symbolic trip counts, nesting and
+the declared ``SMALL`` facts alone:
+
+1. One fork per top-level nest. The region goes on the outermost proven-parallel loop whose trips, times those of
+   the adjacent proven-parallel loops collapsed with it, reach ``ITERATIONS_PER_THREAD`` per core; a ``SMALL`` or
+   few-trip outer loop collapses with, or hands the team to, the loop inside it (``DecideCpuParallelAxes``).
+2. Nothing inside a parallel loop opens a region of its own: a reduction, scan or other library node there takes
+   its sequential expansion (:func:`~dace.transformation.auto.auto_optimize.libnode_is_sequential`), and an
+   expansion's own loops around its call share out once instead of forking per iteration (``ExpandReduceOpenMP``).
+   On GPU the same node inside a kernel takes its block-collective lowering
+   (:func:`~dace.libraries.standard.block_reduce.in_kernel_block_implementation`). A parallel loop under a
+   sequential carry is hoisted: one region outside the carry, tiles of the parallel axis inside it
+   (``StripMineInterchange``, ``HoistParallelRegion`` in ``finalize``).
+3. The innermost unit-stride loop stays sequential for SIMD unless it is the only parallel loop: it never joins a
+   collapse, and an innermost axis that must be cut is strip-mined in tiles of at least ``MIN_TILE``.
+4. Thresholds live in one place: :mod:`~dace.transformation.passes.cpu_specialization.machine` (fork/join work per
+   region, scaled to the host's cores).
+
+A ``SMALL`` declaration is a fact the rule trusts: a form rendered with ``nblks`` small shares out the
+other axes, and running it on data where ``nblks`` is large leaves threads idle by design.
+
 The stage runs at the very end, AFTER cleanup and parallelization, for a reason the passes below
 depend on: the verdict is read off the FINAL map shapes, and fusion and collapse change the work
 per region by orders of magnitude. A schedule set earlier also blocks the map fusion stages, which

@@ -14,6 +14,8 @@ from tests.codegen.cpf.conftest import build_standalone, call_standalone
 
 N = dace.symbol("N", dace.int64)
 M = dace.symbol("M", dace.int64)
+B = dace.symbol("B", dace.int64)
+L = dace.symbol("L", dace.int64)
 
 
 @dace.program
@@ -81,6 +83,68 @@ def test_a_reduction_under_its_parallel_output_loop_folds_each_row_sequentially(
     assert np.array_equal(out, a.min(axis=1))
 
 
+@dace.program
+def slab_max(a: dace.float64[B, L, N], out: dace.float64[1]):
+    out[0] = np.max(a[:, 2, :])
+
+
+@dace.program
+def slab_any(a: dace.bool_[B, L, N], out: dace.bool_[1]):
+    out[0] = np.any(a[:, 2, :])
+
+
+def slab(dtype):
+    rng = np.random.default_rng(6)
+    if dtype == np.bool_:
+        a = np.zeros((40, 5, 33), dtype=np.bool_)
+        a[37, 2, 31] = True
+        return a
+    return rng.random((40, 5, 33))
+
+
+@pytest.mark.parametrize("language", ["c", "c++"])
+@pytest.mark.parametrize(
+    ("program", "clause", "dtype", "reference"),
+    [
+        (slab_max, "reduction(max:_acc)", np.float64, lambda a: a[:, 2, :].max()),
+        (slab_any, "reduction(||:_acc)", np.bool_, lambda a: a[:, 2, :].any()),
+    ],
+    ids=["max", "any"],
+)
+def test_a_reduction_over_a_strided_slab_forks_once_over_its_rows(language, program, clause, dtype, reference):
+    """The rows of ``a[:, 2, :]`` are not one contiguous run: the team shares the rows out, each row folds
+    sequentially. A parallel entry per row forked once per row (ICON's levelmask, 27,000 regions per call)."""
+    sdfg = program.to_sdfg(simplify=True)
+    sdfg.name = f"cpf_reduce_{program.name}_{'c' if language == 'c' else 'cpp'}"
+    a = slab(dtype)
+    out = np.zeros(1, dtype=dtype)
+
+    rendering = cpf.render(sdfg, language=language)
+    call_standalone(
+        build_standalone(rendering.code, sdfg.name, language=language),
+        rendering.sdfg,
+        {"a": a, "out": out, "B": a.shape[0], "L": a.shape[1], "N": a.shape[2]},
+    )
+
+    assert rendering.code.count("omp parallel") == 1 and clause in rendering.code, rendering.code
+    assert "reduce_seq_" in rendering.code, rendering.code
+    assert out[0] == reference(a)
+
+
+def test_a_c_form_using_bool_builds_before_c23():
+    """gcc 14 defaults to ``gnu17``, where ``bool`` needs ``<stdbool.h>``."""
+    sdfg = slab_any.to_sdfg(simplify=True)
+    sdfg.name = "cpf_reduce_slab_any_gnu17"
+    a = slab(np.bool_)
+    out = np.zeros(1, dtype=np.bool_)
+
+    rendering = cpf.render(sdfg, language="c")
+    library = build_standalone(rendering.code, sdfg.name, language="c", extra_flags=("-std=gnu17",))
+    call_standalone(library, rendering.sdfg, {"a": a, "out": out, "B": 40, "L": 5, "N": 33})
+
+    assert out[0]
+
+
 @pytest.mark.parametrize("language", ["c", "c++"])
 def test_a_complex_sum_reduces_through_the_combiner_it_declares(language):
     sdfg = complex_sum.to_sdfg(simplify=True)
@@ -98,3 +162,22 @@ def test_a_complex_sum_reduces_through_the_combiner_it_declares(language):
 
     assert "reduction(cpf_cadd:acc)" in rendering.code and "critical" not in rendering.code, rendering.code
     assert np.allclose(out, [a.sum()], rtol=1e-12)
+
+
+if __name__ == "__main__":
+    for lang in ("c", "c++"):
+        test_a_full_reduction_is_one_openmp_reduction_loop(
+            lang, full_max, "reduction(max:acc)", np.float64, lambda a: np.array([a.max()])
+        )
+        test_a_full_reduction_is_one_openmp_reduction_loop(
+            lang, full_sum, "reduction(+:acc)", np.int32, lambda a: np.array([a.sum()], dtype=np.int32)
+        )
+        test_a_reduction_under_its_parallel_output_loop_folds_each_row_sequentially(lang)
+        test_a_reduction_over_a_strided_slab_forks_once_over_its_rows(
+            lang, slab_max, "reduction(max:_acc)", np.float64, lambda a: a[:, 2, :].max()
+        )
+        test_a_reduction_over_a_strided_slab_forks_once_over_its_rows(
+            lang, slab_any, "reduction(||:_acc)", np.bool_, lambda a: a[:, 2, :].any()
+        )
+        test_a_complex_sum_reduces_through_the_combiner_it_declares(lang)
+    test_a_c_form_using_bool_builds_before_c23()

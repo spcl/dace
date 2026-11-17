@@ -103,7 +103,7 @@ def test_two_dimensional_map_indexes_through_a_stride():
     assert "#pragma omp parallel for" in code
     # The helper takes the two indices, then whichever extents the stride arithmetic needs (a
     # symbolic shape is passed in rather than baked in), so match the leading two and not the arity.
-    assert re.search(r"a_idx\(int64_t __d0, int64_t __d1[,)]", code), (
+    assert re.search(r"a_idx\(int64_t i0, int64_t i1[,)]", code), (
         "a 2-D array needs a two-index helper; a one-index one would mean the shape was lost"
     )
 
