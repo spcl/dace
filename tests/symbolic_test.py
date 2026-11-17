@@ -99,7 +99,7 @@ def test_a_floor_of_a_floor_by_an_integer_is_one_floor():
     """``h // 2 // 2`` and ``h // 4`` size one tensor of a U-Net's encoder; ``h // 2 // 3`` still differs from
     ``h // 2``."""
     assert not symbolic.inequal_symbols(pystr_to_symbolic("(h // 2) // 2"), pystr_to_symbolic("h // 4"))
-    assert str(symbolic.relax_int_floor(pystr_to_symbolic("((h // 2) // 2) // 3"))) == "floor(h/12)"
+    assert str(symbolic.comparable(pystr_to_symbolic("((h // 2) // 2) // 3"))) == "floor(h/12)"
     assert symbolic.inequal_symbols(pystr_to_symbolic("(h // 2) // 3"), pystr_to_symbolic("h // 2"))
 
 

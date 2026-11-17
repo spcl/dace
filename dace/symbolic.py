@@ -2207,8 +2207,16 @@ def relax_int_floor(expr: SymbolicType) -> SymbolicType:
     if not isinstance(expr, sympy.Basic):
         return expr
     expr = expr.replace(int_floor, lambda x, y: sympy.floor(x / y))
-    expr = expr.replace(int_ceil, lambda x, y: sympy.ceiling(x / y))
-    # floor(floor(x) / n) is floor(x / n) for every positive integer n: ``h // 2 // 2`` and ``h // 4`` are one extent.
+    return expr.replace(int_ceil, lambda x, y: sympy.ceiling(x / y))
+
+
+def comparable(expr: SymbolicType) -> SymbolicType:
+    """``expr`` relaxed (:func:`relax_int_floor`) with every floor of a floor by a positive integer folded into one,
+    since ``floor(floor(x) / n)`` is ``floor(x / n)``: ``h // 2 // 2`` and ``h // 4`` compare as one extent. Not for a
+    solver: the fold drops the nesting a call's shape inference matches the callee's ``floor(s / 2)`` against."""
+    expr = relax_int_floor(expr)
+    if not isinstance(expr, sympy.Basic):
+        return expr
     return expr.replace(lambda node: floor_of_floor(node) is not None, floor_of_floor)
 
 
@@ -5522,7 +5530,7 @@ def inequal_symbols(a: sympy.Expr | Any, b: sympy.Expr | Any, facts: Facts | Non
         return a != b
     else:
         given = (a, b)
-        a, b = (relax_int_floor(x) for x in equalize_symbols(a, b))
+        a, b = (comparable(x) for x in equalize_symbols(a, b))
         difference = a - b
         if facts is not None:
             difference = difference.xreplace(
@@ -5578,10 +5586,10 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> bool | No
     # caller reading ``is True`` treats as "not equal" and silently refuses on. Equalize first, so
     # the answer is about the VALUES rather than about which instance the caller happened to hold.
     if all(isinstance(arg, sympy.Basic) for arg in args):
-        # relax_int_floor for the same reason: one extent reaches here as ``int_floor(x, y)`` from
+        # comparable (relax_int_floor) for the same reason: one extent reaches here as ``int_floor(x, y)`` from
         # the parser and as ``floor(x/y)`` from Python's ``//``, and sympy relates neither head.
         # ``ipow`` likewise: a size reaches one descriptor as ``Lb**2`` and its copy as ``ipow(Lb, 2)``.
-        args = [relax_int_floor(arg).replace(ipow, lambda b, e: b**e) for arg in equalize_symbols_across(*args)]
+        args = [comparable(arg).replace(ipow, lambda b, e: b**e) for arg in equalize_symbols_across(*args)]
 
     if sympy.assumptions.global_assumptions:
         return ask_equal.__wrapped__(*args, is_length)
