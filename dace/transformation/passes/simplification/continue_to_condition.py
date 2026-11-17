@@ -5,9 +5,22 @@ from typing import Any
 from dace import properties
 from dace import sdfg as sd
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import ConditionalBlock, ContinueBlock, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+
+
+def ends_loop_body(region: ControlFlowRegion) -> bool:
+    """Whether ``region`` is a loop body, or ends one: every block enclosing it up to the loop is the last of its own
+    region, so a ``continue`` in ``region`` skips only what follows it there."""
+    while not isinstance(region, LoopRegion):
+        if isinstance(region, SDFG):
+            return False
+        block = region.parent_graph if isinstance(region.parent_graph, ConditionalBlock) else region
+        region = block.parent_graph
+        if region is None or region.out_degree(block) != 0:
+            return False
+    return True
 
 
 @properties.make_properties
@@ -72,11 +85,8 @@ class ContinueToCondition(ppl.Pass):
         if len(outer_cfg.successors(pg)) > 1:
             return False
 
-        # ..and the conditional block must be directly nested in a loop.
-        if not isinstance(outer_cfg, LoopRegion):
-            return False
-
-        return True
+        # ..and nothing of the loop body may run after the region holding it.
+        return ends_loop_body(outer_cfg)
 
     def apply(self, cb: ContinueBlock, sdfg: sd.SDFG):
         # If there are no successors, we can just remove the continue node

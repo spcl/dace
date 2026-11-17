@@ -380,16 +380,41 @@ def test_consecutive_continues():
     ppl.apply_pass(sdfg, {})
     sdfg.validate()
 
-    # Only the FIRST converts: converting it moves the other three inside the new branch region,
-    # whose parent is a ControlFlowRegion rather than the LoopRegion this pass requires. That is the
-    # pass declining, which is its job -- the defect was that it DIED here instead of declining.
+    # Converting the first moves the other three into its branch, which ends the loop body, so they convert too.
     cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
-    assert len(cont_nodes) == 3
+    assert len(cont_nodes) == 0
 
     a = np.arange(20, dtype=np.int64) % 7
     out = np.zeros(1, dtype=np.int64)
     sdfg(a=a, out=out)
     assert out[0] == int(a[a > 3].sum())
+
+
+def test_continue_in_a_branch_that_ends_the_body():
+    """The second continue sits in the branch of an if that is the last block of the loop body."""
+
+    @dace.program
+    def tester(a: dace.float64[20], b: dace.int64[20]):
+        for i in range(20):
+            if b[i] < 0:
+                continue
+            if b[i] == 3:
+                continue
+            a[i] = a[i] + 1
+
+    sdfg = tester.to_sdfg(simplify=False)
+    sdfg.simplify(skip=["ContinueToCondition"])
+    assert len([n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]) == 2
+
+    FixedPointPipeline([ContinueToCondition()]).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
+
+    a = np.random.rand(20)
+    b = np.arange(20, dtype=np.int64) % 5 - 1
+    expected = a + ((b >= 0) & (b != 3))
+    sdfg(a=a, b=b)
+    assert np.allclose(a, expected)
 
 
 def test_nested_loop_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
@@ -427,3 +452,4 @@ if __name__ == "__main__":
     test_nested_conditions()
     test_nested_loops()
     test_consecutive_continues()
+    test_continue_in_a_branch_that_ends_the_body()
