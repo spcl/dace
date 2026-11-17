@@ -14,10 +14,11 @@ write.
 from collections.abc import Iterator
 from typing import Any
 
-from dace import SDFG, Memlet, data, properties, symbolic
+from dace import SDFG, Memlet, data, dtypes, properties, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -64,6 +65,18 @@ def read_by_tasklets(state: SDFGState, edge: Any) -> bool:
     return all(isinstance(leaf.dst, nodes.Tasklet) for leaf in state.memlet_tree(edge).leaves())
 
 
+def reads_in_place(sdfg: SDFG, state: SDFGState, consumer: nodes.Node, storage: dtypes.StorageType) -> bool:
+    """Whether ``consumer`` runs where a container of ``storage`` is addressable: a copy into a scalar is also the
+    only transfer between host and device memory, so a kernel reads a host element (and host code a device element)
+    only through it."""
+    on_device = is_devicelevel_gpu(sdfg, state, consumer) or (
+        isinstance(consumer, nodes.EntryNode) and consumer.schedule in dtypes.GPU_SCHEDULES
+    )
+    if storage in (dtypes.StorageType.Register, dtypes.StorageType.CPU_Pinned):
+        return True
+    return (storage in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES) == on_device
+
+
 def foldable(sdfg: SDFG, state: SDFGState, copy: Any, counts: dict[str, int], scopes: bool = False) -> Memlet | None:
     """The direct read of the source element if the copy edge ``copy`` may be folded, else ``None``. With ``scopes``
     a consumer may also be a scope entry that hands the scalar to its body (a map broadcasting it)."""
@@ -86,6 +99,8 @@ def foldable(sdfg: SDFG, state: SDFGState, copy: Any, counts: dict[str, int], sc
         return None
     source = sdfg.arrays[root.data]
     if isinstance(source, (data.Scalar, data.Stream)) or source.dtype != desc.dtype:
+        return None
+    if not all(reads_in_place(sdfg, state, edge.dst, source.storage) for edge in consumers):
         return None
     # A view bound to the scalar alone would view nothing once the scalar is gone.
     if isinstance(source, data.View) and not view_keeps_a_data_binding(state, root, copy):

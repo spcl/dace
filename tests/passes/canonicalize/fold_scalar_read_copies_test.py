@@ -227,17 +227,24 @@ def nested_store(name: str) -> dace.SDFG:
     return inner
 
 
-def broadcast_by_a_map(name: str, writes_source: bool = False, nested: bool = False) -> dace.SDFG:
+def broadcast_by_a_map(
+    name: str,
+    writes_source: bool = False,
+    nested: bool = False,
+    storage: dace.StorageType = dace.StorageType.Default,
+    schedule: dace.ScheduleType = dace.ScheduleType.Default,
+) -> dace.SDFG:
     """``A[1] -> s -> map i: B[i] = s`` (fdtd_2d's ``ey[0, :] = fict[t]``); with ``writes_source`` the map also stores
-    ``A[1]``, with ``nested`` a nested SDFG reads ``s`` as its scalar ``x``."""
+    ``A[1]``, with ``nested`` a nested SDFG reads ``s`` as its scalar ``x``. ``A`` lives in ``storage`` and the map
+    runs on ``schedule``."""
     sdfg = dace.SDFG(name)
-    sdfg.add_array("A", [2], dace.float64)
-    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_array("A", [2], dace.float64, storage=storage)
+    sdfg.add_array("B", [N], dace.float64, storage=storage)
     sdfg.add_scalar("s", dace.float64, transient=True)
     state = sdfg.add_state()
     s = state.add_access("s")
     state.add_edge(state.add_read("A"), None, s, None, dace.Memlet("A[1]"))
-    entry, exit_ = state.add_map("broadcast", dict(i="0:N"))
+    entry, exit_ = state.add_map("broadcast", dict(i="0:N"), schedule=schedule)
     if nested:
         use = state.add_nested_sdfg(nested_store(f"{name}_store"), {"x"}, {"y"}, {"N": N, "i": "i"})
         state.add_memlet_path(s, entry, use, dst_conn="x", memlet=dace.Memlet("s[0]"))
@@ -277,6 +284,27 @@ def test_a_copy_broadcast_into_a_nested_sdfg_stays():
     sdfg.validate()
 
 
+def test_a_host_element_broadcast_into_a_kernel_stays():
+    """The copy into the scalar is the element's only way onto the device: a kernel cannot read host ``A``."""
+    sdfg = broadcast_by_a_map(
+        "broadcast_host_into_kernel", storage=dace.StorageType.CPU_Heap, schedule=dace.ScheduleType.GPU_Device
+    )
+    assert FoldScalarReadCopies(scopes=True).apply_pass(sdfg, {}) is None
+
+
+def test_a_device_element_broadcast_into_a_kernel_folds():
+    sdfg = broadcast_by_a_map(
+        "broadcast_device_into_kernel", storage=dace.StorageType.GPU_Global, schedule=dace.ScheduleType.GPU_Device
+    )
+    assert FoldScalarReadCopies(scopes=True).apply_pass(sdfg, {}) == 1
+    assert scalar_copies(sdfg) == 0
+
+
+def test_a_device_element_broadcast_by_a_host_map_stays():
+    sdfg = broadcast_by_a_map("broadcast_device_on_host", storage=dace.StorageType.GPU_Global)
+    assert FoldScalarReadCopies(scopes=True).apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
     test_a_read_only_copy_folds()
     test_a_same_element_update_folds()
@@ -294,3 +322,6 @@ if __name__ == "__main__":
     test_a_copy_broadcast_by_a_map_folds_into_its_memlet_tree()
     test_a_copy_broadcast_by_a_map_writing_its_source_stays()
     test_a_copy_broadcast_into_a_nested_sdfg_stays()
+    test_a_host_element_broadcast_into_a_kernel_stays()
+    test_a_device_element_broadcast_into_a_kernel_folds()
+    test_a_device_element_broadcast_by_a_host_map_stays()
