@@ -216,7 +216,8 @@ def rename_into_nested_sdfgs(states, old: str, new: str) -> None:
 def has_wcr_write(state: SDFGState, node: nd.AccessNode) -> bool:
     """Whether ``node`` is written through a write-conflict resolution: a read-modify-write, not a kill.
 
-    A ``Reduce`` with no identity counts too (:func:`~dace.transformation.passes.analysis.analysis.has_wcr_in_edge`).
+    A library node folding onto its output counts too, a ``Reduce`` with no identity or an ``Einsum`` with a nonzero
+    ``beta`` (:func:`~dace.transformation.passes.analysis.analysis.has_wcr_in_edge`).
     """
     return ap.has_wcr_in_edge(state, node)
 

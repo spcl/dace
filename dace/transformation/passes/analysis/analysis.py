@@ -213,16 +213,15 @@ def has_wcr_in_edge(state: SDFGState, anode: nd.AccessNode) -> bool:
 
     A WCR edge accumulates INTO its destination, so the destination's prior value is read even with no
     outgoing edge. Degree alone would call such a node write-only and let liveness drop a live accumulator.
-    A ``Reduce`` with no identity is the same write before expansion: it folds into the output's value.
+    A library node that folds onto its output (:meth:`~dace.sdfg.nodes.LibraryNode.folds_onto_output`: a ``Reduce``
+    with no identity, a contraction with a nonzero ``beta``) is the same write before expansion.
     The resolution can also sit inside a ``NestedSDFG`` the write comes out of -- LoopToMap outlines a
     reduction loop's body, leaving ``CR: Sum`` on the inner edge and none on the MapExit path.
     """
-    from dace.libraries.standard.nodes.reduce import Reduce
-
     for edge in state.in_edges(anode):
         if edge.data is not None and edge.data.wcr is not None:
             return True
-        if isinstance(edge.src, Reduce) and edge.src.identity is None:
+        if isinstance(edge.src, nd.LibraryNode) and edge.src.folds_onto_output():
             return True
         if isinstance(edge.src, (nd.ExitNode, nd.NestedSDFG)) and any(
             resolved_at_leaf(leaf) for leaf in state.memlet_tree(edge).leaves()
