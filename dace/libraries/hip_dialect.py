@@ -12,6 +12,7 @@ import os
 import pathlib
 import re
 import shutil
+import subprocess
 
 from dace import nodes
 from dace.transformation.transformation import ExpandTransformation
@@ -60,6 +61,42 @@ def rocm_roots() -> list[pathlib.Path]:
     if hipcc is not None:
         roots.append(pathlib.Path(hipcc).resolve().parent.parent)
     return roots
+
+
+#: The oldest ROCm whose BLAS the HIP expansions link: hipBLAS 3 on rocBLAS 5, the API of ROCm 7.
+MIN_ROCM = (7, 0)
+
+
+@functools.lru_cache(maxsize=None, typed=True)
+def rocm_version() -> tuple[int, ...] | None:
+    """The ROCm version: the first root's ``.info/version`` (``7.2.4``), else ``hipconfig --version`` (a distribution's
+    ROCm has no ``.info``), or None without ROCm."""
+    for root in rocm_roots():
+        info = root / ".info" / "version"
+        if info.is_file():
+            return parsed_version(info.read_text())
+    hipconfig = shutil.which("hipconfig")
+    if hipconfig is None:
+        return None
+    try:
+        done = subprocess.run([hipconfig, "--version"], capture_output=True, text=True, timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return parsed_version(done.stdout) if done.returncode == 0 else None
+
+
+def parsed_version(text: str) -> tuple[int, ...] | None:
+    """``(major, minor)`` of a version string such as ``7.2.4-43`` or ``7.1.52801-9999``."""
+    found = re.match(r"\s*(\d+)\.(\d+)", text)
+    return (int(found[1]), int(found[2])) if found else None
+
+
+def require_rocm(library: str) -> None:
+    """Refuse ``library`` on a ROCm older than :data:`MIN_ROCM`, naming the version found."""
+    version = rocm_version()
+    if version is not None and version < MIN_ROCM:
+        want, have = ".".join(map(str, MIN_ROCM)), ".".join(map(str, version))
+        raise RuntimeError(f"{library} needs ROCm {want} or newer; this ROCm is {have}")
 
 
 def find_rocm_library(name: str) -> str | None:

@@ -25,8 +25,12 @@ class hipBLAS:
 
     @staticmethod
     def handle_setup_code(node):
+        hip_dialect.require_rocm("hipBLAS")
         return hip_dialect.to_hip(cuBLAS.handle_setup_code(node), hip_dialect.BLAS)
 
     @staticmethod
     def is_installed():
-        return hip_dialect.find_rocm_library("hipblas") is not None
+        """hipBLAS from ROCm 7 or newer (:data:`hip_dialect.MIN_ROCM`); an older ROCm counts as not installed."""
+        version = hip_dialect.rocm_version()
+        recent = version is not None and version >= hip_dialect.MIN_ROCM
+        return recent and hip_dialect.find_rocm_library("hipblas") is not None
