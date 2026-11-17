@@ -554,7 +554,9 @@ def add_einsum(sdfg: SDFG, state: SDFGState, label: str, contraction: Contractio
     for i, operand in enumerate(contraction.operands):
         conn = f"_ein{i:02d}"
         node.add_in_connector(conn)
-        src = operand.root if reuse else reads.setdefault(operand.array, state.add_read(operand.array))
+        if not reuse and operand.array not in reads:
+            reads[operand.array] = state.add_read(operand.array)
+        src = operand.root if reuse else reads[operand.array]
         state.add_edge(src, None, node, conn, Memlet(data=operand.array, subset=widened(sdfg, operand, axes)))
     output = contraction.output
     node.add_out_connector("_out")

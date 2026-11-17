@@ -125,6 +125,22 @@ def test_loop_of_dots_onto_a_scalar_becomes_one_contraction():
     assert np.allclose(out[0], np.sum(A * A))
 
 
+def test_a_loop_lift_reads_an_operand_used_twice_through_one_access_node():
+    """``A[i, :] @ A[i, :]`` names ``A`` twice: the einsum in place of the loop reads both from ONE new access node, and
+    leaves no second, unconnected one behind (jfnk_bratu failed validation with "Isolated node")."""
+    from dace.transformation.passes.canonicalize.nest_to_contraction import Contraction, Operand, add_einsum
+
+    sdfg = dace.SDFG("n2c_operand_used_twice")
+    sdfg.add_array("A", [N, K], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
+    state = sdfg.add_state()
+    operand = Operand("A", [None, None], None)
+    contraction = Contraction("ak,ak->", 1.0, 0.0, [operand, operand], Operand("out", [None], None))
+    add_einsum(sdfg, state, "lifted", contraction, {}, reuse=False)
+    assert [n.data for n in state.data_nodes()].count("A") == 1
+    assert all(state.degree(n) > 0 for n in state.nodes())
+
+
 def test_loop_of_dots_onto_an_array_element_becomes_one_contraction():
     @dace.program
     def n2c_loop_dot_element(A: dace.float64[N, M, K], B: dace.float64[N, M, K], out: dace.float64[N]):
@@ -276,6 +292,7 @@ if __name__ == "__main__":
     test_loop_of_gemms_after_a_zero_init_takes_beta_zero()
     test_loop_over_map_of_einsums_becomes_one_contraction()
     test_loop_of_dots_onto_a_scalar_becomes_one_contraction()
+    test_a_loop_lift_reads_an_operand_used_twice_through_one_access_node()
     test_loop_of_dots_onto_an_array_element_becomes_one_contraction()
     test_map_of_dots_with_a_wcr_sum_output_becomes_one_contraction()
     test_strided_index_is_not_lifted()
