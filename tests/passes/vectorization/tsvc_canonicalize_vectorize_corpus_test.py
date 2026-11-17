@@ -51,6 +51,8 @@ KERNELS = [k.name for k in tsvc.collect()]
 #: ``canon_vec`` comparison alone passes on a refusal, which hands back the un-tiled graph.
 UNTILED_KERNELS = frozenset(
     {
+        # ``b[i] = b[i-4] + a[i]``: one strided Scan reading its input in place, no map left to tile.
+        "s1221_d_single",
         "s123_d_single",
         "s13110_d_single",
         "s141_d_single",

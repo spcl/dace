@@ -71,6 +71,8 @@ UNTILED_KERNELS = frozenset(
         "tests_corpus_tsvc_2_5_tsvc_2_5_quasi_affine_reduce_odd",
         "tests_corpus_tsvc_2_5_tsvc_2_5_reduce_inner_carry",
         "tests_corpus_tsvc_2_5_tsvc_2_5_scan_multi_carry",
+        # One strided Scan reading its input in place (no copy map since 5abf74013): no map left to tile.
+        "tests_corpus_tsvc_2_5_tsvc_2_5_scan_strided_2",
         "tests_corpus_tsvc_2_5_tsvc_2_5_thomas_solve",
         "tests_corpus_tsvc_2_5_tsvc_2_5_wavefront2d",
         "tests_corpus_tsvc_2_5_tsvc_2_5_wf_north_west",
