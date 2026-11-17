@@ -40,6 +40,7 @@ from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
     declare_nonnegative_symbols,
     set_symbol_nonnegative_assumptions,
 )
+from dace.transformation.passes.canonicalize.batch_gathered_products import BatchGatheredProducts
 from dace.transformation.passes.canonicalize.carried_accumulation import CarriedAccumulationToWCR
 from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import (
     CascadeInterstateEdgeAssignmentsUp,
@@ -861,9 +862,11 @@ def lift_semantics(lift: bool, lift_copy: bool, interchange_carry_with_map: bool
         (label, LoopToStateScan()),
         (label, ArgMaxLift()),
         (label, LoopToConditionalReduce()),
-        (label, LoopToStreamCompaction()),
-        (label, LiftLoopCarriedReduction()),
     ]
+    if target == "gpu":
+        # One guard per nest, then its gathered products become one batched call the compaction below feeds
+        s += [(label, MergeGuards()), (label, BatchGatheredProducts())]
+    s += [(label, LoopToStreamCompaction()), (label, LiftLoopCarriedReduction())]
     return s
 
 
