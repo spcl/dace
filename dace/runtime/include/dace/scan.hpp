@@ -53,8 +53,19 @@ struct alignas(64) TeamSlot {
   T v[K];
 };
 
+// Whether the block rescan uses `omp simd reduction(inscan)`. Measured on an inclusive sum of 64M doubles: on
+// x86-64 (AVX2) it is up to 1.3x faster than the scalar loop on one thread and equal on four; on aarch64
+// (Neoverse V2, gcc 14) it is 1.1-1.25x slower at every thread count. Override with -DDACE_SCAN_SIMD_RESCAN=0/1.
+#ifndef DACE_SCAN_SIMD_RESCAN
+#if defined(__x86_64__) || defined(_M_X64)
+#define DACE_SCAN_SIMD_RESCAN 1
+#else
+#define DACE_SCAN_SIMD_RESCAN 0
+#endif
+#endif
+
 // Fallback tile size when the cache hierarchy cannot be queried.
-constexpr long TILE_BYTES = 1L << 17;
+constexpr long TILE_BYTES = 1L << 19;
 
 // One cache level's size in bytes, or 0 if unknown. Queried once and cached.
 inline long cache_bytes(int level) {
@@ -69,14 +80,15 @@ inline long cache_bytes(int level) {
 #endif
 }
 
-// Bytes per thread per tile, derived from this machine's L2 (clamped to [32 KB, 512 KB]) so the
-// scan pass re-reads a block that is still in cache after the reduce pass wrote it.
+// Bytes per thread per tile: half of this machine's L2 (clamped to [64 KB, 1 MB]), so the scan pass re-reads a
+// block that is still in cache after the reduce pass read it. Half of L2 beat L2/8 by 1.1-1.4x on Neoverse V2 at
+// 8-36 threads (fewer tiles, fewer barriers) and matched it at 72.
 inline long tile_bytes() {
   const long l2 = cache_bytes(2);
   if (l2 <= 0) return TILE_BYTES;
-  const long derived = l2 / 8;
-  if (derived < (1L << 15)) return 1L << 15;
-  if (derived > (1L << 19)) return 1L << 19;
+  const long derived = l2 / 2;
+  if (derived < (1L << 16)) return 1L << 16;
+  if (derived > (1L << 20)) return 1L << 20;
   return derived;
 }
 
@@ -179,10 +191,14 @@ inline A fold_max(It f, long lo, long hi) {
 template <typename It, typename OutIt, typename T>
 inline void scan_incl_sum(It f, OutIt o, long lo, long hi, T seed) {
   T acc = seed;
+#if DACE_SCAN_SIMD_RESCAN
 #pragma omp simd reduction(inscan, + : acc)
+#endif
   for (long i = lo; i < hi; ++i) {
     acc = acc + f[i];
+#if DACE_SCAN_SIMD_RESCAN
 #pragma omp scan inclusive(acc)
+#endif
     o[i] = acc;
   }
 }
@@ -190,10 +206,14 @@ inline void scan_incl_sum(It f, OutIt o, long lo, long hi, T seed) {
 template <typename It, typename OutIt, typename T>
 inline void scan_incl_product(It f, OutIt o, long lo, long hi, T seed) {
   T acc = seed;
+#if DACE_SCAN_SIMD_RESCAN
 #pragma omp simd reduction(inscan, * : acc)
+#endif
   for (long i = lo; i < hi; ++i) {
     acc = acc * f[i];
+#if DACE_SCAN_SIMD_RESCAN
 #pragma omp scan inclusive(acc)
+#endif
     o[i] = acc;
   }
 }
@@ -201,10 +221,14 @@ inline void scan_incl_product(It f, OutIt o, long lo, long hi, T seed) {
 template <typename It, typename OutIt, typename T>
 inline void scan_incl_min(It f, OutIt o, long lo, long hi, T seed) {
   T acc = seed;
+#if DACE_SCAN_SIMD_RESCAN
 #pragma omp simd reduction(inscan, min : acc)
+#endif
   for (long i = lo; i < hi; ++i) {
     acc = std::min<T>(acc, f[i]);
+#if DACE_SCAN_SIMD_RESCAN
 #pragma omp scan inclusive(acc)
+#endif
     o[i] = acc;
   }
 }
@@ -212,10 +236,14 @@ inline void scan_incl_min(It f, OutIt o, long lo, long hi, T seed) {
 template <typename It, typename OutIt, typename T>
 inline void scan_incl_max(It f, OutIt o, long lo, long hi, T seed) {
   T acc = seed;
+#if DACE_SCAN_SIMD_RESCAN
 #pragma omp simd reduction(inscan, max : acc)
+#endif
   for (long i = lo; i < hi; ++i) {
     acc = std::max<T>(acc, f[i]);
+#if DACE_SCAN_SIMD_RESCAN
 #pragma omp scan inclusive(acc)
+#endif
     o[i] = acc;
   }
 }
@@ -223,10 +251,14 @@ inline void scan_incl_max(It f, OutIt o, long lo, long hi, T seed) {
 template <typename It, typename OutIt, typename T>
 inline void scan_excl_sum(It f, OutIt o, long lo, long hi, T seed) {
   T acc = seed;
+#if DACE_SCAN_SIMD_RESCAN
 #pragma omp simd reduction(inscan, + : acc)
+#endif
   for (long i = lo; i < hi; ++i) {
     o[i] = acc;
+#if DACE_SCAN_SIMD_RESCAN
 #pragma omp scan exclusive(acc)
+#endif
     acc = acc + f[i];
   }
 }
@@ -234,10 +266,14 @@ inline void scan_excl_sum(It f, OutIt o, long lo, long hi, T seed) {
 template <typename It, typename OutIt, typename T>
 inline void scan_excl_product(It f, OutIt o, long lo, long hi, T seed) {
   T acc = seed;
+#if DACE_SCAN_SIMD_RESCAN
 #pragma omp simd reduction(inscan, * : acc)
+#endif
   for (long i = lo; i < hi; ++i) {
     o[i] = acc;
+#if DACE_SCAN_SIMD_RESCAN
 #pragma omp scan exclusive(acc)
+#endif
     acc = acc * f[i];
   }
 }
@@ -245,10 +281,14 @@ inline void scan_excl_product(It f, OutIt o, long lo, long hi, T seed) {
 template <typename It, typename OutIt, typename T>
 inline void scan_excl_min(It f, OutIt o, long lo, long hi, T seed) {
   T acc = seed;
+#if DACE_SCAN_SIMD_RESCAN
 #pragma omp simd reduction(inscan, min : acc)
+#endif
   for (long i = lo; i < hi; ++i) {
     o[i] = acc;
+#if DACE_SCAN_SIMD_RESCAN
 #pragma omp scan exclusive(acc)
+#endif
     acc = std::min<T>(acc, f[i]);
   }
 }
@@ -256,10 +296,14 @@ inline void scan_excl_min(It f, OutIt o, long lo, long hi, T seed) {
 template <typename It, typename OutIt, typename T>
 inline void scan_excl_max(It f, OutIt o, long lo, long hi, T seed) {
   T acc = seed;
+#if DACE_SCAN_SIMD_RESCAN
 #pragma omp simd reduction(inscan, max : acc)
+#endif
   for (long i = lo; i < hi; ++i) {
     o[i] = acc;
+#if DACE_SCAN_SIMD_RESCAN
 #pragma omp scan exclusive(acc)
+#endif
     acc = std::max<T>(acc, f[i]);
   }
 }
@@ -274,7 +318,9 @@ inline void blocked_scan(long n, long elem_bytes, T seed, Reduce reduce, Scan sc
   // No size test here: a scan too small for a team is expanded to the sequential shape
   // instead, before it ever reaches this function.
   if (want > 1) {
-    TeamSlot<T> totals[MAX_TEAM];
+    // Two banks of totals, alternating by tile: a thread writing tile k+1's total cannot overwrite a total another
+    // thread still reads for tile k, so one barrier per tile suffices.
+    TeamSlot<T> totals[2][MAX_TEAM];
 #pragma omp parallel num_threads(want)
     {
       const long team = static_cast<long>(omp_get_num_threads());
@@ -282,21 +328,21 @@ inline void blocked_scan(long n, long elem_bytes, T seed, Reduce reduce, Scan sc
       const long per = block_span(n, team, elem_bytes);
       const long tile = per * team;
       T carry = seed;
-      for (long base = 0; base < n; base += tile) {
+      int bank = 0;
+      for (long base = 0; base < n; base += tile, bank ^= 1) {
         const long end = (base + tile < n) ? base + tile : n;
         const long lo = (base + me * per < end) ? base + me * per : end;
         const long hi = (lo + per < end) ? lo + per : end;
         if (team > 1) {
-          totals[me].v[0] = reduce(lo, hi);
+          totals[bank][me].v[0] = reduce(lo, hi);
 #pragma omp barrier
           T off = carry, all = carry;
           for (long q = 0; q < team; ++q) {
             if (q == me) off = all;
-            all = combine(all, totals[q].v[0]);
+            all = combine(all, totals[bank][q].v[0]);
           }
           scan(lo, hi, off);
           carry = all;
-#pragma omp barrier
         } else {
           scan(lo, hi, carry);
         }
