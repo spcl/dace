@@ -26,7 +26,7 @@ import enum
 
 import dace
 from dace import SDFG, dtypes, library, symbolic
-from dace.libraries.standard.helper import schedule_dispatch
+from dace.libraries.standard.helper import collapse_to_elements, schedule_dispatch
 from dace.libraries.standard.pure_components import chain, counted_loop, tasklet_state
 from dace.memlet import Memlet
 from dace.properties import CodeBlock, EnumProperty, Property, SDFGReferenceProperty, SymbolicProperty
@@ -77,10 +77,14 @@ def argument(outer: SDFG, name: str) -> dace.data.Data:
 
 
 def declare_operands(node: "StateScan", sdfg: SDFG, outer: SDFG, state: dace.SDFGState) -> None:
-    """The node's tables, ``_init`` and ``_out`` as non-transient containers of ``sdfg``."""
-    for edge in state.in_edges(node) + state.out_edges(node):
-        name = edge.dst_conn if edge.dst is node else edge.src_conn
-        sdfg.add_datadesc(name, argument(outer, edge.data.data))
+    """The node's tables and ``_init`` as non-transient containers of ``sdfg``, and ``_out`` as the window of states
+    it writes: its container may hold more than one scan's states (one row per block of a kernel)."""
+    for edge in state.in_edges(node):
+        sdfg.add_datadesc(edge.dst_conn, argument(outer, edge.data.data))
+    for edge in state.out_edges(node):
+        desc = outer.arrays[edge.data.data]
+        shape, strides = collapse_to_elements(edge.data.subset, desc.strides)
+        sdfg.add_array(edge.src_conn, shape, desc.dtype, desc.storage, strides=strides)
 
 
 def run_sdfg(
@@ -395,6 +399,11 @@ def scan_sdfg(node: "StateScan", state: dace.SDFGState, outer: SDFG, schedule: d
     if node.kind is StateScanKind.FINITE:
         sdfg.add_array("__scan_table", [node.chunks * node.count + 1], dtype, storage=storage, transient=True)
         first, second, third = phases(sdfg, 3)
+        table_range = {"__c": f"0:{chunks}", "__j": f"0:{text(node.count)}"}
+        if schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+            # a block's x lane takes the last parameter: chunks there, as in the last phase, keep the block at
+            # chunks x count lanes instead of chunks x chunks
+            table_range = dict(reversed(table_range.items()))
         nest(
             first,
             sdfg,
@@ -409,7 +418,7 @@ def scan_sdfg(node: "StateScan", state: dace.SDFGState, outer: SDFG, schedule: d
             ),
             tables,
             ["__scan_table"],
-            {"__c": f"0:{chunks}", "__j": f"0:{text(node.count)}"},
+            table_range,
             schedule,
         )
         nest(

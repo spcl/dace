@@ -216,15 +216,37 @@ def whole_array_nodes() -> tuple[type, ...]:
     return (ExtremeIndex, MaskReduction, Norm2)
 
 
-def writes_block_shared(node: nodes.Node, state: SDFGState) -> bool:
-    """Whether every container ``node`` writes is one the block shares: lanes splitting a thread's own copy would
-    each fill only their share of it."""
+def thread_private_outputs(node: nodes.Node, state: SDFGState) -> list[str]:
+    """The transients ``node`` writes that each thread holds a copy of, not in shared or global memory: lanes
+    splitting a thread's own copy would each fill only their share of it."""
     arrays = state.sdfg.arrays
-    return all(
-        not arrays[e.data.data].transient or arrays[e.data.data].storage == dtypes.StorageType.GPU_Shared
-        for e in state.out_edges(node)
-        if not e.data.is_empty()
+    return list(
+        dict.fromkeys(
+            e.data.data
+            for e in state.out_edges(node)
+            if not e.data.is_empty()
+            and arrays[e.data.data].transient
+            and arrays[e.data.data].storage not in (dtypes.StorageType.GPU_Shared, dtypes.StorageType.GPU_Global)
+        )
     )
+
+
+def share_with_block(names: list[str], kernel: nodes.MapEntry, state: SDFGState) -> bool:
+    """Put each thread-private transient of ``names`` in global memory, where the lanes of a block share it;
+    :class:`~dace.transformation.passes.move_array_out_of_kernel.MoveArrayOutOfKernel` then gives each iteration of
+    ``kernel`` (one block) its own slice. ``False``, and nothing changed, when one is used outside the kernel or
+    through a view."""
+    sdfg = state.sdfg
+    inside = set(state.scope_subgraph(kernel).nodes())
+    for name in names:
+        if isinstance(sdfg.arrays[name], data.View):
+            return False
+        for other in sdfg.states():
+            if any(n.data == name and (other is not state or n not in inside) for n in other.data_nodes()):
+                return False
+    for name in names:
+        sdfg.arrays[name].storage = dtypes.StorageType.GPU_Global
+    return True
 
 
 def holds_thread_block_maps(node: nodes.Node, state: SDFGState) -> bool:
@@ -258,10 +280,13 @@ def enclosing_maps(node: nodes.Node, state: SDFGState) -> list[nodes.MapEntry]:
     return [s for s in get_parent_map_and_loop_scopes(state.sdfg, node, state) if isinstance(s, nodes.MapEntry)]
 
 
-def in_kernel_block_implementation(node: nodes.LibraryNode, state: SDFGState) -> str | None:
+def in_kernel_block_implementation(
+    node: nodes.LibraryNode, state: SDFGState, share_private_outputs: bool = False
+) -> str | None:
     """The block collective ``node`` lowers to by default: inside a GPU kernel, outside thread-level code.
 
-    A caller that takes it calls :func:`release_kernel_block_size`.
+    A caller that takes it calls :func:`release_kernel_block_size`. With ``share_private_outputs``, a thread-private
+    transient the node writes first moves to global memory, one slice per block (:func:`share_with_block`).
 
     :returns: The implementation key, or ``None`` on the host, in thread-level code, or for a shape the
               node's block lowering refuses.
@@ -278,9 +303,17 @@ def in_kernel_block_implementation(node: nodes.LibraryNode, state: SDFGState) ->
         return None
     if accumulates_beside(node, state):
         return None
-    if isinstance(node, lane_map_nodes()) and not writes_block_shared(node, state):
+    block = gpu_block_implementation(node, state, state.sdfg)
+    private = thread_private_outputs(node, state) if isinstance(node, lane_map_nodes()) else []
+    if block is None or not private:
+        return block
+    if not share_private_outputs:
         return None
-    return gpu_block_implementation(node, state, state.sdfg)
+    # the kernel in this state: one across a nested SDFG passes the outputs in, which this cannot move
+    kernel = state.entry_node(node)
+    while isinstance(kernel, nodes.MapEntry) and kernel.map.schedule != dtypes.ScheduleType.GPU_Device:
+        kernel = state.entry_node(kernel)
+    return block if isinstance(kernel, nodes.MapEntry) and share_with_block(private, kernel, state) else None
 
 
 def accumulates_beside(node: nodes.LibraryNode, state: SDFGState) -> bool:
