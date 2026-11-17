@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <type_traits>
 
 // ``types.h`` first: ``math.h`` pulls in ``ITE.h`` before defining ``DACE_CONSTEXPR``,
 // so this header is only self-contained when the macros are already in scope.
@@ -224,6 +225,10 @@ struct _wcr_fixed<ReductionType::Sum, T> {
     // No HIP atomicAdd below 32 bits (__half, __hip_bfloat16, 8/16-bit integers): CAS fallback.
     if constexpr (sizeof(T) < sizeof(unsigned int)) {
       return wcr_custom<T>::reduce_atomic(_wcr_fixed<ReductionType::Sum, T>(), ptr, value);
+    } else if constexpr (std::is_same_v<T, float> || std::is_same_v<T, double>) {
+      // atomicAdd on a float or double is a compare-and-swap loop on gfx90a; the hardware add is exact on the
+      // coarse-grained device memory hipMalloc returns, which every DaCe GPU_Global container is
+      return unsafeAtomicAdd(ptr, value);
     } else {
       return atomicAdd(ptr, value);
     }
