@@ -50,18 +50,6 @@ def kind_of(node: nodes.LibraryNode, state: SDFGState) -> str | None:
     return None
 
 
-def packed(desc: data.Data) -> bool:
-    """C-contiguous: a stack's elements lie one element's size apart, the stride the strided call walks."""
-    if not isinstance(desc, data.Array):
-        return False
-    stride = 1
-    for extent, actual in zip(reversed(desc.shape), reversed(desc.strides)):
-        if symbolic.equal(actual, stride) is not True:
-            return False
-        stride = stride * extent
-    return True
-
-
 def follows(expr, param) -> bool:
     return str(param) in symbolic.symlist(expr)
 
@@ -70,7 +58,8 @@ def stacked(memlet: Memlet, desc: data.Data, param, begin, end) -> tuple[subsets
     """The subset of every iteration's ``memlet`` together and the per-iteration pool index if it is gathered (else
     ``None``); ``None`` overall unless only the leading dimension follows ``param``, at one point, the rest whole."""
     ranges = memlet.subset.ranges
-    if not ranges or not packed(desc):
+    # C-contiguous: a stack's elements lie one element's size apart, the stride the strided call walks
+    if not ranges or not isinstance(desc, data.Array) or not desc.is_packed_c_strides():
         return None
     first, last, _ = ranges[0]
     if symbolic.equal(first, last) is not True or not follows(first, param):
@@ -95,8 +84,10 @@ def batch(state: SDFGState, entry: nodes.MapEntry, node: nodes.LibraryNode) -> b
     begin, end, step = entry.map.range[0]
     if step != 1:
         return False
-    edges = {e.dst_conn: e for e in state.in_edges(node)} | {e.src_conn: e for e in state.out_edges(node)}
-    if set(edges) - {conn_a, conn_b, conn_c} or any(e.data.wcr is not None for e in edges.values()):
+    inputs = {e.dst_conn: e for e in state.in_edges(node)}
+    edges = inputs | {e.src_conn: e for e in state.out_edges(node)}
+    # A product folding onto its output (a Gemv with nonzero beta reads ``_y``) is not batched
+    if conn_c in inputs or set(edges) - {conn_a, conn_b, conn_c} or any(e.data.wcr is not None for e in edges.values()):
         return False
     plan = {}
     for role, conn in (("_a", conn_a), ("_b", conn_b), ("_c", conn_c)):
@@ -122,10 +113,9 @@ def batch(state: SDFGState, entry: nodes.MapEntry, node: nodes.LibraryNode) -> b
         return False
 
     product = BatchedMatMul(f"{node.label}_batched")
-    product.transA = trans if kind.startswith("matmul") else getattr(node, "transA", False)
-    for name in ("alpha", "beta"):
-        if hasattr(node, name):
-            setattr(product, name, getattr(node, name))
+    product.transA = node.transA if isinstance(node, Gemv) else trans
+    if isinstance(node, (Gemv, MatMul)):
+        product.alpha, product.beta = node.alpha, node.beta
     state.add_node(product)
     trip = entry.map.range.num_elements()
     for role, (outer, edge, subset, index, _) in plan.items():
@@ -148,9 +138,11 @@ def batch(state: SDFGState, entry: nodes.MapEntry, node: nodes.LibraryNode) -> b
             state.add_edge(
                 state.out_edges(fill_exit)[0].dst, None, product, BATCH_INDEX[role], Memlet(f"{name}[0:{trip}]")
             )
-    state.remove_nodes_from([entry, state.exit_node(entry), node])
-    for leftover in [n for n in state.data_nodes() if state.degree(n) == 0]:
-        state.remove_node(leftover)
+    exit_node = state.exit_node(entry)
+    around = {e.src for e in state.in_edges(entry)} | {e.dst for e in state.out_edges(exit_node)}
+    state.remove_nodes_from([entry, exit_node, node])
+    # Only the map's own access nodes may be left unconnected; others in the state are not this rewrite's
+    state.remove_nodes_from([n for n in around if state.degree(n) == 0])
     return True
 
 
