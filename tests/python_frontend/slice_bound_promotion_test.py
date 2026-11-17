@@ -443,5 +443,14 @@ def test_a_store_index_names_no_scalar_its_proof_read():
     assert np.array_equal(out, expected), out
 
 
+def test_a_simplified_tap_sizes_its_temporaries_by_symbols_only():
+    """``hi = min(N, p + 3)`` is assigned on an interstate edge that reads the scalar argument ``p``, and a temporary
+    is sized by ``hi``'s symbol. Folding that derived variable into the shape named the container ``p`` as a symbol,
+    which inlining the loop body later refuses (auto-optimized general tests)."""
+    sdfg = strided_tap_add_in_nested_loops.to_sdfg(simplify=True)
+    named = {str(sym) for sd in sdfg.all_sdfgs_recursive() for desc in sd.arrays.values() for sym in desc.free_symbols}
+    assert not named & set(sdfg.arrays), named
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

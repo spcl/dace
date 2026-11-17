@@ -130,7 +130,11 @@ def fold_self_referential_iedge_ivs(
         # Only fold when the counter is dead after the loop. If its post-loop
         # value is consumed, InductionVariableSubstitution owns the rewrite (it
         # materialises the exit value); folding here would drop the update.
-        if not symbol_is_dead_outside_loop(loop, name) or shared_container_uses_symbol(loop, name):
+        if (
+            not symbol_is_dead_outside_loop(loop, name)
+            or shared_container_uses_symbol(loop, name)
+            or names_containers(loop.sdfg, step)
+        ):
             continue
         # Determine whether the increment is before or after the body reads.
         # Post-increment (edge from empty start block): body sees ``sym + (t+1)*step``.
@@ -200,8 +204,10 @@ def fold_nested_carried_symbols(
             continue
         # Refuse if the symbol is still assigned on an interstate edge of this loop;
         # that would be a direct outer-loop increment (s126) and double-counting.
-        if any(name in e.data.assignments for e in loop.all_interstate_edges()) or shared_container_uses_symbol(
-            loop, name
+        if (
+            any(name in e.data.assignments for e in loop.all_interstate_edges())
+            or shared_container_uses_symbol(loop, name)
+            or names_containers(loop.sdfg, per_iter)
         ):
             continue
         # The symbol's value at the start of this loop is a derived IV: substitute
@@ -292,6 +298,8 @@ def simplify_loop(loop: LoopRegion, nested_carries: dict[str, tuple[LoopRegion, 
         # Build the replacement: scale * basis + offset, parenthesized so later
         # string-based substitutions don't capture adjacent operators.
         replacement = f"({iv.scale} * ({basis.name}) + ({iv.offset}))"
+        if names_containers(loop.sdfg, replacement):
+            continue
 
         # Substitute every use of ``name`` inside the loop. ``replace_keys=False``
         # preserves the defining assignment on the interstate edge so we can
@@ -342,6 +350,12 @@ def shared_container_uses_symbol(loop: LoopRegion, name: str) -> bool:
         for state in loop.states()
         for node in state.data_nodes()
     )
+
+
+def names_containers(sdfg: SDFG, value: symbolic.SymbolicType | str) -> bool:
+    """Whether ``value`` reads a data container. An interstate edge may (``hi = Min(N, p + 3)`` over a scalar argument
+    ``p``); a memlet or a descriptor's shape, where a fold puts the closed form, names only symbols."""
+    return any(str(sym) in sdfg.arrays for sym in symbolic.pystr_to_symbolic(value).free_symbols)
 
 
 def fold_into_loop_local_descriptors(loop: LoopRegion, name: str, replacement: str) -> bool:
