@@ -11,6 +11,7 @@ import pytest
 
 import dace
 from dace import dtypes
+from dace.codegen import common
 from dace.libraries.lapack import Getrf, GetrfNoPivot, Getri, Getrs, Potrf, Syevd
 from dace.libraries.lapack.block import BLOCK_LAPACK
 from dace.libraries.linalg import Cholesky, Eigh, Inv, Solve
@@ -219,6 +220,11 @@ def test_a_complex_matrix_refuses_the_block_lowering():
     assert gpu_block_implementation(node, state, sdfg) is None
 
 
+def vendor_solver() -> str:
+    """The dense solver of the GPU backend this process builds for."""
+    return "hipSolverDn" if common.get_gpu_backend() == "hip" else "cuSolverDn"
+
+
 def getri_on_the_device(dtype: dace.typeclass) -> dace.SDFG:
     """A host-issued ``Getri`` on GPU-resident operands, through the vendor solver."""
     sdfg = dace.SDFG("getri_device")
@@ -227,7 +233,7 @@ def getri_on_the_device(dtype: dace.typeclass) -> dace.SDFG:
     sdfg.add_array("info", [1], dace.int32, storage=dtypes.StorageType.GPU_Global)
     state = sdfg.add_state()
     node = Getri("getri")
-    node.implementation = "cuSolverDn"
+    node.implementation = vendor_solver()
     state.add_edge(state.add_read("A"), None, node, "_xin", dace.Memlet(f"A[0:{N}, 0:{N}]"))
     state.add_edge(state.add_read("piv"), None, node, "_ipiv", dace.Memlet(f"piv[0:{N}]"))
     state.add_edge(node, "_xout", state.add_write("A"), None, dace.Memlet(f"A[0:{N}, 0:{N}]"))
@@ -240,7 +246,7 @@ def test_getri_on_the_device_solves_against_an_identity():
     sdfg.expand_library_nodes(recursive=False)
     (nested,) = [n for n in sdfg.start_state.nodes() if isinstance(n, nodes.NestedSDFG)]
     (solve,) = [n for n in nested.sdfg.start_state.nodes() if isinstance(n, Getrs)]
-    assert solve.implementation == "cuSolverDn"
+    assert solve.implementation == vendor_solver()
     assert nested.sdfg.arrays["_eye"].transient
 
 
@@ -296,7 +302,7 @@ def test_getri_on_the_device_matches_numpy_inv():
     import scipy.linalg
 
     a = np.random.default_rng(11).standard_normal((N, N))
-    # cuSolverDn reads the buffer column-major, so it holds the factors of A^T transposed
+    # The vendor solver reads the buffer column-major, so it holds the factors of A^T transposed
     lu, piv = scipy.linalg.lu_factor(a.T)
     device = {"A": cupy.asarray(np.ascontiguousarray(lu.T)), "piv": cupy.asarray(piv.astype(np.int32) + 1)}
     device["info"] = cupy.ones(1, np.int32)
