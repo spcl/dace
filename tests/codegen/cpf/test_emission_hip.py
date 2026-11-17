@@ -708,3 +708,25 @@ if __name__ == "__main__":
     test_the_device_object_is_found_however_the_backend_labels_it("cpp", "cuda")
     test_a_split_that_is_not_a_device_object_is_still_refused()
     test_non_linkable_objects_do_not_count_as_a_split()
+
+
+@dace.program
+def bf16_abs_scale_sign(x: dace.bfloat16[N], y: dace.bfloat16[N], negative: dace.bool_[N]):
+    for i in dace.map[0:N]:
+        y[i] = np.abs(x[i]) / N
+        negative[i] = x[i] < 0
+
+
+def test_a_bfloat16_unit_carries_the_overloads_its_abs_and_integer_arithmetic_need():
+    """``__hip_bfloat16`` converts to every built-in arithmetic type, so ``std::abs`` of one and its division by or
+    comparison with an integer are ambiguous; the unit that names the type carries exact overloads."""
+    rendering = render_gpu(bf16_abs_scale_sign, "cpf_hip_bf16_overloads")
+    assert "__hip_bfloat16" in rendering.device_code
+    assert "inline __hip_bfloat16 abs(__hip_bfloat16 v)" in rendering.device_code
+    assert "operator/(__hip_bfloat16 a, I b)" in rendering.device_code
+    assert "operator<(__hip_bfloat16 a, I b)" in rendering.device_code
+
+
+@pytest.mark.gpu
+def test_a_bfloat16_unit_with_abs_and_integer_arithmetic_builds_with_hipcc(tmp_path):
+    build_units(render_gpu(bf16_abs_scale_sign, "cpf_hip_bf16_build"), tmp_path, "cpf_hip_bf16_build")

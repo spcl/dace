@@ -1285,6 +1285,45 @@ struct cpf_gpu_context {
 };
 """
 
+#: The arithmetic and comparison operators :func:`bfloat16_overloads` defines between a 16-bit vendor float and an
+#: integer, with each one's result (``T`` is the float type).
+BFLOAT16_INTEGER_OPERATORS: tuple[tuple[str, str], ...] = (
+    *((op, "T") for op in ("+", "-", "*", "/")),
+    *((op, "bool") for op in ("<", ">", "<=", ">=", "==", "!=")),
+)
+
+
+def bfloat16_overloads(vendor: str) -> str:
+    """The device block of ``vendor``'s bfloat16 (``__hip_bfloat16``, ``__nv_bfloat16``): ``std::abs`` and its
+    arithmetic and comparisons with an integer, each through ``float``.
+
+    The type converts to every built-in arithmetic type, so ``std::abs(x)``, ``x / n`` and ``x < 0`` each match
+    several built-in candidates at once and do not compile (ml40's resnet, GELU and group-norm kernels). A template
+    over the integral types is an exact match and wins; ``float`` holds every bfloat16 value.
+    """
+    lines = [
+        f"//: ``{vendor}`` converts to every built-in arithmetic type: these exact overloads go through ``float``.",
+        "namespace std {",
+        f"__host__ __device__ inline {vendor} abs({vendor} v) {{ return {vendor}(fabsf(static_cast<float>(v))); }}",
+        "}  // namespace std",
+    ]
+    integral = "template <typename I, std::enable_if_t<std::is_integral_v<I>, int> = 0>"
+    for op, result in BFLOAT16_INTEGER_OPERATORS:
+        ret = vendor if result == "T" else result
+        if result == "T":
+            left = f"a {op} {vendor}(static_cast<float>(b))"
+            right = f"{vendor}(static_cast<float>(a)) {op} b"
+        else:
+            left = right = f"static_cast<float>(a) {op} static_cast<float>(b)"
+        lines += [
+            integral,
+            f"__host__ __device__ inline {ret} operator{op}({vendor} a, I b) {{ return {left}; }}",
+            integral,
+            f"__host__ __device__ inline {ret} operator{op}(I a, {vendor} b) {{ return {right}; }}",
+        ]
+    return "\n".join(lines) + "\n"
+
+
 #: Device preamble blocks only SOME units need, keyed by the identifier that pulls each one in.
 #:
 #: Same principle as :func:`helpers_used`, and for the same reason: what a unit needs is a property
@@ -1318,6 +1357,7 @@ __host__ __device__ inline T cpf_narrow(const V &value) {
     }
 }
 """,
+    "__hip_bfloat16": bfloat16_overloads("__hip_bfloat16"),
     "gpucub": """\
 //: The backend cub, under the name the code generator writes -- what gpucub.cuh aliases. hipCUB
 //: keeps the functor structs CCCL 3 dropped, and a unit built by hipcc is never built against CCCL.
@@ -1406,6 +1446,7 @@ __device__ inline void cpf_gpu_atomic_add_complex(std::complex<R> *address, V va
 #: The CUDA unit's blocks: the same ones, with cub under its CUDA name.
 CUDA_DEVICE_BLOCKS: dict[str, str] = {
     **HIP_DEVICE_BLOCKS,
+    "__nv_bfloat16": bfloat16_overloads("__nv_bfloat16"),
     "gpucub": "//: The backend cub, under the name the code generator writes -- what gpucub.cuh aliases.\n"
     "namespace gpucub = cub;\n",
 }
@@ -1418,7 +1459,7 @@ DEVICE_BLOCKS: dict[Dialect, dict[str, str]] = {
 #: Emission order for :data:`DEVICE_BLOCKS`. A dict preserves insertion order, but the blocks
 #: are selected into a set, so the order a unit gets them in has to be stated rather than inherited
 #: from however the set happened to iterate -- two runs of the same SDFG must render byte-identical.
-DEVICE_BLOCK_ORDER: tuple[str, ...] = tuple(HIP_DEVICE_BLOCKS)
+DEVICE_BLOCK_ORDER: tuple[str, ...] = (*HIP_DEVICE_BLOCKS, "__nv_bfloat16")
 
 #: What each block needs in turn.
 DEVICE_BLOCK_DEPENDENCIES: dict[str, tuple[str, ...]] = {
