@@ -520,7 +520,8 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
     header's -- no pragma, no per-element atomic here. SHAPES: the reduced axes split into the
     innermost CONTIGUOUS run (consecutive indices whose strides nest exactly, hence one
     ``count``/``stride`` walk) plus the rest; the run is the call, the rest are plain C loops around
-    it, and no strided input is ever packed, so a single-axis reduction (the ``LoopToReduce`` shape)
+    it -- shared out under one ``reduction`` clause, each folding its run with the ``seq`` entry, when the node
+    opens the region -- and no strided input is ever packed, so a single-axis reduction (the ``LoopToReduce`` shape)
     and a full dense reduction are each ONE call with no loops. A degenerate reduction, unrecognised
     WCR, non-scalar dtype or Windows falls back to :class:`ExpandReducePure`.
     """
@@ -543,6 +544,19 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         dtypes.ReductionType.Bitwise_Xor: ("bitwise_xor", "{o}", "{o} = {call};"),
         dtypes.ReductionType.Sub: ("sum", "({t})0", "{o} -= {call};"),
         dtypes.ReductionType.Div: ("product", "({t})1", "{o} = {o} / {call};"),
+    }
+
+    #: ``dace::reduce`` entry point -> its OpenMP ``reduction`` identifier.
+    OPENMP_CLAUSES = {
+        "max": "max",
+        "min": "min",
+        "sum": "+",
+        "product": "*",
+        "bitwise_and": "&",
+        "logical_and": "&&",
+        "bitwise_or": "|",
+        "logical_or": "||",
+        "bitwise_xor": "^",
     }
 
     #: Integer-only: no ``&`` / ``|`` / ``^`` exists on a floating-point operand, in C++ or in OpenMP.
@@ -673,6 +687,21 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         if node.identity is not None:
             code += f"{outexpr} = {sym2cpp(node.identity)};\n"
 
+        # Reduced axes outside the contiguous run: the team shares THEM out, each iteration folding its run
+        # sequentially into a private accumulator. A parallel entry per iteration forks once per iteration.
+        parallel_outer_red = (
+            bool(outer_red)
+            and not outer_loops
+            and not reentered
+            and not numpy.issubdtype(output_data.dtype.type, numpy.complexfloating)
+        )
+        seed = seed_fmt.format(o=outexpr, t=output_data.dtype.ctype)
+        if parallel_outer_red:
+            ctype = output_data.dtype.ctype
+            code += f"{ctype} _acc = {seed};\n"
+            clause = ExpandReduceOpenMP.OPENMP_CLAUSES[fname]
+            code += f"#pragma omp parallel for {collapse_clause(len(outer_red))}reduction({clause}:_acc)\n"
+            seed = f"({ctype})(_acc)"
         for i, axis in enumerate(outer_red):
             code += f"for (int _i{i} = 0; _i{i} < {sym2cpp(sizes[axis])}; ++_i{i}) {{\n"
 
@@ -693,16 +722,19 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
 
         count = functools.reduce(lambda a, b: a * b, [sizes[a] for a in group], 1)
         call = "::dace::reduce::{seq}{fn}({base}, (long)({count}), (long)({stride}), {seed})".format(
-            seq="seq::" if (outer_loops or reentered) else "",
+            seq="seq::" if (outer_loops or reentered or outer_red) else "",
             fn=fname,
             base=_IN if not in_offset else "%s + %s" % (_IN, " + ".join(in_offset)),
             count=sym2cpp(count),
             stride=sym2cpp(strides[group[-1]]),
-            seed=seed_fmt.format(o=outexpr, t=output_data.dtype.ctype),
+            seed=seed,
         )
-        code += stmt.format(o=outexpr, call=call) + "\n"
-
-        code += "}\n" * len(outer_red)
+        if parallel_outer_red:
+            code += f"_acc = {call};\n" + "}\n" * len(outer_red)
+            code += stmt.format(o=outexpr, call="_acc") + "\n"
+        else:
+            code += stmt.format(o=outexpr, call=call) + "\n"
+            code += "}\n" * len(outer_red)
         if outer_loops:
             code += "}\n" * output_dims
 
