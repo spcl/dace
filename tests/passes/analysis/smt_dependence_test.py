@@ -12,12 +12,12 @@ import math
 
 import pytest
 import sympy as sp
-import z3
 
 from dace import symbolic
 from dace.transformation.passes.analysis import smt_dependence
+from dace.transformation.passes.analysis.smt_dependence import z3
 
-#: ``z3-solver`` is a hard dependency of this branch (``pyproject.toml`` marks it "Not optional":
+#: The solver (``z3-solver``, or ``cvc5`` under ``smt_solver``) is a hard dependency of this branch (``pyproject.toml`` marks it "Not optional":
 #: LoopToMap and the canonicalize parallelization band query the oracle), so an absent solver is a
 #: broken install, not a reason to report green.
 assert smt_dependence.has_z3(), "z3-solver is a required dependency but the SMT oracle is unavailable"

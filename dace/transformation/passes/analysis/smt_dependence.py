@@ -1,10 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """SMT-backed dependence oracle for non-affine loop-carried dependences.
 
-The oracle is a *conservative* fallback: it asks z3 to prove the absence of a
+The oracle is a *conservative* fallback: it asks the solver to prove the absence of a
 loop-carried dependence (or the direction of the only possible dependence).
-When z3 is unavailable, every query returns ``None`` and callers fall back to
+When the solver is unavailable, every query returns ``None`` and callers fall back to
 their existing safe refusal.
+
+Terms and queries are written once, in the z3py API, which :data:`z3` names. Config
+``optimizer.canonicalization.smt_solver`` picks what serves it: z3 itself, or cvc5 through
+``cvc5.pythonic``, its z3py-compatible API.
 """
 
 from typing import Any
@@ -16,34 +20,48 @@ from dace.config import Config
 from dace.optionals import required
 from dace.sdfg.analysis.cfg import collect_enclosing_conditions  # noqa: F401 -- re-exported
 
-try:
-    import z3
+#: The solver behind the z3py API, read once: terms of two solvers never meet
+SOLVER = Config.get("optimizer", "canonicalization", "smt_solver")
 
+try:
+    if SOLVER == "cvc5":
+        import cvc5.pythonic as z3
+    else:
+        import z3
+
+        # A collector run on another thread (pytest-xdist's receiver) finalizes terms while this thread is inside z3
+        # with the GIL released; z3's reference counts are not thread-safe, so that aborted the process. Deferred.
+        z3.Z3_enable_concurrent_dec_ref(z3.main_ctx().ref())
     _HAS_Z3 = True
-    # A collector run on another thread (pytest-xdist's receiver) finalizes terms while this thread is inside z3 with
-    # the GIL released; z3's reference counts are not thread-safe, so that aborted the process. Deferred instead.
-    z3.Z3_enable_concurrent_dec_ref(z3.main_ctx().ref())
 except Exception:
     z3 = None  # type: ignore
     _HAS_Z3 = False
 
 
 def has_z3() -> bool:
-    """Whether the solver may be asked: z3 is importable and ``optimizer.canonicalization.smt`` holds."""
+    """Whether the solver may be asked: it is importable and ``optimizer.canonicalization.smt`` holds."""
     return _HAS_Z3 and Config.get_bool("optimizer", "canonicalization", "smt")
 
 
-# Solver budget in z3 resource units, not milliseconds: a wall-clock limit lets machine load flip
-# a verdict. 50M units is ~8 CPU seconds at the ~6M units/s measured here, above the old 5 s
-# budget; the largest oracle query measured on CloudSC ParallelizeLoops used 505 units.
-DEFAULT_RLIMIT = 50_000_000
+# Solver budget in resource units, not milliseconds: a wall-clock limit lets machine load flip
+# a verdict. For z3, 50M units is ~8 CPU seconds at the ~6M units/s measured here, above the old 5 s
+# budget; the largest oracle query measured on CloudSC ParallelizeLoops used 505 units. cvc5 counts
+# its own units, about ten times fewer per second on the oracle's queries.
+RLIMITS = {"z3": 50_000_000, "cvc5": 5_000_000}
+DEFAULT_RLIMIT = RLIMITS[SOLVER]
 
 
 def bounded_solver(rlimit: int = DEFAULT_RLIMIT) -> Any:
-    """A z3 solver limited to ``rlimit`` resource units, with no wall-clock limit."""
+    """A solver limited to ``rlimit`` resource units, with no wall-clock limit."""
     solver = required(z3).Solver()
     solver.set("rlimit", rlimit)
     return solver
+
+
+def is_free_constant(term: Any) -> bool:
+    """Whether ``term`` is a free constant (a variable), not a value: the test both solvers' z3py API answers."""
+    z = required(z3)
+    return z.is_const(term) and not (z.is_int_value(term) or z.is_bv_value(term) or z.is_true(term) or z.is_false(term))
 
 
 def _z3_int(expr):
