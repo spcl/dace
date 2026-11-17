@@ -1,7 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A map of matrix-vector products becomes ONE batched product before the device offload.
+"""A map of matrix-vector products or dots becomes ONE batched product before the device offload.
 
-``for b in map: y[b] = A[b] @ x[b]`` is a map whose body is one ``Gemv`` (or a ``MatMul`` of that shape). The offload would keep such a map on the host, one vendor
+``for b in map: y[b] = A[b] @ x[b]`` is a map whose body is one ``Gemv`` (or a ``MatMul`` of that shape), and
+``s[b] = x[b, :] @ y[b, :]`` one whose body is a ``Dot``. The offload would keep such a map on the host, one vendor
 call per iteration, or run each iteration's product on a thread block of our own code. The products are
 independent, so the map becomes one ``BatchedMatMul`` over stacks of vectors: a vendor ``gemmStridedBatched`` when
 every stacked operand is read at ``b`` plus a constant, else a ``gemmBatched`` over pointer arrays that gathers the
@@ -12,6 +13,7 @@ from typing import Any
 
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace.libraries.blas.nodes.batched_matmul import BATCH_INDEX, BatchedMatMul
+from dace.libraries.blas.nodes.dot import Dot
 from dace.libraries.blas.nodes.gemv import Gemv
 from dace.libraries.blas.nodes.matmul import MatMul, _get_matmul_operands, specialization
 from dace.memlet import Memlet
@@ -24,17 +26,21 @@ from dace.transformation.passes.offloading.taskloop import small_operands
 #: (``gemvt``: ``x @ A`` is ``A^T x``).
 ROLES = {
     "gemv": (("_A", "_x", "_y"), False),
+    "dot": (("_x", "_y", "_result"), False),
     "matmul_gemv": (("_a", "_b", "_c"), False),
+    "matmul_dot": (("_a", "_b", "_c"), False),
     "matmul_gemvt": (("_b", "_a", "_c"), True),
 }
 
 #: The rank of each operand's product, ``_a``, ``_b``, ``_c``, by the rank of ``_c``.
-RANKS = {1: (2, 1, 1)}
+RANKS = {1: (2, 1, 1), 0: (1, 1, 0)}
 
 
 def kind_of(node: nodes.LibraryNode, state: SDFGState) -> str | None:
     if isinstance(node, Gemv):
         return "gemv"
+    if isinstance(node, Dot):
+        return None if node.conjugate else "dot"
     if isinstance(node, MatMul):
         try:
             found = specialization(*_get_matmul_operands(node, state, state.sdfg))
@@ -150,7 +156,7 @@ def batch(state: SDFGState, entry: nodes.MapEntry, node: nodes.LibraryNode) -> b
 
 @properties.make_properties
 class BatchMapProducts(ppl.Pass):
-    """Batch every top-level map whose body is one matrix-vector product into one ``BatchedMatMul``."""
+    """Batch every top-level map whose body is one matrix-vector product or dot into one ``BatchedMatMul``."""
 
     CATEGORY: str = "Device Specialization"
 

@@ -832,7 +832,7 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False, tile_programs: bool = Fal
     run_structural_cleanup(sdfg)
     # Before the offload reads a map around a device-wide scan as a host loop of launches.
     BatchRowScans().apply_pass(sdfg, {})
-    # Likewise a map around a matrix-vector product: one batched vendor call instead
+    # Likewise a map around a matrix-vector product or dot: one batched vendor call instead
     BatchMapProducts().apply_pass(sdfg, {})
     expand_gathered_dots(sdfg)
     recompute_fuse_for_gpu(sdfg)
