@@ -52,7 +52,6 @@ from dace import cpf_lowering, dtypes, subsets, symbolic, tile_functions
 from dace import data as dt
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
-from dace.codegen.common import sym2cpp
 from dace.config import Config, set_temporary
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.fft.environments import fftw3
@@ -1267,9 +1266,11 @@ class EntrySignature:
 def add_workspace(sdfg: SDFG, workspace: str, size: str) -> None:
     """Add the caller-owned scratch pair to ``sdfg``'s entry, device-resident when any argument is.
 
-    :raises ValueError: if either name is already one of ``sdfg``'s data or symbols.
+    :raises ValueError: if a name it adds -- the pair, or the running offset the entry carves the workspace at --
+                        is already one of ``sdfg``'s data or symbols.
     """
-    taken = [name for name in (workspace, size) if name in sdfg.arrays or name in sdfg.symbols]
+    names = (workspace, size, cpf_lowering.workspace_offset_name(workspace))
+    taken = [name for name in names if name in sdfg.arrays or name in sdfg.symbols]
     if taken:
         raise ValueError(f"CPF cannot add the workspace pair to {sdfg.name}: {taken} already name something in it")
     on_device = any(
@@ -1284,33 +1285,37 @@ def add_workspace(sdfg: SDFG, workspace: str, size: str) -> None:
     )
 
 
-#: Each array a unit places in the workspace starts on this boundary, the alignment its own allocation had.
-WORKSPACE_ALIGNMENT = 64
+def plan_workspace(sdfg: SDFG, workspace: str) -> tuple[dict[str, dt.Data], str]:
+    """Choose ``sdfg``'s heap transients the workspace holds: ``(carve, workspace_bytes)``, in place.
 
+    ``carve`` maps each placed array to its descriptor; ``workspace_bytes`` is an arithmetic expression over the
+    entry's scalar arguments, an upper bound on the bytes the arrays need (``'0'`` when nothing is placed). An
+    array is placed when the host allocates it once per use, at the entry's level: a top-level host array
+    (``CPU_Heap``, or ``Default``, which the host generator puts there) sized by the arguments alone, unless its
+    lifetime is ``Scope`` and a map touches it -- that one is allocated per iteration, per thread, and keeps its
+    allocation. One the generator keeps on the stack takes no slot. The persistent buffers of nested SDFGs are
+    at the entry by now (:func:`lift_persistent_transients`); the rest of a nested SDFG's arrays keep their
+    allocations.
 
-def plan_workspace(sdfg: SDFG, workspace: str) -> tuple[dict[str, tuple[dt.Data, str]], str]:
-    """Lay ``sdfg``'s heap transients out in the workspace: ``(carve, workspace_bytes)``.
-
-    ``carve`` maps each placed array to its descriptor and its C byte offset; ``workspace_bytes`` is an
-    arithmetic expression over the entry's scalar arguments, an upper bound on the bytes the layout needs
-    (``'0'`` when nothing is placed). An array is placed when the host allocates it once per use, at the
-    entry's level: a top-level host array (``CPU_Heap``, or ``Default``, which the host generator puts
-    there) sized by the arguments alone, unless its lifetime is ``Scope`` and a map touches it -- that one
-    is allocated per iteration, per thread, and keeps its allocation. One the generator keeps on the stack
-    leaves its slot unused. The persistent buffers of nested SDFGs are at the entry by now
-    (:func:`lift_persistent_transients`); the rest of a nested SDFG's arrays keep their allocations.
+    The entry takes each slot at a running offset (:func:`~dace.cpf_lowering.workspace_slot`), which is only
+    sound when every placed array is allocated exactly once per call, so each one's lifetime becomes ``SDFG``:
+    allocated on entry, whichever state or loop body it was allocated in before. Its slot is its own either way,
+    so only an array zeroed on allocation could tell the difference, and that one is not placed unless it
+    already had ``SDFG`` lifetime.
     """
     if sdfg.arrays[workspace].storage is not dtypes.StorageType.Default:
         return {}, "0"
     arguments = set(sdfg.arglist())
-    in_maps = {
-        node.data
-        for state in sdfg.states()
-        for node, scope in state.scope_dict().items()
-        if isinstance(node, nodes.AccessNode) and scope is not None
-    }
-    carve: dict[str, tuple[dt.Data, str]] = {}
-    offset: list[str] = []
+    in_maps: OrderedSet[str] = OrderedSet()
+    zeroed: OrderedSet[str] = OrderedSet()
+    for state in sdfg.states():
+        for node, scope in state.scope_dict().items():
+            if isinstance(node, nodes.AccessNode):
+                if scope is not None:
+                    in_maps.add(node.data)
+                if node.setzero:
+                    zeroed.add(node.data)
+    carve: dict[str, dt.Data] = {}
     bound: list[symbolic.SymExpr] = []
     for name, desc in sorted(sdfg.arrays.items()):
         if (
@@ -1318,13 +1323,13 @@ def plan_workspace(sdfg: SDFG, workspace: str) -> tuple[dict[str, tuple[dt.Data,
             or type(desc) is not dt.Array
             or desc.storage not in (dtypes.StorageType.CPU_Heap, dtypes.StorageType.Default)
             or (desc.lifetime is dtypes.AllocationLifetime.Scope and name in in_maps)
+            or (desc.lifetime is not dtypes.AllocationLifetime.SDFG and name in zeroed)
             or not {str(s) for s in symbolic.symlist(desc.total_size)} <= arguments
         ):
             continue
-        carve[name] = (desc, " + ".join(offset) or "0")
-        nbytes = f"sizeof({desc.dtype.ctype}) * (size_t)({sym2cpp(desc.total_size)})"
-        offset.append(f"(({nbytes} + {WORKSPACE_ALIGNMENT - 1}) / {WORKSPACE_ALIGNMENT}) * {WORKSPACE_ALIGNMENT}")
-        bound.append(desc.total_size * desc.dtype.bytes + WORKSPACE_ALIGNMENT)
+        desc.lifetime = dtypes.AllocationLifetime.SDFG
+        carve[name] = desc
+        bound.append(desc.total_size * desc.dtype.bytes + cpf_lowering.WORKSPACE_ALIGNMENT)
     return carve, str(sum(bound)) if bound else "0"
 
 

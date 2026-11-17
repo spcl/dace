@@ -278,13 +278,16 @@ def provenance_scope(provenance: dict[str, tuple[str, str]]):
 
 
 #: The heap transients a standalone rendering places in the caller's workspace instead of allocating, as data
-#: name -> (descriptor, C byte offset), and the workspace's name; empty outside :func:`workspace_carve_scope`.
-_workspace_carve: dict[str, tuple[Any, str]] = {}
+#: name -> descriptor, and the workspace's name; empty outside :func:`workspace_carve_scope`.
+_workspace_carve: dict[str, Any] = {}
 _workspace_name: str = ""
+
+#: Each array placed in the workspace starts on this boundary, the alignment its own allocation had.
+WORKSPACE_ALIGNMENT = 64
 
 
 @contextlib.contextmanager
-def workspace_carve_scope(workspace: str, carve: dict[str, tuple[Any, str]]):
+def workspace_carve_scope(workspace: str, carve: dict[str, Any]):
     """Make ``carve`` the ambient workspace layout for the duration of the block (:func:`workspace_slot`)."""
     global _workspace_carve, _workspace_name
     previous = _workspace_carve, _workspace_name
@@ -295,17 +298,35 @@ def workspace_carve_scope(workspace: str, carve: dict[str, tuple[Any, str]]):
         _workspace_carve, _workspace_name = previous
 
 
-def workspace_slot(name: str | None, desc: Any) -> str | None:
-    """``<workspace> + <offset>`` for a heap transient the rendering carves out of the workspace, else ``None``.
+def workspace_offset_name(workspace: str) -> str:
+    """The running byte offset into ``workspace`` the entry carves its arrays at."""
+    return f"{workspace}_off"
 
-    Matched on the descriptor itself, so a nested SDFG's array of the same name keeps its own allocation.
+
+def workspace_offset_declaration() -> str:
+    """``size_t <workspace>_off = 0;`` at the top of an entry that carves arrays out of its workspace, else ``''``."""
+    if not standalone() or not _workspace_carve:
+        return ""
+    return f"size_t {workspace_offset_name(_workspace_name)} = 0;\n"
+
+
+def workspace_slot(alloc_name: str, name: str | None, desc: Any, ctype: str, count: str) -> str | None:
+    """The statement pointing ``alloc_name`` at the next free slot of the workspace and moving the running offset
+    past it, rounded up to :data:`WORKSPACE_ALIGNMENT`, for a heap transient the rendering carves out of the
+    workspace; ``None`` for any other array.
+
+    Matched on the descriptor itself, so a nested SDFG's array of the same name keeps its own allocation. The
+    rendering allocates every carved array once, at the top of the entry (``cpf.render_unit``), so each slot is
+    taken exactly once per call.
     """
-    if not standalone() or name is None:
+    if not standalone() or name is None or _workspace_carve.get(name) is not desc:
         return None
-    slot = _workspace_carve.get(name)
-    if slot is None or slot[0] is not desc:
-        return None
-    return f"{_workspace_name} + {slot[1]}"
+    offset = workspace_offset_name(_workspace_name)
+    align = WORKSPACE_ALIGNMENT
+    return (
+        f"{alloc_name} = ({ctype} *)({_workspace_name} + {offset}); "
+        f"{offset} += (sizeof({ctype}) * (size_t)({count}) + {align - 1}) / {align} * {align};\n"
+    )
 
 
 #: The entry's persistent transients a standalone rendering keeps in ``static`` pointers, which survive the call
@@ -339,7 +360,7 @@ def persistent_static_desc(desc: Any) -> bool:
 
 def carved_from_workspace(desc: Any) -> bool:
     """Whether ``desc`` lives in the workspace, so freeing it frees nothing."""
-    return standalone() and any(slot[0] is desc for slot in _workspace_carve.values())
+    return standalone() and any(carved is desc for carved in _workspace_carve.values())
 
 
 #: Runtime function -> the ``std`` function with identical semantics and arity.

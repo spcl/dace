@@ -200,7 +200,7 @@ def test_a_heap_transient_lives_in_the_workspace(language):
     name = f"cpf_sig_carve_{'cpp' if language == 'c++' else 'c'}"
     result = rendered(cpf_sig_reverse, name, language, with_workspace("dst", "src", "N"))
     assert heap_allocations(result.code) == []
-    assert "tmp = (double *)(workspace + 0);" in result.code
+    assert "tmp = (double *)(workspace + workspace_off); workspace_off += " in result.code
     n = 50
     needed = int(eval(result.workspace_bytes, {"N": n}))  # noqa: S307 -- an expression the renderer wrote
     assert needed >= 8 * n

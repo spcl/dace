@@ -1438,6 +1438,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 sdfg,
             )
 
+        # The running offset the workspace arrays among them are carved at (a CPF entry with a workspace)
+        offset_declaration = cpf_lowering.workspace_offset_declaration() if is_top_level else ""
+        if offset_declaration:
+            callsite_stream.write(offset_declaration, sdfg)
         # Allocate outer-level transients
         self.allocate_arrays_in_scope(sdfg, sdfg, sdfg, global_stream, callsite_stream)
 

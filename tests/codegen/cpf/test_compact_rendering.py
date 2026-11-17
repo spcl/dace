@@ -11,6 +11,7 @@ import pytest
 import dace
 from dace import cpf_lowering
 from dace.codegen.cpf import CONTRACT_LINES, EntrySignature, Rendering, render
+from dace.sdfg.state import LoopRegion
 from tests.codegen.cpf.conftest import assert_matches, assert_standalone, build_standalone, call_standalone
 
 M = dace.symbol("M")
@@ -134,6 +135,113 @@ def test_an_extent_named_like_an_index_keeps_the_helper_indices_apart():
     run_broadcast_rows(result, name, "c", extent="i1")
 
 
+#: Bytes past the end of the workspace the tests fill and check: a slot past the declared size lands there.
+CANARY = 256
+WORKSPACE = EntrySignature(("a", "out", "N", "workspace", "workspace_size"), "workspace", "workspace_size")
+
+
+def loop_scratch_sdfg(name: str, zeroed: bool) -> dace.SDFG:
+    """Three times over: ``tmp = a + t`` and ``out += reverse(tmp)``, or with ``zeroed`` ``tmp += a`` on a ``tmp``
+    zeroed each time it is allocated and ``out += tmp``. ``tmp`` and ``tmp2`` are allocated in the loop body."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    for scratch in ("tmp", "tmp2"):
+        sdfg.add_transient(scratch, [N], dace.float64, lifetime=dace.AllocationLifetime.State)
+    loop = LoopRegion("repeat", condition_expr="t < 3", loop_var="t", initialize_expr="t = 0", update_expr="t = t + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    tmp = body.add_access("tmp")
+    tmp.setzero = zeroed
+    tmp2 = body.add_access("tmp2")
+    if zeroed:
+        body.add_mapped_tasklet(
+            "acc",
+            {"i": "0:N"},
+            {"x": dace.Memlet("a[i]")},
+            "y = x",
+            {"y": dace.Memlet("tmp[i]", wcr="lambda p, q: p + q")},
+            external_edges=True,
+            output_nodes={"tmp": tmp},
+        )
+        source = "tmp2[i]"
+    else:
+        body.add_mapped_tasklet(
+            "fill",
+            {"i": "0:N"},
+            {"x": dace.Memlet("a[i]")},
+            "y = x + t",
+            {"y": dace.Memlet("tmp[i]")},
+            external_edges=True,
+            output_nodes={"tmp": tmp},
+        )
+        source = "tmp2[N - 1 - i]"
+    body.add_mapped_tasklet(
+        "copy",
+        {"i": "0:N"},
+        {"x": dace.Memlet("tmp[i]")},
+        "y = x",
+        {"y": dace.Memlet("tmp2[i]")},
+        external_edges=True,
+        input_nodes={"tmp": tmp},
+        output_nodes={"tmp2": tmp2},
+    )
+    body.add_mapped_tasklet(
+        "add",
+        {"i": "0:N"},
+        {"x": dace.Memlet(source), "o": dace.Memlet("out[i]")},
+        "y = o + x",
+        {"y": dace.Memlet("out[i]")},
+        external_edges=True,
+        input_nodes={"tmp2": tmp2},
+    )
+    return sdfg
+
+
+def run_with_canary(result: Rendering, name: str, language: str, n: int) -> tuple[np.ndarray, np.ndarray]:
+    """``(a, out)`` after one call on a workspace of exactly ``result.workspace_bytes`` bytes, checking that the
+    bytes past it are untouched."""
+    needed = int(eval(result.workspace_bytes, {"N": n}))  # noqa: S307 -- an expression the renderer wrote
+    raw = np.zeros(needed + CANARY + 64, dtype=np.uint8)
+    start = (-raw.ctypes.data) % 64
+    workspace = raw[start : start + needed + CANARY]
+    workspace[needed:] = 0xA5
+    a = np.random.default_rng(2).random(n)
+    args = {"a": a, "out": np.zeros(n), "N": n, "workspace": workspace, "workspace_size": needed}
+    library = build_standalone(result.code, name, language=language)
+    call_standalone(library, result.sdfg, args, order=result.arguments)
+    assert (workspace[needed:] == 0xA5).all(), "a workspace slot reached past the declared size"
+    return a, args["out"]
+
+
+@pytest.mark.parametrize("language", ["c++", "c"])
+def test_the_workspace_is_carved_at_a_running_offset_taken_once_per_call(language):
+    """``tmp`` and ``tmp2`` are allocated in the loop body, yet each takes its slot once, at the top of the entry:
+    a slot taken per iteration would walk the offset past the declared size."""
+    name = f"cpf_compact_carve_{'cpp' if language == 'c++' else 'c'}"
+    result = render(loop_scratch_sdfg(name, zeroed=False), language=language, signature=WORKSPACE)
+    code = result.code
+    assert code.count("size_t workspace_off = 0;") == 1
+    for scratch in ("tmp", "tmp2"):
+        slot = re.search(
+            rf"\b{scratch} = \(double \*\)\(workspace \+ workspace_off\); workspace_off \+= .*;$", code, re.MULTILINE
+        )
+        assert slot is not None and code.index(slot.group(0)) < code.index("for (int64_t t ="), code
+    assert code.count("workspace_off +=") == 2
+    a, out = run_with_canary(result, name, language, n=33)
+    assert_matches({"out": sum(a[::-1] + t for t in range(3))}, {"out": out}, name)
+
+
+def test_an_array_zeroed_on_each_allocation_keeps_its_own_allocation():
+    """Allocated once at the top it would be zeroed once, and the loop would accumulate into stale values."""
+    name = "cpf_compact_carve_zeroed"
+    result = render(loop_scratch_sdfg(name, zeroed=True), language="c", signature=WORKSPACE)
+    assert re.search(r"\btmp2 = \(double \*\)\(workspace \+ workspace_off\)", result.code), result.code
+    assert not re.search(r"\btmp = \(double \*\)\(workspace", result.code), result.code
+    a, out = run_with_canary(result, name, "c", n=33)
+    assert_matches({"out": 3 * a}, {"out": out}, name)
+
+
 if __name__ == "__main__":
     test_a_loop_comment_is_its_class_and_reason_and_the_header_says_what_the_class_means("c++")
     test_a_loop_comment_is_its_class_and_reason_and_the_header_says_what_the_class_means("c")
@@ -145,3 +253,6 @@ if __name__ == "__main__":
     test_an_index_helper_takes_only_the_indices_its_body_reads("c++")
     test_an_index_helper_takes_only_the_indices_its_body_reads("c")
     test_an_extent_named_like_an_index_keeps_the_helper_indices_apart()
+    test_the_workspace_is_carved_at_a_running_offset_taken_once_per_call("c++")
+    test_the_workspace_is_carved_at_a_running_offset_taken_once_per_call("c")
+    test_an_array_zeroed_on_each_allocation_keeps_its_own_allocation()
