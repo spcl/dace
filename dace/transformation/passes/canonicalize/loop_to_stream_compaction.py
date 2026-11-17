@@ -610,26 +610,19 @@ class LoopToStreamCompaction(ppl.Pass):
 
     def guard_reads_survive_hoisting(self, loop: LoopRegion, levels: tuple[NestLevel, ...], sdfg: SDFG) -> bool:
         """Phase 1 runs every guard read before every body write; that must not reorder a dependence."""
-        guard_reads: dict[str, subsets.Subset] = {}
+        guard_reads: dict[str, list[subsets.Subset]] = {}
         for level in levels:
             for blk in [*level.preamble, level.child]:
                 for edge in level.loop.in_edges(blk):
                     for read in edge.data.get_read_memlets(sdfg.arrays):
-                        if read.data in guard_reads and guard_reads[read.data] != read.subset:
-                            return False  # two distinct guard reads of one array -> no single point
-                        guard_reads[read.data] = read.subset
+                        guard_reads.setdefault(read.data, []).append(read.subset)
             for blk in level.preamble:
                 if not isinstance(blk, SDFGState):
                     continue
                 for node in blk.data_nodes():
-                    if blk.out_degree(node) == 0:
-                        continue
                     for edge in blk.out_edges(node):
-                        if edge.data.is_empty() or edge.data.data != node.data:
-                            continue
-                        if node.data in guard_reads and guard_reads[node.data] != edge.data.subset:
-                            return False
-                        guard_reads[node.data] = edge.data.subset
+                        if not edge.data.is_empty() and edge.data.data == node.data:
+                            guard_reads.setdefault(node.data, []).append(edge.data.subset)
         if not guard_reads:
             return True
         loop_vars = [symbolic.pystr_to_symbolic(level.loop.loop_variable) for level in levels]
@@ -642,7 +635,8 @@ class LoopToStreamCompaction(ppl.Pass):
                 name = edge.data.data
                 if name not in guard_reads:
                     continue
-                if edge.data.subset != guard_reads[name]:
+                # Reads of an array the body never writes hoist freely, at as many points as they like
+                if any(read != edge.data.subset for read in guard_reads[name]):
                     return False  # the body overwrites an element the guard read at another index
                 if not self.subset_is_injective_point(edge.data.subset, loop_vars):
                     return False  # two iterations share the element -> the hoist changes the value read

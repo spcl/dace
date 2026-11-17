@@ -298,6 +298,29 @@ def test_s343_static_extents_lift_the_whole_nest():
 
 
 @dace.program
+def guard_on_two_fields(pairs: dace.int64[N, 2], out: dace.int64[N], cnt: dace.int64[1]):
+    n = 0
+    for i in range(N):
+        lo = pairs[i, 0]
+        hi = pairs[i, 1]
+        if lo < hi:
+            out[n] = i
+            n = n + 1
+    cnt[0] = n
+
+
+def test_guard_reading_two_elements_of_an_array_the_body_never_writes():
+    """Both guard reads hoist into phase 1: nothing in the body writes ``pairs``, at either element."""
+    sdfg = build(guard_on_two_fields)
+    assert lifted(sdfg)
+    pairs = np.random.default_rng(2).integers(0, 9, (40, 2))
+    out, cnt = np.zeros(40, np.int64), np.zeros(1, np.int64)
+    sdfg(pairs=pairs, out=out, cnt=cnt, N=40)
+    want = np.flatnonzero(pairs[:, 0] < pairs[:, 1])
+    assert int(cnt[0]) == len(want) and out[: len(want)].tolist() == want.tolist()
+
+
+@dace.program
 def triangular_nest(bb: dace.float64[MM, MM], flat: dace.float64[MM * MM], kout: dace.int64[1]):
     k = -1
     for i in range(MM):
