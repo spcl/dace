@@ -34,6 +34,10 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.analysis.scopes import AccessInstances, AllocationScopes, CodegenAnalysisPipeline
 from dace.transformation.passes.canonicalize import supply_num_threads
 
+#: Scalar constants of these types are written as ``constexpr float``: their vendor types have no constexpr
+#: constructor.
+LOW_PRECISION_CONSTANT_TYPES = frozenset({dtypes.float16, dtypes.bfloat16})
+
 #: Guarded so a build without OpenMP still compiles; ``1`` is the honest count there, not a guess.
 #: ``omp_get_max_threads`` reports the POOL size outside a parallel region, which is where this is
 #: emitted -- the top of the program function, before any region opens and before any allocation.
@@ -257,6 +261,11 @@ class DaCeCodeGenerator:
                 const_str += ", ".join(sym2cpp(stored.flat[i]) for i in range(stored.size))
                 const_str += "};\n"
                 callsite_stream.write(const_str, sdfg)
+            elif csttype.dtype in LOW_PRECISION_CONSTANT_TYPES:
+                # ``__hip_bfloat16``, ``__half`` and their CUDA twins have no constexpr constructor, so a
+                # ``constexpr`` of one is ill-formed (resnet18's fused accumulator ``constexpr __hip_bfloat16 ... = 0``).
+                # Every value of a 16-bit float is exact in ``float``, and each converts from it where it is used.
+                callsite_stream.write(f"constexpr float {cstname} = {sym2cpp(np.float32(cstval))};\n", sdfg)
             else:
                 callsite_stream.write(f"constexpr {csttype.dtype.ctype} {cstname} = {sym2cpp(cstval)};\n", sdfg)
 
