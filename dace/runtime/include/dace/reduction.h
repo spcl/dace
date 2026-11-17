@@ -1241,17 +1241,37 @@ inline auto stridedIterator(size_t stride) {
 }
 #endif
 
+#if defined(__CUDACC__) || defined(__HIPCC__)
+// The lane-xor shuffle of one value. The vendor intrinsics take arithmetic types only, so a complex value
+// shuffles its real and imaginary parts.
+template <typename T>
+DACE_DFI T warp_shfl_xor(T v, int lane_mask) {
+#if defined(__CUDACC__)
+  return __shfl_xor_sync(0xffffffff, v, lane_mask);
+#else
+  return __shfl_xor(v, lane_mask);
+#endif
+}
+
+#ifdef DACE_THRUST_COMPLEX
+template <typename T>
+DACE_DFI thrust::complex<T> warp_shfl_xor(thrust::complex<T> v, int lane_mask) {
+  return thrust::complex<T>(warp_shfl_xor(v.real(), lane_mask), warp_shfl_xor(v.imag(), lane_mask));
+}
+#endif
+#endif
+
 #if defined(__CUDACC__)
 template <ReductionType REDTYPE, typename T>
 struct warpReduce {
   static DACE_DFI T reduce(T v) {
-    for (int i = 1; i < 32; i = i * 2) v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor_sync(0xffffffff, v, i));
+    for (int i = 1; i < 32; i = i * 2) v = _wcr_fixed<REDTYPE, T>()(v, warp_shfl_xor(v, i));
     return v;
   }
 
   template <int NUM_MW>
   static DACE_DFI T mini_reduce(T v) {
-    for (int i = 1; i < NUM_MW; i = i * 2) v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor_sync(0xffffffff, v, i));
+    for (int i = 1; i < NUM_MW; i = i * 2) v = _wcr_fixed<REDTYPE, T>()(v, warp_shfl_xor(v, i));
     return v;
   }
 };
@@ -1259,13 +1279,13 @@ struct warpReduce {
 template <ReductionType REDTYPE, typename T>
 struct warpReduce {
   static DACE_DFI T reduce(T v) {
-    for (int i = 1; i < warpSize; i = i * 2) v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor(v, i));
+    for (int i = 1; i < warpSize; i = i * 2) v = _wcr_fixed<REDTYPE, T>()(v, warp_shfl_xor(v, i));
     return v;
   }
 
   template <int NUM_MW>
   static DACE_DFI T mini_reduce(T v) {
-    for (int i = 1; i < NUM_MW; i = i * 2) v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor(v, i));
+    for (int i = 1; i < NUM_MW; i = i * 2) v = _wcr_fixed<REDTYPE, T>()(v, warp_shfl_xor(v, i));
     return v;
   }
 };
