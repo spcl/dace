@@ -85,7 +85,9 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
     for res, name in ((res_lhs, name_lhs), (res_rhs, name_rhs), (res_out, name_out)):
         if res is None:
             raise ValueError(f'Matrix multiplication connector "{name}" not found.')
-    return res_lhs, res_rhs, res_out
+    # A node multiplying stacks of vectors (``BatchedMatMul``) reads each vector as the matrix it multiplies as
+    as_matrices = getattr(node, "as_matrices", None)
+    return (res_lhs, res_rhs, res_out) if as_matrices is None else as_matrices(state, res_lhs, res_rhs, res_out)
 
 
 def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides) -> dict[str, Any]:

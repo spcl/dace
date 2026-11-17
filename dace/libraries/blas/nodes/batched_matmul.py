@@ -370,7 +370,7 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        if gathered_operands(node):
+        if gathered_operands(node) or node.vector_rank(state) < 2:
             return ExpandBatchedMatMulPure.expansion(node, state, sdfg)
         refuse_broadcast_batches(node, state, sdfg)
         (_, adesc, ashape, astrides, _, _), (_, bdesc, bshape, bstrides, _, _), _ = _get_matmul_operands(
@@ -462,7 +462,7 @@ class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        if gathered_operands(node):
+        if gathered_operands(node) or node.vector_rank(state) < 2:
             return ExpandBatchedMatMulPure.expansion(node, state, sdfg)
         refuse_broadcast_batches(node, state, sdfg)
         (_, adesc, ashape, astrides, _, _), (_, bdesc, bshape, bstrides, _, _), _ = _get_matmul_operands(
@@ -523,7 +523,7 @@ class ExpandBatchedMatMulLIBXSMM(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        if gathered_operands(node):
+        if gathered_operands(node) or node.vector_rank(state) < 2:
             return ExpandBatchedMatMulPure.expansion(node, state, sdfg)
         refuse_broadcast_batches(node, state, sdfg)
         (_, adesc, _, _, _, _), (_, bdesc, _, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
@@ -903,18 +903,58 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, location=None):
         super().__init__(name, location=location, inputs=OrderedSet(("_a", "_b")), outputs={"_c"})
 
+    def vector_rank(self, state) -> int:
+        """The rank of each product: 2 for matrices; 1 for a ``[B, M]`` output, a stack of matrix-vector products
+        whose ``_b`` is a stack ``[B, K]`` (or one ``[K]``) of vectors; 0 for a ``[B]`` output, a stack of dots
+        whose ``_a`` and ``_b`` are both vectors."""
+        return min(2, len(state.out_edges(self)[0].data.subset) - 1)
+
+    def as_matrices(self, state, lhs, rhs, out):
+        """The ``_get_matmul_operands`` tuples with every vector read as the matrix it multiplies as: ``_b`` and the
+        output as one column (``[..., K, 1]``), a dot's ``_a`` as one row (``[..., 1, K]``). The unit dimension's
+        stride is free; ``packed_unit_extent`` gives the leading dimension BLAS checks."""
+
+        def column(operand):
+            edge, desc, size, strides, *squeezed = operand
+            return (edge, desc, [*size, 1], [*strides, 1], *squeezed)
+
+        def row(operand):
+            edge, desc, size, strides, *squeezed = operand
+            return (
+                edge,
+                desc,
+                [*size[:-1], 1, size[-1]],
+                [*strides[:-1], 1, strides[-1]],
+                *squeezed,
+            )
+
+        rank = self.vector_rank(state)
+        if rank == 2:
+            return lhs, rhs, out
+        if rank == 1:
+            return lhs, column(rhs), column(out)
+        return row(lhs), column(rhs), column(column(out))
+
     def validate(self, sdfg, state):
         gathered = gathered_operands(self)
         in_edges = [edge for edge in state.in_edges(self) if edge.dst_conn not in gathered.values()]
         if len(in_edges) != 2:
             raise ValueError("Expected exactly two inputs to batched matrix-matrix product")
-        # NumPy matmul semantics on the real extents: squeezing would turn B[b, k, 1] into a (b, k) matrix
-        sizes = {edge.dst_conn: edge.data.subset.size() for edge in in_edges}
-        size0, size1 = sizes["_a"], sizes["_b"]
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from batched matrix-matrix product")
         out_memlet = out_edges[0].data
+        rank = self.vector_rank(state)
+        vectors = {"_b"} if rank == 1 else {"_a", "_b"} if rank == 0 else set()
+        for edge in in_edges:
+            if edge.dst_conn in vectors and len(edge.data.subset) > 2:
+                raise ValueError(f"Vector operand {edge.dst_conn} must be one vector [K] or a stack [B, K] of them")
+        if (self.transB and rank < 2) or (self.transA and rank == 0):
+            raise ValueError("A vector operand cannot be transposed")
+        # NumPy matmul semantics on the real extents: squeezing would turn B[b, k, 1] into a (b, k) matrix
+        lhs, rhs, out = _get_matmul_operands(self, state, sdfg)
+        size0, size1, out_size = lhs[2], rhs[2], out[2]
+        sizes = {"_a": size0, "_b": size1}
 
         # Both inputs must be at least 2D
         if len(size0) < 2:
@@ -936,7 +976,7 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         batch0, batch1 = size0[:-2], size1[:-2]
         if gathered:
             # The index, not the pool, sets the batch: a gathered operand is a pool of matrices
-            if len(out_memlet.subset) != 3 or any(len(sizes[operand]) != 3 for operand in gathered):
+            if len(out_size) != 3 or any(len(sizes[operand]) != 3 for operand in gathered):
                 raise ValueError("A gathered batched product takes 3D operands and output")
             batch0 = batch1 = ()
         if batch0 and batch1:
@@ -960,7 +1000,7 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Inputs to matrix-matrix product must agree in the k-dimension")
 
         # Output must have batch dimensions
-        if len(out_memlet.subset) < 3:
+        if len(out_size) < 3:
             raise ValueError(
                 f"Batched matrix-matrix product output must be at least 3D, got {len(out_memlet.subset)} dimensions"
             )
