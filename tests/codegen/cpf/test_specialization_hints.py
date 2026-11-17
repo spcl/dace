@@ -913,9 +913,9 @@ def test_the_kinds_rendering_says_par_seq_or_unknown_and_nothing_else():
     assert any("witness" in line for line in proofs), proofs
 
 
-def test_the_kinds_rendering_carries_no_tasklet_or_scope_label():
-    """A tasklet's label (``_Add_``, ``for_696_scan_op``) is a DaCe name, not a verdict: the kinds rendering drops
-    it from the statement and from the brace, the proofs rendering keeps it."""
+def test_no_rendering_carries_a_tasklet_or_scope_label():
+    """A tasklet's label (``_Add_``, ``for_696_scan_op``) is a DaCe name, not a verdict: neither rendering writes it
+    after the statement or the brace."""
     kinds, proofs = kinds_and_proofs("cpf_kinds_no_label")
     trailing = lambda code: [
         line
@@ -923,7 +923,7 @@ def test_the_kinds_rendering_carries_no_tasklet_or_scope_label():
         if "//" in line and line.split("//")[0].strip() and not line.lstrip().startswith("#")
     ]
     assert not trailing(kinds), trailing(kinds)
-    assert any("// _Add_" in line for line in trailing(proofs)), proofs
+    assert not trailing(proofs), trailing(proofs)
 
 
 def test_the_kinds_rendering_names_the_loops_the_proofs_rendering_classes():
@@ -1014,7 +1014,7 @@ if __name__ == "__main__":
     test_a_map_resting_on_an_unknown_sign_is_versioned_on_it()
     test_a_map_resting_on_no_trap_assumes_nothing()
     test_the_kinds_rendering_says_par_seq_or_unknown_and_nothing_else()
-    test_the_kinds_rendering_carries_no_tasklet_or_scope_label()
+    test_no_rendering_carries_a_tasklet_or_scope_label()
     test_the_kinds_rendering_names_the_loops_the_proofs_rendering_classes()
     test_the_two_variants_render_the_same_code()
     test_an_unknown_hint_detail_is_refused()
