@@ -726,10 +726,16 @@ def proof_of_carry(loop: LoopRegion, reason: LoopRefusal) -> str | None:
     # The element-level proof also names the direction: LoopToMap's "read-after-write conflict" is
     # any read meeting a write, so its access alone reads as RAW for a read-ahead WAR too.
     access = proven_carrying_access(loop)
-    if access is None and reason.kind is Refusal.CARRIED_SYMBOL:
-        # A symbol one iteration hands to the next: the witness is two consecutive iterations
+    if access is None and reason.kind is Refusal.CARRIED_SYMBOL and not has_branch(loop):
+        # A symbol one iteration hands to the next: the witness is two consecutive iterations. Only a body without a
+        # branch proves it, since a branch that skips the assignment or the use carries nothing on that input.
         access = carrying_access(reason) + pattern_witness(loop, 1)
     return access
+
+
+def has_branch(loop: LoopRegion) -> bool:
+    """Whether a branch anywhere under ``loop``, nested SDFGs included, may skip part of an iteration."""
+    return any(isinstance(block, ConditionalBlock) for block in loop.all_control_flow_blocks(recursive=True))
 
 
 #: Appended to a parallel map's class line when its independence rests on entry traps.

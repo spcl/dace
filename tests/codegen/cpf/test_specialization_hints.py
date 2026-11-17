@@ -31,8 +31,9 @@ from dace.codegen.cpf import CONTRACT_LINES, render
 from dace.codegen.targets.experimental_cpu import map_hint
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.nodes.scan import PARALLEL_SCAN_HINT, SEQUENTIAL_SCAN_HINT, Scan, ScanOp
+from dace.properties import CodeBlock
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     CONFLICT_MEANING,
     MAP_DIMENSIONS,
@@ -438,6 +439,46 @@ def test_an_access_under_a_data_dependent_branch_proves_no_carried_dependence():
     ``carried: RAW on c[i]`` from its two branch bodies. The solver witness skips branch bodies; so must the
     constant-distance proof."""
     rendered = comment_lines(named(branch_carried_sdfg("cpf_kind_branch_carried")))
+    assert not [line for line in rendered if line.startswith("// sequential -- carried:")], rendered
+
+
+def carried_symbol_sdfg(name: str, branch: bool) -> dace.SDFG:
+    """``a[i] = s`` then ``s = i``: the symbol ``s`` carries the previous iteration's value, assigned on every
+    iteration, or only when ``b[i] > 0`` if ``branch``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [N], dace.int64)
+    sdfg.add_symbol("s", dace.int64)
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion("carry", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"s": "0"}))
+    use = loop.add_state("use", is_start_block=True)
+    put = use.add_tasklet("put", {}, {"out"}, "out = s")
+    use.add_edge(put, "out", use.add_write("a"), None, dace.Memlet("a[i]"))
+    after = loop.add_state("after")
+    if branch:
+        pick = ConditionalBlock("pick")
+        loop.add_node(pick)
+        taken = ControlFlowRegion("taken", sdfg=sdfg)
+        pick.add_branch(CodeBlock("b[i] > 0"), taken)
+        first = taken.add_state("first", is_start_block=True)
+        taken.add_edge(first, taken.add_state("second"), dace.InterstateEdge(assignments={"s": "i"}))
+        loop.add_edge(use, pick, dace.InterstateEdge())
+        loop.add_edge(pick, after, dace.InterstateEdge())
+    else:
+        loop.add_edge(use, after, dace.InterstateEdge(assignments={"s": "i"}))
+    return sdfg
+
+
+def test_a_symbol_carried_on_every_iteration_is_rendered_as_a_proof():
+    rendered = comment_lines(named(carried_symbol_sdfg("cpf_kind_symbol_carried", branch=False)))
+    assert [line for line in rendered if line.startswith("// sequential -- carried:")], rendered
+
+
+def test_a_symbol_assigned_only_under_a_branch_proves_no_carried_dependence():
+    """A branch that never runs hands nothing to the next iteration, so the carried symbol proves nothing there."""
+    rendered = comment_lines(named(carried_symbol_sdfg("cpf_kind_symbol_branch", branch=True)))
     assert not [line for line in rendered if line.startswith("// sequential -- carried:")], rendered
 
 
