@@ -8,6 +8,7 @@ two arrays sized from the same reused name keep their own extents.
 """
 
 import ast
+import functools
 import types
 
 import numpy as np
@@ -303,9 +304,15 @@ def test_a_loop_drops_the_shape_version_of_a_size_it_assigns_without_a_ctx():
     vars(target).pop("ctx", None)  # Python 3.13+ fills in a default ctx; 3.12 leaves it out
     loop = ast.parse("for i in range(m):\n    n = n + 1").body[0]
     loop.body[0].targets = [target]
-    visitor = types.SimpleNamespace(shape_promotions={"n": "n_version", "m": "m_version"}, variables={})
+    visitor = types.SimpleNamespace(
+        shape_promotions={"n": "n_version", "m": "m_version"},
+        variables={},
+        scalar_arithmetic={"n": (None, {"k"}, None), "m": (None, {"k"}, None)},
+    )
+    visitor.forget_scalar_arithmetic = functools.partial(ProgramVisitor.forget_scalar_arithmetic, visitor)
     ProgramVisitor.drop_shape_versions_written_in(visitor, loop)
     assert visitor.shape_promotions == {"m": "m_version"}
+    assert visitor.scalar_arithmetic == {"m": (None, {"k"}, None)}, "the write to n also ends n's recorded arithmetic"
 
 
 def test_a_loop_storing_through_a_slice_by_a_size_keeps_its_shape_version():
