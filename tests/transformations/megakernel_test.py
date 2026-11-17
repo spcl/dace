@@ -426,6 +426,7 @@ def test_kernels_split_by_a_reassigned_bound_become_one_state_and_one_megakernel
     assert "lo" not in kernel_bounds
 
 
+@pytest.mark.gpu
 def test_kernels_split_by_a_reassigned_bound_match_as_one_megakernel():
     import cupy
 
@@ -469,6 +470,7 @@ def kernels_after_a_conditional_bound() -> dace.SDFG:
     return sdfg
 
 
+@pytest.mark.gpu
 def test_a_bound_the_host_reads_after_the_kernels_stays_on_the_host():
     """The conditional assigning ``lo`` leaves the chain: a kernel cannot hand ``lo`` to the host code after it."""
     import cupy

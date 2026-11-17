@@ -151,6 +151,7 @@ LIBRARY_NODE_DESCRIPTIONS: dict[str, str] = {
     "CommRank": "MPI_Comm_rank: this rank in the communicator",
     "CommSize": "MPI_Comm_size: number of ranks in the communicator",
     "CommSplit": "MPI_Comm_split: split the communicator",
+    "ComputePersistentKernelRange": "persistent kernel range: the host computes how many blocks of a cooperative kernel fit on the device at once",
     "Copy": "BLAS copy: y = x",
     "CopyLibraryNode": "copy: write one buffer into another",
     "CountLibraryNode": "count: number of elements satisfying the predicate",
