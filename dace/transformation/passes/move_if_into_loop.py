@@ -105,6 +105,9 @@ def match_guard(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, Cont
         # writes is not idempotent (subset_sum re-snapshots ``prev[:] = ways`` mid-update).
         if _state_reads(p) & loop_w:
             bad = True
+        # Nor may it multiply real work by the trip count: dbcsr's block product ahead of its scatter loops
+        if any(isinstance(n, nodes.LibraryNode) for n in p.nodes()):
+            bad = True
     # Also idempotent w.r.t. itself. Staged computation is fine; an UPWARD-EXPOSED read of a
     # container the chain then updates applies the update N times (eigh's ``bw``).
     exposed, defined = set(), set()

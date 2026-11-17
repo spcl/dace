@@ -7,6 +7,7 @@ import numpy as np
 
 import dace
 from dace import SDFG, InterstateEdge
+from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.properties import CodeBlock
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate.loop_fusion import LoopFusion
@@ -104,6 +105,37 @@ def test_guard_stays_above_a_prep_that_writes_its_condition():
 
 def test_guard_stays_above_a_prep_an_empty_loop_would_skip():
     assert MoveIfIntoLoop().apply_pass(guarded_prep("empty_loop_prep", "N > 1"), {}) is None
+
+
+def guarded_work(name, library):
+    """``if M > 0: t[:] = 1 (a fill, or one element by a tasklet); for i: a[i] = t[i] + 1``."""
+    sdfg = int_program(name, a=[N])
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_array("t", [N], dace.int64, transient=True)
+    guard = ConditionalBlock("guard")
+    sdfg.add_node(guard, is_start_block=True)
+    branch = ControlFlowRegion("branch")
+    guard.add_branch(CodeBlock("M > 0"), branch)
+    prep = branch.add_state("prep", is_start_block=True)
+    if library:
+        fill = FillLibraryNode("fill", value=1)
+        prep.add_node(fill)
+        prep.add_edge(fill, FillLibraryNode.OUTPUT_CONNECTOR_NAME, prep.add_write("t"), None, dace.Memlet("t[0:N]"))
+    else:
+        copy_statement(prep, None, "t[0]")
+    loop = counted_loop("loop", "i")
+    branch.add_node(loop)
+    branch.add_edge(prep, loop, InterstateEdge())
+    copy_statement(loop.add_state("body", is_start_block=True), "t[i]", "a[i]")
+    return sdfg
+
+
+def test_guard_moves_with_a_tasklet_prep():
+    assert MoveIfIntoLoop().apply_pass(guarded_work("tasklet_prep", library=False), {}) is not None
+
+
+def test_guard_stays_above_a_library_node_prep_the_loop_would_repeat():
+    assert MoveIfIntoLoop().apply_pass(guarded_work("library_prep", library=True), {}) is None
 
 
 def recurrence_pair(name, first_guard=None, second_code="y = x + 1"):
@@ -285,6 +317,8 @@ if __name__ == "__main__":
     test_distribution_keeps_a_break_with_the_statements_it_skips()
     test_guard_stays_above_a_prep_that_writes_its_condition()
     test_guard_stays_above_a_prep_an_empty_loop_would_skip()
+    test_guard_moves_with_a_tasklet_prep()
+    test_guard_stays_above_a_library_node_prep_the_loop_would_repeat()
     test_fusion_refuses_a_loop_that_breaks()
     test_fusion_refuses_a_read_of_the_first_iterators_exit_value()
     test_exit_symbol_of_a_loop_that_runs_no_iteration()
