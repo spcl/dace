@@ -78,6 +78,8 @@ dependencies = [
     # parallelization band query it, so an install without it silently refuses
     # loops the shipped analysis can otherwise prove parallel.
     "z3-solver",
+    # The other solver ``optimizer.canonicalization.smt_solver`` may pick, through its z3py-compatible API
+    "cvc5",
     # Exact-integer polyhedral engine. Not optional for the same reason: WavefrontSkew is a silent
     # no-op without it, so a wavefront nest (polybench nussinov, seidel_2d, the fdtd family) keeps
     # its sequential loops and the canonical form an install produces depends on which extras were
