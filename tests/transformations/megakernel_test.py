@@ -51,9 +51,7 @@ def gpu_sdfg(name: str) -> dace.SDFG:
     return sdfg
 
 
-def add_kernel(
-    state: dace.SDFGState, label: str, src: str = "A", dst: str = "A", latest: dict | None = None
-) -> None:
+def add_kernel(state: dace.SDFGState, label: str, src: str = "A", dst: str = "A", latest: dict | None = None) -> None:
     """``dst = src + 1`` as one kernel. With ``latest``, the kernel reads ``src`` through the access node the last
     kernel wrote it to, so a kernel reading another's output in one state runs after it."""
     inputs = {src: latest[src]} if latest is not None and src in latest else None
@@ -566,6 +564,7 @@ def two_column_stages(read: str, code: str) -> dace.SDFG:
         ("A", "0:K", {"w": dace.Memlet("W[k, i]")}, "x = 2 * w", "x", "X"),
         ("B", "1:K", {"x": dace.Memlet(read), "idx": dace.Memlet("IDX[i]")}, code, "y", "Y"),
     ]
+    latest: dict = {}  # B reads X through the access node A writes it to, so B runs after A
     for label, levels, inputs, tasklet_code, out, dst in stages:
         tasklet, entry, exit_ = state.add_mapped_tasklet(
             label,
@@ -574,9 +573,11 @@ def two_column_stages(read: str, code: str) -> dace.SDFG:
             tasklet_code,
             {out: dace.Memlet(f"{dst}[k, i]")},
             schedule=dace.ScheduleType.GPU_Device,
+            input_nodes={m.data: latest[m.data] for m in inputs.values() if m.data in latest},
             external_edges=True,
         )
         entry.map.gpu_block_size = [256, 1, 1]
+        latest[dst] = state.out_edges(exit_)[0].dst
     return sdfg
 
 
@@ -665,9 +666,10 @@ def test_column_owned_stages_match_the_kernels(read, code, barriers):
         for n, s in fused.all_nodes_recursive()
         if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.ScheduleType.Sequential
     )
-    # Owned where that saves the barrier: the columns stride over the grid, the levels loop inside; else flattened
-    owned = [("i", "__mk_nthreads"), ("i", "__mk_nthreads"), ("k", "1"), ("k", "1")]
-    assert loops == (owned if barriers == 0 else [("__mk_g", "__mk_nthreads")] * 2)
+    # The columns stride over the grid and the levels loop inside: owned where that saves the barrier, else through
+    # the flat grid-stride index (54e5bb2f4: the grid stride runs over the innermost dimension, the others stay loops)
+    columns = ("i", "__mk_nthreads") if barriers == 0 else ("__mk_g", "__mk_nthreads")
+    assert loops == [columns, columns, ("k", "1"), ("k", "1")]
 
     rng = np.random.default_rng(0)
     size, levels = 70001, 5
