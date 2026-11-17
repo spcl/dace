@@ -47,6 +47,10 @@ value-preserving when:
   ``acc = 0; for j: acc += a[i, j]; c[i] = acc`` reduction -- is refused: ``LoopToReduce`` lifts
   it as it stands and the outer axis then parallelizes, while the sifted form keeps the
   accumulator, which ``LoopToMap`` cannot privatize, and leaves both loops sequential.
+* A nest whose inner body reads what a pre statement defines (a container or a symbol: srad's
+  ``north = iN[i]``) is refused: guarded, the first inner iteration defines it and every later one
+  reads it, a carry that leaves the inner loop sequential -- and the outer loop on the host around
+  one kernel per row -- while the unsifted nest maps on both axes.
 
 The construction mirrors ``MoveIfIntoLoop``: each statement group is deep-copied into a
 single-branch (no-else) :class:`ConditionalBlock` placed as the first (pre) / last (post)
@@ -62,7 +66,7 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_expr
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, is_written
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, is_read, is_written
 from dace.subsets import Subset
 from dace.transformation.passes.analysis.loop_analysis import (
     get_init_assignment,
@@ -182,15 +186,18 @@ def _accumulates_across_outer(
 
 def _carries_statement_data(inner: LoopRegion, pre: list[SDFGState], post: list[SDFGState]) -> bool:
     """Whether ``inner``'s body both reads and writes a container a ``pre`` / ``post`` statement writes."""
-    stmt_written = {n.data for st in pre + post for n in st.data_nodes() if is_written(st, n)}
-    read, written = set(), set()
-    for st in inner.states():
-        for n in st.data_nodes():
-            if n.data in stmt_written:
-                (written if st.in_degree(n) > 0 else read).add(n.data)
-                if st.out_degree(n) > 0:
-                    read.add(n.data)
-    return bool(read & written)
+    stmt_written = _written_data(pre + post)
+    return bool(stmt_written & _read_data(inner.states()) & _written_data(inner.states()))
+
+
+def _written_data(states) -> set[str]:
+    """The containers ``states`` write."""
+    return {n.data for st in states for n in st.data_nodes() if is_written(st, n)}
+
+
+def _read_data(states) -> set[str]:
+    """The containers ``states`` read."""
+    return {n.data for st in states for n in st.data_nodes() if is_read(st, n)}
 
 
 def _body_written_names(inner: LoopRegion) -> dict[str, None]:
@@ -244,19 +251,26 @@ def _match(sdfg: SDFG) -> tuple[LoopRegion, LoopRegion, list[SDFGState], list[SD
             continue  # a reduction: lifted as it stands, see the module docstring
         # Refuse a sifted interstate assignment whose LHS the body reassigns.
         sifted_lhs: dict[str, None] = {}
+        pre_lhs: set[str] = set()
         edge_of = {(e.src, e.dst): e for e in outer.edges()}
         chain = pre + [inner] + post
-        for a, b in zip(chain, chain[1:]):
+        for k, (a, b) in enumerate(zip(chain, chain[1:])):
             e = edge_of.get((a, b))
             if e is not None:
                 sifted_lhs.update(dict.fromkeys(e.data.assignments.keys()))
+                if k < len(pre):
+                    pre_lhs.update(e.data.assignments.keys())
         body_written = _body_written_names(inner)
         if any(s in sifted_lhs for s in body_written):
             continue
         # The inner header runs before any sifted statement, so it must not read what ``pre`` produces; the guards
         # read it in every iteration, so the body must not write it either.
-        pre_written = {n.data for st in pre for n in st.data_nodes() if is_written(st, n)}
+        pre_written = _written_data(pre)
         if loop_header_names(inner) & (pre_written | sifted_lhs.keys() | body_written.keys()):
+            continue
+        # Guarded, ``pre`` defines its values at the first inner iteration only, and every later one reads them:
+        # a carry that leaves the inner loop sequential, where the outer loop maps around the unsifted nest.
+        if pre_written & _read_data(inner.states()) or (pre_written | pre_lhs) & inner.free_symbols:
             continue
         return outer, inner, pre, post
     return None

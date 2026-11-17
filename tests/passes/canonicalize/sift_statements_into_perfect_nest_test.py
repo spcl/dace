@@ -71,6 +71,15 @@ def _pre_only(a: dace.float64[N, 5], b: dace.float64[N, 5], s: dace.float64[N]):
 
 
 @dace.program
+def _pre_unread(a: dace.float64[N, 5], b: dace.float64[N, 5], s: dace.float64[N]):
+    # The pre statement writes ``s[i]``, which the inner loop does not read: sifted, nothing is carried across ``j``.
+    for i in range(N):
+        s[i] = a[i, 0] * 2.0
+        for j in range(5):
+            b[i, j] = a[i, j] + 1.0
+
+
+@dace.program
 def _post_only(a: dace.float64[N, 5], b: dace.float64[N, 5], c: dace.float64[N]):
     # Post block reads the inner loop's last-column output; element-wise (no reduction) so the
     # result is bit-exact and deterministic regardless of how the compiler vectorizes the body.
@@ -91,15 +100,24 @@ def _pre_and_post(a: dace.float64[N, 5], c: dace.float64[N]):
 
 @dace.program
 def _pre_and_post_shared(a: dace.float64[N, 5], b: dace.float64[N, 5], c: dace.float64[N]):
-    # A per-row scalar the inner loop only reads: nothing is carried across ``j``, so the sift applies.
+    # A per-row scalar only the post statement reads: nothing is carried across ``j``, so the sift applies.
     for i in range(N):
         t = a[i, 0] * 2.0
         for j in range(5):
-            b[i, j] = a[i, j] + t
+            b[i, j] = a[i, j] + 1.0
         c[i] = b[i, 4] + t
 
 
 LEN = dace.symbol("LEN", dtype=dace.int64, positive=True)
+
+
+@dace.program
+def _row_gather(a: dace.float64[LEN, LEN], idx: dace.int32[LEN], b: dace.float64[LEN, LEN]):
+    # srad's directional derivative: a per-row neighbour index every inner iteration reads.
+    for i in range(LEN):
+        n = idx[i]
+        for j in range(LEN):
+            b[i, j] = a[n, j] - a[i, j]
 
 
 @dace.program
@@ -144,14 +162,14 @@ def _neighbour_accumulate(w: dace.float64[9], idx: dace.int64[4, 9], c: dace.flo
 def _build_interstate_sdfg() -> dace.SDFG:
     """Hand-built imperfect nest whose pre state is fed by an interstate-edge assignment.
 
-    ``for i: { pre_head --(t = 2*i)--> [s[i] = a[i,0] + t] ; for j in 5: b[i,j] = a[i,j] + s[i] }``.
+    ``for i: { pre_head --(t = 2*i)--> [s[i] = a[i,0] + t] ; for j in 5: b[i,j] = a[i,j] + 1 }``.
     The ``t = 2*i`` assignment lives on the internal pre edge; the sift must carry it into the
     ``j == 0`` guard together with the state that reads it.
     """
     sdfg = dace.SDFG("istate_kern")
     sdfg.add_array("a", [N, 5], dace.float64)
     sdfg.add_array("b", [N, 5], dace.float64)
-    sdfg.add_array("s", [N], dace.float64, transient=True)
+    sdfg.add_array("s", [N], dace.float64)
     sdfg.add_symbol("t", dace.float64)
 
     outer = LoopRegion("i_loop", "i < N", "i", "i = 0", "i = i + 1")
@@ -168,11 +186,9 @@ def _build_interstate_sdfg() -> dace.SDFG:
     inner = LoopRegion("j_loop", "j < 5", "j", "j = 0", "j = j + 1")
     body = inner.add_state("body", is_start_block=True)
     ba = body.add_read("a")
-    bs = body.add_read("s")
     bw = body.add_write("b")
-    btk = body.add_tasklet("body", {"ina", "ins"}, {"out"}, "out = ina + ins")
+    btk = body.add_tasklet("body", {"ina"}, {"out"}, "out = ina + 1.0")
     body.add_edge(ba, None, btk, "ina", dace.Memlet("a[i, j]"))
-    body.add_edge(bs, None, btk, "ins", dace.Memlet("s[i]"))
     body.add_edge(btk, "out", bw, None, dace.Memlet("b[i, j]"))
 
     outer.add_node(inner)
@@ -183,16 +199,16 @@ def _build_interstate_sdfg() -> dace.SDFG:
 
 # Tests
 def test_pre_only_sift():
-    """``for i: { s[i]=a[i,0]; for j: b=a+s }`` -> the pre state moves into a ``j == 0`` guard
+    """``for i: { s[i]=2*a[i,0]; for j: b=a+1 }`` -> the pre state moves into a ``j == 0`` guard
     that is the first inner block; outer body left with one child; bit-exact."""
     rng = np.random.default_rng(42)
     n = 7
     a = rng.random((n, 5))
-    base = _pre_only.to_sdfg(simplify=True)
+    base = _pre_unread.to_sdfg(simplify=True)
     ref_b, ref_s = np.zeros((n, 5)), np.zeros(n)
     copy.deepcopy(base)(a=a.copy(), b=ref_b, s=ref_s, N=n)
 
-    sdfg = _pre_only.to_sdfg(simplify=True)
+    sdfg = _pre_unread.to_sdfg(simplify=True)
     assert sift_imperfect_nests(sdfg) == 1
     sdfg.validate()
 
@@ -238,7 +254,7 @@ def test_post_only_sift():
 
 
 def test_pre_and_post_sift():
-    """``for i: { t=2*a[i,0]; for j: b[i,j]=a[i,j]+t; c[i]=b[i,4]+t }`` -> two guards: ``j == 0``
+    """``for i: { t=2*a[i,0]; for j: b[i,j]=a[i,j]+1; c[i]=b[i,4]+t }`` -> two guards: ``j == 0``
     first (the pre) and ``j == 4`` last (the post)."""
     rng = np.random.default_rng(42)
     n = 8
@@ -268,6 +284,29 @@ def test_refuses_a_reduction_the_inner_loop_carries():
     assert sift_imperfect_nests(sdfg) == 0
 
 
+def test_refuses_a_pre_value_the_inner_body_reads():
+    """``for i: { s[i]=a[i,0]; for j: b=a+s }`` stays as it is: guarded at ``j == 0``, ``s[i]`` would be written
+    by the first inner iteration and read by every later one, a carry that keeps the inner loop sequential."""
+    sdfg = _pre_only.to_sdfg(simplify=True)
+    assert sift_imperfect_nests(sdfg) == 0
+
+
+def test_row_gather_parallelizes_on_gpu():
+    """The per-row index ``n = idx[i]`` the inner body reads stays outside it: sifted under ``j == 0``, it left
+    both loops on the host and the GPU launched one kernel per row. Both axes must become maps."""
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+
+    sdfg = _row_gather.to_sdfg(simplify=False)
+    canonicalize(sdfg, target="gpu", validate_all=False)
+    assert not _loops(sdfg)
+    rng = np.random.default_rng(3)
+    n = 6
+    a, idx = rng.random((n, n)), rng.integers(0, n, n).astype(np.int32)
+    b = np.zeros((n, n))
+    sdfg(a=a, idx=idx, b=b, LEN=n)
+    assert np.array_equal(b, a[idx] - a)
+
+
 def test_row_sums_parallelize_on_gpu():
     """With a positive bound the inner loop is provably non-empty, which let the sift bury the row
     reduction and leave both loops sequential on the GPU: the outer axis must become a map."""
@@ -289,7 +328,7 @@ def test_interstate_assignment_sifts_with_statement():
     base = _build_interstate_sdfg()
     base.validate()
     ref = np.zeros((n, 5))
-    copy.deepcopy(base)(a=a.copy(), b=ref, N=n)
+    copy.deepcopy(base)(a=a.copy(), b=ref, s=np.zeros(n), N=n)
 
     sdfg = _build_interstate_sdfg()
     assert sift_imperfect_nests(sdfg) == 1
@@ -306,11 +345,10 @@ def test_interstate_assignment_sifts_with_statement():
     assert any("t" in e.data.assignments for e in region.edges())
     assert _region_writes(region, "s")
 
-    out = np.zeros((n, 5))
-    sdfg(a=a.copy(), b=out, N=n)
+    out, out_s = np.zeros((n, 5)), np.zeros(n)
+    sdfg(a=a.copy(), b=out, s=out_s, N=n)
     assert np.array_equal(out, ref)
-    # dace evaluates s[i] = a[i,0] + t (t = 2*i) then b[i,j] = a[i,j] + s[i]; match that association.
-    assert np.array_equal(out, a + (a[:, 0:1] + 2.0 * np.arange(n).reshape(-1, 1)))
+    assert np.array_equal(out_s, a[:, 0] + 2.0 * np.arange(n))
 
 
 def test_refuses_possibly_empty_inner_loop():
@@ -396,7 +434,7 @@ def test_new_start_block_set_correctly():
     n = 6
     a = rng.random((n, 5))
 
-    sdfg = _pre_only.to_sdfg(simplify=True)
+    sdfg = _pre_unread.to_sdfg(simplify=True)
     assert sift_imperfect_nests(sdfg) == 1
 
     inner = _inner_loop(sdfg)
@@ -408,40 +446,7 @@ def test_new_start_block_set_correctly():
 
     out_b, out_s = np.zeros((n, 5)), np.zeros(n)
     sdfg(a=a.copy(), b=out_b, s=out_s, N=n)
-    assert np.array_equal(out_b, a + a[:, 0:1])
-
-
-def test_perfect_loop_nesting_drives_the_sink_on_gpu_only():
-    """``PerfectLoopNesting`` owns this capability: ``target='gpu'`` performs the sink,
-    ``target='cpu'`` does not.
-
-    Pinned on ``_pre_and_post_shared``, whose ``t`` is a scalar the inner loop reads, so distribution
-    is refused and the sink is the ONLY route to a perfect nest -- which is what isolates the
-    capability being tested. (``_pre_only`` no longer serves: its pre statement writes ``s[i]`` and
-    the inner body reads exactly ``s[i]``, both pinned to the parent index, so the distribution
-    reaches it first -- see :func:`test_aligned_pre_shape_is_distributed_not_sunk`.)
-
-    Asserted on the boundary guards rather than on a named loop: the pass SSA-renames iterators.
-    """
-    rng = np.random.default_rng(42)
-    n = 6
-    a = rng.random((n, 5))
-    ref_b, ref = np.zeros((n, 5)), np.zeros(n)
-    _pre_and_post_shared.to_sdfg(simplify=True)(a=a.copy(), b=ref_b, c=ref, N=n)
-
-    gpu = _pre_and_post_shared.to_sdfg(simplify=True)
-    guards_before = len(_conds(gpu))
-    assert PerfectLoopNesting(target="gpu").apply_pass(gpu, {})
-    gpu.validate()
-    assert len(_conds(gpu)) == guards_before + 2, "the pre and the post each get a boundary guard"
-    out_b, out = np.zeros((n, 5)), np.zeros(n)
-    gpu(a=a.copy(), b=out_b, c=out, N=n)
-    assert np.allclose(out_b, ref_b) and np.allclose(out, ref)
-
-    cpu = _pre_and_post_shared.to_sdfg(simplify=True)
-    PerfectLoopNesting(target="cpu").apply_pass(cpu, {})
-    cpu.validate()
-    assert len(_conds(cpu)) == guards_before
+    assert np.array_equal(out_b, a + 1.0) and np.array_equal(out_s, a[:, 0] * 2.0)
 
 
 @pytest.mark.parametrize("target", ["cpu", "gpu"])
@@ -470,7 +475,7 @@ def test_aligned_pre_shape_is_distributed_not_sunk(target):
 
 def test_sift_is_idempotent():
     """Re-running must be a no-op -- the pass sits in the canonicalize fixpoint."""
-    sdfg = _pre_only.to_sdfg(simplify=True)
+    sdfg = _pre_unread.to_sdfg(simplify=True)
     assert sift_imperfect_nests(sdfg) == 1
     assert sift_imperfect_nests(sdfg) == 0
 
@@ -510,4 +515,22 @@ def test_inner_loop_whose_body_moves_its_bound_is_refused():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_pre_only_sift()
+    test_post_only_sift()
+    test_pre_and_post_sift()
+    test_refuses_a_reduction_the_inner_loop_carries()
+    test_refuses_a_pre_value_the_inner_body_reads()
+    test_row_gather_parallelizes_on_gpu()
+    test_row_sums_parallelize_on_gpu()
+    test_interstate_assignment_sifts_with_statement()
+    test_refuses_possibly_empty_inner_loop()
+    test_cpu_target_noop()
+    test_refuses_outer_axis_carry()
+    test_refuses_an_accumulation_across_the_outer_axis()
+    test_new_start_block_set_correctly()
+    for target in ("cpu", "gpu"):
+        test_aligned_pre_shape_is_distributed_not_sunk(target)
+    test_sift_is_idempotent()
+    with pytest.MonkeyPatch.context() as patch:
+        test_sifting_keeps_the_cfg_list_of_a_fresh_reset(patch)
+    test_inner_loop_whose_body_moves_its_bound_is_refused()
