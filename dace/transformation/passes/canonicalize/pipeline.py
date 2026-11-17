@@ -1119,9 +1119,10 @@ def finish() -> Stages:
         # Spelled for the code generator once nothing analyzes the form any more: the runtime call is opaque to the
         # symbolic and SMT reasoning that sees a floored ``Mod`` through
         (FINISH, RewriteModuloToPyMod()),
-        # Fusion leaves plain copies through its intermediates
+        # Fusion leaves plain copies through its intermediates; a map broadcasting an element reads it itself, or
+        # on GPU the element takes a device-to-host copy and a stream synchronization per launch
         (FINISH, EliminateTrivialTasklets()),
-        (FINISH, FoldScalarReadCopies()),
+        (FINISH, FoldScalarReadCopies(scopes=True)),
         # A staging copy sits in its readers' map scope, fed from the map entry, only once the terminal inlining has
         # run; the reclaim stays last for the arrays the fold leaves.
         (FINISH, PatternApplyOnceEverywhere([RedundantMapReadCopy()])),

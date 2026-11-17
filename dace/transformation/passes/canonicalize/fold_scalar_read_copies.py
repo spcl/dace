@@ -53,8 +53,20 @@ def writers(state: SDFGState, name: str) -> list[nodes.Node]:
     return [node for node in state.data_nodes() if node.data == name and state.in_degree(node) > 0]
 
 
-def foldable(sdfg: SDFG, state: SDFGState, copy: Any, counts: dict[str, int]) -> Memlet | None:
-    """The direct read of the source element if the copy edge ``copy`` may be folded, else ``None``."""
+def consumer_end(state: SDFGState, consumer: nodes.Node) -> nodes.Node:
+    """The node after which ``consumer`` has read the scalar: a tasklet itself, a scope its exit."""
+    return state.exit_node(consumer) if isinstance(consumer, nodes.EntryNode) else consumer
+
+
+def read_by_tasklets(state: SDFGState, edge: Any) -> bool:
+    """Whether the element ``edge`` hands on reaches tasklets only: a nested SDFG's connector descriptor must match
+    the whole container it reads, so a scalar it reads cannot become the source's element."""
+    return all(isinstance(leaf.dst, nodes.Tasklet) for leaf in state.memlet_tree(edge).leaves())
+
+
+def foldable(sdfg: SDFG, state: SDFGState, copy: Any, counts: dict[str, int], scopes: bool = False) -> Memlet | None:
+    """The direct read of the source element if the copy edge ``copy`` may be folded, else ``None``. With ``scopes``
+    a consumer may also be a scope entry that hands the scalar to its body (a map broadcasting it)."""
     scalar = copy.dst
     desc = sdfg.arrays[scalar.data]
     if not (isinstance(desc, data.Scalar) and desc.transient and counts.get(scalar.data) == 1):
@@ -62,7 +74,8 @@ def foldable(sdfg: SDFG, state: SDFGState, copy: Any, counts: dict[str, int]) ->
     if state.in_degree(scalar) != 1 or copy.data.wcr is not None or copy.data.is_empty():
         return None
     consumers = state.out_edges(scalar)
-    if not consumers or not all(isinstance(edge.dst, nodes.Tasklet) for edge in consumers):
+    kinds = (nodes.Tasklet, nodes.EntryNode) if scopes else nodes.Tasklet
+    if not consumers or not all(isinstance(edge.dst, kinds) and read_by_tasklets(state, edge) for edge in consumers):
         return None
     # An empty edge out of the snapshot orders the read before a later overwrite of the source; folding would
     # leave the reading tasklets unordered against that overwrite.
@@ -82,19 +95,30 @@ def foldable(sdfg: SDFG, state: SDFGState, copy: Any, counts: dict[str, int]) ->
         return None
     # The source node's own writes land before the copy reads it.
     before = reachable(state, copy.src, forward=False) | {copy.src}
-    after = set.intersection(*(reachable(state, edge.dst) for edge in consumers))
+    # A write inside a consuming scope is neither: its other iterations would read the overwritten element
+    after = set.intersection(*(reachable(state, consumer_end(state, edge.dst)) for edge in consumers))
     viewed = sdutil.get_last_view_node(state, root).data if isinstance(source, data.View) else root.data
     if any(writer not in before and writer not in after for writer in writers(state, viewed)):
+        return None
+    # A scope writing the source overwrites the element its other iterations read
+    ends = [consumer_end(state, edge.dst) for edge in consumers if isinstance(edge.dst, nodes.EntryNode)]
+    if any(e.data.data in (root.data, viewed) for end in ends for e in state.out_edges(end)):
         return None
     return Memlet(data=root.data, subset=subset)
 
 
 def fold(state: SDFGState, copy: Any, read: Memlet) -> None:
-    """Connect every consumer of the copy's scalar to the copy's source, then drop the scalar."""
+    """Connect every consumer of the copy's scalar to the copy's source, then drop the scalar. A scope's memlet tree
+    reads the source element from its entry down to every leaf."""
     scalar = copy.dst
     for edge in list(state.out_edges(scalar)):
-        state.add_edge(copy.src, copy.src_conn, edge.dst, edge.dst_conn, Memlet.from_memlet(read))
+        memlet = Memlet.from_memlet(read)
+        if isinstance(edge.dst, nodes.EntryNode):
+            memlet = edge.data
+            for tree in state.memlet_tree(edge).traverse_children(include_self=True):
+                tree.edge.data.data, tree.edge.data.subset = read.data, Memlet.from_memlet(read).subset
         state.remove_edge(edge)
+        state.add_edge(copy.src, copy.src_conn, edge.dst, edge.dst_conn, memlet)
     state.remove_edge(copy)
     state.remove_node(scalar)
 
@@ -176,10 +200,14 @@ class FoldScalarReadCopies(ppl.Pass):
     CATEGORY: str = "Canonicalization"
 
     reads_only = properties.Property(dtype=bool, default=False, desc="Leave the result copies alone")
+    scopes = properties.Property(
+        dtype=bool, default=False, desc="Also fold a read copy into the scopes it feeds (a map broadcasting it)"
+    )
 
-    def __init__(self, reads_only: bool = False):
+    def __init__(self, reads_only: bool = False, scopes: bool = False):
         super().__init__()
         self.reads_only = reads_only
+        self.scopes = scopes
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Memlets
@@ -202,7 +230,7 @@ class FoldScalarReadCopies(ppl.Pass):
                 for copy in list(copy_edges(owner, state)):
                     if copy.dst not in state.nodes():
                         continue
-                    read = foldable(owner, state, copy, counts)
+                    read = foldable(owner, state, copy, counts, self.scopes)
                     if read is not None:
                         fold(state, copy, read)
                         counts[copy.dst.data] = 0

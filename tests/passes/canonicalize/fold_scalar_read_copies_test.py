@@ -214,6 +214,69 @@ def test_a_copy_out_of_a_view_bound_to_the_scalar_alone_stays():
     sdfg.validate()
 
 
+def nested_store(name: str) -> dace.SDFG:
+    """``y[i] = x`` with the scalar ``x`` a nested SDFG's own descriptor."""
+    inner = dace.SDFG(name)
+    inner.add_scalar("x", dace.float64)
+    inner.add_array("y", [N], dace.float64)
+    inner.add_symbol("i", dace.int64)
+    state = inner.add_state()
+    store = state.add_tasklet("store", {"a"}, {"b"}, "b = a")
+    state.add_edge(state.add_read("x"), None, store, "a", dace.Memlet("x[0]"))
+    state.add_edge(store, "b", state.add_write("y"), None, dace.Memlet("y[i]"))
+    return inner
+
+
+def broadcast_by_a_map(name: str, writes_source: bool = False, nested: bool = False) -> dace.SDFG:
+    """``A[1] -> s -> map i: B[i] = s`` (fdtd_2d's ``ey[0, :] = fict[t]``); with ``writes_source`` the map also stores
+    ``A[1]``, with ``nested`` a nested SDFG reads ``s`` as its scalar ``x``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [2], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    state = sdfg.add_state()
+    s = state.add_access("s")
+    state.add_edge(state.add_read("A"), None, s, None, dace.Memlet("A[1]"))
+    entry, exit_ = state.add_map("broadcast", dict(i="0:N"))
+    if nested:
+        use = state.add_nested_sdfg(nested_store(f"{name}_store"), {"x"}, {"y"}, {"N": N, "i": "i"})
+        state.add_memlet_path(s, entry, use, dst_conn="x", memlet=dace.Memlet("s[0]"))
+        state.add_memlet_path(use, exit_, state.add_write("B"), src_conn="y", memlet=dace.Memlet("B[i]"))
+    else:
+        use = state.add_tasklet("use", {"x"}, {"y"}, "y = x")
+        state.add_memlet_path(s, entry, use, dst_conn="x", memlet=dace.Memlet("s[0]"))
+        state.add_memlet_path(use, exit_, state.add_write("B"), src_conn="y", memlet=dace.Memlet("B[i]"))
+    if writes_source:
+        clobber = state.add_tasklet("clobber", {}, {"z"}, "z = 7.0")
+        state.add_nedge(entry, clobber, dace.Memlet())
+        state.add_memlet_path(clobber, exit_, state.add_write("A"), src_conn="z", memlet=dace.Memlet("A[1]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_copy_broadcast_by_a_map_folds_into_its_memlet_tree():
+    sdfg = broadcast_by_a_map("broadcast_fold")
+    assert FoldScalarReadCopies().apply_pass(sdfg, {}) is None
+    assert FoldScalarReadCopies(scopes=True).apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert scalar_copies(sdfg) == 0 and "s" not in {n.data for n in sdfg.start_state.data_nodes()}
+    A, B = np.random.rand(2), np.zeros(5)
+    sdfg(A=A, B=B, N=5)
+    assert np.allclose(B, A[1])
+
+
+def test_a_copy_broadcast_by_a_map_writing_its_source_stays():
+    sdfg = broadcast_by_a_map("broadcast_clobbered", writes_source=True)
+    assert FoldScalarReadCopies(scopes=True).apply_pass(sdfg, {}) is None
+
+
+def test_a_copy_broadcast_into_a_nested_sdfg_stays():
+    """A nested SDFG's connector descriptor must match the container it reads: the scalar stays its input."""
+    sdfg = broadcast_by_a_map("broadcast_nested", nested=True)
+    assert FoldScalarReadCopies(scopes=True).apply_pass(sdfg, {}) is None
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_a_read_only_copy_folds()
     test_a_same_element_update_folds()
@@ -228,3 +291,6 @@ if __name__ == "__main__":
     test_a_result_copy_beside_an_unordered_reader_stays()
     test_a_result_copy_whose_reader_runs_first_folds()
     test_a_copy_out_of_a_view_bound_to_the_scalar_alone_stays()
+    test_a_copy_broadcast_by_a_map_folds_into_its_memlet_tree()
+    test_a_copy_broadcast_by_a_map_writing_its_source_stays()
+    test_a_copy_broadcast_into_a_nested_sdfg_stays()
