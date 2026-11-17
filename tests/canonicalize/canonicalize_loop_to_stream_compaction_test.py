@@ -297,6 +297,27 @@ def test_s343_static_extents_lift_the_whole_nest():
         assert int(got_k[0]) == want_k
 
 
+def rank_dtypes(sdfg: dace.SDFG) -> set:
+    return {desc.dtype for name, desc in sdfg.arrays.items() if name.startswith(IDX_PREFIX)}
+
+
+def test_rank_is_int32_when_the_nest_provably_fits_it():
+    """24x24 iterations cannot reach 2^31: the scan writes, and the scatter reads, a 32-bit rank."""
+    assert rank_dtypes(build(s343_static_kernel)) == {dace.int32}
+
+
+def test_rank_width_is_picked_at_runtime_when_the_extent_is_symbolic():
+    """``N`` may be anything: a test of ``N`` against 2^31 runs the 32-bit lift, else an int64 copy of it."""
+    sdfg = build(s341_kernel)
+    assert rank_dtypes(sdfg) == {dace.int32, dace.int64}
+    b = np.random.default_rng(341).standard_normal(77)
+    want = np.zeros(77)
+    want_j = oracle_s341(want, b)
+    got, got_j = np.zeros(77), np.zeros(1, dtype=np.int64)
+    sdfg(a=got, b=b.copy(), jout=got_j, N=77)
+    assert np.array_equal(got, want) and int(got_j[0]) == want_j
+
+
 @dace.program
 def guard_on_two_fields(pairs: dace.int64[N, 2], out: dace.int64[N], cnt: dace.int64[1]):
     n = 0

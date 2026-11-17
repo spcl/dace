@@ -191,6 +191,12 @@ BASE_PREFIX = "compaction_base_"
 #: Index dtype of the rank buffer, the total and the cursor base symbol. An index stays int64.
 COUNT_DTYPE = dtypes.int64
 
+#: The rank buffer and the total narrow to this when every cursor offset ``K * rank`` fits it: half
+#: the scan's write and phase 3's read. When that is not provable, a runtime test of the nest's reach
+#: picks between the narrow lift and an int64 copy of it.
+NARROW_COUNT_DTYPE = dtypes.int32
+NARROW_COUNT_LIMIT = 2**31 - 1
+
 #: Element type of the predicate mask. ONE BYTE, not an index width: ``mask`` holds 0 or 1, and it
 #: is the buffer the phases touch most -- phase 1 writes it, the ``Scan`` reads it and the ``Reduce``
 #: reads it again. At int64 the three phases moved ~40N bytes of auxiliary traffic against the
@@ -275,7 +281,8 @@ class LoopToStreamCompaction(ppl.Pass):
                 m = self.match_loop(region, sd)
                 if m is None:
                     continue
-                self.rewrite(m, resolver)
+                for width_match, count_dtype in self.by_count_width(m):
+                    self.rewrite(width_match, resolver, count_dtype)
                 lifted += 1
         return lifted or None
 
@@ -756,22 +763,63 @@ class LoopToStreamCompaction(ppl.Pass):
 
     # rewrite
 
-    def rewrite(self, m: CompactionMatch, resolver: scopes.ScopedSymbolResolver) -> None:
+    def rank_shape(self, m: CompactionMatch) -> list[symbolic.SymbolicType]:
+        """One extent per level; a level past its end runs nothing, but an array sized by its bare count would be negative."""
+        facts = SymbolResolver().facts_at(m.parent)
+        return [
+            level.trip if symbolic.provably_nonnegative(level.trip, facts) else sympy.Max(0, level.trip)
+            for level in m.levels
+        ]
+
+    def by_count_width(self, m: CompactionMatch) -> list[tuple[CompactionMatch, dtypes.typeclass]]:
+        """The lifts to make and their rank dtype: narrow if the reach ``K * iterations`` provably fits, else both
+        behind a runtime test of it."""
+        reach = m.step * sympy.Mul(*self.rank_shape(m))
+        fits = f"({symbolic.symstr(reach)}) <= {NARROW_COUNT_LIMIT}"
+        if symbolic.provably_le(reach, NARROW_COUNT_LIMIT, SymbolResolver().facts_at(m.parent)):
+            return [(m, NARROW_COUNT_DTYPE)]
+        parent, root = m.parent, m.root
+        width = ConditionalBlock(f"{root.label}_count_width")
+        parent.add_node(width, ensure_unique_name=True, is_start_block=parent.start_block is root)
+        for edge in parent.in_edges(root):
+            parent.add_edge(edge.src, width, edge.data)
+        for edge in parent.out_edges(root):
+            parent.add_edge(width, edge.dst, edge.data)
+        parent.remove_node(root)
+        # The copy is the same nest, so it is the same match; re-matching it would see its twin's transients
+        memo: dict[int, Any] = {}
+        copy.deepcopy(root, memo)
+        levels = tuple(
+            level._replace(
+                loop=memo[id(level.loop)],
+                preamble=[memo[id(b)] for b in level.preamble],
+                child=memo[id(level.child)],
+                tail=tuple(memo[id(b)] for b in level.tail),
+            )
+            for level in m.levels
+        )
+        wide = m._replace(root=memo[id(root)], levels=levels, cond_block=memo[id(m.cond_block)])
+        lifts = []
+        for condition, lift, count_dtype in ((fits, m, NARROW_COUNT_DTYPE), (None, wide, COUNT_DTYPE)):
+            branch = ControlFlowRegion(f"{width.label}_{count_dtype.to_string()}", sdfg=m.sdfg)
+            branch.add_node(lift.root, is_start_block=True)
+            width.add_branch(condition, branch)
+            lifts.append((lift._replace(parent=branch), count_dtype))
+        return lifts
+
+    def rewrite(
+        self, m: CompactionMatch, resolver: scopes.ScopedSymbolResolver, count_dtype: dtypes.typeclass = COUNT_DTYPE
+    ) -> None:
         from dace.transformation.passes.canonicalize.carried_accumulation import convert_updates
 
         sdfg, parent, root = m.sdfg, m.parent, m.root
         # Read before anything is added: the phase copies rename each level's iterator, and a
         # rename must carry the dtype the ORIGINAL level declares, level by level.
         iterator_dtypes = [self.iterator_dtype(level.loop, sdfg, resolver) for level in m.levels]
-        # A level past its end runs nothing, but an array sized by its bare count would be negative.
-        facts = SymbolResolver().facts_at(parent)
-        shape = [
-            level.trip if symbolic.provably_nonnegative(level.trip, facts) else sympy.Max(0, level.trip)
-            for level in m.levels
-        ]
+        shape = self.rank_shape(m)
         mask_name, _ = sdfg.add_array(MASK_PREFIX + root.label, shape, MASK_DTYPE, transient=True, find_new_name=True)
-        idx_name, _ = sdfg.add_array(IDX_PREFIX + root.label, shape, COUNT_DTYPE, transient=True, find_new_name=True)
-        total_name, _ = sdfg.add_scalar(TOTAL_PREFIX + root.label, COUNT_DTYPE, transient=True, find_new_name=True)
+        idx_name, _ = sdfg.add_array(IDX_PREFIX + root.label, shape, count_dtype, transient=True, find_new_name=True)
+        total_name, _ = sdfg.add_scalar(TOTAL_PREFIX + root.label, count_dtype, transient=True, find_new_name=True)
         base_sym = BASE_PREFIX + root.label
         while base_sym in sdfg.symbols:
             base_sym += "_"
