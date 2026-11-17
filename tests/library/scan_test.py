@@ -207,6 +207,62 @@ def test_multi_chain_scan_matches_numpy(op: ScanOp, implementation: str, seeded:
         )
 
 
+def one_element_scan(op: ScanOp, implementation: str, seeded: bool, chains: int = 1, stride: int = 1) -> dace.SDFG:
+    """``chains`` scans of one element each; ``implementation`` ``"CPU in a loop"`` is ``CPU`` on a sequential
+    schedule, which lowers through ``ExpandSequential``."""
+    sdfg = dace.SDFG(f"one_{op.value}_{_safe_label(implementation)}_{int(seeded)}_{chains}_{stride}")
+    sdfg.add_array("arr_in", [chains, 1], dace.float64)
+    sdfg.add_array("arr_out", [chains, 1], dace.float64)
+    sdfg.add_array("seed", [chains, stride], dace.float64)
+    state = sdfg.add_state("scan")
+    node = Scan("Scan", op=op, chains=chains)
+    node.stride = stride
+    node.implementation = "CPU" if implementation == "CPU in a loop" else implementation
+    if implementation == "CPU in a loop":
+        node.schedule = dace.ScheduleType.Sequential
+    state.add_node(node)
+    a_out = state.add_write("arr_out")
+    for c in range(chains):
+        state.add_edge(state.add_read("arr_in"), None, node, in_connector(c), dace.Memlet(f"arr_in[{c}, 0:1]"))
+        state.add_edge(node, out_connector(c), a_out, None, dace.Memlet(f"arr_out[{c}, 0:1]"))
+        if seeded:
+            node.add_in_connector(init_connector(c))
+            seeds = dace.Memlet(f"seed[{c}, 0:{stride}]")
+            state.add_edge(state.add_read("seed"), None, node, init_connector(c), seeds)
+    sdfg.validate()
+    return sdfg
+
+
+#: ``seed OP x`` for x = 2 and seed = 3, per op: the one prefix a seeded one-element scan writes.
+SEEDED_ONE_ELEMENT = {ScanOp.SUM: 5.0, ScanOp.PRODUCT: 6.0, ScanOp.MIN: 2.0, ScanOp.MAX: 3.0}
+
+
+@pytest.mark.parametrize("implementation", ["CPU", "CPU in a loop", "pure", "sequential"])
+@pytest.mark.parametrize("op", [ScanOp.SUM, ScanOp.PRODUCT, ScanOp.MIN, ScanOp.MAX])
+@pytest.mark.parametrize("seeded", [False, True])
+def test_one_element_scan_folds_its_seed(op: ScanOp, implementation: str, seeded: bool):
+    sut = one_element_scan(op, implementation, seeded)
+    out = np.zeros((1, 1))
+    sut(arr_in=np.array([[2.0]]), arr_out=out, seed=np.array([[3.0]]))
+    assert out[0, 0] == (SEEDED_ONE_ELEMENT[op] if seeded else 2.0)
+
+
+@pytest.mark.parametrize("op", [ScanOp.SUM, ScanOp.PRODUCT, ScanOp.MIN, ScanOp.MAX])
+def test_one_element_scans_of_several_chains_fold_their_own_seeds(op: ScanOp):
+    sut = one_element_scan(op, "CPU", seeded=True, chains=2)
+    out = np.zeros((2, 1))
+    sut(arr_in=np.array([[2.0], [2.0]]), arr_out=out, seed=np.array([[3.0], [3.0]]))
+    np.testing.assert_array_equal(out[:, 0], [SEEDED_ONE_ELEMENT[op]] * 2)
+
+
+@pytest.mark.parametrize("implementation", ["CPU", "pure"])
+def test_one_element_strided_scan_folds_the_first_class_seed(implementation: str):
+    sut = one_element_scan(ScanOp.SUM, implementation, seeded=True, stride=2)
+    out = np.zeros((1, 1))
+    sut(arr_in=np.array([[2.0]]), arr_out=out, seed=np.array([[3.0, 100.0]]))
+    assert out[0, 0] == 5.0
+
+
 def test_multi_chain_scan_opens_one_parallel_region():
     """The point of ``chains > 1``: ONE fork/join and ONE ``omp scan`` directive
     listing every accumulator, instead of one region per chain."""

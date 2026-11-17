@@ -3659,12 +3659,7 @@ def rewrite_scan_loop(
     out_desc = sdfg.arrays[info.out_name]
     trip = _trip(info.iter_start, info.iter_end, SymbolResolver().facts_at(parent))
     source = direct_scan_source(loop, info, sdfg) if _can_emit_direct_write(info, out_desc) else None
-    # A one-element scan expands to a plain copy that ignores the seed, so it keeps the fold.
-    if (
-        source is not None
-        and (info.scan_stride == 1 or per_class_seeds)
-        and not (symbolic.simplify(trip).is_number and int(symbolic.simplify(trip)) <= 1)
-    ):
+    if source is not None and (info.scan_stride == 1 or per_class_seeds):
         state = info.body_state
         _disconnect_carry_chain(state, required(info.scan_update_tasklet), info.carry_in_conn, info.carry_anchor)
         _drop_carried_write(state, required(_find_carried_write_an(state, info.out_name)))
