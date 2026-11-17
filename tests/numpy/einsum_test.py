@@ -433,6 +433,39 @@ def test_einsum_dot_node(beta):
     assert np.allclose(r[0], 2.0 * np.dot(x, y) + beta * prior), f"got {r[0]}"
 
 
+@pytest.mark.parametrize("beta", [0.0, 1.0])
+def test_a_packed_several_subscript_dot_expands_to_one_flat_dot(beta):
+    """``ak,ak->`` over a matrix and a packed slice of a 3D tensor is one DDOT over the flattened operands, not a
+    1x1 GEMM: the GEMM's threaded partial sums cost a parallel region on every call (jfnk_bratu's norms, 5x)."""
+    from dace.libraries.blas.nodes.dot import Dot
+    from dace.libraries.blas.nodes.einsum import Einsum
+    from dace.libraries.blas.nodes.gemm import Gemm
+
+    sdfg = dace.SDFG(f"einsum_flat_dot_{int(beta)}")
+    sdfg.add_array("x", [6, 7], dace.float64)
+    sdfg.add_array("q", [3, 6, 7], dace.float64)
+    sdfg.add_array("r", [1], dace.float64)
+    state = sdfg.add_state()
+    enode = Einsum("einsum")
+    enode.einsum_str = "ak,ak->"
+    enode.beta = beta
+    enode.in_connectors = {"a": None, "b": None}
+    enode.out_connectors = {"out": None}
+    state.add_node(enode)
+    state.add_edge(state.add_read("x"), None, enode, "a", dace.Memlet("x[0:6, 0:7]"))
+    state.add_edge(state.add_read("q"), None, enode, "b", dace.Memlet("q[1, 0:6, 0:7]"))
+    state.add_edge(enode, "out", state.add_write("r"), None, dace.Memlet("r[0]"))
+    sdfg.expand_library_nodes(recursive=False)
+    expanded = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, (Dot, MatMul, Gemm))]
+    assert [type(n) for n in expanded] == [Dot], expanded
+
+    rng = np.random.default_rng(1)
+    x, q, r = rng.random((6, 7)), rng.random((3, 6, 7)), np.array([7.0])
+    expected = np.sum(x * q[1]) + beta * r[0]
+    sdfg(x=x, q=q, r=r)
+    assert np.allclose(r[0], expected), f"got {r[0]}"
+
+
 @pytest.mark.parametrize(
     "spec,in_shape,out_shape,in_subset,out_subset",
     [
@@ -788,6 +821,8 @@ def test_a_nest_reads_a_repeated_operand_once_per_term() -> None:
 
 
 if __name__ == "__main__":
+    test_a_packed_several_subscript_dot_expands_to_one_flat_dot(0.0)
+    test_a_packed_several_subscript_dot_expands_to_one_flat_dot(1.0)
     test_an_interleaving_contraction_of_device_tensors_keeps_its_product_on_the_device()
     test_general_einsum()
     test_matmul()

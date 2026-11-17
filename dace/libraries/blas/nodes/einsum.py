@@ -6,18 +6,22 @@ Specialization expansions of this node convert it to fast BLAS operations (e.g.,
 """
 
 from copy import deepcopy
+from math import prod
 
-from dace import SDFG, Memlet, SDFGState, library, nodes, properties, symbolic
+from dace import SDFG, Memlet, SDFGState, dtypes, library, nodes, properties, symbolic
 from dace import transformation as xf
 from dace.frontend.common import einsum
 from dace.libraries.blas import block
 from dace.libraries.standard.environments.cuda import CUDA
+from dace.sdfg.scope import is_devicelevel_gpu
 
 
 def _is_dot_einsum(einsum_str: str, num_tensor_inputs: int) -> bool:
-    """True for a 2-operand single-contracted-index dot ``i,i->`` (scalar output). Such a
-    contraction is a DDOT, not a GEMM -- the degenerate 1x1 GEMM the contraction path would
-    emit carries an illegal BLAS leading dimension for a strided operand."""
+    """True for a 2-operand full contraction onto a scalar with the same subscripts on both sides (``i,i->``,
+    ``ak,ak->``). Such a contraction is a DDOT, not a GEMM -- the degenerate 1x1 GEMM the contraction path would
+    emit carries an illegal BLAS leading dimension for a strided operand, and its threaded partial sums cost a
+    parallel region per call. Several subscripts take the DDOT only over operands packed alike
+    (:func:`_flatten_dot_operands`)."""
     lhs, sep, rhs = einsum_str.partition("->")
     terms = [t.strip() for t in lhs.split(",")]
     return (
@@ -25,9 +29,30 @@ def _is_dot_einsum(einsum_str: str, num_tensor_inputs: int) -> bool:
         and rhs.strip() == ""
         and num_tensor_inputs == 2
         and len(terms) == 2
-        and len(terms[0]) == 1
+        and len(set(terms[0])) == len(terms[0])
         and terms[0] == terms[1]
     )
+
+
+def _flatten_dot_operands(sdfg: SDFG, inputs: list[str]) -> bool:
+    """Redeclare the operands of a several-subscript dot as one vector each, when both are packed in the same order
+    with the same shape: element ``i`` of one flat vector then pairs with element ``i`` of the other. A one-subscript
+    dot is already a vector; ``False`` when the operands are not packed alike."""
+    descs = [sdfg.arrays[name] for name in inputs]
+    if all(len(d.shape) == 1 for d in descs):
+        return True
+    shape = descs[0].shape
+    same_shape = all(
+        len(d.shape) == len(shape) and all(symbolic.equal(a, b) is True for a, b in zip(d.shape, shape)) for d in descs
+    )
+    if not same_shape:
+        return False
+    if not (all(d.is_packed_c_strides() for d in descs) or all(d.is_packed_fortran_strides() for d in descs)):
+        return False
+    for name, desc in zip(inputs, descs):
+        sdfg.remove_data(name, validate=False)
+        sdfg.add_array(name, [prod(desc.shape)], desc.dtype, storage=desc.storage)
+    return True
 
 
 # Define the library node itself
@@ -137,7 +162,7 @@ class SpecializeEinsum(xf.ExpandTransformation):
         # degenerate 1x1 GEMM the contraction path emits (whose leading dimension ``lda=1`` is
         # illegal for a strided operand -> DGEMM no-ops, silently dropping the contraction).
         # ``out = alpha * dot(x, y) + beta * out_prior``.
-        if _is_dot_einsum(node.einsum_str, len(inputs)):
+        if _is_dot_einsum(node.einsum_str, len(inputs)) and _flatten_dot_operands(sdfg, sorted(inputs)):
             from dace.libraries.blas.nodes.dot import Dot
 
             x_conn, y_conn = sorted(inputs)
@@ -156,15 +181,26 @@ class SpecializeEinsum(xf.ExpandTransformation):
             # zero beta. That would emit the fold branch's ``__oin = output[0]`` read-back of an
             # uninitialized reduction temp (``0.0 * NaN = NaN`` -> nondeterministic garbage). This
             # is the value-aware zero test gemm/``create_einsum_sdfg`` use.
-            if symbolic.equal_valued(0, beta):
-                scale = state.add_tasklet("dot_scale", {"__d"}, {"__o"}, f"__o = ({alpha}) * __d")
-            else:
-                scale = state.add_tasklet(
-                    "dot_scale", {"__d": None, "__oin": None}, {"__o"}, f"__o = ({alpha}) * __d + ({beta}) * __oin"
-                )
-                state.add_edge(state.add_read(output), None, scale, "__oin", Memlet(f"{output}[0]"))
-            state.add_edge(state.add_read("__dot_res"), None, scale, "__d", Memlet("__dot_res[0]"))
-            state.add_edge(scale, "__o", state.add_write(output), None, Memlet(f"{output}[0]"))
+            scale_inputs = {"__d": Memlet("__dot_res[0]")}
+            code = f"__o = ({alpha}) * __d"
+            if not symbolic.equal_valued(0, beta):
+                scale_inputs["__oin"] = Memlet(f"{output}[0]")
+                code += f" + ({beta}) * __oin"
+            # A device-resident result is scaled by a one-element device map, host code cannot touch it; inside a
+            # kernel already, the map is sequential.
+            on_device = sdfg.arrays[output].storage == dtypes.StorageType.GPU_Global and not is_devicelevel_gpu(
+                parent_sdfg, parent_state, node
+            )
+            state.add_mapped_tasklet(
+                "dot_scale",
+                {"__s": "0:1"},
+                scale_inputs,
+                code,
+                {"__o": Memlet(f"{output}[0]")},
+                schedule=dtypes.ScheduleType.GPU_Device if on_device else dtypes.ScheduleType.Sequential,
+                input_nodes={"__dot_res": state.add_read("__dot_res")},
+                external_edges=True,
+            )
             return sdfg
 
         # Fill SDFG with einsum contents
