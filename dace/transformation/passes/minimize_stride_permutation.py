@@ -33,7 +33,7 @@ import functools
 
 import sympy
 
-from dace import SDFG, properties, symbolic
+from dace import SDFG, dtypes, properties, symbolic
 from dace import data as dt
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_basic, as_expr
@@ -195,6 +195,14 @@ def min_stride_order(edges, sdfg: SDFG, params: list[str]) -> list[int] | None:
         return None
 
 
+def interchangeable_levels(outer: nodes.MapEntry, inner: nodes.MapEntry) -> bool:
+    """Whether ``inner`` may trade places with ``outer``: not across a GPU schedule boundary, where the order is the
+    offload's (a kernel's thread axes around each thread's loop over a SMALL axis). Host schedules interchange freely:
+    ``MapExpansion`` leaves its inner levels ``Sequential`` without deciding anything."""
+    schedules = {outer.map.schedule, inner.map.schedule}
+    return len(schedules) == 1 or not schedules & set(dtypes.GPU_SCHEDULES)
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class MinimizeStridePermutation(ppl.Pass):
@@ -258,9 +266,10 @@ class MinimizeStridePermutation(ppl.Pass):
         """Collect the chain of perfectly-nested map entries.
 
         A level is part of the perfect nest only if its scope contains exactly
-        one child node and that node is the next map entry. A level may carry
-        several parameters: :meth:`_reorder_nest` splits it into one map per
-        parameter only when the permutation needs to.
+        one child node and that node is the next map entry, and the two do not
+        straddle a GPU schedule boundary (:func:`interchangeable_levels`). A level
+        may carry several parameters: :meth:`_reorder_nest` splits it into one
+        map per parameter only when the permutation needs to.
 
         :param state: The containing state.
         :param outer: The outermost candidate map entry.
@@ -276,7 +285,7 @@ class MinimizeStridePermutation(ppl.Pass):
             exit_node = state.exit_node(current)
             body = [c for c in scope_children.get(current, []) if c is not exit_node]
             inner_maps = [c for c in body if isinstance(c, nodes.MapEntry)]
-            if len(body) == 1 and len(inner_maps) == 1:
+            if len(body) == 1 and len(inner_maps) == 1 and interchangeable_levels(current, inner_maps[0]):
                 current = inner_maps[0]
             else:
                 current = None

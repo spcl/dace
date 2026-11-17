@@ -334,6 +334,28 @@ def test_level_map_moves_between_the_plane_axes():
 
 
 @dace.program
+def plane_map_over_level_map(A: dace.float64[N, K, M], B: dace.float64[N, K, M]):
+    for i, j in dace.map[0:N, 0:M]:
+        for k in dace.map[0:K]:
+            B[i, k, j] = A[i, k, j] + 1.0
+
+
+def test_a_kernel_around_each_threads_loop_is_not_a_nest():
+    """A GPU kernel over ``(i, j)`` of ``B[i, k, j]`` around a ``Sequential`` map over ``k`` (qe_vexx_k's offloaded
+    fill: each thread walks a SMALL axis) stays as it is: the order across the device boundary is the offload's, and
+    moving ``k`` between ``i`` and ``j`` would leave ``j`` a nested kernel."""
+    sdfg = plane_map_over_level_map.to_sdfg(simplify=True)
+    state = sdfg.start_state
+    plane = next(n for n in state.scope_children()[None] if isinstance(n, nodes.MapEntry))
+    level = next(n for n in state.scope_children()[plane] if isinstance(n, nodes.MapEntry))
+    plane.map.schedule, level.map.schedule = dace.ScheduleType.GPU_Device, dace.ScheduleType.Sequential
+    assert _flat_param_order(sdfg) == ["i", "j", "k"]
+
+    assert MinimizeStridePermutation().apply_pass(sdfg, {}) is None
+    assert plane.map.params == ["i", "j"] and _flat_param_order(sdfg) == ["i", "j", "k"]
+
+
+@dace.program
 def rotated_3d_int(A: dace.float64[5, 7, 11], B: dace.float64[5, 7, 11]):
     for k, i, j in dace.map[0:11, 0:5, 0:7]:
         B[i, j, k] = A[i, j, k] + 1.0
@@ -452,6 +474,7 @@ if __name__ == "__main__":
     test_all_concrete_mixed_magnitudes_still_reorders()
     test_multi_parameter_map_is_split_and_reordered()
     test_level_map_moves_between_the_plane_axes()
+    test_a_kernel_around_each_threads_loop_is_not_a_nest()
     test_three_level_cycle_reordered()
     test_nest_inside_a_nested_sdfg_is_reordered()
     test_equal_strides_keep_the_order_whatever_the_offsets()
