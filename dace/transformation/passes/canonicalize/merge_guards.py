@@ -6,7 +6,8 @@ Three shapes merge, and nothing else does:
 * consecutive guards with the same predicate (``if c: A`` then ``if c: B`` becomes ``if c: A; B``) or with
   opposite predicates (``if c: A`` then ``if not c: B`` becomes ``if c: A else: B``), when nothing between the two
   tests changes what the second reads;
-* a guard alone in the only branch of another (``if a: if b: X`` becomes ``if (a) and (b): X``);
+* a guard alone in the only branch of another (``if a: if b: X`` becomes ``if (a) and (b): X``), also behind
+  in-bounds symbol loads, which move above the outer guard;
 * a guard alone in the ``else`` of another (``if a: X else: if b: Y else: Z`` becomes ``if a: X elif b: Y else: Z``).
 
 Every body moves; none is copied. Guards that test different predicates stay apart: merging them takes one copy
@@ -14,14 +15,24 @@ of a body per combination of branches, and the copies keep their transients' nam
 map body turns into one shared by every copy and code generation hoists it out of the parallel loop.
 """
 
+import ast
 from collections import deque
 from typing import Any
 
 from dace import SDFG, InterstateEdge, symbolic
 from dace.properties import CodeBlock
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, is_written, rehome_claimed_block
+from dace.sdfg.state import (
+    ConditionalBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    SymbolResolver,
+    is_written,
+    rehome_claimed_block,
+)
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.passes.loop_fission import _linear_blocks
+from dace.transformation.passes.loop_invariant_code_motion import subset_in_bounds
 
 
 def single_guard(block: ConditionalBlock) -> tuple[CodeBlock, ControlFlowRegion] | None:
@@ -100,15 +111,80 @@ def merge_consecutive(first: ConditionalBlock, second: ConditionalBlock, verdict
     return True
 
 
+#: Expression nodes a hoisted load may hold: nothing a skipped iteration could trip on (a division, a call).
+SAFE_LOAD_NODES = (
+    ast.Expression,
+    ast.Name,
+    ast.Constant,
+    ast.Subscript,
+    ast.Tuple,
+    ast.Load,
+    ast.BinOp,
+    ast.UnaryOp,
+    ast.Add,
+    ast.Sub,
+    ast.Mult,
+    ast.USub,
+)
+
+
+def hoist_loads(outer: ConditionalBlock, inner: ConditionalBlock) -> bool:
+    """Move the symbol loads between ``outer``'s test and ``inner`` above ``outer``, leaving ``inner`` alone in the
+    branch (dbcsr's ``if a_bid >= 0: {b_bid = b_index[ib, 2]; if b_bid >= 0: ...}``).
+
+    Hoisted, a load also runs where ``outer`` skips, so the states between hold nothing, every load provably reads
+    inside its array's extents and divides or calls nothing, reads nothing the guarded body writes, and binds a
+    symbol that ``outer``'s test and everything outside ``outer`` leave alone."""
+    branch = inner.parent_graph
+    order = _linear_blocks(branch, allow_assignments=True)
+    if order is None or order[-1] is not inner or any(b.number_of_nodes() for b in order[:-1]):
+        return False
+    sdfg = outer.sdfg
+    loads = [branch.edges_between(a, b)[0].data for a, b in zip(order, order[1:])]
+    names = {lhs for load in loads for lhs in load.assignments}
+    if names & {str(s) for s in single_guard(outer)[0].get_free_symbols()}:
+        return False
+    if any(
+        not isinstance(n, SAFE_LOAD_NODES)
+        for load in loads
+        for rhs in load.assignments.values()
+        for n in ast.walk(ast.parse(rhs, mode="eval"))
+    ):
+        return False
+    reads = [m for load in loads for m in load.get_read_memlets(sdfg.arrays)]
+    if {m.data for m in reads} & changed_by(outer):
+        return False
+    inside = set(outer.all_control_flow_blocks(recursive=True))
+    if any(
+        edge.src not in inside and names & (edge.data.assignments.keys() | edge.data.free_symbols)
+        for edge in sdfg.all_interstate_edges(recursive=True)
+    ) or any(names & state.free_symbols for state in sdfg.states() if state not in inside):
+        return False
+    facts = SymbolResolver().facts_at(outer.parent_graph)
+    if not all(subset_in_bounds(m.subset, sdfg.arrays[m.data], facts) for m in reads):
+        return False
+    region = outer.parent_graph
+    for load in loads:
+        region.add_state_before(
+            outer, f"{outer.label}_load", is_start_block=region.start_block is outer, assignments=load.assignments
+        )
+    for block in order[:-1]:
+        branch.remove_node(block)
+    return True
+
+
 def flatten_nested(inner: ConditionalBlock) -> bool:
-    """Fold ``inner`` into the guard around it when it is alone in that guard's only branch."""
+    """Fold ``inner`` into the guard around it when it is alone in that guard's only branch, or only loads that
+    :func:`hoist_loads` moves above that guard precede it."""
     branch = inner.parent_graph
     outer = branch.parent_graph if branch is not None else None
-    if not isinstance(outer, ConditionalBlock) or branch.number_of_nodes() != 1:
+    if not isinstance(outer, ConditionalBlock):
         return False
     outer_guard = single_guard(outer)
     inner_guard = single_guard(inner)
     if outer_guard is None or inner_guard is None:
+        return False
+    if branch.number_of_nodes() != 1 and not hoist_loads(outer, inner):
         return False
     body = inner_guard[1]
     inner.remove_branch(body)

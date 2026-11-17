@@ -218,14 +218,21 @@ def _reads_in_bounds(state: SDFGState, tasklet: nodes.Tasklet) -> bool:
         desc = state.sdfg.arrays[edge.data.data]
         if isinstance(desc, data.Scalar):
             continue
-        if edge.data.dynamic or edge.data.subset is None:
+        if edge.data.dynamic or not subset_in_bounds(edge.data.subset, desc, facts):
             return False
-        for (begin, end, _), extent in zip(edge.data.subset.ndrange(), desc.shape):
-            begin, end = symbolic.pystr_to_symbolic(begin), symbolic.pystr_to_symbolic(end)
-            if not symbolic.provably_nonnegative(begin, facts):
-                return False
-            if not symbolic.provably_le(end, symbolic.pystr_to_symbolic(extent) - 1, facts):
-                return False
+    return True
+
+
+def subset_in_bounds(subset, desc: data.Data, facts) -> bool:
+    """Whether every index of ``subset`` provably lies inside the extents of ``desc`` under ``facts``."""
+    if subset is None:
+        return False
+    for (begin, end, _), extent in zip(subset.ndrange(), desc.shape):
+        begin, end = symbolic.pystr_to_symbolic(begin), symbolic.pystr_to_symbolic(end)
+        if not symbolic.provably_nonnegative(begin, facts):
+            return False
+        if not symbolic.provably_le(end, symbolic.pystr_to_symbolic(extent) - 1, facts):
+            return False
     return True
 
 

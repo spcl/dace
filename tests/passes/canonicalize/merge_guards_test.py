@@ -128,6 +128,37 @@ def test_a_guard_alone_inside_another_folds_into_it():
     assert [run(sdfg, c)[0] for c in (0, 3, 7)] == [0.0, 1.0, 0.0]
 
 
+def guard_behind_load(name: str, index: str) -> dace.SDFG:
+    """``if c > 0: {k = A[index]; if k > 2: R[0] = 1}``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_symbol("c", dace.int64)
+    sdfg.add_array("A", [2], dace.int64)
+    sdfg.add_array("R", [1], dace.float64)
+    outer = ConditionalBlock("outer", sdfg=sdfg)
+    branch = ControlFlowRegion("outer_body")
+    load = branch.add_state("load", is_start_block=True)
+    inner = guard(sdfg, "inner", "k > 2", "R", "1.0")
+    branch.add_node(inner)
+    branch.add_edge(load, inner, dace.InterstateEdge(assignments={"k": f"A[{index}]"}))
+    outer.add_branch(CodeBlock("c > 0"), branch)
+    sdfg.add_node(outer, is_start_block=True)
+    return sdfg
+
+
+def test_a_guard_behind_an_in_bounds_load_folds_into_the_guard_around_it():
+    sdfg = guard_behind_load("merge_guards_behind_load", "1")
+    assert MergeGuards().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    (block,) = conditionals(sdfg)
+    assert len(block.branches) == 1 and "and" in block.branches[0][0].as_string
+    for c, a, expected in ((0, 5, 0.0), (1, 5, 1.0), (1, 2, 0.0)):
+        R = np.zeros(1)
+        sdfg(A=np.array([0, a], dtype=np.int64), R=R, c=c)
+        assert R[0] == expected
+    # Hoisted, ``A[c]`` would also read where ``c > 0`` keeps it out of bounds
+    assert MergeGuards().apply_pass(guard_behind_load("merge_guards_behind_unsafe_load", "c"), {}) is None
+
+
 def arm(label: str, value: str) -> ControlFlowRegion:
     """A branch body writing ``R[0] = value``."""
     body = ControlFlowRegion(label)
@@ -168,4 +199,5 @@ if __name__ == "__main__":
     test_a_second_guard_reading_what_the_first_body_writes_stays_apart()
     test_a_link_with_assignments_keeps_its_guards_apart()
     test_a_guard_alone_inside_another_folds_into_it()
+    test_a_guard_behind_an_in_bounds_load_folds_into_the_guard_around_it()
     test_a_guard_alone_in_an_else_becomes_elif_arms()
