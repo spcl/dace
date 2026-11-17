@@ -191,6 +191,42 @@ def test_strided_slice_of_a_slice_keeps_its_step():
     assert any(r.ranges[1][2] == 2 for r in reads), f"the composed read must keep step 2, got {[str(r) for r in reads]}"
 
 
+def _transposed_view_sdfg(write: bool) -> dace.SDFG:
+    """
+    ``B = A.T`` expressed as a copy through a View with permuted strides: the View is a reinterpretation of ``A``
+    (``write=False``) or of ``B`` (``write=True``), not a slice.
+    """
+    sdfg = dace.SDFG(f"transposed_view_{'write' if write else 'read'}")
+    sdfg.add_array("A", [4, 4], dace.float64)
+    sdfg.add_array("B", [4, 4], dace.float64)
+    sdfg.add_view("V", [4, 4], dace.float64, strides=(1, 4))
+    state = sdfg.add_state()
+    a, v, b = state.add_read("A"), state.add_access("V"), state.add_write("B")
+    if write:
+        state.add_nedge(a, v, dace.Memlet("A[0:4, 0:4] -> [0:4, 0:4]"))
+        state.add_edge(v, "views", b, None, dace.Memlet("V[0:4, 0:4] -> [0:4, 0:4]"))
+    else:
+        state.add_edge(a, None, v, "views", dace.Memlet("A[0:4, 0:4] -> [0:4, 0:4]"))
+        state.add_nedge(v, b, dace.Memlet("V[0:4, 0:4] -> [0:4, 0:4]"))
+    return sdfg
+
+
+@pytest.mark.parametrize("write", (False, True))
+def test_permuted_view_is_not_a_slice(write):
+    """A View that permutes the dimensions of its Array (e.g., a transpose) must not be removed as a slice."""
+    sdfg = _transposed_view_sdfg(write)
+    xform = RedundantWriteSlice if write else RedundantReadSlice
+    assert sdfg.apply_transformations_repeated(xform) == 0
+    assert _count_views(sdfg) == 1
+
+    sdfg = _transposed_view_sdfg(write)
+    sdfg.simplify()
+    A = np.random.rand(4, 4)
+    B = np.zeros((4, 4))
+    sdfg(A=A, B=B)
+    assert np.allclose(B, A.T)
+
+
 if __name__ == "__main__":
     test_read_slice()
     test_read_slice2()
@@ -202,3 +238,5 @@ if __name__ == "__main__":
     test_view_slice_detect_complex(True)
     test_view_slice_detect_nonslice()
     test_strided_slice_of_a_slice_keeps_its_step()
+    test_permuted_view_is_not_a_slice(False)
+    test_permuted_view_is_not_a_slice(True)
