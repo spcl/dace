@@ -106,7 +106,15 @@ static DACE_CONSTEXPR DACE_HDFI int iround(const T& a) {
   return static_cast<int>(round(a));
 }
 
-template <typename T, typename T2>
+template <typename T, typename T2, std::enable_if_t<std::is_integral<T>::value && std::is_integral<T2>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T int_ceil(const T& numerator, const T2& denominator) {
+  // Quotient plus one when the remainder points the way of the exact quotient: no ``numerator + denominator``
+  // sum to overflow (a grid split by INT_MAX), and the ceiling of a negative quotient too.
+  return numerator / denominator +
+         ((numerator % denominator != 0 && ((numerator % denominator > 0) == (denominator > 0))) ? 1 : 0);
+}
+
+template <typename T, typename T2, std::enable_if_t<!(std::is_integral<T>::value && std::is_integral<T2>::value)>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T int_ceil(const T& numerator, const T2& denominator) {
   return (numerator + denominator - 1) / denominator;
 }
