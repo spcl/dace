@@ -126,6 +126,29 @@ def test_warp_reduction_counts_the_initial_value_once():
     np.testing.assert_allclose(y.get(), b + A @ x, rtol=1e-12)
 
 
+def test_warp_tiling_skips_an_ordering_edge_into_a_tasklet():
+    """An inner map exit ordered before a tasklet by an empty edge (bout_arakawa's GPU kernel) is lane-strided."""
+    sdfg = dace.SDFG("warp_ordering_edge_into_tasklet")
+    for name, shape in (("A", ["M", "N"]), ("B", ["M", "N"]), ("C", ["M"])):
+        sdfg.add_array(name, shape, dace.float64, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    rows, rows_exit = state.add_map("rows", dict(i="0:M"), schedule=dace.ScheduleType.GPU_Device)
+    cols, cols_exit = state.add_map("cols", dict(j="0:N"))
+    A, B, C = (state.add_access(name) for name in "ABC")
+    copy = state.add_tasklet("copy", {"inp"}, {"out"}, "out = inp")
+    edge = state.add_tasklet("edge", {}, {"out"}, "out = 1.0")
+    state.add_memlet_path(A, rows, cols, copy, dst_conn="inp", memlet=dace.Memlet("A[i, j]"))
+    state.add_memlet_path(copy, cols_exit, rows_exit, B, src_conn="out", memlet=dace.Memlet("B[i, j]"))
+    state.add_nedge(cols_exit, edge, dace.Memlet())
+    state.add_memlet_path(edge, rows_exit, C, src_conn="out", memlet=dace.Memlet("C[i]"))
+    sdfg.validate()
+
+    WarpTiling.apply_to(sdfg, mapentry=rows, verify=False)
+    sdfg.validate()
+    assert str(cols.map.range[0][2]) == "32"
+
+
 if __name__ == "__main__":
     test_warp_softmax()
     test_warp_reduction_counts_the_initial_value_once()
+    test_warp_tiling_skips_an_ordering_edge_into_a_tasklet()

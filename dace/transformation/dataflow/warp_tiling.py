@@ -150,8 +150,8 @@ class WarpTiling(xf.SingleStateTransformation):
             # If has WCR, add warp-collaborative reduction on outputs
             for out_edge in nstate.out_edges(inner_map_exit):
                 dst = nstate.memlet_path(out_edge)[-1].dst
-                if not xfh.contained_in(nstate, dst, new_me):
-                    # Skip edges going out of map
+                # Skip edges going out of the map, and ordering edges into a tasklet: no data to reduce
+                if not isinstance(dst, nodes.AccessNode) or not xfh.contained_in(nstate, dst, new_me):
                     continue
                 if dst.desc(nsdfg).storage == dtypes.StorageType.GPU_Global:
                     # Skip shared memory
