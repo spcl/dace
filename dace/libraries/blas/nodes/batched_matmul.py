@@ -15,6 +15,8 @@ from dace.libraries.blas.blas_helpers import (
     check_access,
     check_one_device,
     dtype_to_cudadatatype,
+    get_gemm_opts,
+    packed_unit_extent,
     to_blastype,
     to_cublas_computetype,
 )
@@ -97,6 +99,36 @@ def format_scalar_literal(value, ctype: "dtypes.typeclass") -> str:
         cvalue = complex(value)
         return f"dace.{ctype.to_string()}({cvalue.real}, {cvalue.imag})"
     return f"dace.{ctype.to_string()}({float(value)})"
+
+
+#: The optional gather inputs: batch element ``p`` multiplies ``_a[_a_batch_index[p]]`` (``_b`` likewise) into ``_c[p]``.
+BATCH_INDEX = {"_a": "_a_batch_index", "_b": "_b_batch_index"}
+
+
+def gathered_operands(node) -> dict[str, str]:
+    """The operands of ``node`` gathered through a batch index, mapped to the index connector."""
+    return {operand: index for operand, index in BATCH_INDEX.items() if index in node.in_connectors}
+
+
+def gathered_sdfg(node, state, sdfg, label: str) -> tuple[dace.SDFG, dict[str, list[str]]]:
+    """The nested SDFG of a gathered product: its operands, output and indices as arrays, and per operand the
+    subscripts ``__p, __m, __k``-style of batch element ``__p``'s matrix (``__g`` for a gathered pool index)."""
+    nsdfg = dace.SDFG(label)
+    matrices = {"_a": ["__k", "__m"] if node.transA else ["__m", "__k"]}
+    matrices["_b"] = ["__n", "__k"] if node.transB else ["__k", "__n"]
+    matrices["_c"] = ["__m", "__n"]
+    gathered = gathered_operands(node)
+    subscripts = {}
+    for name, operand in zip(("_a", "_b", "_c"), _get_matmul_operands(node, state, sdfg)):
+        desc, shape, strides = operand[1:4]
+        nsdfg.add_array(name, shape, desc.dtype, strides=strides, storage=desc.storage)
+        batch = ["__g"] if name in gathered else ["__p"] if len(shape) == 3 else []
+        subscripts[name] = batch + matrices[name]
+    for edge in state.in_edges(node):
+        if edge.dst_conn in gathered.values():
+            desc = sdfg.arrays[edge.data.data]
+            nsdfg.add_array(edge.dst_conn, edge.data.subset.size(), desc.dtype, storage=desc.storage)
+    return nsdfg, subscripts
 
 
 @dace.library.expansion
@@ -232,8 +264,58 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         return sdfg
 
     @staticmethod
+    def make_gathered_sdfg(node, parent_state, parent_sdfg):
+        """``_c[p] = alpha * _a[_a_batch_index[p]] @ _b[_b_batch_index[p]]`` as one map, reading the pool through
+        the index; an operand without an index is batched (3D) or shared (2D)."""
+        if not (equal_valued(0, node.beta) or equal_valued(1, node.beta)):
+            raise NotImplementedError("A gathered batched product takes beta 0 or 1")
+        sdfg, subscripts = gathered_sdfg(node, parent_state, parent_sdfg, node.label + "_sdfg")
+        shape_a, shape_c = sdfg.arrays["_a"].shape, sdfg.arrays["_c"].shape
+        extents = {"__p": shape_c[0], "__m": shape_c[1], "__n": shape_c[2], "__k": shape_a[-2 if node.transA else -1]}
+        state = sdfg.add_state(node.label + "_state")
+        if equal_valued(0, node.beta):
+            init = sdfg.add_state_before(state, node.label + "_initstate")
+            init.add_mapped_tasklet(
+                "batched_matmul_init",
+                {
+                    "__p": f"0:{symstr(extents['__p'])}",
+                    "__m": f"0:{symstr(extents['__m'])}",
+                    "__n": f"0:{symstr(extents['__n'])}",
+                },
+                {},
+                "out = 0",
+                {"out": dace.Memlet.simple("_c", "__p, __m, __n")},
+                external_edges=True,
+            )
+        inputs, factors = {}, []
+        for name, conn in (("_a", "__a"), ("_b", "__b")):
+            index = BATCH_INDEX[name]
+            if index in sdfg.arrays:
+                pool = symstr(sdfg.arrays[name].shape[0])
+                inputs[f"{conn}_at"] = dace.Memlet.simple(index, "__p")
+                inputs[conn] = dace.Memlet.simple(name, ", ".join([f"0:{pool}", *subscripts[name][1:]]))
+                factors.append(f"{conn}[{conn}_at]")
+            else:
+                inputs[conn] = dace.Memlet.simple(name, ", ".join(subscripts[name]))
+                factors.append(conn)
+        product = " * ".join(factors)
+        if not equal_valued(1, node.alpha):
+            product = f"{format_scalar_literal(node.alpha, sdfg.arrays['_c'].dtype)} * {product}"
+        state.add_mapped_tasklet(
+            "_BatchedMatMult_",
+            {var: f"0:{symstr(extent)}" for var, extent in extents.items()},
+            inputs,
+            f"__c = {product}",
+            {"__c": dace.Memlet.simple("_c", "__p, __m, __n", wcr_str="lambda x, y: x + y")},
+            external_edges=True,
+        )
+        return sdfg
+
+    @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
+        if gathered_operands(node):
+            return ExpandBatchedMatMulPure.make_gathered_sdfg(node, state, sdfg)
         return ExpandBatchedMatMulPure.make_sdfg(node, state, sdfg)
 
 
@@ -248,6 +330,8 @@ class ExpandBatchedMatMulCUDABlock(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
         node.validate(parent_sdfg, parent_state)
+        if gathered_operands(node):
+            return ExpandBatchedMatMulPure.expansion(node, parent_state, parent_sdfg)
         operands = _get_matmul_operands(node, parent_state, parent_sdfg)
         sdfg = dace.SDFG(node.label + "_block")
         for name, operand in zip(("_a", "_b", "_c"), operands):
@@ -286,6 +370,8 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
+        if gathered_operands(node):
+            return ExpandBatchedMatMulPure.expansion(node, state, sdfg)
         refuse_broadcast_batches(node, state, sdfg)
         (_, adesc, ashape, astrides, _, _), (_, bdesc, bshape, bstrides, _, _), _ = _get_matmul_operands(
             node, state, sdfg
@@ -376,6 +462,8 @@ class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
+        if gathered_operands(node):
+            return ExpandBatchedMatMulPure.expansion(node, state, sdfg)
         refuse_broadcast_batches(node, state, sdfg)
         (_, adesc, ashape, astrides, _, _), (_, bdesc, bshape, bstrides, _, _), _ = _get_matmul_operands(
             node, state, sdfg
@@ -435,6 +523,8 @@ class ExpandBatchedMatMulLIBXSMM(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
+        if gathered_operands(node):
+            return ExpandBatchedMatMulPure.expansion(node, state, sdfg)
         refuse_broadcast_batches(node, state, sdfg)
         (_, adesc, _, _, _, _), (_, bdesc, _, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
         cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
@@ -457,13 +547,128 @@ class ExpandBatchedMatMulLIBXSMM(ExpandTransformation):
         )
 
 
+def cuda_ctype(dtype: dtypes.typeclass) -> str:
+    """The CUDA C type a GPU BLAS call takes ``dtype`` as."""
+    ctypes = {
+        dace.float16: "__half",
+        dace.float32: "float",
+        dace.float64: "double",
+        dace.complex64: "cuComplex",
+        dace.complex128: "cuDoubleComplex",
+    }
+    if dtype not in ctypes:
+        raise ValueError("Unsupported type: " + str(dtype))
+    return ctypes[dtype]
+
+
 @dace.library.expansion
 class ExpandBatchedMatMulGPUBLAS(ExpandTransformation):
     environments = []
 
     @classmethod
+    def gathered_expansion(cls, node, state, sdfg):
+        """One ``<T>gemmBatched`` over device pointer arrays that a GPU map fills from the batch indices."""
+        from dace.codegen.common import sym2cpp  # Avoid import loops
+
+        nsdfg, subscripts = gathered_sdfg(node, state, sdfg, node.label + "_gathered")
+        operands = ("_a", "_b", "_c")
+        on_device = all(nsdfg.arrays[name].storage == dtypes.StorageType.GPU_Global for name in nsdfg.arrays)
+        if not on_device or not (equal_valued(0, node.beta) or equal_valued(1, node.beta)):
+            return ExpandBatchedMatMulPure.make_gathered_sdfg(node, state, sdfg)
+        dtype = nsdfg.arrays["_c"].dtype.base_type
+        batch = symstr(nsdfg.arrays["_c"].shape[0])
+
+        def matrix(name: str, transposed: bool) -> list:
+            desc = nsdfg.arrays[name]
+            shape, strides = list(desc.shape[-2:]), list(desc.strides[-2:])
+            return packed_unit_extent(shape[::-1], strides[::-1]) if transposed else packed_unit_extent(shape, strides)
+
+        opt = get_gemm_opts(matrix("_a", node.transA), matrix("_b", node.transB), matrix("_c", False))
+        rows, depth = nsdfg.arrays["_a"].shape[-1:-3:-1] if node.transA else nsdfg.arrays["_a"].shape[-2:]
+        cols = nsdfg.arrays["_b"].shape[-2] if node.transB else nsdfg.arrays["_b"].shape[-1]
+        x, y, lda, ldb, ta, tb = "_a", "_b", opt["lda"], opt["ldb"], opt["ta"], opt["tb"]
+        if opt["swap"]:
+            x, y, lda, ldb, ta, tb, rows, cols = y, x, ldb, lda, tb, ta, cols, rows
+
+        fill = nsdfg.add_state(node.label + "_pointers")
+        entry, exit_node = fill.add_map(node.label + "_pointers", {"__p": f"0:{batch}"}, dtypes.ScheduleType.GPU_Device)
+        tasklet = fill.add_tasklet(node.label + "_pointers", {}, {}, "", language=dtypes.Language.CPP)
+        code, writes = [], []
+        # Inputs first: a tasklet the entry does not yet reach is outside the map scope
+        for name in operands:
+            desc = nsdfg.arrays[name]
+            base = f"__base{name}"
+            at = {"__g": f"__at{name}", "__p": "__p"}.get(subscripts[name][0], "0")
+            code.append(f"*__out{name} = ({dtype.ctype} *){base} + ({at}) * ({symstr(desc.strides[0])});")
+            whole = dace.Memlet.from_array(name, desc)
+            if name == "_c":
+                # The output's address only; the call writes it
+                tasklet.add_out_connector(base, dtypes.pointer(dtype))
+                whole.dynamic = True
+                writes.append((base, name, whole))
+            else:
+                tasklet.add_in_connector(base, dtypes.pointer(dtype))
+                fill.add_memlet_path(fill.add_read(name), entry, tasklet, dst_conn=base, memlet=whole)
+            if at == f"__at{name}":
+                tasklet.add_in_connector(at)
+                index = BATCH_INDEX[name]
+                fill.add_memlet_path(
+                    fill.add_read(index), entry, tasklet, dst_conn=at, memlet=dace.Memlet(f"{index}[__p]")
+                )
+            pointers, _ = nsdfg.add_array(
+                f"__ptr{name}", [batch], dtypes.pointer(dtype), dtypes.StorageType.GPU_Global, transient=True
+            )
+            tasklet.add_out_connector(f"__out{name}", dtypes.pointer(dtypes.pointer(dtype)))
+            writes.append((f"__out{name}", pointers, dace.Memlet(f"{pointers}[__p]")))
+        for conn, data, memlet in writes:
+            fill.add_memlet_path(tasklet, exit_node, fill.add_write(data), src_conn=conn, memlet=memlet)
+        tasklet.code = properties.CodeBlock("\n".join(code), dtypes.Language.CPP)
+
+        cdtype = cls.dialect.ctype(cuda_ctype(dtype))
+        alpha = (
+            f"{dtype.ctype}({node.alpha.real}, {node.alpha.imag})"
+            if isinstance(node.alpha, complex)
+            else f"{dtype.ctype}({node.alpha})"
+        )
+        beta = (
+            f"{dtype.ctype}({node.beta.real}, {node.beta.imag})"
+            if isinstance(node.beta, complex)
+            else f"{dtype.ctype}({node.beta})"
+        )
+        routine = cls.dialect.routine(f"{to_blastype(dtype.type)}gemmBatched")
+        body = f"""{dtype.ctype} __alpha = {alpha}, __beta = {beta};
+{cls.dialect.check_error}({routine}({cls.dialect.handle}, {cls.dialect.op(ta)}, {cls.dialect.op(tb)},
+    {sym2cpp(rows)}, {sym2cpp(cols)}, {sym2cpp(depth)}, ({cdtype} *)&__alpha,
+    (const {cdtype} * const *)__in_ptr{x}, {sym2cpp(lda)}, (const {cdtype} * const *)__in_ptr{y}, {sym2cpp(ldb)},
+    ({cdtype} *)&__beta, ({cdtype} * const *)__in_ptr_c, {sym2cpp(opt["ldc"])}, {batch}));"""
+        call_state = nsdfg.add_state_after(fill, node.label + "_call")
+        pointer = dtypes.pointer(dtypes.pointer(dtype))
+        call = call_state.add_tasklet(
+            node.label + "_call",
+            {f"__in_ptr{name}": pointer for name in operands},
+            {"__c": dtypes.pointer(dtype)},
+            cls.environments[0].handle_setup_code(node) + gpu_dialect.host_scalar_mode(cls.dialect, body),
+            language=dtypes.Language.CPP,
+        )
+        for name in operands:
+            pointers = f"__ptr{name}"
+            call_state.add_edge(
+                call_state.add_read(pointers),
+                None,
+                call,
+                f"__in_ptr{name}",
+                dace.Memlet.from_array(pointers, nsdfg.arrays[pointers]),
+            )
+        call_state.add_edge(
+            call, "__c", call_state.add_write("_c"), None, dace.Memlet.from_array("_c", nsdfg.arrays["_c"])
+        )
+        return nsdfg
+
+    @classmethod
     def expansion(cls, node, state, sdfg):
         node.validate(sdfg, state)
+        if gathered_operands(node):
+            return cls.gathered_expansion(node, state, sdfg)
         refuse_broadcast_batches(node, state, sdfg)
 
         # Find inputs and output
@@ -492,24 +697,7 @@ class ExpandBatchedMatMulGPUBLAS(ExpandTransformation):
 
         dtype = cdesc.dtype.base_type
         func = f"{to_blastype(dtype.type)}gemm"
-        if dtype == dace.float16:
-            cdtype = "__half"
-            factort = "Half"
-        elif dtype == dace.float32:
-            cdtype = "float"
-            factort = "Float"
-        elif dtype == dace.float64:
-            cdtype = "double"
-            factort = "Double"
-        elif dtype == dace.complex64:
-            cdtype = "cuComplex"
-            factort = "Complex64"
-        elif dtype == dace.complex128:
-            cdtype = "cuDoubleComplex"
-            factort = "Complex128"
-        else:
-            raise ValueError("Unsupported type: " + str(dtype))
-        cdtype = cls.dialect.ctype(cdtype)
+        cdtype = cls.dialect.ctype(cuda_ctype(dtype))
 
         call_prefix = cls.environments[0].handle_setup_code(node)
         call_suffix = ""
@@ -716,7 +904,8 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         super().__init__(name, location=location, inputs=OrderedSet(("_a", "_b")), outputs={"_c"})
 
     def validate(self, sdfg, state):
-        in_edges = state.in_edges(self)
+        gathered = gathered_operands(self)
+        in_edges = [edge for edge in state.in_edges(self) if edge.dst_conn not in gathered.values()]
         if len(in_edges) != 2:
             raise ValueError("Expected exactly two inputs to batched matrix-matrix product")
         # NumPy matmul semantics on the real extents: squeezing would turn B[b, k, 1] into a (b, k) matrix
@@ -745,6 +934,11 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         # (the pure lowering indexes a broadcast dimension at 0; the BLAS ones walk a fixed batch
         # stride and refuse, see ``refuse_broadcast_batches``).
         batch0, batch1 = size0[:-2], size1[:-2]
+        if gathered:
+            # The index, not the pool, sets the batch: a gathered operand is a pool of matrices
+            if len(out_memlet.subset) != 3 or any(len(sizes[operand]) != 3 for operand in gathered):
+                raise ValueError("A gathered batched product takes 3D operands and output")
+            batch0 = batch1 = ()
         if batch0 and batch1:
             offset = len(batch0) - len(batch1)
             paired = zip(batch0[offset:], batch1) if offset >= 0 else zip(batch0, batch1[-offset:])
