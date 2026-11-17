@@ -446,9 +446,9 @@ def device_one_element_scan(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG
         desc = operand_array(nsdfg, conn, edge, sdfg)
         name = conn
         if edge.dst is node and desc.storage not in GPU_RESIDENT_STORAGES:
-            name, _ = nsdfg.add_array(
+            name = nsdfg.add_array(
                 f"{conn}_device", desc.shape, desc.dtype, storage=dtypes.StorageType.GPU_Global, transient=True
-            )
+            )[0]
             seeds.add_nedge(seeds.add_read(conn), seeds.add_write(name), Memlet.from_array(conn, desc))
         whole = Memlet.from_array(name, nsdfg.arrays[name])
         if edge.dst is node:
