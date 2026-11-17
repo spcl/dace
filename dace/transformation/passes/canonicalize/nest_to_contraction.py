@@ -165,13 +165,15 @@ def body_contraction(node: nodes.LibraryNode, ranks: dict[str, int]) -> tuple[st
 
 @dataclass(slots=True)
 class BodyMatcher:
-    """Reads one nest body. ``claimed`` collects every node the contraction accounts for."""
+    """Reads one nest body. ``claimed`` collects every node the contraction accounts for; ``wcr_sum`` records an
+    accumulation through a WCR Sum write, which a parallel axis may contract."""
 
     sdfg: SDFG
     state: SDFGState
     axes: dict[str, Axis]
     state_counts: dict[str, int]
     claimed: dict[nodes.Node, None]
+    wcr_sum: bool = False
 
     def outside_node(self, edge: MultiConnectorEdge[Memlet], incoming: bool) -> nodes.AccessNode | None:
         path = self.state.memlet_path(edge)
@@ -267,7 +269,11 @@ class BodyMatcher:
         if not self.is_local(temp) or isinstance(self.sdfg.arrays[temp.data], data.View):
             return None
         outs = self.state.out_edges(temp)
-        if len(outs) != 1 or self.state.in_degree(temp) != 1 or not isinstance(outs[0].dst, nodes.MapEntry):
+        if len(outs) != 1 or self.state.in_degree(temp) != 1:
+            return None
+        if isinstance(outs[0].dst, nodes.Tasklet):
+            return self.element_accumulation(temp, outs[0].dst)
+        if not isinstance(outs[0].dst, nodes.MapEntry):
             return None
         entry = outs[0].dst
         exit_node = self.state.exit_node(entry)
@@ -298,6 +304,7 @@ class BodyMatcher:
                 or detect_reduction_type(write.wcr) != dtypes.ReductionType.Sum
             ):
                 return None
+            self.wcr_sum = True
         elif len(other_reads) != 1 or not _is_sum_tasklet(tasklet) or other_reads[0].data.subset != write.subset:
             return None
         if write.data == temp.data:
@@ -330,6 +337,54 @@ class BodyMatcher:
                 return None
             self.claimed[source] = None
         for n in (temp, entry, exit_node, tasklet, root):
+            self.claimed[n] = None
+        return Operand(root.data, dims, root)
+
+    def element_accumulation(self, temp: nodes.AccessNode, tasklet: nodes.Tasklet) -> Operand | None:
+        """``X[idx] = X[idx] + T`` or ``X[idx] (+)= T`` for a one-element local ``T``, written to ``X`` directly or
+        through one one-element local copy."""
+        if any(not symbolic.equal_valued(1, n) for n in self.sdfg.arrays[temp.data].shape):
+            return None
+        writes = self.state.out_edges(tasklet)
+        reads = [e for e in self.state.in_edges(tasklet) if e.src is not temp]
+        if len(writes) != 1 or self.state.in_degree(tasklet) != len(reads) + 1:
+            return None
+        write = writes[0]
+        if write.data.wcr is not None:
+            if (
+                reads
+                or not _is_copy_tasklet(tasklet)
+                or detect_reduction_type(write.data.wcr) != dtypes.ReductionType.Sum
+            ):
+                return None
+            self.wcr_sum = True
+        elif len(reads) != 1 or not _is_sum_tasklet(tasklet):
+            return None
+        hop = write.dst
+        if write.data.wcr is None and self.is_local(hop):
+            hops = self.state.out_edges(hop)
+            if (
+                self.state.in_degree(hop) != 1
+                or len(hops) != 1
+                or hops[0].data.wcr is not None
+                or any(not symbolic.equal_valued(1, n) for n in self.sdfg.arrays[hop.data].shape)
+            ):
+                return None
+            self.claimed[hop] = None
+            write = hops[0]
+        root = self.outside_node(write, incoming=False)
+        if root is None or self.is_local(root):
+            return None
+        subset = write.data.subset if write.data.data == root.data else write.data.other_subset
+        dims = self.classify(root.data, subset) if subset is not None else None
+        if dims is None or None in dims:
+            return None
+        for read in reads:
+            source = self.outside_node(read, incoming=True)
+            if source is None or source.data != root.data or read.data.data != root.data or read.data.subset != subset:
+                return None
+            self.claimed[source] = None
+        for n in (temp, tasklet, root):
             self.claimed[n] = None
         return Operand(root.data, dims, root)
 
@@ -473,7 +528,7 @@ def match_nest(
         if not any(letter in t for t in full_terms):
             return None
         if letter not in full_out:
-            if axis.parallel:
+            if axis.parallel and not matcher.wcr_sum:
                 return None
             contracted = True
     if contracted and not symbolic.equal_valued(1, beta):

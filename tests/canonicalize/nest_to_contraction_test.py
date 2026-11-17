@@ -110,6 +110,50 @@ def test_loop_over_map_of_einsums_becomes_one_contraction():
     assert np.allclose(C, expected)
 
 
+def test_loop_of_dots_onto_a_scalar_becomes_one_contraction():
+    @dace.program
+    def n2c_loop_dot_scalar(A: dace.float64[N, K], out: dace.float64[1]):
+        s = 0.0
+        for i in range(N):
+            s = s + A[i, :] @ A[i, :]
+        out[0] = s
+
+    sdfg = canonical(n2c_loop_dot_scalar)
+    assert_one_lifted_einsum(sdfg, "ak,ak->", 1.0)
+    A, out = random(6, 7), np.full(1, np.nan)
+    sdfg(A=A, out=out, **SIZES)
+    assert np.allclose(out[0], np.sum(A * A))
+
+
+def test_loop_of_dots_onto_an_array_element_becomes_one_contraction():
+    @dace.program
+    def n2c_loop_dot_element(A: dace.float64[N, M, K], B: dace.float64[N, M, K], out: dace.float64[N]):
+        for i in range(N):
+            for j in range(M):
+                out[i] = out[i] + A[i, j, :] @ B[i, j, :]
+
+    sdfg = canonical(n2c_loop_dot_element)
+    assert_one_lifted_einsum(sdfg, "bak,bak->b", 1.0)
+    A, B, out = random(6, 8, 7), random(6, 8, 7), random(6)
+    expected = out + np.einsum("ijk,ijk->i", A, B)
+    sdfg(A=A, B=B, out=out, **SIZES)
+    assert np.allclose(out, expected)
+
+
+def test_map_of_dots_with_a_wcr_sum_output_becomes_one_contraction():
+    @dace.program
+    def n2c_map_dot_wcr(A: dace.float64[N, K], B: dace.float64[N, K], out: dace.float64[1]):
+        for i in dace.map[0:N]:
+            out[0] += A[i, :] @ B[i, :]
+
+    sdfg = canonical(n2c_map_dot_wcr)
+    assert_one_lifted_einsum(sdfg, "ak,ak->", 1.0)
+    A, B, out = random(6, 7), random(6, 7), random(1)
+    expected = out[0] + np.sum(A * B)
+    sdfg(A=A, B=B, out=out, **SIZES)
+    assert np.allclose(out[0], expected)
+
+
 def test_strided_index_is_not_lifted():
     @dace.program
     def n2c_strided(A: dace.float64[2 * NB, N, K], B: dace.float64[K, M], C: dace.float64[NB, N, M]):
@@ -231,9 +275,12 @@ if __name__ == "__main__":
     test_sequential_accumulating_loop_contracts_its_variable()
     test_loop_of_gemms_after_a_zero_init_takes_beta_zero()
     test_loop_over_map_of_einsums_becomes_one_contraction()
+    test_loop_of_dots_onto_a_scalar_becomes_one_contraction()
+    test_loop_of_dots_onto_an_array_element_becomes_one_contraction()
+    test_map_of_dots_with_a_wcr_sum_output_becomes_one_contraction()
     test_strided_index_is_not_lifted()
     test_second_tasklet_in_the_body_is_not_lifted()
-    test_triangular_nest_is_not_lifted_as_a_whole()
+    test_triangular_nest_lifts_only_its_rectangular_inner_loop()
     test_overlapping_outputs_are_not_lifted()
     test_operand_written_in_the_nest_is_not_lifted()
     test_non_accumulating_loop_whose_variable_is_not_in_the_output_is_not_lifted()
