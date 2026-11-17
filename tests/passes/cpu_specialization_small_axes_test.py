@@ -16,11 +16,8 @@ from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.sdfg import infer_types, nodes
 from dace.symbolic import Scale
 from dace.symbolic_facts import SMALL_CONSTANT_EXTENT
-from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import (
-    ITERATIONS_PER_THREAD,
-    DecideCpuParallelAxes,
-)
-from dace.transformation.passes.cpu_specialization.machine import topology
+from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import DecideCpuParallelAxes
+from dace.transformation.passes.cpu_specialization.machine import ITERATIONS_PER_THREAD, topology
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
 
 PAR = dtypes.ScheduleType.CPU_Multicore

@@ -118,7 +118,7 @@ from dace.transformation.passes.cpu_specialization.hoist_parallel_region import 
     top_level_loop_locals,
 )
 from dace.transformation.passes.cpu_specialization.interchange_loops_into_lane_maps import iterator_indexes
-from dace.transformation.passes.cpu_specialization.machine import topology
+from dace.transformation.passes.cpu_specialization.machine import MAX_TILE, MIN_TILE, topology
 
 #: Parameter name of the tile loop. One name, so the reshape can find the map it just made.
 TILE_PARAM = "__dace_tile"
@@ -1205,12 +1205,6 @@ def cut_along(
 def same_extent(left: Any, right: Any) -> bool:
     """Whether two extents are provably equal; undecided reads as unequal."""
     return str(left) == str(right) or symbolic.equal(left, right) is True
-
-
-#: Bounds of a tile of an innermost axis. Powers of two, so every SIMD width up to the lower bound divides a
-#: tile and only the last one carries a remainder.
-MIN_TILE = 16
-MAX_TILE = 256
 
 
 def tile_size(cut: Cut) -> Any:

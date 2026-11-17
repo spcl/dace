@@ -53,7 +53,7 @@ from dace.symbolic_facts import SMALL_CONSTANT_EXTENT, prove
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import share_out_past_leading_small_axes
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.cpu_specialization.machine import topology
+from dace.transformation.passes.cpu_specialization.machine import ITERATIONS_PER_THREAD, topology
 
 #: Schedules a CPU map or library node still parallelizes under. ``Default`` is included because
 #: canonicalization leaves the schedule unset: codegen infers it, and a top-level ``Default`` map
@@ -64,9 +64,6 @@ CPU_PARALLEL_SCHEDULES = (dtypes.ScheduleType.Default, dtypes.ScheduleType.CPU_M
 #: Schedules of a map nested in a CPU map that make it run sequentially: ``Sequential``, and ``Default``, which
 #: schedule inference resolves to ``Sequential`` under any CPU map (``dtypes.SCOPEDEFAULT_SCHEDULE``).
 SEQUENTIAL_UNDER_A_MAP = (dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential)
-
-#: Iterations per core the leading axes of a parallel map must provably reach before they stop collapsing more axes.
-ITERATIONS_PER_THREAD = 4
 
 
 #: The line a map made sequential here adds under its ``parallel`` class line, so the rendered loop -- which loses
