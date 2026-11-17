@@ -184,7 +184,7 @@ def test_the_sized_grid_runs_every_block_at_once():
     with new_gpu_codegen():
         sdfg(C=counter)
     threads = int(counter[0])
-    sms = cupy.cuda.Device().attributes["MultiProcessorCount"]
+    sms = cupy.cuda.runtime.getDeviceProperties(0)["multiProcessorCount"]  # ROCm cupy has no attribute table
     assert threads > 0 and threads % 256 == 0
     assert threads // 256 <= sms * 2048 // 256  # never more blocks than the device holds resident
 

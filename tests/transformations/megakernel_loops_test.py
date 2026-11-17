@@ -117,7 +117,9 @@ def test_a_gpu_time_loop_matches_the_per_launch_version_on_both_sides_of_its_siz
     inputs = {name: rng.random((size, size), dtype=np.float32) for name in "AB"}
     want = copy.deepcopy(inputs)
     sdfg(TSTEPS=5, N=size, **want)
-    fused(TSTEPS=5, N=size, **inputs)
+    # A cooperative launch is emitted by the new GPU code generator only
+    with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
+        fused(TSTEPS=5, N=size, **inputs)
     for name in "AB":
         np.testing.assert_array_equal(inputs[name], want[name])
 

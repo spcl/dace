@@ -24,7 +24,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.megakernel.discovery import TARGETS, MegakernelChain, find_chains, kernels_in
+from dace.transformation.passes.megakernel.discovery import TARGETS, MegakernelChain, find_chains, kernels_in, states_in
 from dace.transformation.passes.megakernel.gather_kernels import GatherKernelStates
 from dace.transformation.passes.megakernel.megakernel import MegaKernelOptimization
 
@@ -71,6 +71,14 @@ def launch_bound(loop: LoopRegion, target) -> sympy.Expr | None:
     if not bounds or any(b is None for b in bounds):
         return None
     return sympy.Max(*bounds)
+
+
+def per_launch_copy(loop: LoopRegion) -> tuple[LoopRegion, dict]:
+    """``loop`` as it launches its kernels today, with the descriptors of the containers it accesses: fusing ``loop``
+    moves its transients into the megakernel, and the copy still needs its own."""
+    fallback = copy.deepcopy(loop)
+    accessed = {node.data for state in states_in(fallback) for node in state.data_nodes()}
+    return fallback, {name: copy.deepcopy(desc) for name, desc in loop.sdfg.arrays.items() if name in accessed}
 
 
 def guard_with_fallback(host: SDFGState, fallback: LoopRegion, fits: str) -> None:
@@ -129,7 +137,8 @@ class MegakernelLoops(ppl.Pass):
             bound = launch_bound(loop, target) if gpu else None
             if gpu and bound is None:
                 continue
-            fallback = copy.deepcopy(loop) if gpu else None
+            fallback, descriptors = per_launch_copy(loop) if gpu else (None, {})
+            loop_sdfg = loop.sdfg
             mk = MegaKernelOptimization(device=self.device)
             mk.block_size = self.block_size
             fused_chain = mk.fuse_chain(sdfg, chain, target, f"{chain.region.sdfg.name}_loop_megakernel_{fused}")
@@ -137,6 +146,9 @@ class MegakernelLoops(ppl.Pass):
                 continue
             host, nblk = fused_chain
             if gpu:
+                for name, desc in descriptors.items():
+                    if name not in loop_sdfg.arrays:
+                        loop_sdfg.add_datadesc(name, desc)
                 guard_with_fallback(host, fallback, f"({symbolic.symstr(bound)}) <= {nblk} * {self.block_size}")
             fused += 1
         return fused or None
