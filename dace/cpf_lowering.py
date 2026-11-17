@@ -790,13 +790,15 @@ SCAN_OPERATIONS: dict[str, tuple[str, str, str]] = {
 
 
 def blocked_scan_body(kind: str, operation: str, ctype: str, c_dialect: bool) -> list[str]:
-    """The body of one prefix scan over ``o[lo:hi]``: a blocked three-phase OpenMP scan, as
-    ``dace::scan::detail::blocked_scan`` runs it, with the ``inscan`` loop as each thread's block pass.
+    """The body of one prefix scan over ``o[lo:hi]``: the tiled two-pass OpenMP scan of
+    ``dace::scan::detail::blocked_scan``.
 
-    ``omp simd reduction(inscan)`` only vectorizes; the threads come from the blocking. Each thread folds
-    its contiguous block, the block totals are combined in order into each block's offset, and every
-    block is then scanned from its offset. Inside a parallel region, or with one thread, it is the plain
-    ``inscan`` loop. ``ctype`` is the accumulator (seed) type.
+    One parallel region walks the range in tiles of ``team`` blocks of at most 512 KB each, so a block's second
+    pass re-reads it from cache. Per tile, each thread folds its block (vectorized), one barrier publishes the
+    totals (two banks alternate by tile, so no second barrier is needed), and each thread rescans its block from
+    the combined offset. The rescan is a ``simd inscan`` loop on x86-64 and a scalar loop elsewhere, where the
+    ``inscan`` loop measured slower. Inside a parallel region, or with one thread, it is the rescan alone.
+    ``ctype`` is the accumulator (seed) type.
     """
     clause, cpp_step, c_step = SCAN_OPERATIONS[operation]
     step = c_step if c_dialect else cpp_step
@@ -804,13 +806,34 @@ def blocked_scan_body(kind: str, operation: str, ctype: str, c_dialect: bool) ->
     def fold(a: str, x: str) -> str:
         return step.format(a=a, x=x, T=ctype)
 
-    update = "            acc = %s;" % fold("acc", "f[i]")
-    store = "            o[i] = acc;"
-    phases = (update, store) if kind == "incl" else (store, update)
     directive = "inclusive" if kind == "incl" else "exclusive"
+
+    def rescan(indent: str, first: str, last: str) -> list[str]:
+        update = indent + "    acc = %s;" % fold("acc", "f[i]")
+        store = indent + "    o[i] = acc;"
+        phases = (update, store) if kind == "incl" else (store, update)
+        return [
+            "#if defined(__x86_64__) || defined(_M_X64)",
+            indent + "#pragma omp simd reduction(inscan, %s:acc)" % clause,
+            indent + "for (long i = %s; i < %s; ++i) {" % (first, last),
+            phases[0],
+            indent + "    #pragma omp scan %s(acc)" % directive,
+            phases[1],
+            indent + "}",
+            "#else",
+            indent + "for (long i = %s; i < %s; ++i) {" % (first, last),
+            phases[0],
+            phases[1],
+            indent + "}",
+            "#endif",
+        ]
+
     cast = "(%s)f[b]" % ctype if c_dialect else "static_cast<%s>(f[b])" % ctype
-    alloc = "(%s *)malloc(sizeof(%s) * (size_t)team)" % (ctype, ctype) if c_dialect else "new %s[team]" % ctype
-    release = "free(totals);" if c_dialect else "delete[] totals;"
+    alloc = (
+        "(%s *)malloc(sizeof(%s) * (size_t)(2 * team))" % (ctype, ctype) if c_dialect else "new %s[2 * team]" % ctype
+    )
+    flags = "(char *)malloc((size_t)(2 * team))" if c_dialect else "new char[2 * team]"
+    release = "free(totals); free(filled);" if c_dialect else "delete[] totals; delete[] filled;"
     return [
         "    long team = 1;",
         "#ifdef _OPENMP",
@@ -819,37 +842,41 @@ def blocked_scan_body(kind: str, operation: str, ctype: str, c_dialect: bool) ->
         "    if (team > hi - lo) team = hi - lo;",
         "    if (team <= 1) {",
         "        %s acc = seed;" % ctype,
-        "        #pragma omp simd reduction(inscan, %s:acc)" % clause,
-        "        for (long i = lo; i < hi; ++i) {",
-        phases[0].replace("            ", "            "),
-        "            #pragma omp scan %s(acc)" % directive,
-        phases[1],
-        "        }",
+        *rescan("        ", "lo", "hi"),
         "        return;",
         "    }",
         "#ifdef _OPENMP",
         "    %s *totals = %s;" % (ctype, alloc),
+        "    char *filled = %s;" % flags,
+        "    const long span = (long)((1L << 19) / sizeof(%s)) > 0 ? (long)((1L << 19) / sizeof(%s)) : 1;"
+        % (ctype, ctype),
         "    #pragma omp parallel num_threads(team)",
         "    {",
         "        const long size = (long)omp_get_num_threads();",
         "        const long me = (long)omp_get_thread_num();",
-        "        const long per = (hi - lo + size - 1) / size;",
-        "        const long b = lo + me * per < hi ? lo + me * per : hi;",
-        "        const long e = b + per < hi ? b + per : hi;",
-        "        if (b < e) {",
-        "            %s total = %s;" % (ctype, cast),
-        "            for (long i = b + 1; i < e; ++i) total = %s;" % fold("total", "f[i]"),
-        "            totals[me] = total;",
-        "        }",
-        "        #pragma omp barrier",
-        "        if (b < e) {",
-        "            %s acc = seed;" % ctype,
-        "            for (long q = 0; q < me; ++q) acc = %s;" % fold("acc", "totals[q]"),
-        "            #pragma omp simd reduction(inscan, %s:acc)" % clause,
-        "            for (long i = b; i < e; ++i) {",
-        "    " + phases[0],
-        "                #pragma omp scan %s(acc)" % directive,
-        "    " + phases[1],
+        "        const long even = (hi - lo + size - 1) / size;",
+        "        const long per = span < even ? span : even;",
+        "        const long tile = per * size;",
+        "        %s carry = seed;" % ctype,
+        "        long bank = 0;",
+        "        for (long base = lo; base < hi; base += tile, bank ^= 1) {",
+        "            const long end = base + tile < hi ? base + tile : hi;",
+        "            const long b = base + me * per < end ? base + me * per : end;",
+        "            const long e = b + per < end ? b + per : end;",
+        "            filled[bank * size + me] = (char)(b < e);",
+        "            if (b < e) {",
+        "                %s total = %s;" % (ctype, cast),
+        "                #pragma omp simd reduction(%s:total)" % clause,
+        "                for (long i = b + 1; i < e; ++i) total = %s;" % fold("total", "f[i]"),
+        "                totals[bank * size + me] = total;",
+        "            }",
+        "            #pragma omp barrier",
+        "            for (long q = 0; q < size; ++q) {",
+        "                if (q == me && b < e) {",
+        "                    %s acc = carry;" % ctype,
+        *rescan("                    ", "b", "e"),
+        "                }",
+        "                if (filled[bank * size + q]) carry = %s;" % fold("carry", "totals[bank * size + q]"),
         "            }",
         "        }",
         "    }",
