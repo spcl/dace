@@ -151,16 +151,6 @@ required:
                             scan lifting). False runs every pass as if z3 were not installed, for an ablation.
                             Read on every query.
 
-                    smt_solver:
-                        type: str
-                        default: z3
-                        enum: [z3, cvc5]
-                        title: SMT solver
-                        description: >
-                            The solver behind the SMT queries: ``z3`` or ``cvc5`` (through its z3py-compatible
-                            ``cvc5.pythonic`` API). Read once, when the oracle is first imported, so set it with
-                            ``DACE_optimizer_canonicalization_smt_solver`` before importing DaCe.
-
                     gpu_coarsen_factor:
                         type: int
                         default: 4

@@ -16,7 +16,7 @@ from dace.optionals import required
 from dace.sdfg.state import LoopRegion
 from dace.symbolic_facts import RelationKind
 from dace.transformation.passes.analysis import array_facts, canon_stats, smt_dependence
-from dace.transformation.passes.analysis.smt_dependence import is_free_constant, z3
+from dace.transformation.passes.analysis.smt_dependence import z3
 
 #: The relations a query may assume; a ``<<`` order holds only under a recorded runtime check, a divisibility needs
 #: a quotient the encoding does not introduce.
@@ -37,7 +37,7 @@ def constant_names(terms: list[Any]) -> tuple[set[str], set[str]]:
         seen.add(term.get_id())
         if z.is_select(term):
             arrays.add(str(term.arg(0)))
-        if is_free_constant(term):
+        if z.is_const(term) and term.decl().kind() == z.Z3_OP_UNINTERPRETED:
             names.add(str(term))
         stack.extend(term.children())
     return names, arrays
