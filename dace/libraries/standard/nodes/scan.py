@@ -875,24 +875,23 @@ def single_block_scan_call(op: ScanOp, exclusive: bool, n_expr: str, seed: str) 
     return f"{fn}({INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, 0L, static_cast<long>({n_expr}), {seed});"
 
 
-#: The trade a Scan records: canonicalization takes the parallel form.
+#: The trade a Scan records: canonicalization takes the parallel form. Facts of the two lowerings only.
 PARALLEL_SCAN_HINT = (
     "parallel scan; canonicalization takes the parallel form.\n"
     "Alternative: a sequential loop over parallel maps.\n"
-    "CPU: the loop is worth trying -- the scan does more work, and the loop "
-    "may already saturate the memory system.\n"
-    "GPU: the scan is usually the better of the two.\n"
-    "Both are correct. Measure before choosing."
+    "CPU: the scan runs blocked over contiguous chunks on every thread of the team -- pass 1 reads the input "
+    "and folds each chunk, pass 2 reads the input again and writes the output; a team of one runs one pass. "
+    "The loop makes one pass over the input and the output, on one thread.\n"
+    "Both are correct."
 )
 
 #: The same trade after a sequential expansion: the emitted scan is one loop.
 SEQUENTIAL_SCAN_HINT = (
     "sequential scan; this expansion runs the recurrence as one loop.\n"
     "Alternative: the parallel scan canonicalization chose.\n"
-    "CPU: the loop is usually the better of the two -- the scan does more work, and the loop "
-    "may already saturate the memory system.\n"
-    "GPU: the parallel scan is usually the better of the two.\n"
-    "Both are correct. Measure before choosing."
+    "CPU: the loop makes one pass over the input and the output, on one thread. The parallel scan runs blocked "
+    "over contiguous chunks on every thread of the team, reading the input twice.\n"
+    "Both are correct."
 )
 
 
