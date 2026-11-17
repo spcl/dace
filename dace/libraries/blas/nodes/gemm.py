@@ -680,7 +680,8 @@ class ExpandGemmPlanned(ExpandTransformation):
       partial with a single-threaded call, and the partials are summed in slice order (deterministic). OpenBLAS
       threads over ``M`` and ``N`` only, so a tall-skinny Gramian (``X.T @ W``) otherwise keeps few cores busy.
     * The same operand on both sides (``X.T @ X``) multiplies each slice with ``syrk``, half the flops, and the
-      sum mirrors the triangle.
+      sum mirrors the triangle, so the result is exactly symmetric at any thread count and size (one slice when
+      the result is too large to split).
     * Any other shape is one threaded ``gemm``.
 
     Real types and compile-time coefficients only.
@@ -718,12 +719,13 @@ class ExpandGemmPlanned(ExpandTransformation):
         code = f"""
 const int64_t __m = {opt["M"]}, __n = {opt["N"]}, __k = {opt["K"]};
 const int64_t __lda = {opt["lda"]}, __ldb = {opt["ldb"]}, __ldc = {opt["ldc"]};
-const int64_t __slices = std::max<int64_t>(1, std::min<int64_t>(omp_get_max_threads(), __k / {ExpandGemmPlanned.MIN_SLICE}));
-if (__slices < 2 || __m * __n > {ExpandGemmPlanned.MAX_SPLIT_RESULT}) {{
+const int64_t __slices = __m * __n > {ExpandGemmPlanned.MAX_SPLIT_RESULT} ? 1
+    : std::max<int64_t>(1, std::min<int64_t>(omp_get_max_threads(), __k / {ExpandGemmPlanned.MIN_SLICE}));
+const bool __gram = {"true" if gram else "false"} && (const void*){opt["x"]} == (const void*){opt["y"]} && __lda == __ldb && __m == __n;
+if (!__gram && __slices < 2) {{
     cblas_{prefix}gemm(CblasColMajor, {ta}, {tb}, __m, __n, __k, {alpha}, {opt["x"]}, __lda, {opt["y"]}, __ldb, {beta},
                  _c, __ldc);
 }} else {{
-    const bool __gram = {"true" if gram else "false"} && (const void*){opt["x"]} == (const void*){opt["y"]} && __lda == __ldb && __m == __n;
     std::vector<{ctype}> __partial(__slices * __m * __n);
     #pragma omp parallel for schedule(static)
     for (int64_t __p = 0; __p < __slices; ++__p) {{

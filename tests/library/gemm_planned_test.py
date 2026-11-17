@@ -64,6 +64,17 @@ def test_a_gramian_of_one_operand_is_symmetric():
     assert np.array_equal(c, c.T)
 
 
+def test_a_gramian_too_large_to_split_is_still_symmetric():
+    """A 130 x 130 ``X.T @ X`` is past the split limit: one syrk slice, still mirrored into an exact symmetric C."""
+    sdfg = gemm_sdfg("planned_gram_large", dace.float64, True, 0.0, True)
+    rng = np.random.default_rng(2)
+    a = rng.random((600, 130))
+    c = np.zeros((130, 130))
+    sdfg(A=a, C=c, M=130, N=130, K=600)
+    assert np.allclose(c, a.T @ a, rtol=1e-11)
+    assert np.array_equal(c, c.T)
+
+
 def test_a_square_product_is_one_call():
     """A 200 x 200 result is past the split: the plain threaded call, same numbers."""
     sdfg = gemm_sdfg("planned_square", dace.float64, False, 0.0, False)
@@ -79,4 +90,5 @@ if __name__ == "__main__":
         for beta in [0.0, 0.5]:
             test_a_tall_skinny_product_splits_k(dtype, beta)
     test_a_gramian_of_one_operand_is_symmetric()
+    test_a_gramian_too_large_to_split_is_still_symmetric()
     test_a_square_product_is_one_call()
