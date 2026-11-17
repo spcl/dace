@@ -3390,11 +3390,12 @@ C_REWRITTEN_IN_NATIVE_CODE: frozenset[str] = frozenset(
     | {"cpf_atomic_max", "cpf_atomic_min"}
 )
 
-#: Headers CPF's C output always includes. ``<stdbool.h>`` is deliberately absent: ``bool`` /
-#: ``true`` / ``false`` are C23 keywords. ``<tgmath.h>`` is deliberately absent too -- see the
-#: section header above.
+#: Headers CPF's C output always includes. ``<stdbool.h>`` spells ``bool`` / ``true`` / ``false`` before C23, where
+#: they became keywords and the header is a no-op: gcc 14 still defaults to ``gnu17``. ``<tgmath.h>`` is deliberately
+#: absent -- see the section header above.
 C_BASE_HEADERS: tuple[str, ...] = (
     "<stdint.h>",
+    "<stdbool.h>",
     "<math.h>",
     "<limits.h>",
     "<float.h>",
