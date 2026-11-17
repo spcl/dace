@@ -279,8 +279,8 @@ def provenance_scope(provenance: dict[str, tuple[str, str]]):
 
 #: The heap transients a standalone rendering places in the caller's workspace instead of allocating, as data
 #: name -> descriptor, and the workspace's name; empty outside :func:`workspace_carve_scope`.
-_workspace_carve: dict[str, Any] = {}
-_workspace_name: str = ""
+carved_workspace_arrays: dict[str, Any] = {}
+carved_workspace_name: str = ""
 
 #: Each array placed in the workspace starts on this boundary, the alignment its own allocation had.
 WORKSPACE_ALIGNMENT = 64
@@ -289,13 +289,13 @@ WORKSPACE_ALIGNMENT = 64
 @contextlib.contextmanager
 def workspace_carve_scope(workspace: str, carve: dict[str, Any]):
     """Make ``carve`` the ambient workspace layout for the duration of the block (:func:`workspace_slot`)."""
-    global _workspace_carve, _workspace_name
-    previous = _workspace_carve, _workspace_name
-    _workspace_carve, _workspace_name = carve, workspace
+    global carved_workspace_arrays, carved_workspace_name
+    previous = carved_workspace_arrays, carved_workspace_name
+    carved_workspace_arrays, carved_workspace_name = carve, workspace
     try:
         yield carve
     finally:
-        _workspace_carve, _workspace_name = previous
+        carved_workspace_arrays, carved_workspace_name = previous
 
 
 def workspace_offset_name(workspace: str) -> str:
@@ -305,9 +305,9 @@ def workspace_offset_name(workspace: str) -> str:
 
 def workspace_offset_declaration() -> str:
     """``size_t <workspace>_off = 0;`` at the top of an entry that carves arrays out of its workspace, else ``''``."""
-    if not standalone() or not _workspace_carve:
+    if not standalone() or not carved_workspace_arrays:
         return ""
-    return f"size_t {workspace_offset_name(_workspace_name)} = 0;\n"
+    return f"size_t {workspace_offset_name(carved_workspace_name)} = 0;\n"
 
 
 def workspace_slot(alloc_name: str, name: str | None, desc: Any, ctype: str, count: str) -> str | None:
@@ -319,12 +319,12 @@ def workspace_slot(alloc_name: str, name: str | None, desc: Any, ctype: str, cou
     rendering allocates every carved array once, at the top of the entry (``cpf.render_unit``), so each slot is
     taken exactly once per call.
     """
-    if not standalone() or name is None or _workspace_carve.get(name) is not desc:
+    if not standalone() or name is None or carved_workspace_arrays.get(name) is not desc:
         return None
-    offset = workspace_offset_name(_workspace_name)
+    offset = workspace_offset_name(carved_workspace_name)
     align = WORKSPACE_ALIGNMENT
     return (
-        f"{alloc_name} = ({ctype} *)({_workspace_name} + {offset}); "
+        f"{alloc_name} = ({ctype} *)({carved_workspace_name} + {offset}); "
         f"{offset} += (sizeof({ctype}) * (size_t)({count}) + {align - 1}) / {align} * {align};\n"
     )
 
@@ -360,7 +360,7 @@ def persistent_static_desc(desc: Any) -> bool:
 
 def carved_from_workspace(desc: Any) -> bool:
     """Whether ``desc`` lives in the workspace, so freeing it frees nothing."""
-    return standalone() and any(carved is desc for carved in _workspace_carve.values())
+    return standalone() and any(carved is desc for carved in carved_workspace_arrays.values())
 
 
 #: Runtime function -> the ``std`` function with identical semantics and arity.
