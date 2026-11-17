@@ -1921,14 +1921,19 @@ REDUCE_ENTRY_CALL: "re.Pattern" = re.compile(r"(?:::)?\bdace::reduce::(seq::)?(%
 #: The copy node's contiguous CPU lowering, ``dace::CopyImpl<T, 1>(src, dst, count)``.
 COPY_IMPL_CALL: "re.Pattern" = re.compile(r"(?:::)?dace::CopyImpl\s*<\s*([^,<>]+?)\s*,\s*1\s*>\s*\(")
 
-#: ``out[j]`` from ``out[j - s]`` and ``in[j]`` per scan operation, as the runtime's ``std::min`` /
-#: ``std::max`` order them, so C and C++ read the same expression.
+#: How the running value ``{a}`` takes in the next element ``{b}``, per scan operation, as the runtime's
+#: ``std::min`` / ``std::max`` order them, so C and C++ read the same expression.
 STRIDED_SCAN_COMBINE: dict[str, str] = {
-    "sum": "{o}[cpf_j - cpf_s] + {i}[cpf_j]",
-    "product": "{o}[cpf_j - cpf_s] * {i}[cpf_j]",
-    "min": "({i}[cpf_j] < {o}[cpf_j - cpf_s] ? {i}[cpf_j] : {o}[cpf_j - cpf_s])",
-    "max": "({o}[cpf_j - cpf_s] < {i}[cpf_j] ? {i}[cpf_j] : {o}[cpf_j - cpf_s])",
+    "sum": "{a} + {b}",
+    "product": "{a} * {b}",
+    "min": "({b} < {a} ? {b} : {a})",
+    "max": "({a} < {b} ? {b} : {a})",
 }
+
+#: Elements per chunk of the blocked strided scan, rounded down to whole rows of the carry distance.
+STRIDED_SCAN_CHUNK = 4096
+#: Chunks per thread per round, so a round's chunks are still cached when pass 2 rereads them.
+STRIDED_SCAN_CHUNKS_PER_THREAD = 8
 
 
 def parenthesized(expression: str) -> str:
@@ -1940,7 +1945,7 @@ def parenthesized(expression: str) -> str:
 def residue_class_loop(n: str, s: str, head: str, step: str, parallel: bool) -> str:
     """One pass per residue class ``cpf_r`` of the index mod ``s``: ``head`` writes element ``cpf_r``,
     ``step`` element ``cpf_j`` from ``cpf_j - cpf_s``. The classes are independent, so the class loop is
-    the parallel one, as in the runtime's ``strided_scan``."""
+    the parallel one."""
     return (
         "{ const long cpf_n = (long)%s; const long cpf_s = (long)%s;\n"
         "  if (cpf_s <= 0) std::abort();\n"
@@ -1954,12 +1959,83 @@ def residue_class_loop(n: str, s: str, head: str, step: str, parallel: bool) -> 
     )
 
 
+def blocked_strided_scan(n: str, s: str, source: str, target: str, operation: str, seeds: str | None) -> str:
+    """The inclusive scan ``target[j] = target[j - s] OP source[j]`` as a blocked scan over contiguous chunks.
+
+    A chunk is whole rows of ``s`` elements, so every residue class runs through it intact. Pass 1 folds each
+    chunk but the last into its own last row, a combine carries those totals from chunk to chunk, and pass 2
+    rescans each chunk from the previous chunk's last row; the last rows are final after the combine, so pass 2
+    leaves them alone. Rounds of chunks keep a chunk cached between its two passes. One thread runs the
+    recurrence once. Class ``k`` starts at ``seeds[k] OP source[k]``, or at ``source[k]`` with no seeds.
+    """
+
+    def fold(a: str, b: str) -> str:
+        return STRIDED_SCAN_COMBINE[operation].format(a=a, b=b)
+
+    o, i = parenthesized(target), parenthesized(source)
+    head = fold("%s[cpf_j]" % parenthesized(seeds), "%s[cpf_j]" % i) if seeds is not None else "%s[cpf_j]" % i
+    first_row = fold("%s[cpf_k]" % parenthesized(seeds), "%s[cpf_k]" % i) if seeds is not None else "%s[cpf_k]" % i
+    return "\n".join(
+        [
+            "{ const long cpf_n = (long)%s; const long cpf_s = (long)%s;" % (parenthesized(n), parenthesized(s)),
+            "  if (cpf_s <= 0) std::abort();",
+            "  // threads in the team; 1 without OpenMP",
+            "  long cpf_team = 0;",
+            "  #pragma omp parallel reduction(+ : cpf_team)",
+            "  cpf_team = 1;",
+            "  const long cpf_len = (%d / cpf_s > 1 ? %d / cpf_s : 1) * cpf_s;"
+            % (STRIDED_SCAN_CHUNK, STRIDED_SCAN_CHUNK),
+            "  const long cpf_chunks = cpf_team > 1 ? (cpf_n + cpf_len - 1) / cpf_len : 1;",
+            "  const long cpf_round = %d * cpf_team;" % STRIDED_SCAN_CHUNKS_PER_THREAD,
+            "  #pragma omp parallel if (cpf_chunks > 1)",
+            "  for (long cpf_t = 0; cpf_t < cpf_chunks; cpf_t += cpf_round) {",
+            "      const long cpf_te = cpf_t + cpf_round < cpf_chunks ? cpf_t + cpf_round : cpf_chunks;",
+            "      const long cpf_fe = cpf_te < cpf_chunks - 1 ? cpf_te : cpf_chunks - 1;",
+            "      // pass 1: each chunk's per-class totals, into its last row",
+            "      #pragma omp for schedule(static)",
+            "      for (long cpf_c = cpf_t; cpf_c < cpf_fe; ++cpf_c) {",
+            "          const long cpf_b = cpf_c * cpf_len, cpf_l = cpf_b + cpf_len - cpf_s;",
+            "          for (long cpf_k = 0; cpf_k < cpf_s; ++cpf_k) {",
+            "              %s[cpf_l + cpf_k] = cpf_c == 0 ? %s : %s[cpf_b + cpf_k];" % (o, first_row, i),
+            "          }",
+            "          for (long cpf_r = cpf_b + cpf_s; cpf_r <= cpf_l; cpf_r += cpf_s) {",
+            "              for (long cpf_k = 0; cpf_k < cpf_s; ++cpf_k) {",
+            "                  %s[cpf_l + cpf_k] = %s;" % (o, fold("%s[cpf_l + cpf_k]" % o, "%s[cpf_r + cpf_k]" % i)),
+            "              }",
+            "          }",
+            "      }",
+            "      // combine: carry the totals from chunk to chunk, one class per iteration",
+            "      #pragma omp for schedule(static)",
+            "      for (long cpf_k = 0; cpf_k < cpf_s; ++cpf_k) {",
+            "          for (long cpf_c = cpf_t > 0 ? cpf_t : 1; cpf_c < cpf_fe; ++cpf_c) {",
+            "              const long cpf_l = (cpf_c + 1) * cpf_len - cpf_s + cpf_k;",
+            "              %s[cpf_l] = %s;" % (o, fold("%s[cpf_l - cpf_len]" % o, "%s[cpf_l]" % o)),
+            "          }",
+            "      }",
+            "      // pass 2: rescan each chunk from the previous chunk's last row",
+            "      #pragma omp for schedule(static)",
+            "      for (long cpf_c = cpf_t; cpf_c < cpf_te; ++cpf_c) {",
+            "          long cpf_j = cpf_c * cpf_len;",
+            "          const long cpf_e = cpf_c == cpf_chunks - 1 ? cpf_n : cpf_j + cpf_len - cpf_s;",
+            "          if (cpf_c == 0) {",
+            "              for (; cpf_j < cpf_s && cpf_j < cpf_e; ++cpf_j) %s[cpf_j] = %s;" % (o, head),
+            "          }",
+            "          for (; cpf_j < cpf_e; ++cpf_j) %s[cpf_j] = %s;"
+            % (o, fold("%s[cpf_j - cpf_s]" % o, "%s[cpf_j]" % i)),
+            "      }",
+            "  }",
+            "}",
+        ]
+    )
+
+
 def respell_scan_entry_points(code: str) -> str:
     """Spell the ``Scan`` CPU lowering's ``dace::scan`` calls in the vocabulary CPF already defines.
 
     A unit-stride ``inclusive_*`` / ``exclusive_*`` becomes CPF's ``scan_incl_*`` / ``scan_excl_*``, the
-    runtime's blocked scan with its ``inscan`` block pass, and the strided and affine entry
-    points become their residue-class loops, so both dialects render them with no new definition.
+    runtime's blocked scan with its ``inscan`` block pass, the strided entry point becomes
+    :func:`blocked_strided_scan`, and the affine entry points become their residue-class loops, so both
+    dialects render them with no new definition.
 
     :param code: the body as the expansion wrote it.
     :returns: the body with every ``dace::scan`` entry point respelled.
@@ -1968,9 +2044,8 @@ def respell_scan_entry_points(code: str) -> str:
     def scan(match: "re.Match", arguments: tuple[str, ...]) -> str | None:
         kind, operation = match.group(1), match.group(2)
         if kind == "strided_inclusive":
-            source, target, n, s = arguments
-            step = "%s[cpf_j] = %s" % (target, STRIDED_SCAN_COMBINE[operation].format(o=target, i=source))
-            return residue_class_loop(n, s, "%s[cpf_r] = %s[cpf_r]" % (target, source), step, parallel=True)
+            source, target, n, s, *seeds = arguments
+            return blocked_strided_scan(n, s, source, target, operation, seeds[0] if seeds else None)
         first, last, target, seed = arguments
         n = last[len(first) :].strip().lstrip("+").strip() if last.startswith(first) else "%s - %s" % (last, first)
         return "::dace::scan::detail::scan_%s_%s(%s, %s, 0L, static_cast<long>%s, %s)" % (
