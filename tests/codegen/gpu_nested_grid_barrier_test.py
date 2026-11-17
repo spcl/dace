@@ -67,7 +67,9 @@ def _kernel_with_consecutive_maps(nested: bool, read: str = "T[i, j]") -> dace.S
 
 def _cuda_code(sdfg: dace.SDFG) -> str:
     with dace.config.set_temporary("compiler", "cuda", "backend", value="cuda"):
-        return next(obj.clean_code for obj in sdfg.generate_code() if obj.language == "cu")
+        return next(
+            obj.clean_code for obj in sdfg.generate_code() if obj.target.target_name in ("cuda", "experimental_cuda")
+        )
 
 
 @pytest.mark.parametrize("nested", [False, True])

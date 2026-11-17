@@ -27,7 +27,9 @@ def register_wcr_sdfg() -> dace.SDFG:
 def test_a_register_wcr_source_is_a_thread_level_write():
     sdfg = register_wcr_sdfg()
     with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
-        device = next(code for code in sdfg.generate_code() if code.language == "cu").clean_code
+        device = next(
+            code for code in sdfg.generate_code() if code.target.target_name in ("cuda", "experimental_cuda")
+        ).clean_code
     kernel = device[device.index("__global__") :]
     assert "SharedToGlobal1D" not in kernel
     assert "Accum" not in kernel

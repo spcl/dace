@@ -35,7 +35,9 @@ def test_a_kernel_reads_a_constant_array():
 
     sdfg = table_kernel_sdfg()
     with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
-        device = next(code for code in sdfg.generate_code() if code.language == "cu").clean_code
+        device = next(
+            code for code in sdfg.generate_code() if code.target.target_name in ("cuda", "experimental_cuda")
+        ).clean_code
         a = cupy.arange(16, dtype=cupy.float64)
         b = cupy.zeros(16, dtype=cupy.float64)
         sdfg(A=a, B=b)

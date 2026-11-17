@@ -28,6 +28,13 @@ def scaled_add(x: dace.float64[N], y: dace.float64[N]):
     y[:] = x * 3.0 + y
 
 
+#: A recording is made only by a Ninja build (``compiler.configure_and_compile``), so without ``ninja`` on ``PATH``
+#: every build runs CMake and nothing is replayed.
+NEEDS_NINJA = pytest.mark.skipif(
+    os.name != "posix" or shutil.which("ninja") is None, reason="recorded builds need the Ninja generator"
+)
+
+
 @pytest.fixture
 def private_cache(tmp_path, monkeypatch):
     """Point the caches at this test. PCH off: it is ~125 MB, tmp is often a RAM disk, and a failed
@@ -84,14 +91,14 @@ def test_configure_cache_seeds_a_working_build(tmp_path, private_cache):
         build_and_check(tmp_path, "seedsecond")
 
 
-@pytest.mark.skipif(os.name != "posix", reason="recorded builds need the Ninja generator")
+@NEEDS_NINJA
 def test_recorded_build_is_replayed(tmp_path, private_cache):
     """The second program of a shape must reuse the first one's commands instead of running CMake."""
     assert ran_cmake(build_and_check(tmp_path, "recordfirst"))
     assert not ran_cmake(build_and_check(tmp_path, "recordsecond"))
 
 
-@pytest.mark.skipif(os.name != "posix", reason="recorded builds need the Ninja generator")
+@NEEDS_NINJA
 def test_unusable_recording_falls_back_to_cmake(tmp_path, private_cache):
     """A recording that misdescribes the program costs speed, not correctness. Here it names a TU the
     program lacks -- staleness where every path still substitutes to something plausible."""
@@ -111,7 +118,7 @@ def test_unusable_recording_falls_back_to_cmake(tmp_path, private_cache):
 PROGRAM_LIBRARY = "lib$NAME.so"
 
 
-@pytest.mark.skipif(os.name != "posix", reason="recorded builds need the Ninja generator")
+@NEEDS_NINJA
 def test_recording_that_links_a_vanished_library_rebuilds_and_replaces_itself(tmp_path, private_cache):
     """A recording bakes in the absolute library paths CMake's ``find_package`` probed -- libgomp on a
     GNU toolchain among them -- and nothing revalidates them before a replay. A toolchain that moves
@@ -266,6 +273,7 @@ def test_caches_disabled_still_builds(tmp_path):
                 build_and_check(tmp_path, "nocaches")
 
 
+@NEEDS_NINJA
 @pytest.mark.gpu
 def test_many_sdfgs_in_one_process(tmp_path, private_cache):
     """Five CPU then five CPU+GPU programs, back to back. The GPU half is a different shape (adds a
@@ -277,6 +285,7 @@ def test_many_sdfgs_in_one_process(tmp_path, private_cache):
         assert not any(ran_cmake(f) for f in folders[1:]), f"{device} builds did not replay the recording"
 
 
+@NEEDS_NINJA
 @pytest.mark.mpi
 @pytest.mark.gpu
 def test_distributed_and_local_builds_interleave(tmp_path, private_cache):
@@ -318,7 +327,7 @@ def test_distributed_and_local_builds_interleave(tmp_path, private_cache):
         assert ran_cmake(gpu_folder), "the CPU+GPU shape records separately from the CPU one"
 
 
-@pytest.mark.skipif(os.name != "posix", reason="recorded builds need the Ninja generator")
+@NEEDS_NINJA
 def test_a_folder_reconfigured_under_new_flags_publishes_nothing(tmp_path, private_cache):
     """A reconfigure keeps what CMake detected under the old flags, so it must not be filed under the new flags' key."""
     build_and_check(tmp_path, "reconfigured")
@@ -427,7 +436,7 @@ def test_a_configure_detected_under_another_cpath_is_not_reused(tmp_path, privat
     assert str(marker) not in detected_compiler(plain_folder), "the configure was seeded from another CPATH"
 
 
-@pytest.mark.skipif(os.name != "posix", reason="recorded builds need the Ninja generator")
+@NEEDS_NINJA
 def test_a_recording_made_under_another_cpath_is_not_replayed(tmp_path, private_cache, monkeypatch):
     """A replay runs the lines CMake authored under the recording's environment, so it must not stand in for a
     build whose ``CPATH`` differs."""
