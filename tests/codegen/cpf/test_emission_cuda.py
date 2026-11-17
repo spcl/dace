@@ -156,6 +156,9 @@ def test_a_nested_body_function_is_not_declared_inline_twice_in_a_cuda_unit():
 def test_a_cuda_unit_built_by_nvcc_computes_what_numpy_computes(
     tmp_path: pathlib.Path, label: str, program: DaceProgram
 ):
+    # Before rendering: a reduction's grid is sized by the visible GPU, and on another vendor's machine the CUDA query
+    # finds none and raises instead of skipping (``total`` on MI300A, DaCe tests job 747532).
+    require_gpu_backend("cuda")
     import cupy  # Deferred: the optional GPU dependency, needed only where a GPU runs this test.
 
     name = f"cpf_cuda_run_{label}"
