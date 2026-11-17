@@ -97,6 +97,16 @@ def test_int_floor_of_nonnegative_is_bounded():
     )
 
 
+def test_a_real_floor_of_an_integer_over_a_constant_is_bounded_like_its_integer_division():
+    """``floor((N - 1) / 4) + 1`` is a stride-4 stage's extent: positive for every positive ``N``, which the real
+    floor's bound ``(N - 1) / 4 - 1`` alone cannot show."""
+    floor = cast(sympy.Expr, sympy.floor(N / 4 - sympy.Rational(1, 4)))
+    facts = facts_of(predicate_relation(Predicate.POSITIVE, N))
+    assert ask(Relation(RelationKind.LT, ZERO, floor + 1), facts) is Truth.TRUE
+    assert ask(Relation(RelationKind.LE, ZERO, floor), facts) is Truth.TRUE
+    assert ask(Relation(RelationKind.LT, ZERO, floor), facts) is not Truth.TRUE, "N = 1 floors to zero"
+
+
 def test_division_of_unknown_sign_is_not_bounded():
     """C++ truncates where Python rounds down, so nothing is known unless the numerator is nonnegative."""
     assert (
@@ -275,6 +285,7 @@ def test_facts_about_unrelated_symbols_share_one_simplification():
 
 
 if __name__ == "__main__":
+    test_a_real_floor_of_an_integer_over_a_constant_is_bounded_like_its_integer_division()
     test_positive_integer_is_at_least_one()
     test_strict_relation_implies_weak()
     test_relations_chain_transitively()

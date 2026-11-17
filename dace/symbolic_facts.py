@@ -577,6 +577,17 @@ def division_kind(atom: sympy.Expr) -> DivisionKind:
     return DivisionKind.MOD
 
 
+def integer_floor(division: Division, integers: frozenset[str]) -> Division:
+    """The real ``floor(n / d)`` of an integer ``n`` over a positive integer constant ``d`` as the integer division it
+    is, whose lower bound ``(n - d + 1) / d`` is tighter than the real ``n / d - 1``: ``floor((H - 1) / 4) >= 0`` for
+    a positive integer ``H`` (a stride-4 stage's extent)."""
+    numerator, denominator = sympy.fraction(sympy.together(division.numerator))
+    numerator = with_integers(cast(sympy.Expr, sympy.expand(numerator)), integers)
+    if not (denominator.is_Integer and denominator.is_positive and numerator.is_integer):
+        return division
+    return Division(DivisionKind.FLOOR, numerator, cast(sympy.Expr, denominator))
+
+
 def lowered(
     expr: sympy.Expr,
     integers: frozenset[str],
@@ -606,6 +617,8 @@ def lowered(
                 for arg in (*atom.args, sympy.Integer(1))[:2]
             )
             division = Division(division_kind(atom), numerator, denominator)
+            if division.kind is DivisionKind.REAL_FLOOR:
+                division = integer_floor(division, known)
             # An exact quotient (and its zero remainder) is the same under C's truncation and Python's rounding; an
             # exact int_ceil is not, as C computes it as ``(x + y - 1) / y``
             quotient = cast(sympy.Expr, sympy.cancel(numerator / denominator))
