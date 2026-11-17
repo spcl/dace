@@ -73,6 +73,21 @@ def test_interstate_accessor_is_stripped():
     assert list(sdfg.all_interstate_edges())[0].data.assignments["k"] == "a + 1"
 
 
+def test_interstate_accessor_of_a_single_element_array_is_stripped():
+    """``a[i - i, j - j]`` on a ``(1, 1)`` array names its one element just as ``a[0]`` does on a ``(1,)`` one: the
+    index tuple collapses too, or the new scalar is read with two indices (mandelbrot_escape_stamp on GPU)."""
+    sdfg = dace.SDFG("istrip_single_element")
+    s0, s1 = sdfg.add_state("s0"), sdfg.add_state("s1")
+    sdfg.add_array("a", [1, 1], dace.int64, transient=True)
+    for name in "ij":
+        sdfg.add_symbol(name, dace.int64)
+    sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={"k": "a[i - i, j - j] + 1"}))
+    ConvertLengthOneArraysToScalars(single_element=True).apply_pass(sdfg, {})
+    assert isinstance(sdfg.arrays["a"], dd.Scalar)
+    assert list(sdfg.all_interstate_edges())[0].data.assignments["k"] == "a + 1"
+    sdfg.validate()
+
+
 @pytest.mark.parametrize("preserve_abi", [False, True], ids=["transient", "staged-argument"])
 def test_interstate_accessor_with_a_computed_index_is_stripped(preserve_abi):
     """``a[j - 1]`` on a length-one array still names element 0 and must collapse like ``a[0]``.
@@ -566,10 +581,6 @@ def test_folded_zero_index_on_interstate_edge_is_stripped():
     assert out[0] == 42
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
-
 def test_arrayize_rewrites_interstate_edge_assignment():
     """A scalar named on an interstate-edge assignment becomes ``name[0]`` once it is a length-1 array.
 
@@ -755,3 +766,47 @@ def test_single_element_scratch_a_nested_sdfg_reads_stays_an_array():
     assert type(sdfg.arrays["tmp"]) is dd.Array
     sdfg.validate()
     assert _run(sdfg, 3.0) == 7.0
+
+
+if __name__ == "__main__":
+    test_default_scalarizes_transient_length_one_array()
+    test_default_skips_signature_arrays()
+    test_interstate_accessor_is_stripped()
+    test_interstate_accessor_of_a_single_element_array_is_stripped()
+    for preserve_abi in (False, True):
+        test_interstate_accessor_with_a_computed_index_is_stripped(preserve_abi)
+    test_scalarize_keeps_overlapping_name_subscript()
+    test_collapsed_memlet_preserves_dynamic()
+    test_recursive_descends_into_nested_sdfg()
+    test_stage_keeps_signature_arrays_and_adds_scalars()
+    test_preserve_abi_leaves_the_signature_byte_identical()
+    test_preserve_abi_stages_a_signature_scalar_into_a_length_one_array()
+    test_stage_is_numerically_correct()
+    test_stage_read_only_input_gets_copyin_not_copyout()
+    test_forward_then_inverse_stays_correct()
+    test_repeated_forward_is_idempotent_and_stays_correct()
+    test_inverse_roundtrip_transient()
+    test_opaque_length_one_array_is_not_scalarized()
+    test_opaque_scalar_is_not_arrayized()
+    test_passes_expose_property_options()
+    test_filter_none_scalarizes_every_eligible()
+    test_filter_set_restricts_to_listed_names()
+    test_filter_with_unknown_name_does_nothing()
+    test_filter_empty_set_converts_nothing_both_directions()
+    test_filter_only_gates_root_level_nested_recursion_unaffected()
+    test_filter_restricts_scalars_to_length_one_arrays()
+    test_length_one_view_is_not_scalarized()
+    test_length_one_view_source_is_not_scalarized()
+    test_other_subset_of_scalarized_side_collapses()
+    test_control_flow_only_gate_gets_a_copyin()
+    test_control_flow_only_signature_scalar_gets_a_copyin()
+    for inverse in (False, True):
+        test_other_subset_of_untouched_side_survives(inverse)
+    test_folded_zero_index_on_interstate_edge_is_stripped()
+    test_arrayize_rewrites_interstate_edge_assignment()
+    test_arrayize_rewrites_conditional_guard_after_branch_removal()
+    test_staged_scalar_of_a_host_written_device_array_stays_on_the_host()
+    test_staged_scalar_of_a_kernel_written_array_keeps_device_storage()
+    test_a_rewritten_symbol_mapping_stays_symbolic()
+    test_single_element_scratch_becomes_a_scalar()
+    test_single_element_scratch_a_nested_sdfg_reads_stays_an_array()

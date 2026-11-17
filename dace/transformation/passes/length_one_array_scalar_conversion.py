@@ -120,9 +120,10 @@ def rewrite_code_slots(sdfg: SDFG, rewrite: CodeSlotRewriter) -> None:
 class ScalarRefRewriter(ast.NodeTransformer):
     """Collapse ``old[i]`` to ``new`` and rename a bare ``old`` to ``new``.
 
-    Any single index collapses, literal or computed: the array has one element, so whatever the
-    index expression is, it names element 0. A computed index left in place would subscript the new
-    scalar, as in ``scal_index_xk[index_xkq_index]`` on npbench ``vexx_k``, which does not compile.
+    Any element index collapses, literal or computed, one per dimension of an all-ones array: the array has
+    one element, so whatever the index expressions are, they name element 0. A computed index left in place
+    would subscript the new scalar, as in ``scal_index_xk[index_xkq_index]`` on npbench ``vexx_k``, which does
+    not compile.
 
     :param rename: Mapping from each rewritten descriptor's old name to its new name.
     """
@@ -135,7 +136,7 @@ class ScalarRefRewriter(ast.NodeTransformer):
         if (
             isinstance(node.value, ast.Name)
             and node.value.id in self.rename
-            and not isinstance(index, (ast.Slice, ast.Tuple))
+            and not any(isinstance(i, ast.Slice) for i in (index.elts if isinstance(index, ast.Tuple) else [index]))
         ):
             return ast.copy_location(ast.Name(id=self.rename[node.value.id], ctx=node.ctx), node)
         return self.generic_visit(node)
