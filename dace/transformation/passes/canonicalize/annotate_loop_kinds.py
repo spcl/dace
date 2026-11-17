@@ -54,11 +54,9 @@ from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_
 #: The first words of every loop hint: its class (see the three below).
 CLASS_PREFIXES = ("parallel -- ", "sequential -- ", "unknown -- ")
 
-#: A Map. Data-parallel by construction, whatever schedule it ends up carrying.
-PARALLEL = (
-    "parallel -- the iterations are independent\n"
-    "settled: proven, no need to re-check; focus: schedule, tiling, vectorization, fusion, data layout"
-)
+#: A Map. Data-parallel by construction, whatever schedule it ends up carrying. What a settled class means for the
+#: reader is said once, in the rendering's header (``cpf.CONTRACT_LINES``), not under every loop.
+PARALLEL = "parallel -- the iterations are independent"
 
 #: The class line of a Map that accumulates into a container through a WCR edge: its iterations are not
 #: independent, they reduce, and the operator and the accumulator are the evidence. ``{reductions}`` reads
@@ -101,12 +99,9 @@ SEQUENTIAL_PROVEN_OVER_DOALL = (
 )
 
 #: A loop the dependence test declined to answer, or never examined. NOT the same fact as the line
-#: above: not proven, and the wording has to keep saying so in one word.
-UNKNOWN = (
-    "unknown -- {reason}\n"
-    "open: not proven either way; kept sequential to be safe, and may well be parallel -- a fact about the "
-    "indices (a bound, a permutation) settles it"
-)
+#: above: not proven, and the wording has to keep saying so in one word. What "open" asks of the reader is said
+#: once, in the rendering's header.
+UNKNOWN = "unknown -- {reason}"
 
 #: The ``UNKNOWN`` reason of a loop the dependence test never answered for; the specific cause follows a colon.
 NEVER_EXAMINED = "never examined for dependences"
@@ -788,14 +783,14 @@ def map_reductions(state: SDFGState, entry: nodes.MapEntry) -> list[str]:
 def parallel_hint(state: SDFGState, entry: nodes.MapEntry, traps: list[tuple[str, set[str]]]) -> str:
     """``PARALLEL``, or ``REDUCTION`` for a map that accumulates, naming the entry traps whose symbols the map's
     element accesses use."""
-    first, rest = PARALLEL.split("\n", 1)
+    first = PARALLEL
     reductions = map_reductions(state, entry)
     if reductions:
         first = REDUCTION.format(reductions=" and ".join(reductions))
     relied = sorted({held for held, names in traps if names & map_names(state, entry)})
     if relied:
         first += ASSUMES.format(predicates=" and ".join(relied))
-    return f"{first}\n{rest}"
+    return first
 
 
 @xf.explicit_cf_compatible

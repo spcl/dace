@@ -201,6 +201,16 @@ KIND_WORDS: tuple[tuple[str, str], ...] = (
     ("unknown -- ", "unknown"),
 )
 
+#: What a settled ``parallel`` loop and an open ``unknown`` loop ask of the reader. Said once, in the rendering's
+#: header (``cpf.CONTRACT_LINES``); a hint stored before the loop templates dropped them still carries one of
+#: these as its own line, which :func:`hint_comment` leaves out.
+SETTLED_PARALLEL = "settled: proven, no need to re-check; focus: schedule, tiling, vectorization, fusion, data layout"
+OPEN_UNKNOWN = (
+    "open: not proven either way; kept sequential to be safe, and may well be parallel -- a fact about the "
+    "indices (a bound, a permutation) settles it"
+)
+HEADER_HINT_LINES = frozenset({SETTLED_PARALLEL, OPEN_UNKNOWN})
+
 _hint_detail: HintDetail = HintDetail.PROOFS
 
 
@@ -248,7 +258,11 @@ def hint_comment(hint: str | None, indent: str = "") -> str:
     if _hint_detail is HintDetail.KINDS:
         word = kind_word(hint)
         return f"{indent}// {word}\n" if word else ""
-    return "".join(f"{indent}// {line}\n" for line in str(hint).splitlines() if line.strip())
+    return "".join(
+        f"{indent}// {line}\n"
+        for line in str(hint).splitlines()
+        if line.strip() and line.strip() not in HEADER_HINT_LINES
+    )
 
 
 @contextlib.contextmanager

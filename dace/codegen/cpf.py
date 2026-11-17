@@ -1416,9 +1416,11 @@ def preamble(
 
 #: What the rendering already did and what is left, ahead of the per-loop verdicts it explains.
 CONTRACT_LINES = [
-    "// Already parallelized, with basic heuristics applied. Every loop names its class first:",
+    "// Already parallelized, with basic heuristics applied. Every loop names its class first, then its reason:",
     "//   parallel, sequential -- settled; their parallelism needs no further reasoning.",
+    f"//     (parallel) {cpf_lowering.SETTLED_PARALLEL}",
     "//   unknown              -- open; the only loops whose parallelism is worth reasoning about.",
+    f"//     (unknown) {cpf_lowering.OPEN_UNKNOWN}",
     "// Spend the effort on heuristic optimizations and restructuring.",
 ]
 

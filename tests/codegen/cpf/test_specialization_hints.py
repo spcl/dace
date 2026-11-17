@@ -604,7 +604,7 @@ def test_a_map_codegen_lowers_a_copy_into_is_labelled():
     code = render(sdfg).code
     lines = [line.strip() for line in code.splitlines()]
     pragma = next(index for index, line in enumerate(lines) if line.startswith("#pragma omp parallel for"))
-    assert lines[pragma - 2 : pragma] == ["// " + line for line in PARALLEL.splitlines()], code
+    assert lines[pragma - 1] == "// " + PARALLEL, code
 
 
 def test_a_loop_left_unlabelled_by_canonicalize_is_labelled_by_the_rendering():
