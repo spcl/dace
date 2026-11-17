@@ -110,6 +110,10 @@ def simplify_input(shape, strides, axes):
     return shape, strides, axes, out_shape, out_strides
 
 
+#: Lanes per wide load the CUDA reduce expansion emits (``ExpandReduceGPUAuto``'s vector accumulator).
+VECTOR_WIDTHS = (2, 4)
+
+
 def get_reduction_schedule(
     in_array: Array, axes: list[int], use_vectorization=True, use_mini_warps=True, warp_size=32, wide_load_bytes=16
 ):
@@ -264,6 +268,7 @@ def get_reduction_schedule(
             (shape[contiguous_dimension] > 32) == True
             and (shape[contiguous_dimension] % num_loaded_elements == 0) == True
             and use_vectorization
+            and num_loaded_elements in VECTOR_WIDTHS
             and not strided_input
         ):
             schedule.vectorize = True
