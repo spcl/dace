@@ -80,6 +80,7 @@ from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline i
 from dace.transformation.passes.gpu_specialization.promote_warp_tiles import PromoteWarpTiles
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from dace.transformation.passes.minimize_transients import MinimizeTransients
+from dace.transformation.passes.offloading.batch_map_products import BatchMapProducts
 from dace.transformation.passes.offloading.batch_row_scans import BatchRowScans
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.specialize_small_gemms import (
@@ -831,6 +832,8 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False, tile_programs: bool = Fal
     run_structural_cleanup(sdfg)
     # Before the offload reads a map around a device-wide scan as a host loop of launches.
     BatchRowScans().apply_pass(sdfg, {})
+    # Likewise a map around a matrix-vector product: one batched vendor call instead
+    BatchMapProducts().apply_pass(sdfg, {})
     expand_gathered_dots(sdfg)
     recompute_fuse_for_gpu(sdfg)
     # Before the offload reads a map around a small GEMM as a host loop of vendor calls.
