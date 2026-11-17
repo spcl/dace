@@ -1186,24 +1186,6 @@ def test_an_access_node_a_code_node_outside_writes_stays_out_of_the_wrapped_grou
     assert written not in group and read in group and use in group
 
 
-if __name__ == "__main__":
-    test_a_scalar_a_kernel_writes_and_the_host_reads_lives_on_the_device()
-    test_a_kernel_never_reads_a_host_pinned_result()
-    test_a_kernel_never_reads_a_host_pinned_result_through_arithmetic()
-    test_the_guarded_kernel_still_canonicalizes_to_a_parallel_and_a_sequential_arm()
-    test_the_fallback_arm_owns_its_copies()
-    test_the_fallback_copies_in_before_it_runs_and_out_after()
-    test_an_offloaded_scan_gets_its_device_lowering()
-    test_a_host_pinned_library_node_keeps_its_operands_on_the_host()
-    test_a_find_first_answer_stays_on_the_host()
-    test_an_interstate_read_does_not_hand_the_next_state_the_device_name()
-    test_a_wrapped_region_puts_every_root_under_its_entry()
-    test_a_one_iteration_map_inside_a_kernel_leaves_a_scalar_behind()
-    test_a_one_iteration_map_outside_a_kernel_keeps_its_array()
-    test_a_trivial_kernel_map_is_never_eliminated()
-    test_a_kernel_never_reads_a_host_pinned_result_through_arithmetic_and_computes()  # needs a GPU
-
-
 def kernel_writing_a_scalar_a_later_state_reads() -> dace.SDFG:
     """A hybrid state whose free tasklet writes a scalar, and a second state that reads it.
 
@@ -1606,4 +1588,87 @@ def test_a_cpu_heap_array_survives_the_round_trip():
     sdfg(A=a, B=b)
 
     assert np.allclose(b, a * 2.0), "the device result never reached the host array"
+
+
+def test_an_input_only_copy_routed_out_of_a_wrapped_region_reads_only_its_source():
+    """The size-1 wrap routes the region's last access of an input-only container out through its exit, under the
+    memlet the container entered with. Entering as a copy into a scalar (``A[0, 1] -> [0]``), the routed memlet
+    names ``A``'s cells only: the copy's other side is at neither end of the new path (bdf_newton_krylov on GPU)."""
+    sdfg = dace.SDFG("input_only_copy")
+    sdfg.add_array("A", [2, 2], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("B", [1], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_scalar("s", dace.float64, transient=True, storage=dtypes.StorageType.Register)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("size1_wrap_region", dict(__wrap_i="0:1"), schedule=dtypes.ScheduleType.GPU_Device)
+    inner = state.add_access("A")  # a later read of A in the region, ordered by an empty edge
+    tasklet = state.add_tasklet("add", {"a", "b"}, {"out"}, "out = a + b")
+    scalar = state.add_access("s")
+    # Both halves of a copy that crossed the region boundary keep the copy's memlet, as the wrap rewires it.
+    entry.add_in_connector("IN_REGION_IN_0")
+    entry.add_out_connector("OUT_REGION_IN_0")
+    state.add_edge(
+        state.add_access("A"), None, entry, "IN_REGION_IN_0", dace.Memlet(data="A", subset="0, 1", other_subset="0")
+    )
+    state.add_edge(entry, "OUT_REGION_IN_0", scalar, None, dace.Memlet(data="A", subset="0, 1", other_subset="0"))
+    state.add_edge(scalar, None, tasklet, "a", dace.Memlet("s[0]"))
+    state.add_nedge(entry, inner, dace.Memlet())
+    state.add_edge(inner, None, tasklet, "b", dace.Memlet("A[1, 0]"))
+    state.add_memlet_path(tasklet, exit_, state.add_access("B"), src_conn="out", memlet=dace.Memlet("B[0]"))
+    sdfg.validate()
+
+    OffloadToAccelerator()._forward_input_only_map_data(state, entry, exit_)
+    routed = [e for e in state.in_edges(exit_) + state.out_edges(exit_) if e.data.data == "A"]
+    assert len(routed) == 2 and all(e.data.other_subset is None and str(e.data.subset) == "0, 1" for e in routed)
+    sdfg.validate()
+
+
+if __name__ == "__main__":
+    test_the_guarded_kernel_still_canonicalizes_to_a_parallel_and_a_sequential_arm()
+    test_the_fallback_arm_owns_its_copies()
+    test_the_fallback_copies_in_before_it_runs_and_out_after()
+    test_apply_gpu_transformations_offloads_with_the_pass()
+    test_an_offloaded_scan_gets_its_device_lowering()
+    test_a_host_pinned_library_node_keeps_its_operands_on_the_host()
+    test_a_scatter_dispatcher_copies_only_inside_its_sequential_arm()
+    test_a_find_first_answer_stays_on_the_host()
+    test_a_kernel_never_reads_a_host_pinned_result()
+    test_a_kernel_never_reads_a_host_pinned_result_through_arithmetic()
+    test_a_kernel_never_reads_a_host_pinned_result_through_arithmetic_and_computes()
+    test_a_scalar_a_kernel_writes_and_the_host_reads_lives_on_the_device()
+    test_a_scalar_operand_never_enters_the_placement_sets()
+    for build in (where_with_a_host_computed_fallback, where_with_a_device_reduced_fallback):
+        test_a_select_kernel_reads_its_single_element_fallback_from_the_device(build)
+    test_a_vendor_coefficient_may_stay_on_the_host()
+    test_a_select_with_a_host_computed_fallback_runs_on_the_device()
+    test_a_select_with_a_device_reduced_fallback_runs_on_the_device()
+    test_an_interstate_read_does_not_hand_the_next_state_the_device_name()
+    test_fusing_the_wrappers_does_not_validate_before_the_copies_exist()
+    test_the_fused_wrappers_compute_what_the_host_tasklets_computed()
+    test_a_join_hands_on_the_locations_its_later_arm_carries()
+    test_a_join_hands_on_the_locations_its_later_arm_carries_and_computes()
+    test_a_wrapped_region_puts_every_root_under_its_entry()
+    test_a_one_iteration_map_inside_a_kernel_leaves_a_scalar_behind()
+    test_a_one_iteration_map_outside_a_kernel_keeps_its_array()
+    test_a_trivial_kernel_map_is_never_eliminated()
+    test_a_small_map_in_a_host_loop_stays_on_the_host()
+    test_a_map_over_the_whole_shared_array_stays_a_kernel()
+    test_a_copy_hands_its_destination_the_side_of_its_source()
+    test_a_copy_before_a_host_recurrence_computes_what_numpy_computes()
+    test_a_map_whose_size_cannot_be_ranked_stays_a_kernel()
+    test_a_scatter_through_an_operator_chain_is_one_reduction()
+    test_a_scatter_fallback_on_the_host_computes_what_numpy_computes()
+    test_a_small_map_kept_on_the_host_computes_what_numpy_computes()
+    test_a_host_copy_out_of_a_kernel_output_is_not_a_kernel_write()
     test_an_access_node_a_code_node_outside_writes_stays_out_of_the_wrapped_group()
+    test_a_scalar_a_kernel_writes_and_a_later_state_reads_is_device_resident()
+    test_apply_gpu_storage_leaves_every_scalar_on_the_host()
+    test_a_read_only_array_both_sides_read_is_copied_exactly_once()
+    test_a_host_only_array_is_staged_once_each_way_and_not_wrapped()
+    test_the_sequential_arm_of_a_guarded_loop_keeps_its_host_copies()
+    test_apply_gpu_storage_moves_an_array_an_interstate_edge_reads_and_the_offload_stages_it()
+    test_a_device_access_to_a_cpu_heap_array_is_renamed_to_the_device_copy()
+    test_the_ir_walk_does_not_recurse_once_per_block()
+    test_traverse_ir_does_not_recurse_once_per_block()
+    test_a_tail_contributes_none_of_its_remaining_siblings()
+    test_a_cpu_heap_array_survives_the_round_trip()
+    test_an_input_only_copy_routed_out_of_a_wrapped_region_reads_only_its_source()

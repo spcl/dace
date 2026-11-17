@@ -2862,10 +2862,10 @@ class OffloadToAccelerator(ppl.Pass):
             map_exit.add_in_connector(in_conn)
             map_exit.add_out_connector(out_conn)
             outside_access = state.add_access(required(data_name))
-            internal_memlet = deepcopy(input_memlet)
-            external_memlet = deepcopy(input_memlet)
-            state.add_edge(last_access, None, map_exit, in_conn, internal_memlet)
-            state.add_edge(map_exit, out_conn, outside_access, None, external_memlet)
+            # The cells of ``data_name`` only: a copy's other side is not at either end of the new path
+            routed = Memlet(data=data_name, subset=deepcopy(input_memlet.subset))
+            state.add_edge(last_access, None, map_exit, in_conn, routed)
+            state.add_edge(map_exit, out_conn, outside_access, None, deepcopy(routed))
 
     def host_level_scopes(self, state: SDFGState, scope_children: dict) -> list:
         """Every scope of ``state`` that runs as host code: the top level, and each taskloop body.
