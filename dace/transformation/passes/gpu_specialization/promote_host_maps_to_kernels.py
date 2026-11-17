@@ -98,8 +98,12 @@ def promotable(state: SDFGState, entry: nodes.MapEntry, scopes: list[Any], memo:
     if any(isinstance(scope, nodes.MapEntry) and scope.map.schedule in dtypes.GPU_SCHEDULES for scope in scopes):
         return False
     body = state.scope_subgraph(entry, include_entry=False, include_exit=False).nodes()
+    # What the map writes outside it, too: a kernel takes a host Scalar by value and would discard the write.
+    written = [
+        state.memlet_path(edge)[-1].dst for edge in state.out_edges(state.exit_node(entry)) if not edge.data.is_empty()
+    ]
     if not any(launches_device_work(node, memo) for node in body) or not all(
-        device_capable(node, state, False, memo) for node in body
+        device_capable(node, state, False, memo) for node in [*body, *written]
     ):
         return False
     return launch_bound(state, entry, body, memo)

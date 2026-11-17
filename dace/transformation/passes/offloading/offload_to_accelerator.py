@@ -419,6 +419,7 @@ class OffloadToAccelerator(ppl.Pass):
         through_the_exit: OrderedSet[str] = OrderedSet()
         written_inside: OrderedSet[str] = OrderedSet()
         kernels_per_data: dict[str, OrderedSet[nodes.MapEntry | None]] = {}
+        accumulations: list[tuple[str, nodes.Node]] = []
         for state in sdfg.states():
             scopes = state.scope_dict()
             for node in state.nodes():
@@ -432,7 +433,14 @@ class OffloadToAccelerator(ppl.Pass):
                 kernels_per_data.setdefault(node.data, OrderedSet()).add(kernel)
                 if kernel is not None and state.in_degree(node) > 0:
                     written_inside.add(node.data)
-        return through_the_exit | OrderedSet(name for name in written_inside if len(kernels_per_data[name]) > 1)
+                accumulations += [
+                    (node.data, state.memlet_path(edge)[-1].dst) for edge in state.out_edges(node) if edge.data.wcr
+                ]
+        written = through_the_exit | OrderedSet(name for name in written_inside if len(kernels_per_data[name]) > 1)
+        # No transfer accumulates (:meth:`lift_accumulating_copies`): what accumulates device-written data is too
+        return written | OrderedSet(
+            dst.data for src, dst in accumulations if src in written and isinstance(dst, nodes.AccessNode)
+        )
 
     def refuse_by_value_scalars_the_device_writes(self, sdfg: SDFG) -> None:
         """Raise if a Scalar a kernel writes would reach that kernel BY VALUE.
