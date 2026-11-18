@@ -815,7 +815,10 @@ def normalize_statements(
     s += [(label, NormalizeNegativeStride()), (label, EliminateTrivialTasklets()), (label, StructuralCleanup())]
     s += [(label, RerollUnrolledLoops()), (label, UntileLoops()), (label, FuseConsecutiveLoops())]
     if unroll_limit > 0:
-        s += [(label, ShortLoopUnroll(unroll_limit)), (label, UniqueLoopIterators()), (label, SymbolSSA())]
+        s += [(label, ShortLoopUnroll(unroll_limit))]
+    # Whether or not short loops unrolled: the statement round's induction-variable substitution closes a counter
+    # bumped several times per iteration (``k = k + 1`` before each unrolled copy) only once it is in SSA form.
+    s += [(label, UniqueLoopIterators()), (label, SymbolSSA())]
     s += [
         (
             label,
