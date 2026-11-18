@@ -219,6 +219,40 @@ def test_outer_sequential_wrapping_inner_map_gets_no_simd(impl):
     assert pragmas.count("#pragma omp simd") == 1, pragmas
 
 
+def straight_line_inner_map_sdfg(name: str):
+    """``B[i] = sum_k A[i, k] ** 2`` with ``k`` over three coordinates: a map over ``0:3`` into a per-``i`` transient
+    ``d``, then one tasklet adding its elements (gem's distance inside the loop over atoms)."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [10, 3], dace.float64)
+    sdfg.add_array("B", [10], dace.float64)
+    sdfg.add_transient("d", [3], dace.float64)
+    state = sdfg.add_state()
+    ome, omx = state.add_map("atoms", dict(i="0:10"), schedule=dtypes.ScheduleType.Sequential)
+    ime, imx = state.add_map("coords", dict(k="0:3"), schedule=dtypes.ScheduleType.Sequential)
+    square = state.add_tasklet("square", {"a"}, {"o"}, "o = a * a")
+    total = state.add_tasklet("total", {"v"}, {"o"}, "o = v[0] + v[1] + v[2]")
+    d = state.add_access("d")
+    state.add_memlet_path(state.add_access("A"), ome, ime, square, dst_conn="a", memlet=dace.Memlet("A[i, k]"))
+    state.add_memlet_path(square, imx, d, src_conn="o", memlet=dace.Memlet("d[k]"))
+    state.add_edge(d, None, total, "v", dace.Memlet("d[0:3]"))
+    state.add_memlet_path(total, omx, state.add_access("B"), src_conn="o", memlet=dace.Memlet("B[i]"))
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("impl", IMPLS)
+def test_a_small_literal_inner_map_into_a_local_vectorizes_the_enclosing_loop(impl):
+    """The three-coordinate map is code of one atom: the atom loop takes the clause and the inner loop none (simd does
+    not nest), so a call in the atom body (``exp``) can take its vector form."""
+    with temporary_config():
+        Config.set("compiler", "cpu", "implementation", value=impl)
+        code = straight_line_inner_map_sdfg("straight_line_" + impl).generate_code()[0].clean_code
+    pragmas = PRAGMA_RE.findall(code)
+    assert pragmas.count("#pragma omp simd") == 1, pragmas
+    after = code.split("#pragma omp simd", 1)[1].lstrip().splitlines()[0]
+    assert "i" in after and "k" not in after, after
+
+
 @pytest.mark.parametrize("impl", IMPLS)
 @pytest.mark.parametrize("schedule", [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Sequential])
 def test_map_with_uninlinable_nested_loop_gets_no_simd(impl, schedule):
@@ -448,3 +482,5 @@ if __name__ == "__main__":
     test_sequential_leaf_gets_simd("experimental_readable")
     test_multicore_leaf_gets_parallel_for_simd("legacy")
     test_multicore_leaf_gets_parallel_for_simd("experimental_readable")
+    test_a_small_literal_inner_map_into_a_local_vectorizes_the_enclosing_loop("legacy")
+    test_a_small_literal_inner_map_into_a_local_vectorizes_the_enclosing_loop("experimental_readable")

@@ -11,15 +11,39 @@ from dace.frontend import operations
 from dace.sdfg import nodes
 from dace.sdfg.infer_types import map_scope_carries_dependency
 from dace.sdfg.state import LoopRegion, SDFGState
+from dace.symbolic_facts import SMALL_CONSTANT_EXTENT
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.dataflow import MapExpansion
+from dace.transformation.passes.unroll_small_maps import constant_trips, outside_every_map
 
 OMP_DIRECTIVE = "#pragma omp"
 
 
+def is_straight_line_map(state: SDFGState, entry: nodes.MapEntry) -> bool:
+    """Whether ``entry`` is a map over a small literal domain whose every write lands in a scope-local transient:
+    code of the enclosing iteration, which the compiler unrolls, rather than a loop to vectorize on its own (gem's
+    ``sum(d * d)`` over three coordinates inside the loop over atoms). Each SIMD lane then holds its own copy."""
+    trips = constant_trips(entry)
+    if trips is None or trips >= SMALL_CONSTANT_EXTENT:
+        return False
+    for edge in state.out_edges(state.exit_node(entry)):
+        if edge.data.is_empty():
+            continue
+        if not isinstance(edge.dst, nodes.AccessNode):
+            return False
+        desc = state.sdfg.arrays[edge.dst.data]
+        if not desc.transient or desc.lifetime != dtypes.AllocationLifetime.Scope:
+            return False
+        # At the top level of a state the transient must live inside an enclosing map, not beside it
+        if state.entry_node(edge.dst) is None and state.sdfg.parent_nsdfg_node is None:
+            return False
+    return True
+
+
 def map_body_is_leaf(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
-    """True if the map's body holds no Map and no loop, at any depth.
+    """True if the map's body holds no Map and no loop, at any depth, except straight-line maps
+    (:func:`is_straight_line_map`).
 
     A NestedSDFG is opened rather than refused on sight: an outlined body is often just
     straight-line dataflow. Inside one a loop takes two forms, a ``LoopRegion`` and a back
@@ -36,13 +60,13 @@ def map_body_is_leaf(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
                 return False
         for st in sdfg.states():
             for n in st.nodes():
-                if not node_is_loop_free(n, seen):
+                if not node_is_loop_free(st, n, seen):
                     return False
         return True
 
-    def node_is_loop_free(n: nodes.Node, seen: set[int]) -> bool:
+    def node_is_loop_free(st: SDFGState, n: nodes.Node, seen: set[int]) -> bool:
         if isinstance(n, nodes.MapEntry):
-            return False
+            return is_straight_line_map(st, n)
         # A library node still to be expanded is undecidable here: its expansion routinely
         # lowers to a Map, and an ``omp parallel for`` inside a simd region does not compile.
         if isinstance(n, nodes.LibraryNode):
@@ -59,7 +83,7 @@ def map_body_is_leaf(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
         map_exit = state.exit_node(map_entry)
     except (KeyError, StopIteration):
         return False
-    return all(node_is_loop_free(n, set()) for n in state.all_nodes_between(map_entry, map_exit))
+    return all(node_is_loop_free(state, n, set()) for n in state.all_nodes_between(map_entry, map_exit))
 
 
 def body_wcr(state: SDFGState, map_entry: nodes.MapEntry):
@@ -204,6 +228,10 @@ class MarkSIMDMaps(ppl.Pass):
         """Whether this map's innermost loop can carry the clause."""
         if map_entry.map.unroll:  # its own pragma, and an unrolled body is not a loop to vectorize
             return False
+        if is_straight_line_map(state, map_entry) and not (
+            state.entry_node(map_entry) is None and outside_every_map(state.sdfg)
+        ):
+            return False  # code of the enclosing iteration, which vectorizes instead; simd does not nest
         if map_entry.map.collapse > 1:
             # HONOURED, not overridden. ``collapse(k)`` fuses k dimensions into one iteration space,
             # which is a request for their COMBINED trip count as thread parallelism, and it is the
