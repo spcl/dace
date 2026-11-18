@@ -717,7 +717,9 @@ def test_pruning_an_output_keeps_an_access_node_the_body_reads():
     assert sdfg.apply_transformations(PruneConnectors) == 1
     sd = state.scope_dict()
     entry = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry))
-    local = next(n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == "B" and sd[n] is not None)
+    local = next(
+        n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == "B" and sd[n] is not None
+    )
     assert sd[local] is entry
     sdfg.validate()
     A = np.arange(4, dtype=np.float64)
