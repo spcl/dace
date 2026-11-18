@@ -12,7 +12,9 @@ import dace
 from dace import symbolic
 from dace.libraries.standard.nodes import Reduce
 from dace.sdfg import nodes
+from dace.transformation.dataflow import MapFusionVertical
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+from dace.transformation.passes.canonicalize.fuse_maps_at_shared_axes import FuseMapsAtSharedAxes
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 N = dace.symbol("N", dace.int64)
@@ -22,6 +24,16 @@ H = dace.symbol("H", dace.int64)
 
 def canon_cpu(program) -> dace.SDFG:
     return finalize_for_target(canonicalize(program.to_sdfg(simplify=True), target="cpu", validate=True), "cpu")
+
+
+def canon_only(program) -> dace.SDFG:
+    return canonicalize(program.to_sdfg(simplify=True), target="cpu", validate=True)
+
+
+def refuses_both_fusions(program) -> bool:
+    """Whether FuseMapsAtSharedAxes and MapFusionVertical both leave the simplified program unchanged."""
+    sdfg = program.to_sdfg(simplify=True)
+    return FuseMapsAtSharedAxes().apply_pass(sdfg, {}) is None and sdfg.apply_transformations_repeated(MapFusionVertical) == 0
 
 
 def transients_of_size(sdfg: dace.SDFG, size) -> list[str]:
@@ -90,9 +102,11 @@ def test_a_column_read_of_a_square_intermediate_fuses_through_the_pipeline():
 
 
 def test_a_row_and_column_read_keeps_the_square_intermediate():
-    """No split axis makes both ``T[3, j]`` and ``T[j, 3]`` an element of one producer iteration."""
+    """No split axis makes both ``T[3, j]`` and ``T[j, 3]`` an element of one producer iteration: neither fusion
+    applies and canonicalization keeps ``T``. Finalization may still recompute the elementwise ``T`` at each read."""
+    assert refuses_both_fusions(canon_fusion_row_and_column_of_square)
+    assert transients_of_size(canon_only(canon_fusion_row_and_column_of_square), 64) != []
     sdfg = canon_cpu(canon_fusion_row_and_column_of_square)
-    assert transients_of_size(sdfg, 64) != []
     a = np.random.default_rng(1).random((8, 8))
     b = np.zeros(8)
     sdfg(A=a, B=b)
@@ -130,8 +144,11 @@ def test_a_transposed_read_of_a_square_intermediate_fuses_through_the_pipeline()
 
 
 def test_reading_both_orientations_keeps_the_square_intermediate():
+    """``T[i, j]`` and ``T[j, i]`` in one iteration: neither fusion applies and canonicalization keeps ``T``.
+    Finalization may still recompute the elementwise ``T`` at each read."""
+    assert refuses_both_fusions(canon_fusion_both_orientations)
+    assert transients_of_size(canon_only(canon_fusion_both_orientations), N * N) != []
     sdfg = canon_cpu(canon_fusion_both_orientations)
-    assert transients_of_size(sdfg, N * N) != []
     a = np.random.default_rng(3).random((7, 7))
     b = np.zeros((7, 7))
     sdfg(A=a, B=b, N=7)
