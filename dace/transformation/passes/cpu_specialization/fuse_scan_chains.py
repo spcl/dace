@@ -247,6 +247,8 @@ class FuseScanChains(ppl.Pass):
             c_dialect=True,
             element=producer.expression,
             store=f"{OUT}[({out_start}) + {{i}}] = acc;",
+            # One position reads one element of every array the producer reads: the block holds 512 KB of those.
+            element_bytes=str(sum(sdfg.arrays[name].dtype.bytes for name in producer.reads)),
         )
         code = "\n".join(
             [

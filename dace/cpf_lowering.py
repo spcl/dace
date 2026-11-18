@@ -796,6 +796,7 @@ def blocked_scan_body(
     c_dialect: bool,
     element: str = "f[{i}]",
     store: str = "o[{i}] = acc;",
+    element_bytes: str | None = None,
 ) -> list[str]:
     """The body of one prefix scan over ``o[lo:hi]``: the tiled two-pass OpenMP scan of
     ``dace::scan::detail::blocked_scan``.
@@ -808,6 +809,8 @@ def blocked_scan_body(
     ``ctype`` is the accumulator (seed) type. ``element`` is the scanned value at position ``{i}`` and ``store``
     the statement run with the prefix ``acc`` at position ``{i}``: the defaults read ``f`` and write ``o``; a fused
     producer or consumer replaces them (:mod:`~dace.transformation.passes.cpu_specialization.fuse_scan_chains`).
+    ``element_bytes`` is what one position reads from memory (the input's element size by default): a block holds
+    512 KB of it, so a producer reading three arrays gets a third of the elements per block.
 
     """
     clause, cpp_step, c_step = SCAN_OPERATIONS[operation]
@@ -845,6 +848,7 @@ def blocked_scan_body(
     )
     flags = "(char *)malloc((size_t)(2 * team))" if c_dialect else "new char[2 * team]"
     release = "free(totals); free(filled);" if c_dialect else "delete[] totals; delete[] filled;"
+    per_element = element_bytes if element_bytes is not None else "sizeof(%s)" % ctype
     return [
         "    long team = 1;",
         "#ifdef _OPENMP",
@@ -859,8 +863,8 @@ def blocked_scan_body(
         "#ifdef _OPENMP",
         "    %s *totals = %s;" % (ctype, alloc),
         "    char *filled = %s;" % flags,
-        "    const long span = (long)((1L << 19) / sizeof(%s)) > 0 ? (long)((1L << 19) / sizeof(%s)) : 1;"
-        % (ctype, ctype),
+        "    const long span = (long)((1L << 19) / (%s)) > 0 ? (long)((1L << 19) / (%s)) : 1;"
+        % (per_element, per_element),
         "    #pragma omp parallel num_threads(team)",
         "    {",
         "        const long size = (long)omp_get_num_threads();",
