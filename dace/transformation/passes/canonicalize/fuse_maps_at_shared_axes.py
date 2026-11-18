@@ -10,7 +10,7 @@ Mirrored, ``for i: T[i] = f(i)`` followed by ``for i, k: g(T[i], k)`` splits the
 
 from typing import Any
 
-from dace import SDFG, SDFGState, properties
+from dace import SDFG, SDFGState, properties, subsets
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import forget_all_facts
@@ -20,19 +20,58 @@ from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.passes import analysis as ap
 
 
-def shared_axes(producer: nodes.Map, consumer: nodes.Map) -> list[str] | None:
+def shared_axes(producer: nodes.Map, consumer: nodes.Map, pairs: dict[str, str] | None = None) -> list[str] | None:
     """The producer parameters, in the consumer's parameter order, that iterate the consumer's ranges; ``None`` unless
-    every consumer parameter has one and the producer keeps at least one axis of its own."""
+    every consumer parameter has one and the producer keeps at least one axis of its own. A consumer parameter takes
+    the producer parameter ``pairs`` names for it when their ranges agree, before any other of its range."""
     if len(consumer.params) >= len(producer.params):
         return None
-    ranges = list(zip(producer.params, producer.range.ranges))
-    chosen: list[str] = []
-    for crange in consumer.range.ranges:
-        match = next((p for p, r in ranges if p not in chosen and r == crange), None)
+    ranges = dict(zip(producer.params, producer.range.ranges, strict=False))
+    crange_of = dict(zip(consumer.params, consumer.range.ranges, strict=False))
+    # Two producer axes over one range are told apart by the dimension of the intermediate both maps index
+    chosen = {c: p for c, p in (pairs or {}).items() if c in crange_of and p in ranges and ranges[p] == crange_of[c]}
+    if len(set(chosen.values())) != len(chosen):
+        chosen = {}
+    for cparam, crange in crange_of.items():
+        if cparam in chosen:
+            continue
+        taken = set(chosen.values())
+        match = next((p for p, r in ranges.items() if p not in taken and r == crange), None)
         if match is None:
             return None
-        chosen.append(match)
-    return chosen
+        chosen[cparam] = match
+    return [chosen[c] for c in consumer.params]
+
+
+def bare_indices(edges: list, name: str, params: list[str]) -> dict[int, str]:
+    """Dimension -> parameter, for each dimension of ``name`` every one of ``edges`` indexes by that parameter alone."""
+    agreed: dict[int, str] | None = None
+    for edge in edges:
+        if edge.data.data != name or not isinstance(edge.data.subset, subsets.Range):
+            return {}
+        found = {
+            dim: str(begin)
+            for dim, (begin, end, _) in enumerate(edge.data.subset.ranges)
+            if begin == end and str(begin) in params
+        }
+        agreed = found if agreed is None else {d: p for d, p in agreed.items() if found.get(d) == p}
+    return agreed or {}
+
+
+def index_pairs(state: SDFGState, producer: nodes.MapEntry, write: Any, read: Any) -> dict[str, str]:
+    """Producer parameter -> consumer parameter, per dimension of the intermediate ``producer`` writes through
+    ``write`` (its exit -> the node) and the consumer reads through ``read`` (the node -> its entry) by one
+    parameter alone."""
+    if write.src_conn is None or not write.src_conn.startswith("OUT_") or read.dst_conn is None:
+        return {}
+    if not read.dst_conn.startswith("IN_"):
+        return {}
+    name = write.dst.data
+    inner_writes = list(state.in_edges_by_connector(write.src, "IN_" + write.src_conn[4:]))
+    inner_reads = list(state.out_edges_by_connector(read.dst, "OUT_" + read.dst_conn[3:]))
+    writes = bare_indices(inner_writes, name, producer.map.params)
+    reads = bare_indices(inner_reads, name, read.dst.map.params)
+    return {writes[d]: reads[d] for d in sorted(writes.keys() & reads.keys())}
 
 
 def reorder(entry: nodes.MapEntry, params: list[str]) -> None:
@@ -60,12 +99,15 @@ def candidates(state: SDFGState) -> list[tuple[nodes.MapEntry, nodes.AccessNode,
             for oe in state.out_edges(node):
                 if not isinstance(oe.dst, nodes.MapEntry) or sdict[oe.dst] is not None:
                     continue
-                axes = shared_axes(producer.map, oe.dst.map)
+                if len(oe.dst.map.params) == len(producer.map.params):
+                    continue
+                pairs = index_pairs(state, producer, ie, oe)
+                axes = shared_axes(producer.map, oe.dst.map, {c: p for p, c in pairs.items()})
                 if axes is not None:
                     found.append((producer, node, oe.dst, axes, False))
                     continue
                 # The consumer keeps its loop order: the shared axes are its outermost ones
-                axes = shared_axes(oe.dst.map, producer.map)
+                axes = shared_axes(oe.dst.map, producer.map, pairs)
                 if axes is not None and set(axes) == set(oe.dst.map.params[: len(axes)]):
                     found.append((producer, node, oe.dst, axes, True))
     return found

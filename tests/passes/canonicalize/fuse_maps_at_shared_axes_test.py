@@ -40,6 +40,15 @@ def two_refused_consumers(A: dace.float64[N, 8], B: dace.float64[N], C: dace.flo
         C[j] = T[N - 1 - j, 7]
 
 
+@dace.program
+def column_of_a_square(A: dace.float64[8, 8], B: dace.float64[8]):
+    T = np.empty((8, 8), dtype=np.float64)
+    for i, k in dace.map[0:8, 0:8]:
+        T[i, k] = A[i, k] * 2.0
+    for j in dace.map[0:8]:
+        B[j] = T[3, j] + T[5, j]
+
+
 def top_level_maps(sdfg: dace.SDFG) -> list[nodes.Map]:
     return [
         n.map
@@ -105,7 +114,25 @@ def test_each_refused_consumer_sees_the_rebuilt_producer():
     assert np.allclose(b, 2.0 * a[::-1, 4]) and np.allclose(c, 2.0 * a[::-1, 7])
 
 
+def test_the_split_axis_is_the_one_the_consumer_indexes_when_two_share_its_range():
+    """Both producer axes iterate ``0:8``; the consumer reads ``T[3, j]``, so ``k`` (not the first equal range ``i``)
+    is the shared axis."""
+    sdfg = column_of_a_square.to_sdfg(simplify=True)
+    assert len(top_level_maps(sdfg)) == 2
+    assert FuseMapsAtSharedAxes().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    (outer,) = top_level_maps(sdfg)
+    assert len(outer.params) == 1
+    assert "T" not in sdfg.arrays and sdfg.arrays["__map_fusion_T"].total_size == 8
+    a = np.random.default_rng(3).random((8, 8))
+    b = np.zeros(8)
+    sdfg(A=a, B=b)
+    assert np.allclose(b, 2.0 * (a[3, :] + a[5, :]))
+
+
 if __name__ == "__main__":
     test_a_producer_over_more_axes_fuses_as_an_inner_map()
+    test_the_fused_map_drops_a_thread_block_sized_for_the_split_axes()
     test_a_consumer_reading_another_iteration_keeps_the_producer()
     test_each_refused_consumer_sees_the_rebuilt_producer()
+    test_the_split_axis_is_the_one_the_consumer_indexes_when_two_share_its_range()

@@ -134,14 +134,14 @@ here is confirmed against generated CPU code or re-measured.
   `beta.T`. What is left on the canon side: whether `hpsi` is the last GEMM's output or a temporary copied into it
   (2.7 GB at XL), and BLAS threading inside the dace process (OpenMP OpenBLAS under the generated code's own team).
   Needs the generated code and a per-call timing; recorded until a run is possible.
-- **warpx_field_gather (hypothesis, diagnosis first).** The per-particle index and weight planes (`_tap3`'s
-  `ix_b/iy_b/iz_b` int64 planes, the `sx_*` shape-factor arrays and `np.where` selections) may stay materialized
-  where numba runs one fused loop. Producer and consumer share the particle range, so shared-range fusion would
-  apply. The likely blocker is that `compute_shape_factor_into` writes `sx` inside branches on the run-time scalar
-  `depos_order`, and the gather that reads it lies outside those branches. Fusing across the branch would mean
-  duplicating the gather into each of the five order branches. That is code growth, a cost choice, so it does not
-  belong in canon. The canon fix is in scope only if the generated code shows a structural blocker that is cheaper
-  than that, such as a missed fusion within one branch. Needs a codegen run.
+- **warpx_field_gather (diagnosed statically).** The per-order arms of `compute_shape_factor_into` fuse within each
+  arm. Across arms, the 12 shape-factor planes `(o+1, n)` and the 12 index vectors `(n,)` stay materialized: each arm
+  writes only the rows of its order, and fusing the gather into the arms would duplicate it five times, the cost trade
+  canon does not make. The tap planes `ix/iy/iz`, `weight` and `gathered` fuse among themselves. The per-particle
+  producers that feed the tap maps stay unfused, because `FuseMapsAtSharedAxes` splits a consumer only at its
+  outermost axes and the particle axis is innermost (proposed, pending a ruling: `doc/design/fusion_audit.md`). On
+  CPU, `RecomputeIntermediates` can still recompute them. Fixed, untested: when two producer axes share a range, the
+  shared axis now follows the index the intermediate is read by. Needs a CPU codegen run.
 - **tsvc_2_vag (hypothesis withdrawn).** The kernel is one gather, `a[i] = b[ip[i]]`, so there is nothing to fuse.
   The 1.45x is the cost of the gather loop itself: threading and fork/join, or a vector gather against numba's
   scalar loop. That is specialization and the measurement environment, not canonicalization. Needs the CPU code.
