@@ -292,7 +292,9 @@ class ParallelizeLoops(ppl.Pass):
                 self.finish(sdfg)
         return applied or None
 
-    def parallelize_loop(self, sdfg: SDFG, loop: LoopRegion, proven: bool = False) -> bool:
+    def parallelize_loop(
+        self, sdfg: SDFG, loop: LoopRegion, proven: bool = False, contract_arrays: frozenset[str] = frozenset()
+    ) -> bool:
         """Lift ONE loop the way :meth:`apply_pass` lifts each candidate, then run its post-lift steps.
 
         :param sdfg: the SDFG to prune and propagate after the lift; it must contain ``loop``.
@@ -300,9 +302,13 @@ class ParallelizeLoops(ppl.Pass):
         :param proven: skip the ``LoopToMap`` probe. Only for a caller holding an independence proof
                        the probe cannot reconstruct: a wavefront legality proof, or a runtime guard
                        that rules out colliding writes. A loop over ``SMALL`` symbols still stays a loop.
+        :param contract_arrays: containers whose write conflicts the caller has proven absent; the dependence
+                                test still checks every other container.
         :returns: whether ``loop`` was lifted.
         """
-        if not self.lift(LoopLift(), loop, {}, proven):
+        xform = LoopLift()
+        xform.contract_arrays = contract_arrays
+        if not self.lift(xform, loop, {}, proven):
             return False
         self.finish(sdfg)
         return True

@@ -99,6 +99,10 @@ def compose(
     replacement: dict[str, str] = {}
     for edge in state.in_edges(tasklet):
         source, conn = edge.src, edge.dst_conn
+        if edge.data.is_empty():
+            if conn is not None:
+                return None
+            continue  # an ordering edge carries no value
         if source is entry:
             name = edge.data.data
             desc = sdfg.arrays[name]

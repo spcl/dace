@@ -761,8 +761,9 @@ def outlinable(sdfg: SDFG, loop: LoopRegion) -> bool:
 
 def shared_work(loop: LoopRegion) -> symbolic.SymbolicType | None:
     """The most iterations a worksharing map at the top level of ``loop``'s states shares out in one execution, in
-    symbols defined ahead of ``loop``. ``None`` if an extent reads a loop variable or a symbol the nest assigns: a
-    wavefront's rows are longest in the middle of its range, so neither end bounds them."""
+    symbols defined ahead of ``loop``. ``None`` if an extent reads a loop variable or a symbol the nest assigns (a
+    wavefront's rows are longest in the middle of its range, so neither end bounds them), or a name that is not a
+    symbol of ``loop``'s SDFG."""
     work = sympy.Integer(0)
     for block in loop.all_control_flow_blocks():
         if isinstance(block, SDFGState):
@@ -772,6 +773,11 @@ def shared_work(loop: LoopRegion) -> symbolic.SymbolicType | None:
     inside = {name for edge in loop.all_interstate_edges() for name in edge.data.assignments}
     inside |= {b.loop_variable for b in (loop, *loop.all_control_flow_blocks()) if isinstance(b, LoopRegion)}
     if any(str(s) in inside for s in work.free_symbols):
+        return None
+    # The team size is written where the region opens, in ``loop``'s SDFG: every name must be a symbol there, not a
+    # container that happens to share the name of a symbol a nested body reads.
+    sdfg = loop.sdfg
+    if any(str(s) in sdfg.arrays or str(s) not in sdfg.symbols for s in work.free_symbols):
         return None
     return work
 

@@ -55,6 +55,20 @@ def kernel_loop() -> dace.SDFG:
     return sdfg
 
 
+def two_kernel_loops() -> dace.SDFG:
+    """Two time loops, ``early`` then ``late``, each launching one kernel per iteration."""
+    sdfg = gpu_sdfg("mk_loops_two_loops")
+    previous = None
+    for label, (src, dst) in (("early", "AB"), ("late", "BA")):
+        loop = LoopRegion(label, "t < T", "t", "t = 0", "t = t + 1")
+        sdfg.add_node(loop, is_start_block=previous is None)
+        if previous is not None:
+            sdfg.add_edge(previous, loop, dace.InterstateEdge())
+        add_kernel(loop.add_state(f"{label}_body", is_start_block=True), f"{label}_kernel", src, dst)
+        previous = loop
+    return sdfg
+
+
 def straight_kernels() -> dace.SDFG:
     """``B = A + 1; A = B + 1`` once each, no loop around them."""
     sdfg = gpu_sdfg("mk_loops_straight")
@@ -78,6 +92,16 @@ def test_a_kernel_loop_runs_persistently_behind_a_test_of_its_launch_size():
     assert len(cooperative_maps(persistent)) == 1
     loops = [r for r in per_launch.all_control_flow_regions() if isinstance(r, LoopRegion)]
     assert len(loops) == 1, "the per-launch loop is kept for launches that do not fit the device"
+
+
+def test_only_the_named_loop_runs_persistently():
+    sdfg = two_kernel_loops()
+    assert MegakernelLoops(loops={"late"}).apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    (guard,) = [b for b in sdfg.all_control_flow_blocks() if isinstance(b, ConditionalBlock)]
+    assert len(cooperative_maps(guard)) == 1
+    (early,) = [r for r in sdfg.nodes() if isinstance(r, LoopRegion)]
+    assert early.label == "early" and not cooperative_maps(early), "the loop not named keeps one launch per kernel"
 
 
 def test_kernels_outside_a_loop_keep_one_launch_each():
@@ -126,6 +150,7 @@ def test_a_gpu_time_loop_matches_the_per_launch_version_on_both_sides_of_its_siz
 
 if __name__ == "__main__":
     test_a_kernel_loop_runs_persistently_behind_a_test_of_its_launch_size()
+    test_only_the_named_loop_runs_persistently()
     test_kernels_outside_a_loop_keep_one_launch_each()
     test_a_cpu_time_loop_is_one_omp_team_and_matches_the_per_map_version()
     test_a_gpu_time_loop_matches_the_per_launch_version_on_both_sides_of_its_size_test(64)

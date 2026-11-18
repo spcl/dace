@@ -12,9 +12,12 @@ import numpy as np
 import pytest
 
 import dace
+from dace.codegen.cpf import cpf
 from dace.codegen.targets.cpu import register_array_on_stack
+from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.dtypes import AllocationLifetime, StorageType
-from dace.sdfg.state import LoopRegion
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize.finalize import force_loop_scoped_registers
 
 N = dace.symbol("N", dtype=dace.int64)
@@ -247,6 +250,76 @@ def test_cpu_finalization_puts_a_loop_transient_on_the_stack():
     run_scratch(sdfg, 8, N=8)
     assert "double tmp[Max(1, K)];" in code, code
     assert_no_heap(code)
+
+
+def branch_in_loop_sdfg(name: str) -> dace.SDFG:
+    """``b = a + 1`` through ``tmp[K]`` inside a loop: ``K`` is assigned in the loop body, and ``tmp`` is written and
+    read in two states of a branch there. Only the interstate edge defines ``K``; nothing outside the loop reads it."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_array("a", (N,), dace.float64)
+    sdfg.add_array("b", (N,), dace.float64)
+    sdfg.add_transient("tmp", (dace.symbol("K", dtype=dace.int64),), dace.float64, storage=FORCED)
+    loop = LoopRegion("repeat", "t < 2", "t", "t = 0", "t = t + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    init = loop.add_state("init", is_start_block=True)
+    # A nest ahead of the assignment that maps ``K`` without reading it, as an outlined region maps every symbol: the
+    # all-symbols view then counts ``K`` as read before it is assigned.
+    inner = dace.SDFG(f"{name}_nest")
+    inner.add_symbol("K", dace.int64)
+    inner.add_array("x", (N,), dace.float64)
+    inner.add_state("touch").add_mapped_tasklet(
+        "touch",
+        {"i": "0:N"},
+        {"inp": dace.Memlet("x[i]")},
+        "o = inp",
+        {"o": dace.Memlet("x[i]")},
+        external_edges=True,
+    )
+    nest = init.add_nested_sdfg(inner, {"x"}, {"x"}, symbol_mapping={"K": "K", "N": "N"})
+    init.add_edge(init.add_read("a"), None, nest, "x", dace.Memlet("a[0:N]"))
+    init.add_edge(nest, "x", init.add_write("a"), None, dace.Memlet("a[0:N]"))
+    assign = loop.add_state("assign")
+    loop.add_edge(init, assign, dace.InterstateEdge())
+    branch = ConditionalBlock("when")
+    loop.add_node(branch)
+    loop.add_edge(assign, branch, dace.InterstateEdge(assignments={"K": "N"}))
+    body = ControlFlowRegion("when_body", sdfg=sdfg)
+    branch.add_branch(CodeBlock("N > 0"), body)
+    first = body.add_state("first", is_start_block=True)
+    second = body.add_state_after(first, "second")
+    first.add_mapped_tasklet(
+        "fill",
+        {"i": "0:K"},
+        {"inp": dace.Memlet("a[i]")},
+        "o = inp + 1.0",
+        {"o": dace.Memlet("tmp[i]")},
+        external_edges=True,
+    )
+    second.add_mapped_tasklet(
+        "drain",
+        {"i": "0:K"},
+        {"inp": dace.Memlet("tmp[i]")},
+        "o = inp",
+        {"o": dace.Memlet("b[i]")},
+        external_edges=True,
+    )
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_size_assigned_in_a_loop_is_not_a_parameter_of_the_allocation():
+    """``K`` is no free symbol of the program (no caller passes it), so ``tmp`` is allocated where the loop body
+    assigned it, never at function entry where ``K`` has no value yet (qe_cegterg's ``nvec * nbase`` buffers)."""
+    sdfg = branch_in_loop_sdfg("vla_size_assigned_in_a_loop")
+    assert "K" not in sdfg.used_symbols(all_symbols=False)
+    assert "K" in sdfg.free_symbols  # the over-approximation the allocation must not read
+    # Allocation reads the symbols the function receives, the signature's set: ``K`` is not among them.
+    assert "K" not in DaCeCodeGenerator(sdfg).symbols_and_constants(sdfg)
+    run_scratch(sdfg, 8, N=8)
+    code = cpf(sdfg, language="c")  # refuses text that does not compile
+    entry = code[code.index("vla_size_assigned_in_a_loop(") :]
+    assert entry.index("tmp") > entry.index("K = N"), entry
 
 
 @pytest.mark.parametrize("placement", [FORCED, UNFORCED])

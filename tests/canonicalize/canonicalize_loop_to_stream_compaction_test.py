@@ -1306,3 +1306,44 @@ def test_refuse_test_and_set_dedup_append():
     assert int(cnt[0]) == 3
     assert out[:3].tolist() == [4, 1, 7]
     assert enabled.tolist() == [0, 1, 1, 0, 1, 0, 0, 1]
+
+
+def iteration_invariant_writes(sdfg: dace.SDFG) -> list[str]:
+    """``map: container`` for each parallel map that writes a one-element transient declared outside it, without a
+    WCR: every iteration writes the same element, so the threads race on it."""
+    found = []
+    for node, state in sdfg.all_nodes_recursive():
+        if not isinstance(node, nd.MapEntry) or node.map.schedule != dace.ScheduleType.CPU_Multicore:
+            continue
+        params = set(node.map.params)
+        for edge in state.out_edges(state.exit_node(node)):
+            memlet = edge.data
+            if memlet.is_empty() or memlet.wcr is not None:
+                continue
+            desc = state.sdfg.arrays[memlet.data]
+            if desc.transient and desc.total_size == 1 and not params & {str(s) for s in memlet.subset.free_symbols}:
+                found.append(f"{node.map.label}: {memlet.data}")
+    return found
+
+
+def test_the_scatter_phase_waives_only_the_compaction_target():
+    """The scatter's disjointness proof covers the arrays written through the cursor. A value the body stages
+    through scratch still meets the dependence test, so
+    each iteration of the parallel scatter gets its own copy instead of all threads writing one shared element.
+    Unsimplified, the frontend stages ``aa[j, i]`` through such a scalar."""
+    sdfg = s343_kernel.to_sdfg(simplify=False)
+    canonicalize(sdfg, validate=True)
+    cpu_specialize(sdfg)
+    sdfg.validate()
+    assert lifted(sdfg)
+    assert omp_parallel_for(sdfg) >= 2
+    assert iteration_invariant_writes(sdfg) == []
+    rng = np.random.default_rng(343)
+    for m in (1, 5, 24):
+        aa = rng.standard_normal((m, m))
+        bb = rng.standard_normal((m, m))
+        want = np.zeros(m * m)
+        oracle_s343(aa, bb, want)
+        got = np.zeros(m * m)
+        sdfg(aa=aa.copy(), bb=bb.copy(), flat=got, M=m)
+        assert np.array_equal(got, want)
