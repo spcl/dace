@@ -69,6 +69,7 @@ from dace.transformation.passes.cpu_specialization.demote_level_maps import (
     demote_uncoalesced_level_maps,
 )
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
+from dace.transformation.passes.cpu_specialization.if_convert_map_bodies import IfConvertParallelMapBodies
 from dace.transformation.passes.cpu_specialization.interchange_loops_into_lane_maps import InterchangeLoopsIntoLaneMaps
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
 from dace.transformation.passes.cpu_specialization.strip_mine_interchange import StripMineInterchange
@@ -956,6 +957,15 @@ def assert_no_nested_parallel_maps(sdfg: SDFG, device: dtypes.DeviceType) -> Non
                 )
 
 
+def codegen_aids(sdfg: SDFG, device: dtypes.DeviceType) -> None:
+    """Rewrites outside the canonical core that every finalize runs: they reshape only the code a compiler sees
+    and decide no schedule, placement or container. On the CPU, once the maps' schedules are final, a parallel
+    map's per-element ``if``/``else`` becomes selects the compiler can vectorize
+    (:class:`~dace.transformation.passes.cpu_specialization.if_convert_map_bodies.IfConvertParallelMapBodies`)."""
+    if device == dtypes.DeviceType.CPU:
+        IfConvertParallelMapBodies().apply_pass(sdfg, {})
+
+
 def finalize_for_target(sdfg: SDFG, target: str = "cpu", validate: bool = False) -> SDFG:
     """Apply the performance finalization tail to a canonicalized ``sdfg``.
 
@@ -1024,6 +1034,7 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType) -> None:
         gpu_specialize_offloaded(sdfg)
     else:
         cpu_specialize(sdfg, validate=False)
+        codegen_aids(sdfg, device)
         # The CPU lowering of a lifted stream compaction: per-block counts and ordered per-block writes instead of
         # the mask and rank buffers. After the stage, whose tests read the device-neutral three-phase form.
         ChunkStreamCompaction().apply_pass(sdfg, {})

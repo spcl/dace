@@ -12,6 +12,7 @@ from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.cpu_specialization.bound_masked_maps import (
     ABSORBED,
     SAME,
+    BoundMaskedMaps,
     index_polynomial,
     masked_value,
 )
@@ -59,6 +60,9 @@ def specialized(program, name):
     sdfg.name = name
     canonicalize(sdfg, target="cpu")
     finalize_for_target(sdfg, "cpu", validate=True)
+    # Not part of the CPU pipeline: a loop bound read from data is a specialization left to the caller
+    BoundMaskedMaps().apply_pass(sdfg, {})
+    sdfg.validate()
     return sdfg
 
 

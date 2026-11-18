@@ -57,28 +57,24 @@ Order within the stage, and why:
    reduced ones inside, small maps and data segments under a long loop run sequentially, and a map's leading
    ``SMALL`` axes are shared out with the first larger one. Schedule inference then resolves what it left unset.
    A copy or fill it sequentializes picks its single ``memcpy`` / ``memset`` itself, at implementation selection.
-5. :class:`~dace.transformation.passes.cpu_specialization.bound_masked_maps.BoundMaskedMaps` -- on the final shapes:
-   a map over padded slots stops at the count that masks them, and ``ChooseOmpSchedule`` then sees the uneven work.
-6. :class:`~dace.transformation.passes.privatize_scatter_reduction.PrivatizeScatterReduction` then
+5. :class:`~dace.transformation.passes.privatize_scatter_reduction.PrivatizeScatterReduction` then
    :class:`~dace.transformation.passes.cpu_specialization.range_privatize_scatter_reductions.RangePrivatizeScatterReductions`
    -- after the schedules are final: a parallel map scattering into an array through data-dependent
    indices reduces into a private copy (an OpenMP array-section ``reduction``), of only the rows its chunk writes
    where that is smaller than the whole array.
-7. :class:`~dace.transformation.passes.specialize_small_gemms.SpecializeSmallGemms` -- a small GEMM a map or
+6. :class:`~dace.transformation.passes.specialize_small_gemms.SpecializeSmallGemms` -- a small GEMM a map or
    loop repeats runs as the row-wise loop nest in the iteration's thread, not as a BLAS call per iteration.
-8. :class:`~dace.transformation.passes.cpu_specialization.choose_omp_schedule.ChooseOmpSchedule` -- once the parallel
+7. :class:`~dace.transformation.passes.cpu_specialization.choose_omp_schedule.ChooseOmpSchedule` -- once the parallel
    maps are final: one whose iterations do data-dependent work (a loop over a CSR row) is scheduled ``guided``.
 """
 
 from dace import SDFG, dtypes
 from dace.sdfg import infer_types
 from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
-from dace.transformation.passes.cpu_specialization.bound_masked_maps import BoundMaskedMaps
 from dace.transformation.passes.cpu_specialization.choose_omp_schedule import ChooseOmpSchedule
 from dace.transformation.passes.cpu_specialization.chunk_anti_dependence import ChunkAntiDependence
 from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import DecideCpuParallelAxes
 from dace.transformation.passes.cpu_specialization.fuse_scan_chains import FuseScanChains
-from dace.transformation.passes.cpu_specialization.if_convert_map_bodies import IfConvertParallelMapBodies
 from dace.transformation.passes.cpu_specialization.range_privatize_scatter_reductions import (
     RangePrivatizeScatterReductions,
 )
@@ -113,9 +109,6 @@ def cpu_specialize(sdfg: SDFG, validate: bool = False) -> SDFG:
     # output states its verdicts outright instead of leaving half of them implicit in a codegen rule.
     DecideCpuParallelAxes().apply_pass(sdfg, {})
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
-    # After the schedules are final: only a body that stays a parallel map is if-converted.
-    IfConvertParallelMapBodies().apply_pass(sdfg, {})
-    BoundMaskedMaps().apply_pass(sdfg, {})
     PrivatizeScatterReduction().apply_pass(sdfg, {})
     RangePrivatizeScatterReductions().apply_pass(sdfg, {})
     SpecializeSmallGemms(dtypes.DeviceType.CPU).apply_pass(sdfg, {})
