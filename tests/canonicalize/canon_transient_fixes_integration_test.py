@@ -209,9 +209,10 @@ def test_a_shifted_copy_read_in_a_later_loop_is_forwarded():
     np.testing.assert_allclose(out, 6.0 * q[1:][::-1])
 
 
-def test_a_loop_writing_the_source_keeps_the_shifted_copy():
+def test_a_loop_writing_the_source_computes_the_reference():
+    """ForwardOffsetCopies keeps the copy here (``forward_offset_copies_test``); the pipeline may still drop ``t``
+    once every read of it runs before the loop that writes ``q``, so only the values are checked."""
     sdfg = finalized(canonical(shifted_reads_in_loop_writing_source, "canon_fix_shifted_loop_writer"))
-    assert ("N",) in transient_extents(sdfg), transient_extents(sdfg)
     q, out = np.random.default_rng(5).random(9), np.zeros(8)
     expected_out, expected_q = 6.0 * q[1:][::-1], q.copy()
     expected_q[1:] += 3.0
