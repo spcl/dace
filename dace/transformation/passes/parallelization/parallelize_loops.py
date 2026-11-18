@@ -382,8 +382,9 @@ class ParallelizeLoops(ppl.Pass):
             # LoopToMap ends the map at the loop bound; a strided map ends at its last iterate, or the memlets
             # propagated over it reach past the array (s351: ``range(0, 4 * N, 4)`` reading ``b[i + 3]``).
             node.map.range = subsets.Range([(rb, last, rs)])
-        # The caller's proof replaced the dependence test, so nothing could lift this map's loop again.
-        if proven or self.permissive:
+        # The caller's proof replaced the dependence test, whole or for its contract arrays (a compaction's scatter
+        # through the cursor), so nothing could lift this map's loop again.
+        if proven or self.permissive or xform.contract_arrays:
             node.map.proven_parallel = True
         if facts:
             note = FACTS_NOTE.format(facts="; ".join(f.describe() for f in facts))
