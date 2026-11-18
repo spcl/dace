@@ -25,7 +25,7 @@ def dependent_copies(q: dace.float64[6, 6, N]):
 def copy_edges(sdfg: dace.SDFG) -> int:
     return sum(
         1
-        for state in sdfg.all_states()
+        for state in sdfg.states()
         for e in state.edges()
         if isinstance(e.src, dace.nodes.AccessNode) and isinstance(e.dst, dace.nodes.AccessNode)
     )
@@ -49,8 +49,10 @@ def test_independent_copies_within_an_array_are_one_map():
 
 def test_a_copy_overwriting_what_an_earlier_one_reads_keeps_its_order():
     sdfg = dependent_copies.to_sdfg(simplify=True)
+    before = copy_edges(sdfg)
+    assert before >= 2, "the frontend chains one copy per statement"
     assert FuseCopyChains().apply_pass(sdfg, {}) is None
-    assert copy_edges(sdfg) == 2
+    assert copy_edges(sdfg) == before, "the copies stay as they were, in their order"
 
 
 if __name__ == "__main__":

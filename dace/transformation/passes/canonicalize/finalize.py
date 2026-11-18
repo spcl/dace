@@ -786,8 +786,10 @@ def recompute_fuse_for_gpu(sdfg: SDFG) -> int:
 def unroll_short_loops(sdfg: SDFG) -> None:
     """Fully unroll every constant-trip loop of at most ``optimizer.canonicalization.unroll_limit`` iterations
     (``ShortLoopUnroll``): straight-line code instead of a small recurrence or reduction loop. A target's choice, so the
-    canonical form keeps the loops; run before the offload, so a kernel sees the unrolled body."""
-    ShortLoopUnroll().apply_pass(sdfg, {})
+    canonical form keeps the loops; run before the offload, so a kernel sees the unrolled body. After canonicalization
+    most loops sit in the body of a map, a nested SDFG, so every SDFG is visited, the innermost first."""
+    for nested in reversed(list(sdfg.all_sdfgs_recursive())):
+        ShortLoopUnroll().apply_pass(nested, {})
     UniqueLoopIterators().apply_pass(sdfg, {})
     SymbolSSA().apply_pass(sdfg, {})
 

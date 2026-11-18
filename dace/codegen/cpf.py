@@ -50,7 +50,7 @@ from typing import NamedTuple
 
 from dace import cpf_lowering, dtypes, subsets, symbolic, tile_functions
 from dace import data as dt
-from dace.codegen import codegen
+from dace.codegen import codegen, cpf_compact
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config, set_temporary
 from dace.libraries.blas.nodes.gemm import Gemm
@@ -1845,6 +1845,9 @@ class Rendering(NamedTuple):
     #: The bytes the unit needs in its workspace, as an arithmetic expression over the entry's scalar
     #: arguments (:func:`plan_workspace`); ``'0'`` without a workspace or with nothing placed in it.
     workspace_bytes: str = "0"
+    #: Under ``llm_friendly``, short name -> the generated name it stands for (:mod:`dace.codegen.cpf_compact`);
+    #: empty otherwise.
+    names: tuple[tuple[str, str], ...] = ()
 
 
 def render(
@@ -1855,6 +1858,7 @@ def render(
     check_compiles: bool = True,
     isa: ISA = ISA.AUTO,
     hints: str = cpf_lowering.HintDetail.PROOFS.value,
+    llm_friendly: bool = False,
 ) -> Rendering:
     """Render ``sdfg`` and return the text together with the SDFG it describes.
 
@@ -1881,6 +1885,9 @@ def render(
                   proof or witness, advice -- and every expansion with the library node it came from;
                   ``'kinds'`` writes one ``// par``, ``// seq`` or ``// unknown`` per loop and map and nothing else;
                   ``'none'`` writes no loop comment at all (same code).
+    :param llm_friendly: respell the host unit under short generated names (:mod:`dace.codegen.cpf_compact`)
+                         before it is verified and compiled; the entry point, its parameters and every export keep
+                         their names, and :attr:`Rendering.names` maps each short name back. Host dialects only.
     :returns: the :class:`Rendering`.
     :raises NotImplementedError: if the SDFG needs anything the dialect's units cannot hold; the
                                  message names the construct.
@@ -1890,14 +1897,44 @@ def render(
                         (see :class:`EntrySignature`).
     """
     with cpf_lowering.hint_detail_scope(cpf_lowering.HintDetail(hints)):
-        return render_unit(sdfg, validate, language, signature, check_compiles, isa)
+        return render_unit(sdfg, validate, language, signature, check_compiles, isa, llm_friendly)
+
+
+#: The ISA test CPF writes around its target-specific code paths (the scan rescan, :mod:`dace.cpf_lowering`).
+X86_GUARD = "#if defined(__x86_64__) || defined(_M_X64)"
+#: One such guarded block: the x86 branch, then the other.
+X86_BLOCK = re.compile(re.escape(X86_GUARD) + r"\n(.*?)^#else\n(.*?)^#endif\n", re.DOTALL | re.MULTILINE)
+
+
+def renders_for_x86(isa: ISA) -> bool:
+    """Whether a unit rendered for ``isa`` runs on x86-64: the tile ISA when it names one, else the host."""
+    resolved = widest_function_isa() if isa is ISA.AUTO else isa
+    if resolved in (ISA.AVX2, ISA.AVX512):
+        return True
+    if resolved in (ISA.ARM_NEON, ISA.ARM_SVE):
+        return False
+    return platform.machine().lower() in ("x86_64", "amd64")
+
+
+def keep_target_path(code: str, x86: bool) -> str:
+    """``code`` with each block CPF guards by :data:`X86_GUARD` reduced to the branch of its target: a served
+    form runs on one machine, and the other branch is text an agent reads for nothing."""
+    return X86_BLOCK.sub(lambda m: m.group(1) if x86 else m.group(2), code)
 
 
 def render_unit(
-    sdfg: SDFG, validate: bool, language: str, signature: EntrySignature | None, check_compiles: bool, isa: ISA
+    sdfg: SDFG,
+    validate: bool,
+    language: str,
+    signature: EntrySignature | None,
+    check_compiles: bool,
+    isa: ISA,
+    llm_friendly: bool = False,
 ) -> Rendering:
     """:func:`render` under the hint detail already in force."""
     dialect = dialect_for(language)
+    if llm_friendly and dialect in cpf_lowering.DEVICE_DIALECTS:
+        raise ValueError("llm_friendly respells a host unit; a device dialect's two units are not supported")
     prepared = copy.deepcopy(sdfg)
     if signature is not None and signature.workspace is not None and signature.workspace_size is not None:
         add_workspace(prepared, signature.workspace, signature.workspace_size)
@@ -1980,7 +2017,12 @@ def render_unit(
                 # Last of all: a pure layout change, so every pass above still sees the generator's text.
                 body = compact_blocks(body)
                 device_body = compact_blocks(device_body) if device_body else ""
-    code = preamble(body, dialect, frame.environments) + body
+    code = keep_target_path(preamble(body, dialect, frame.environments) + body, renders_for_x86(isa))
+    names: tuple[tuple[str, str], ...] = ()
+    if llm_friendly:
+        entry_names = tuple(signature.order) if signature is not None else tuple(entry_arglist)
+        compacted = cpf_compact.compact(code, prepared, {prepared.name, sdfg.name, *entry_names})
+        code, names = compacted.code, tuple(sorted(compacted.names.items()))
     # The device unit repeats the frame's state struct, whose vendor handles and plans need their declarations.
     device_environments = (set(device.environments) | set(frame.environments)) if device is not None else set()
     device_code = preamble(device_body, dialect, device_environments) + device_body if device_body else ""
@@ -2003,6 +2045,7 @@ def render_unit(
         link_libraries(frame, dialect, code + device_code),
         cpf_lowering.vendor_families(code + device_code),
         workspace_bytes,
+        names,
     )
 
 

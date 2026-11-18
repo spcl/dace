@@ -96,12 +96,51 @@ def test_a_kernel_loop_runs_persistently_behind_a_test_of_its_launch_size():
 
 def test_only_the_named_loop_runs_persistently():
     sdfg = two_kernel_loops()
-    assert MegakernelLoops(loops={"late"}).apply_pass(sdfg, {}) == 1
+    assert MegakernelLoops(blocks={"late"}).apply_pass(sdfg, {}) == 1
     sdfg.validate()
     (guard,) = [b for b in sdfg.all_control_flow_blocks() if isinstance(b, ConditionalBlock)]
     assert len(cooperative_maps(guard)) == 1
     (early,) = [r for r in sdfg.nodes() if isinstance(r, LoopRegion)]
     assert early.label == "early" and not cooperative_maps(early), "the loop not named keeps one launch per kernel"
+
+
+def three_straight_kernels() -> dace.SDFG:
+    """``B = A + 1; A = B + 1; B = A + 1`` once each, in states ``first``, ``second``, ``third``."""
+    sdfg = gpu_sdfg("mk_loops_three_straight")
+    first = sdfg.add_state("first", is_start_block=True)
+    add_kernel(first, "one", "A", "B")
+    second = sdfg.add_state_after(first, "second")
+    add_kernel(second, "two", "B", "A")
+    add_kernel(sdfg.add_state_after(second, "third"), "three", "A", "B")
+    return sdfg
+
+
+def test_a_named_run_of_straight_kernels_is_one_persistent_kernel_behind_its_size_test():
+    sdfg = three_straight_kernels()
+    assert MegakernelLoops(blocks={"first", "second"}).apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    (guard,) = [b for b in sdfg.all_control_flow_blocks() if isinstance(b, ConditionalBlock)]
+    (fits, persistent), (otherwise, per_launch) = guard.branches
+    assert "N" in fits.as_string and otherwise is None
+    assert len(cooperative_maps(persistent)) == 1
+    assert len([n for n, _ in per_launch.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]) == 2
+    assert (
+        len(
+            [
+                n
+                for n, _ in sdfg.all_nodes_recursive()
+                if isinstance(n, dace.nodes.MapEntry) and n.map.label == "three_map" and not n.map.cooperative
+            ]
+        )
+        == 1
+    )
+
+
+def test_named_blocks_that_do_not_follow_one_another_are_refused_and_change_nothing():
+    sdfg = three_straight_kernels()
+    before = sdfg.hash_sdfg()
+    assert MegakernelLoops(blocks={"first", "third"}).apply_pass(sdfg, {}) is None
+    assert sdfg.hash_sdfg() == before
 
 
 def test_kernels_outside_a_loop_keep_one_launch_each():
@@ -151,6 +190,8 @@ def test_a_gpu_time_loop_matches_the_per_launch_version_on_both_sides_of_its_siz
 if __name__ == "__main__":
     test_a_kernel_loop_runs_persistently_behind_a_test_of_its_launch_size()
     test_only_the_named_loop_runs_persistently()
+    test_a_named_run_of_straight_kernels_is_one_persistent_kernel_behind_its_size_test()
+    test_named_blocks_that_do_not_follow_one_another_are_refused_and_change_nothing()
     test_kernels_outside_a_loop_keep_one_launch_each()
     test_a_cpu_time_loop_is_one_omp_team_and_matches_the_per_map_version()
     test_a_gpu_time_loop_matches_the_per_launch_version_on_both_sides_of_its_size_test(64)
