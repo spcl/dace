@@ -15,8 +15,8 @@ the array's affine point accesses, every read/write pair is WAR or non-aliasing
 and at least one is WAR.
 
 It trades an extra array + a copy of the window the loop reads (see
-:meth:`BreakAntiDependence._snapshot_window`) for parallelism, so it is meant to run
-**optionally** (a tuning knob), not as part of the default pipeline.
+:meth:`BreakAntiDependence._snapshot_window`) for parallelism. Canonicalization always runs it (renaming, before
+the dependence levels); CPU specialization trades the snapshot for per-chunk seams (``ChunkAntiDependence``).
 
 Two admission policies share the one classifier, selected by the ``forward_reads``
 property. Breaking an anti-dependence is this pass's job in BOTH; nothing else in
