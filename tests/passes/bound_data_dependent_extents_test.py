@@ -2,7 +2,6 @@
 """A transient sized by a symbol read from data takes the extent that bounds it."""
 
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion
@@ -129,5 +128,40 @@ def test_an_extent_growing_with_the_data_symbol_is_left_alone():
     assert [str(extent) for extent in sdfg.arrays["win"].shape] == ["N + lo"]
 
 
+def test_an_in_bounds_access_of_an_argument_bounds_the_extent_by_the_argument_extent():
+    """``A[0:n]`` of an ``A[m]`` argument shows ``n <= m``: ``vals[n]`` takes ``m``, one size for the whole call."""
+    sdfg = table_copy(None)
+    sdfg.name = "table_copy_argument_bound"
+    assert BoundDataDependentExtents().apply_pass(sdfg, {}) == 1
+    assert [str(extent) for extent in sdfg.arrays["vals"].shape] == ["m"]
+    sdfg.validate()
+
+
+def test_an_access_on_one_branch_only_gives_no_bound():
+    """``A[0:n]`` read only when ``n > 2``: the other path never shows ``n <= m``, so ``vals[n]`` keeps ``n``."""
+    sdfg = dace.SDFG("guarded_table_copy")
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_symbol("m", dace.int64)
+    sdfg.add_array("sizes", [1], dace.int64)
+    sdfg.add_array("A", ["m"], dace.float64)
+    sdfg.add_transient("vals", ["n"], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state_after(first, "second", assignments={"n": "sizes[0]"})
+    copy = sdfg.add_state("copy")
+    done = sdfg.add_state("done")
+    sdfg.add_edge(second, copy, dace.InterstateEdge("n > 2"))
+    sdfg.add_edge(second, done, dace.InterstateEdge("n <= 2"))
+    sdfg.add_edge(copy, done, dace.InterstateEdge())
+    copy.add_edge(copy.add_read("A"), None, copy.add_write("vals"), None, dace.Memlet("A[0:n]"))
+    assert BoundDataDependentExtents().apply_pass(sdfg, {}) is None
+    assert [str(extent) for extent in sdfg.arrays["vals"].shape] == ["n"]
+
+
 if __name__ == "__main__":
-    pytest.main([__file__])
+    test_an_in_bounds_access_of_a_literal_array_gives_a_capacity_and_keeps_the_shape()
+    test_an_access_of_a_symbolic_array_gives_no_capacity()
+    test_a_nonnegative_data_symbol_subtracted_from_an_extent_bounds_it_by_zero()
+    test_a_nest_the_bound_names_a_new_symbol_for_is_given_it()
+    test_an_extent_growing_with_the_data_symbol_is_left_alone()
+    test_an_in_bounds_access_of_an_argument_bounds_the_extent_by_the_argument_extent()
+    test_an_access_on_one_branch_only_gives_no_bound()

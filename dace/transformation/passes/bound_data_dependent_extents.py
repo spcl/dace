@@ -13,6 +13,11 @@ shape ``(5, 5)`` gives ``nlp <= 5`` and ``span <= 2``. Shape and strides stay ex
 only ``total_size`` becomes a literal, the most any iteration needs, so a thread can own the array. A site counts when
 its trip counts are literals or extents of the arrays being sized, which are taken to be nonzero: an extent that is zero
 runs no access, so it proves nothing about another one.
+
+The same rule bounds a symbol by an extent of the arguments: ``nl[l, 0:count]``, with ``count = counts[l]`` and ``nl``
+of shape ``(n, w)``, gives ``count <= w`` on every path that runs the access. A transient ``pointers[1 + count]`` whose
+extent grows with ``count`` then takes the extent ``1 + w``, set once for the whole call, so a kernel that owns it needs
+no fold of ``count`` before the launch.
 """
 
 import re
@@ -94,8 +99,11 @@ def within(low: Any, high: Any, first: Any, last: Any, ranges: dict[str, Interva
     ]
 
 
-def state_relations(state: SDFGState, ranges: dict[str, Interval], nonempty: set[str]) -> list[symbolic.Relation]:
-    """What the in-bounds accesses of ``state`` to literal-shaped arrays imply; only exact leaf memlets count."""
+def state_relations(
+    state: SDFGState, ranges: dict[str, Interval], nonempty: set[str], assigned: set[str]
+) -> list[symbolic.Relation]:
+    """What the in-bounds accesses of ``state`` imply, to arrays whose shape names no symbol of ``assigned``; only
+    exact leaf memlets count."""
     sdfg, scopes, relations = state.sdfg, state.scope_dict(), []
     known: dict[nodes.EntryNode | None, bool] = {None: True}
 
@@ -118,7 +126,7 @@ def state_relations(state: SDFGState, ranges: dict[str, Interval], nonempty: set
                 first, last, _ = memlets["__arr"].subset[-1]
                 relations += within(*values, first, last, ranges)
             continue
-        if not isinstance(node, nodes.AccessNode) or not all(parsed(e).is_number for e in node.desc(sdfg).shape):
+        if not isinstance(node, nodes.AccessNode) or {str(s) for s in node.desc(sdfg).free_symbols} & assigned:
             continue
         for edge in state.all_edges(node):
             if edge.data.is_empty() or edge.data.dynamic or not runs(scopes[node]):
@@ -129,12 +137,12 @@ def state_relations(state: SDFGState, ranges: dict[str, Interval], nonempty: set
             memlet = edge.data
             subset = memlet.get_src_subset(edge, state) if edge.src is node else memlet.get_dst_subset(edge, state)
             for (low, high, _), extent in zip(subset or (), node.desc(sdfg).shape):
-                relations += within(low, high, 0, extent - 1, ranges)
+                relations += within(low, high, 0, parsed(extent) - 1, ranges)
     return relations
 
 
 def guaranteed_relations(
-    region: ControlFlowRegion, ranges: dict[str, Interval], nonempty: set[str]
+    region: ControlFlowRegion, ranges: dict[str, Interval], nonempty: set[str], assigned: set[str]
 ) -> list[symbolic.Relation]:
     """What holds on every path through ``region``: a conditional gives what all its arms, an ``else`` among them, do."""
     if not array_facts.straight(region):
@@ -142,14 +150,14 @@ def guaranteed_relations(
     relations = []
     for block in region.nodes():
         if isinstance(block, SDFGState):
-            relations += state_relations(block, ranges, nonempty)
+            relations += state_relations(block, ranges, nonempty, assigned)
         elif isinstance(block, LoopRegion):
             bounds = array_facts.loop_range(block)
             size = None if bounds is None else parsed(bounds[1]) - parsed(bounds[0]) + 1
             if size is not None and (size.is_number or str(size) in nonempty):
-                relations += guaranteed_relations(block, ranges, nonempty)
+                relations += guaranteed_relations(block, ranges, nonempty, assigned)
         elif isinstance(block, ConditionalBlock) and block.branches[-1][0] is None:
-            arms = [guaranteed_relations(body, ranges, nonempty) for _, body in block.branches]
+            arms = [guaranteed_relations(body, ranges, nonempty, assigned) for _, body in block.branches]
             shared = {str(relation) for relation in arms[0]}
             for arm in arms[1:]:
                 shared &= {str(relation) for relation in arm}
@@ -222,7 +230,7 @@ def set_capacities(sdfg: SDFG, assigned: set[str]) -> int:
     ranges, values, single = one_value_per_path(sdfg)
     nonempty = {str(parsed(extent)) for desc in sized.values() for extent in desc.shape}
     nonempty |= {str(value) for name, value in values.items() if name in nonempty}
-    relations = guaranteed_relations(sdfg, ranges, nonempty)
+    relations = guaranteed_relations(sdfg, ranges, nonempty, assigned)
     for name, value in values.items():
         target = symbolic.symbol(name)
         relations += [
@@ -262,6 +270,51 @@ def extent_upper_bound(extent: Any, assigned: set[str], nonnegative: set[str]) -
         if not lead.is_number or lead > 0:
             return None
         expr = rest
+    return expr
+
+
+def access_bounds(sdfg: SDFG, assigned: set[str]) -> dict[str, Any]:
+    """For each symbol of ``assigned`` that ``sdfg`` assigns once on every path, an upper bound in symbols it does not
+    assign, from an in-bounds access every path runs: ``nl[l, 0:count]``, of ``nl`` shaped ``(n, w)``, gives
+    ``count <= w``."""
+    ranges, _, single = one_value_per_path(sdfg)
+    nonempty = {
+        str(parsed(extent))
+        for desc in sdfg.arrays.values()
+        if isinstance(desc, dt.Array) and desc.transient and {str(s) for s in desc.free_symbols} & assigned
+        for extent in desc.shape
+    }
+    # A bound in extents of the arguments holds for the whole call, so one allocation fits every iteration
+    extents = {str(s) for desc in sdfg.arrays.values() if not desc.transient for s in desc.free_symbols}
+    bounds: dict[str, Any] = {}
+    for relation in guaranteed_relations(sdfg, ranges, nonempty, assigned):
+        if relation.kind is not symbolic.RelationKind.LE:
+            continue
+        difference = sympy.expand(relation.lhs - relation.rhs)
+        names = {str(s) for s in difference.free_symbols} & assigned
+        if len(names) != 1 or not names <= single:
+            continue
+        name = next(iter(names))
+        coefficients = symbolic.affine_coefficients(difference, name)
+        if (
+            coefficients is None
+            or coefficients[0] != 1
+            or not {str(s) for s in coefficients[1].free_symbols} <= extents
+        ):
+            continue
+        bounds.setdefault(name, -coefficients[1])
+    return bounds
+
+
+def extent_access_bound(extent: Any, assigned: set[str], bounds: dict[str, Any]) -> Any | None:
+    """``extent`` with every name of ``assigned`` it holds replaced by its bound in ``bounds``, when each enters
+    linearly with a nonnegative constant coefficient (so the bound maximizes it); ``None`` otherwise."""
+    expr = symbolic.pystr_to_symbolic(extent)
+    for name in sorted({str(s) for s in expr.free_symbols} & assigned):
+        coefficients = symbolic.affine_coefficients(expr, name)
+        if name not in bounds or coefficients is None or not coefficients[0].is_number or coefficients[0] < 0:
+            return None
+        expr = coefficients[0] * bounds[name] + coefficients[1]
     return expr
 
 
@@ -354,6 +407,7 @@ class BoundDataDependentExtents(ppl.Pass):
             assigned = interstate_bound_names(nested)
             if not assigned:
                 continue
+            bounds: dict[str, Any] | None = None
             for name, desc in nested.arrays.items():
                 if (
                     not desc.transient
@@ -364,6 +418,12 @@ class BoundDataDependentExtents(ppl.Pass):
                     continue
                 nonnegative = self.nonnegative(nested, known)
                 shape = [extent_upper_bound(extent, assigned, nonnegative) for extent in desc.shape]
+                if any(extent is None for extent in shape):
+                    bounds = access_bounds(nested, assigned) if bounds is None else bounds
+                    shape = [
+                        extent_access_bound(extent, assigned, bounds) if bound is None else bound
+                        for extent, bound in zip(desc.shape, shape, strict=True)
+                    ]
                 if any(extent is None for extent in shape):
                     continue
                 plan = resize_plan(nested, name, shape)

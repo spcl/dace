@@ -32,7 +32,7 @@ and `pluto` on CPU, and of `triton` and `ppcg_hip` on GPU (`baselines-rev-1117a2
 | fv3_dycore | 10.9x | 256.0 | 23.6 triton | copies fixed, 6587cb40c, untested |
 | lulesh | 9.4x | 40.8 | 4.36 triton | fixed, ce0afd4a4, not yet re-measured |
 | cp2k_density_matrix_trs4 | 8.6x | 24.3 | 2.82 triton | by design (owned by the scan work) |
-| lavamd | 4.9x | 198.2 | 40.4 triton | proposed |
+| lavamd | 4.9x | 198.2 | 40.4 triton | extent bound implemented, untested |
 | minife | 2.6x | 645.9 | 251.5 triton | not yet analysed |
 
 - **gem.** `MapReduceFusion` kept the reduction's identity write inside the block map because a write of the same
@@ -74,7 +74,7 @@ and `pluto` on CPU, and of `triton` and `ppcg_hip` on GPU (`baselines-rev-1117a2
   and a sync run before the main kernel can be allocated. The lift and the fold are `MoveArrayOutOfKernel`
   (`extent_bounds` / `compute_bound`, `move_array_out_of_kernel.py:480-560`): a per-thread array whose extent names a
   symbol read from data gets one global slot per thread, sized by a fold of that symbol's maximum.
-  Proposed design (not implemented): bound the extent from the in-bounds rule that `BoundDataDependentExtents`
+  Implemented (untested; `BoundDataDependentExtents.access_bounds`, GPU offload only): bound the extent from the in-bounds rule that `BoundDataDependentExtents`
   already uses. `count = neighbor_counts[l]` ends the subset `neighbor_list[l, 0:count]`, and an out-of-bounds access
   is undefined, so `count <= max_neighbors`. Today `capacity()` accepts only a literal bound (up to
   `THREAD_CAPACITY`), and `max_neighbors` is a symbol of the signature. The change: let the bound be an expression in
@@ -190,7 +190,7 @@ Entries for the evaluation (canon leaves these gaps to the agent by design):
 
 ## Tuning-style settings in the pipeline
 
-Recommendation (2026-11-18, pending the user): keep all of them. Each is a fixed rule that does not adapt per kernel
+Decided (user, 2026-11-18): keep all of them. Each is a fixed rule that does not adapt per kernel
 (small work stays sequential, a strip-mine tile fits L2, a team is not wider than its work), which is the
 "general, mostly working" specialization the paper describes. `calibrate_thresholds.py` is an offline tool that
 records where the `machine.py` constants come from; the pipeline never runs it. The wavefront tile is part of the
