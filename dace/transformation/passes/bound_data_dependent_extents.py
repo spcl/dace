@@ -273,6 +273,11 @@ def extent_upper_bound(extent: Any, assigned: set[str], nonnegative: set[str]) -
     return expr
 
 
+def argument_extents(sdfg: SDFG) -> set[str]:
+    """The symbols in the shapes of ``sdfg``'s arguments: fixed for the whole call, and nonnegative."""
+    return {str(s) for desc in sdfg.arrays.values() if not desc.transient for s in desc.free_symbols}
+
+
 def access_bounds(sdfg: SDFG, assigned: set[str]) -> dict[str, Any]:
     """For each symbol of ``assigned`` that ``sdfg`` assigns once on every path, an upper bound in symbols it does not
     assign, from an in-bounds access every path runs: ``nl[l, 0:count]``, of ``nl`` shaped ``(n, w)``, gives
@@ -284,8 +289,7 @@ def access_bounds(sdfg: SDFG, assigned: set[str]) -> dict[str, Any]:
         if isinstance(desc, dt.Array) and desc.transient and {str(s) for s in desc.free_symbols} & assigned
         for extent in desc.shape
     }
-    # A bound in extents of the arguments holds for the whole call, so one allocation fits every iteration
-    extents = {str(s) for desc in sdfg.arrays.values() if not desc.transient for s in desc.free_symbols}
+    extents = argument_extents(sdfg)
     bounds: dict[str, Any] = {}
     for relation in guaranteed_relations(sdfg, ranges, nonempty, assigned):
         if relation.kind is not symbolic.RelationKind.LE:
@@ -306,13 +310,22 @@ def access_bounds(sdfg: SDFG, assigned: set[str]) -> dict[str, Any]:
     return bounds
 
 
-def extent_access_bound(extent: Any, assigned: set[str], bounds: dict[str, Any]) -> Any | None:
+def extent_access_bound(extent: Any, assigned: set[str], bounds: dict[str, Any], extents: set[str]) -> Any | None:
     """``extent`` with every name of ``assigned`` it holds replaced by its bound in ``bounds``, when each enters
-    linearly with a nonnegative constant coefficient (so the bound maximizes it); ``None`` otherwise."""
+    linearly with a nonnegative coefficient, a constant or a product of ``extents`` (so the bound maximizes it):
+    ``(1 + count) * ppb`` takes ``(1 + w) * ppb``. ``None`` otherwise."""
     expr = symbolic.pystr_to_symbolic(extent)
     for name in sorted({str(s) for s in expr.free_symbols} & assigned):
         coefficients = symbolic.affine_coefficients(expr, name)
-        if name not in bounds or coefficients is None or not coefficients[0].is_number or coefficients[0] < 0:
+        if name not in bounds or coefficients is None:
+            return None
+        lead = coefficients[0]
+        if lead.is_number and lead < 0:
+            return None
+        if not lead.is_number and not (
+            {str(s) for s in lead.free_symbols} <= extents
+            and all(f.is_number and f > 0 or f.is_Symbol for f in sympy.Mul.make_args(lead))
+        ):
             return None
         expr = coefficients[0] * bounds[name] + coefficients[1]
     return expr
@@ -421,7 +434,9 @@ class BoundDataDependentExtents(ppl.Pass):
                 if any(extent is None for extent in shape):
                     bounds = access_bounds(nested, assigned) if bounds is None else bounds
                     shape = [
-                        extent_access_bound(extent, assigned, bounds) if bound is None else bound
+                        extent_access_bound(extent, assigned, bounds, argument_extents(nested))
+                        if bound is None
+                        else bound
                         for extent, bound in zip(desc.shape, shape, strict=True)
                     ]
                 if any(extent is None for extent in shape):

@@ -137,6 +137,23 @@ def test_an_in_bounds_access_of_an_argument_bounds_the_extent_by_the_argument_ex
     sdfg.validate()
 
 
+def test_an_extent_scaled_by_an_argument_extent_takes_the_bound():
+    """``vals[n * k]``, ``k`` an extent of the argument ``B``: ``A[0:n]`` of ``A[m]`` gives ``vals[m * k]``."""
+    sdfg = dace.SDFG("scaled_table_copy")
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_symbol("m", dace.int64)
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_array("sizes", [1], dace.int64)
+    sdfg.add_array("A", ["m"], dace.float64)
+    sdfg.add_array("B", ["k"], dace.float64)
+    sdfg.add_transient("vals", ["n * k"], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state_after(first, "second", assignments={"n": "sizes[0]"})
+    second.add_edge(second.add_read("A"), None, second.add_write("vals"), None, dace.Memlet("A[0:n] -> [0:n]"))
+    assert BoundDataDependentExtents().apply_pass(sdfg, {}) == 1
+    assert [str(extent) for extent in sdfg.arrays["vals"].shape] == ["k*m"]
+
+
 def test_an_access_on_one_branch_only_gives_no_bound():
     """``A[0:n]`` read only when ``n > 2``: the other path never shows ``n <= m``, so ``vals[n]`` keeps ``n``."""
     sdfg = dace.SDFG("guarded_table_copy")
@@ -164,4 +181,5 @@ if __name__ == "__main__":
     test_a_nest_the_bound_names_a_new_symbol_for_is_given_it()
     test_an_extent_growing_with_the_data_symbol_is_left_alone()
     test_an_in_bounds_access_of_an_argument_bounds_the_extent_by_the_argument_extent()
+    test_an_extent_scaled_by_an_argument_extent_takes_the_bound()
     test_an_access_on_one_branch_only_gives_no_bound()
