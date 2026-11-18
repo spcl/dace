@@ -463,7 +463,8 @@ def test_a_buffer_only_a_guard_admits_is_persistent_and_sized_at_least_zero():
 
 def test_a_persistent_accumulator_of_a_parallel_map_is_reduced_through_a_local_alias():
     """A column sum into a transient of a size fixed for the run: the accumulator stays Persistent, and the map reduces
-    into it with an OpenMP clause on a local pointer to the state-struct member rather than atomically."""
+    into it with an OpenMP clause on a local pointer to the state-struct member rather than atomically. Every output
+    reads ``acc[0]``, so no consumer iteration holds one column's finished sum and the sum is not fused into it."""
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
     from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
@@ -474,7 +475,7 @@ def test_a_persistent_accumulator_of_a_parallel_map_is_reduced_through_a_local_a
         acc = np.zeros(8)
         for i in dace.map[0:N]:
             acc += A[i]
-        out[:] = acc * 2.0
+        out[:] = acc * 2.0 + acc[0]
 
     sdfg = column_sum.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True, validate_all=False, target="cpu", nonnegative_symbols=["N"])
@@ -489,7 +490,7 @@ def test_a_persistent_accumulator_of_a_parallel_map_is_reduced_through_a_local_a
     A = np.random.default_rng(7).random((1000, 8))
     out = np.zeros(8)
     sdfg(A=A, out=out, N=1000)
-    assert np.allclose(out, A.sum(axis=0) * 2.0)
+    assert np.allclose(out, A.sum(axis=0) * 2.0 + A[:, 0].sum())
 
 
 def test_finalize_transient_storage_converts_len1_transient_array_to_scalar():
