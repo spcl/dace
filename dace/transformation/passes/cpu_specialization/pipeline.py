@@ -48,6 +48,9 @@ Order within the stage, and why:
    verdict the fork/join model exists to give.
 3. :class:`~dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates.RecomputeIntermediates`
    -- recomputes a producer map inside every consumer map and drops the intermediate, wherever legal.
+   :class:`~dace.transformation.passes.cpu_specialization.fuse_scan_chains.FuseScanChains` -- then fuses an
+   elementwise producer map into the top-level ``Scan`` it feeds: one tiled scan tasklet that evaluates the
+   producer in both passes, so the buffer between them disappears.
 4. :class:`~dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes.DecideCpuParallelAxes`
    -- the one decision on parallel axes, top-down, while the schedules are still unset: a one- or few-trip map
    hands the team to its body maps, a reducing map shares out the axes its outputs are indexed by and walks the
@@ -74,6 +77,7 @@ from dace.transformation.passes.cpu_specialization.bound_masked_maps import Boun
 from dace.transformation.passes.cpu_specialization.choose_omp_schedule import ChooseOmpSchedule
 from dace.transformation.passes.cpu_specialization.chunk_anti_dependence import ChunkAntiDependence
 from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import DecideCpuParallelAxes
+from dace.transformation.passes.cpu_specialization.fuse_scan_chains import FuseScanChains
 from dace.transformation.passes.cpu_specialization.if_convert_map_bodies import IfConvertParallelMapBodies
 from dace.transformation.passes.cpu_specialization.range_privatize_scatter_reductions import (
     RangePrivatizeScatterReductions,
@@ -102,6 +106,7 @@ def cpu_specialize(sdfg: SDFG, validate: bool = False) -> SDFG:
     SplitInvariantMapNests().apply_pass(sdfg, {})
     ChunkAntiDependence().apply_pass(sdfg, {})
     RecomputeIntermediates().apply_pass(sdfg, {})
+    FuseScanChains().apply_pass(sdfg, {})
     # Canonicalization leaves schedules unset (``Default``), which is not a decision but the absence
     # of one. The CPU maps' schedules are decided first, before inference would pin every nested map
     # ``Sequential``; inference then resolves the rest (library nodes, storage), so this stage's

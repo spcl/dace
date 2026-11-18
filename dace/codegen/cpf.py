@@ -1364,6 +1364,10 @@ def dialect_for(language: str) -> cpf_lowering.Dialect:
         raise ValueError(f"CPF renders {sorted(LANGUAGES)}, not {language!r}") from None
 
 
+#: A call into the OpenMP runtime API in emitted code.
+OPENMP_CALL = re.compile(r"\bomp_[a-z_]+\s*\(")
+
+
 def preamble(
     code: str, dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STANDALONE, environments: Iterable[str] = ()
 ) -> str:
@@ -1382,6 +1386,10 @@ def preamble(
     used = cpf_lowering.helpers_used(code, dialect)
     definitions = cpf_lowering.definitions_for(used, dialect)
     headers = cpf_lowering.headers_for(used, dialect)
+    # Code that calls the OpenMP runtime itself (a fused scan asks for its team) needs the declarations; a pragma
+    # alone does not, and the inline helpers that call it include the header in their own text.
+    if OPENMP_CALL.search(code) and "<omp.h>" not in headers:
+        headers = headers + ("<omp.h>",)
     vendors = cpf_lowering.vendor_libraries(environments, code, dialect)
     lines = ["// Rendered by DaCe CPF (canonical parallel form): self-contained, no DaCe runtime."]
     if cpf_lowering.hint_detail() is cpf_lowering.HintDetail.PROOFS:

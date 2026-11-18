@@ -789,7 +789,14 @@ SCAN_OPERATIONS: dict[str, tuple[str, str, str]] = {
 }
 
 
-def blocked_scan_body(kind: str, operation: str, ctype: str, c_dialect: bool) -> list[str]:
+def blocked_scan_body(
+    kind: str,
+    operation: str,
+    ctype: str,
+    c_dialect: bool,
+    element: str = "f[{i}]",
+    store: str = "o[{i}] = acc;",
+) -> list[str]:
     """The body of one prefix scan over ``o[lo:hi]``: the tiled two-pass OpenMP scan of
     ``dace::scan::detail::blocked_scan``.
 
@@ -798,7 +805,10 @@ def blocked_scan_body(kind: str, operation: str, ctype: str, c_dialect: bool) ->
     totals (two banks alternate by tile, so no second barrier is needed), and each thread rescans its block from
     the combined offset. The rescan is a ``simd inscan`` loop on x86-64 and a scalar loop elsewhere, where the
     ``inscan`` loop measured slower. Inside a parallel region, or with one thread, it is the rescan alone.
-    ``ctype`` is the accumulator (seed) type.
+    ``ctype`` is the accumulator (seed) type. ``element`` is the scanned value at position ``{i}`` and ``store``
+    the statement run with the prefix ``acc`` at position ``{i}``: the defaults read ``f`` and write ``o``; a fused
+    producer or consumer replaces them (:mod:`~dace.transformation.passes.cpu_specialization.fuse_scan_chains`).
+
     """
     clause, cpp_step, c_step = SCAN_OPERATIONS[operation]
     step = c_step if c_dialect else cpp_step
@@ -809,9 +819,9 @@ def blocked_scan_body(kind: str, operation: str, ctype: str, c_dialect: bool) ->
     directive = "inclusive" if kind == "incl" else "exclusive"
 
     def rescan(indent: str, first: str, last: str) -> list[str]:
-        update = indent + "    acc = %s;" % fold("acc", "f[i]")
-        store = indent + "    o[i] = acc;"
-        phases = (update, store) if kind == "incl" else (store, update)
+        update = indent + "    acc = %s;" % fold("acc", element.format(i="i"))
+        written = indent + "    " + store.format(i="i")
+        phases = (update, written) if kind == "incl" else (written, update)
         return [
             "#if defined(__x86_64__) || defined(_M_X64)",
             indent + "#pragma omp simd reduction(inscan, %s:acc)" % clause,
@@ -828,7 +838,8 @@ def blocked_scan_body(kind: str, operation: str, ctype: str, c_dialect: bool) ->
             "#endif",
         ]
 
-    cast = "(%s)f[b]" % ctype if c_dialect else "static_cast<%s>(f[b])" % ctype
+    first = element.format(i="b")
+    cast = "(%s)%s" % (ctype, first) if c_dialect else "static_cast<%s>(%s)" % (ctype, first)
     alloc = (
         "(%s *)malloc(sizeof(%s) * (size_t)(2 * team))" % (ctype, ctype) if c_dialect else "new %s[2 * team]" % ctype
     )
@@ -867,7 +878,7 @@ def blocked_scan_body(kind: str, operation: str, ctype: str, c_dialect: bool) ->
         "            if (b < e) {",
         "                %s total = %s;" % (ctype, cast),
         "                #pragma omp simd reduction(%s:total)" % clause,
-        "                for (long i = b + 1; i < e; ++i) total = %s;" % fold("total", "f[i]"),
+        "                for (long i = b + 1; i < e; ++i) total = %s;" % fold("total", element.format(i="i")),
         "                totals[bank * size + me] = total;",
         "            }",
         "            #pragma omp barrier",
