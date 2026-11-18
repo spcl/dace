@@ -10,6 +10,7 @@ from dace.memlet import Memlet
 from dace.properties import Property, make_properties
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.state import SymbolResolver
 from dace.transformation import transformation as pm
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
 from dace.transformation.dataflow.map_collapse import MapCollapse
@@ -206,7 +207,7 @@ class MapReduceFusion(pm.SingleStateTransformation):
                 name is None or name == array_edge.data.data
                 for name, _ in mfhelper.scope_accesses(graph, scope, graph.exit_node(scope))[0]
             )
-            and not written_elsewhere(graph, scope, array_edge.data.data, graph.memlet_path(fused))
+            and not written_elsewhere(graph, scope, array_edge.data.data, graph.memlet_path(fused), tiles)
         ):
             init_args = (init_args[0], [(f"o{i}", f"{b}:{e + 1}") for i, (b, e) in enumerate(tiles)], *init_args[2:])
             scope = None
@@ -223,14 +224,23 @@ class MapReduceFusion(pm.SingleStateTransformation):
         graph.add_nedge(init_out, tmap_entry, Memlet())
 
 
-def written_elsewhere(graph: SDFGState, scope: nodes.MapEntry, name: str, path: list) -> bool:
+def written_elsewhere(graph: SDFGState, scope: nodes.MapEntry, name: str, path: list, tiles: list) -> bool:
     """Whether ``graph`` writes ``name`` other than along ``path``, the fused reduction's write out of ``scope``, or
     ``scope`` writes through a View that does not resolve. A per-iteration identity write would overwrite such a write
-    where one hoisted ahead of ``scope`` does not."""
+    where one hoisted ahead of ``scope`` does not. A write outside ``scope`` provably disjoint from ``tiles``, the
+    elements the identity covers, is not such a write (gem's leftover points after its blocks)."""
     scope_exit = graph.exit_node(scope)
     if any(written is None for written, _ in mfhelper.scope_accesses(graph, scope, scope_exit)[1]):
         return True
-    edges = [e for node in graph.data_nodes() if node.data == name for e in graph.in_edges(node)]
+    covered, facts = subsets.Range([(begin, end, 1) for begin, end in tiles]), SymbolResolver().facts_at(graph, scope)
+    edges = [
+        e
+        for node in graph.data_nodes()
+        if node.data == name
+        for e in graph.in_edges(node)
+        if graph.entry_node(node) is not None
+        or subsets.intersects(covered, e.data.get_dst_subset(e, graph), facts) is not symbolic.Truth.FALSE
+    ]
     edges += [e for e in graph.in_edges(scope_exit) if e.data.data == name]
     return any(not e.data.is_empty() and e not in path for e in edges)
 

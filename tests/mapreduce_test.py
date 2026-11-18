@@ -455,12 +455,13 @@ def test_a_reduction_written_straight_into_the_outer_map_exit_fuses():
     assert np.allclose(out, (a * a).sum(axis=1)), out
 
 
-def blocked_row_sums(stride: int, flag: bool = False) -> dace.SDFG:
+def blocked_row_sums(stride: int, flag: bool = False, tail: bool = False) -> dace.SDFG:
     """``out[stride*b : stride*b + 4] = (a[4b:4b+4] * a[4b:4b+4]).sum(1)`` for ``b`` in ``0:N``: gem's point blocks.
-    With ``flag``, every block also stores ``1`` into ``out[stride*N]``, past the tiles."""
-    sdfg = dace.SDFG(f"blocked_row_sums_{stride}_{flag}")
+    With ``flag``, every block also stores ``1`` into ``out[stride*N]``, past the tiles; with ``tail``, a tasklet
+    beside the block map does (gem's leftover points)."""
+    sdfg = dace.SDFG(f"blocked_row_sums_{stride}_{flag}_{tail}")
     sdfg.add_array("a", (4 * N, M), dace.float64)
-    sdfg.add_array("out", (stride * N + int(flag),), dace.float64)
+    sdfg.add_array("out", (stride * N + int(flag or tail),), dace.float64)
     sdfg.add_transient("sq", (4, M), dace.float64)
     state = sdfg.add_state()
     ome, omx = state.add_map("blocks", dict(b="0:N"))
@@ -477,6 +478,9 @@ def blocked_row_sums(stride: int, flag: bool = False) -> dace.SDFG:
         mark = state.add_tasklet("mark", {}, {"o"}, "o = 1.0")
         state.add_nedge(ome, mark, dace.Memlet())
         state.add_memlet_path(mark, omx, out, src_conn="o", memlet=dace.Memlet(f"out[{stride}*N]"))
+    if tail:
+        mark = state.add_tasklet("mark", {}, {"o"}, "o = 1.0")
+        state.add_edge(mark, "o", state.add_write("out"), None, dace.Memlet(f"out[{stride}*N]"))
     sdfg.validate()
     return sdfg
 
@@ -495,6 +499,22 @@ def test_blocks_reducing_into_their_own_tiles_initialize_once_and_collapse():
     out = np.full(4 * n, 7.0)
     sdfg(a=a.copy(), out=out, N=n, M=m)
     assert np.allclose(out, (a * a).sum(axis=1)), out
+
+
+def test_a_write_beside_the_blocks_past_their_tiles_still_initializes_once():
+    """A tasklet beside the block map stores into ``out`` past every tile: the identity over the tiles cannot
+    overwrite it, so it is still written once ahead of the blocks and the block map collapses."""
+    sdfg = blocked_row_sums(4, tail=True)
+    assert sdfg.apply_transformations_repeated(MapReduceFusion) == 1
+    assert len(list(sdfg.states())) == 2, "the identity goes into a state of its own, ahead of the blocks"
+    assert sdfg.apply_transformations_repeated(MapCollapse) == 1
+    sdfg.validate()
+
+    n, m = 3, 5
+    a = np.random.default_rng(20261118).random((4 * n, m))
+    out = np.full(4 * n + 1, 7.0)
+    sdfg(a=a.copy(), out=out, N=n, M=m)
+    assert np.allclose(out[:-1], (a * a).sum(axis=1)) and out[-1] == 1.0, out
 
 
 def test_blocks_leaving_gaps_between_their_tiles_keep_the_identity_per_block():
@@ -605,5 +625,6 @@ if __name__ == "__main__":
     test_a_second_body_tasklet_does_not_break_the_match()
     test_a_reduction_inside_an_outer_map_is_reinitialized_every_outer_iteration()
     test_a_reduction_written_straight_into_the_outer_map_exit_fuses()
+    test_a_write_beside_the_blocks_past_their_tiles_still_initializes_once()
     test_a_reduction_into_an_offset_slice_keeps_the_offset()
     test_a_map_reading_the_reduction_output_is_not_fused()
