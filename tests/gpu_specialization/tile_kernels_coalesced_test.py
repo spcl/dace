@@ -111,6 +111,28 @@ def test_a_kernel_that_is_one_tile_is_left_alone():
     assert dtypes.ScheduleType.GPU_ThreadBlock not in schedules(sdfg)
 
 
+@dace.program
+def corner_products(A: dace.float64[N, 4], B: dace.float64[N, 8], C: dace.float64[N, 4, 8]):
+    for e, m, c in dace.map[0:N, 0:4, 0:8]:
+        C[e, m, c] = A[e, m] * B[e, c]
+
+
+def test_a_three_dimensional_kernel_keeps_the_threads_its_block_gave_each_axis():
+    """The selected block is in CUDA order, so the outer axis of a 3-D map is its z: read as y, the outer axis got one
+    thread and the block 32 (lulesh's hourglass kernel, ``numElem x 4 x 8``)."""
+    sdfg = corner_products.to_sdfg(simplify=True)
+    sdfg.name = "tile_coalesced_3d"
+    offload_to_gpu(sdfg)
+    kernel = schedules(sdfg)[dtypes.ScheduleType.GPU_Device]
+    selected = dict(zip(kernel.map.params[::-1], kernel.map.gpu_block_size))
+    (_, (coalesced, outer, factor)), *_ = TileKernelsCoalesced(factor=4).apply_pass(sdfg, {}).items()
+    assert (coalesced, outer) == ("c", "e")
+    grid = schedules(sdfg)[dtypes.ScheduleType.GPU_Device]
+    bx, by, _ = grid.map.gpu_block_size
+    assert (bx, by) == (selected["c"], selected["e"]), (grid.map.gpu_block_size, selected)
+    sdfg.validate()
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("program", [scaled_rows, scaled_columns_transposed])
 def test_tiled_kernels_compute_what_numpy_does(program):
@@ -134,5 +156,6 @@ if __name__ == "__main__":
     test_the_coalesced_axis_is_the_lanes_and_the_outer_axis_the_thread_loop(scaled_columns_transposed, "i", "j")
     test_a_one_dimensional_kernel_keeps_its_selected_block()
     test_a_kernel_that_is_one_tile_is_left_alone()
+    test_a_three_dimensional_kernel_keeps_the_threads_its_block_gave_each_axis()
     test_tiled_kernels_compute_what_numpy_does(scaled_rows)
     test_tiled_kernels_compute_what_numpy_does(scaled_columns_transposed)

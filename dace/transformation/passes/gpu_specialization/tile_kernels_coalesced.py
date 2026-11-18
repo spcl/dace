@@ -14,9 +14,11 @@ instead::
 ``c`` is the coalesced axis: the parameter that indexes the unit-stride dimension of the most accesses. It becomes
 ``threadIdx.x``, so a wavefront's lanes touch adjacent elements on every step of the thread's loop. ``o`` is the
 outermost other parameter (``threadIdx.y``); each thread walks ``factor`` consecutive points of it, so the block
-reuses what neighbouring points of ``o`` read (a stencil's rows). The block keeps the domain-matched shape
-:mod:`~dace.transformation.passes.gpu_block_size_selection` chose (``x`` on ``c``, ``y`` on ``o``, ``z`` on the
-next parameter); without one it is ``block_min_lanes x block_threads / block_min_lanes``.
+reuses what neighbouring points of ``o`` read (a stencil's rows). Each parameter keeps the threads the
+domain-matched block of :mod:`~dace.transformation.passes.gpu_block_size_selection` gave it (that block is in CUDA
+order, the reversed map parameters, so ``o`` of a 3-D map is its ``z``); the block becomes ``x`` on ``c``, ``y`` on
+``o``, ``z`` on the next parameter. Without one it is ``lanes x block_threads / lanes``, ``lanes`` the
+:func:`~dace.transformation.passes.gpu_block_size_selection.coalesced_lane_floor`.
 
 Left alone: a one-parameter kernel (folding a streaming map measured no gain on MI300A, see
 :mod:`~dace.transformation.passes.gpu_specialization.grid_stride_kernels`; its block is the domain-matched line),
@@ -28,12 +30,12 @@ Re-blocking any of these after the block selection conflicts with what was sized
 from typing import Any
 
 from dace import SDFG, SDFGState, dtypes, properties, subsets, symbolic
-from dace.config import Config
 from dace.sdfg import nodes
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.tiling import MapTiling
 from dace.transformation.passes.gpu_block_size_selection import (
+    coalesced_lane_floor,
     map_is_tree_reduction,
     scope_contains_threadblock_map,
     unit_stride_counts,
@@ -100,8 +102,14 @@ class TileKernelsCoalesced(ppl.Pass):
         sequential loop of ``factor`` points of ``outer`` per thread; False, and the kernel untouched, if it is one tile."""
         # threadIdx.x is the last parameter of the thread-block map, .y the one before it.
         rest = [p for p in kernel.map.params if p not in (coalesced, outer)]
-        lanes = Config.get("compiler", "cuda", "block_min_lanes")
-        bx, by, bz = [int(b) for b in (kernel.map.gpu_block_size or [lanes, max(1, self.block_threads // lanes), 1])]
+        preset = kernel.map.gpu_block_size
+        if preset:
+            # A selected block is in CUDA order, the reversed map parameters: read each parameter's own threads
+            threads = dict(zip(kernel.map.params[::-1], (int(b) for b in preset)))
+            bx, by, bz = threads[coalesced], threads[outer], threads[rest[-1]] if rest else 1
+        else:
+            lanes = coalesced_lane_floor()
+            bx, by, bz = lanes, max(1, self.block_threads // lanes), 1
         perm = [kernel.map.params.index(p) for p in rest + [outer, coalesced]]
         factor = max(1, self.factor)
         sizes = {coalesced: bx, outer: by * factor}

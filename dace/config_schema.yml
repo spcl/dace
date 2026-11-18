@@ -939,14 +939,13 @@ required:
 
                     block_min_lanes:
                         type: int
-                        title: Fewest threads on the coalesced axis of a domain-matched block
-                        default: 64
+                        title: Raise the fewest threads on the coalesced axis of a domain-matched block
+                        default: 0
                         description: >
                             A multi-dimensional GPU kernel's domain-matched thread block (``SelectGPUDeviceBlockSize``)
-                            starts its coalesced axis (the one indexing the most accesses at unit stride) at this many
-                            threads, rounded up to a power of two, or the axis' extent if smaller. 64 is one CDNA
-                            wavefront (two NVIDIA warps); on MI300A it beat 32 and the plain 16 x 16 square on 20
-                            stencil / 2-D kernels. 1 gives the plain square / cube.
+                            starts its coalesced axis (the one indexing the most accesses at unit stride) at half a
+                            warp of the backend (16 on NVIDIA, 32 on AMD), or the axis' extent if smaller. A value
+                            above that raises the floor (rounded up to a power of two); 0 keeps half a warp.
 
                     block_size_lastdim_limit:
                         type: int

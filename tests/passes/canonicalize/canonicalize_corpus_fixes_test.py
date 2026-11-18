@@ -393,6 +393,7 @@ def test_offload_to_gpu_sets_domain_matched_block_and_finalize_generates_cuda():
     default), after which ``finalize_for_target(sdfg, 'gpu')`` generates CUDA. The device move is a
     step of its own -- finalize refuses an SDFG that has not had it. Codegen-only (no device
     needed); idempotent."""
+    from dace.codegen.common import gpu_warp_size
     from dace.sdfg import nodes
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
@@ -416,8 +417,9 @@ def test_offload_to_gpu_sets_domain_matched_block_and_finalize_generates_cuda():
         if isinstance(n, nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
     ]
     assert gpu_maps, "offload_to_gpu should move the loop nest to a GPU_Device map"
-    # Both extents are symbolic, so the domain counts as square: 256 threads, a 64-lane wavefront on the contiguous axis.
-    want = [64, 4, 1]
+    # Both extents are symbolic, so the domain counts as square: 256 threads, half a warp on the contiguous axis.
+    lanes = gpu_warp_size() // 2
+    want = [lanes, 256 // lanes, 1]
     assert any(n.map.gpu_block_size == want for n in gpu_maps), (
         f"N x N map should get a {want[0]}x{want[1]} block, got {[n.map.gpu_block_size for n in gpu_maps]}"
     )

@@ -19,9 +19,9 @@ line of a fixed thread count that the domain can fill. ``threadIdx.x`` maps to t
     * 3-D domain              -> a box of 512           (``N x N x N`` -> ``[64, 4, 2]``)
 
 The coalesced axis -- the one indexing the most accesses at unit stride, ``x`` on a tie -- starts
-at ``compiler.cuda.block_min_lanes`` threads (64: one CDNA wavefront, two NVIDIA warps), so every
-wavefront loads one contiguous run; a square or cube would split it into 16- or 8-element pieces
-(MI300A, 20 2-D / 3-D kernels: 64 lanes 1.17x the 16 x 16 square, 32 lanes 1.12x).
+at half a warp (:func:`coalesced_lane_floor`: 16 on NVIDIA, 32 on a CDNA wavefront), so a warp's
+load covers at most two contiguous runs; a square or cube would split it into 8-element pieces.
+``compiler.cuda.block_min_lanes`` raises the floor, never lowers it.
 
 The block is grown one doubling at a time, always on the axis with the most domain left to cover
 (``extent / block``), so a skewed domain gets a matching rectangle (``8 x 1024`` ->
@@ -41,7 +41,7 @@ import math
 from typing import Any
 
 from dace import SDFG, dtypes
-from dace.codegen.common import cuda_emits_tree_reductions
+from dace.codegen.common import cuda_emits_tree_reductions, gpu_warp_size
 from dace.config import Config
 from dace.optionals import required
 from dace.sdfg import nodes
@@ -56,18 +56,6 @@ THREADBLOCK_SCHEDULES = (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleTyp
 
 #: Threads per block by domain rank: a line of 256, a square of 256, a cube of 512.
 BLOCK_THREADS_BY_RANK = {1: 256, 2: 256, 3: 512}
-
-
-def warp_width() -> int:
-    """Lanes in one hardware warp: 64 on a CDNA wavefront, 32 on NVIDIA.
-
-    Asked of the backend rather than configured, the way
-    :mod:`dace.libraries.standard.nodes.reduce` asks it, so one build serves both and neither
-    inherits the other's shape.
-    """
-    from dace.codegen import common
-
-    return 64 if common.get_gpu_backend() == "hip" else 32
 
 
 #: A device map whose reduction is lowered as a block tree-reduce (a WCR map output, where the active
@@ -100,14 +88,23 @@ def next_power_of_two(value: int) -> int:
     return 1 << max(value - 1, 0).bit_length()
 
 
-def domain_matched_block(extents: list, unit_stride: list[int] | None = None) -> list[int]:
+def coalesced_lane_floor() -> int:
+    """Fewest threads on a multi-dimensional block's coalesced axis: half a warp of the backend, or
+    ``compiler.cuda.block_min_lanes`` where that is larger, rounded up to a power of two."""
+    return next_power_of_two(max(gpu_warp_size() // 2, Config.get("compiler", "cuda", "block_min_lanes")))
+
+
+def domain_matched_block(
+    extents: list, unit_stride: list[int] | None = None, min_lanes: int | None = None
+) -> list[int]:
     """A thread block (CUDA ``x, y, z`` order) shaped like ``extents`` (the same order).
 
     Starts from one thread per axis and doubles, :data:`BLOCK_THREADS_BY_RANK` threads in all, the axis
     with the most domain left per thread -- ``extent / block``, a symbolic extent counting as larger
     than any constant -- never past the axis' extent rounded up to a power of two. Ties go to the axis
     with the most unit-stride accesses (``unit_stride``, same order), then to the lower axis (``x``).
-    The axis with the most unit-stride accesses (``x`` on a tie) starts at ``compiler.cuda.block_min_lanes``.
+    The axis with the most unit-stride accesses (``x`` on a tie) starts at ``min_lanes`` threads, by default
+    :func:`coalesced_lane_floor`.
     A domain smaller than the block keeps only the threads it can use.
     """
     rank = len(extents)
@@ -121,7 +118,8 @@ def domain_matched_block(extents: list, unit_stride: list[int] | None = None) ->
     block = [1] * rank
     if rank > 1:
         lanes = max(range(rank), key=lambda axis: (unit_stride[axis], -axis))
-        block[lanes] = min(next_power_of_two(Config.get("compiler", "cuda", "block_min_lanes")), caps[lanes], threads)
+        floor = coalesced_lane_floor() if min_lanes is None else next_power_of_two(min_lanes)
+        block[lanes] = min(floor, caps[lanes], threads)
 
     def priority(axis: int) -> tuple:
         # Most domain left per thread first (a symbolic extent above every constant, and equal to the others), then
@@ -158,7 +156,9 @@ def unit_stride_counts(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry) 
     return counts
 
 
-def pick_gpu_block_size(gpu_map: nodes.Map, unit_stride: list[int] | None = None) -> list[int] | None:
+def pick_gpu_block_size(
+    gpu_map: nodes.Map, unit_stride: list[int] | None = None, min_lanes: int | None = None
+) -> list[int] | None:
     """Domain-matched ``gpu_block_size`` for a ``GPU_Device`` ``map``, in CUDA ``(x, y, z)`` order
     (:func:`domain_matched_block` of its reversed range sizes, so the last, contiguous map dimension is
     ``threadIdx.x``). ``None`` past three dimensions, which keeps the configured default."""
@@ -166,7 +166,7 @@ def pick_gpu_block_size(gpu_map: nodes.Map, unit_stride: list[int] | None = None
         return None
     # ``gpu_block_size`` is read in CUDA (x, y, z) order, which is reversed map order: codegen builds
     # ``grid_size = map.range.size()[::-1]`` and zips it with the block.
-    return domain_matched_block(gpu_map.range.size()[::-1], unit_stride)
+    return domain_matched_block(gpu_map.range.size()[::-1], unit_stride, min_lanes)
 
 
 def is_block_reduce(node) -> bool:
