@@ -103,15 +103,23 @@ def loop_bodies(code: str) -> list[str]:
     return bodies
 
 
-def index_function(code: str, array: str) -> tuple[list[str], str]:
+def index_function(code: str, array: str, symbols: set[str]) -> tuple[list[str], str]:
     """``<array>_idx``'s data dimensions and its subscript arithmetic.
 
-    Returns the ``__dN`` parameters in declaration order -- so the LAST one is the fastest-varying
-    axis -- and the expression they are combined into.
+    Returns the parameters that are not one of the SDFG's ``symbols`` (the shape symbols follow the data indices) in
+    declaration order -- so the LAST one is the fastest-varying axis -- and the expression they are combined into.
+    The renderers name the indices differently (``__d0`` in DaCe's, ``i0`` in CPF's), so they are told apart from the
+    symbols, not by spelling.
     """
     match = re.search(r"\b%s_idx\s*\(([^)]*)\)\s*\{\s*return\s+(.+?);\s*\}" % re.escape(array), code)
     assert match is not None, f"no index function emitted for {array}"
-    return re.findall(r"\b__d\d+\b", match.group(1)), match.group(2)
+    parameters = [parameter.split()[-1] for parameter in match.group(1).split(",")]
+    return [name for name in parameters if name not in symbols], match.group(2)
+
+
+def loop_variables(code: str) -> list[str]:
+    """The variable of every ``for`` loop in ``code``, in order: the last is the innermost loop's."""
+    return re.findall(r"\bfor\s*\(\s*[\w:]+\s+(\w+)\s*=", code)
 
 
 @pytest.mark.parametrize("renderer", RENDERERS)
@@ -175,7 +183,7 @@ def test_the_innermost_loop_of_a_solver_nest_indexes_with_unit_stride(renderer):
     sdfg = lu_solver_nest.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=False, validate_all=False)
     code = emitted(sdfg, renderer)
-    dimensions, expression = index_function(code, "zqlhs")
+    dimensions, expression = index_function(code, "zqlhs", {str(name) for name in sdfg.free_symbols})
     assert len(dimensions) == 3, f"zqlhs should be indexed by three axes, got {dimensions}"
     last = dimensions[-1]
     assert not re.search(r"\*\s*%s\b|\b%s\s*\*" % (last, last), expression), (
@@ -188,7 +196,7 @@ def test_the_innermost_loop_of_a_solver_nest_indexes_with_unit_stride(renderer):
     call = re.search(r"zqlhs_idx\(([^)]*)\)", innermost)
     assert call is not None, f"zqlhs is not indexed in the innermost loop body:\n{innermost}"
     axes = [argument.strip() for argument in call.group(1).split(",")][: len(dimensions)]
-    iterators = re.findall(r"\b_loop_it_\d+\b", innermost) or re.findall(r"\b_loop_it_\d+\b", code)
-    assert axes[-1] == iterators[-1], (
-        f"the innermost loop variable {iterators[-1]} is not on the last axis: zqlhs_idx({call.group(1)})"
+    innermost_variable = loop_variables(code)[-1]
+    assert axes[-1] == innermost_variable, (
+        f"the innermost loop variable {innermost_variable} is not on the last axis: zqlhs_idx({call.group(1)})"
     )

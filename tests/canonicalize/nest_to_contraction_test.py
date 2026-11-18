@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.codegen import common
 from dace.libraries.blas import nodes as blas
 from dace.libraries.linalg.nodes.tensordot import TensorDot
 from dace.sdfg.state import LoopRegion
@@ -265,7 +266,7 @@ def test_non_accumulating_loop_whose_variable_is_not_in_the_output_is_not_lifted
 
 @pytest.mark.gpu
 def test_gpu_map_of_gemms_becomes_a_vendor_tensor_contraction():
-    vendor = "hipTENSOR" if dace.Config.get("compiler", "cuda", "backend") == "hip" else "cuTENSOR"
+    vendor = "hipTENSOR" if common.get_gpu_backend() == "hip" else "cuTENSOR"
 
     @dace.program
     def n2c_gpu_map_gemm(A: dace.float32[NB, N, K], B: dace.float32[K, M], C: dace.float32[NB, N, M]):

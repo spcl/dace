@@ -2,6 +2,7 @@
 """``compiler.cpu.heap_allocator``: CPU heap arrays from mimalloc, or from aligned ``operator new``."""
 
 import ctypes.util
+import os
 import subprocess
 import sys
 
@@ -29,7 +30,12 @@ def heap_transient_sdfg(name: str) -> dace.SDFG:
 
 
 def linked_libraries(compiled) -> str:
-    return subprocess.run(["ldd", compiled.filename], capture_output=True, text=True, check=True).stdout
+    """The libraries the program loads, its own dependencies only: a launcher's ``LD_PRELOAD`` (the judge containers
+    preload mimalloc) would list in every program."""
+    environment = {name: value for name, value in os.environ.items() if name != "LD_PRELOAD"}
+    return subprocess.run(
+        ["ldd", compiled.filename], capture_output=True, text=True, check=True, env=environment
+    ).stdout
 
 
 @pytest.mark.skipif(MiMalloc.library_path() is None, reason="mimalloc is not installed")
@@ -71,13 +77,6 @@ def test_the_system_allocator_links_no_mimalloc():
     np.testing.assert_allclose(B, (A + 1.0) * 2.0)
 
 
-if __name__ == "__main__":
-    if MiMalloc.library_path() is not None:
-        test_heap_arrays_come_from_mimalloc()
-        test_a_mimalloc_program_binds_operator_delete_to_libstdcxx_not_mimalloc()
-    test_the_system_allocator_links_no_mimalloc()
-
-
 def test_a_runtime_only_mimalloc_is_linked_by_its_file_name(monkeypatch):
     """A runtime-only install has ``libmimalloc.so.3`` but no ``libmimalloc.so``: ``-lmimalloc`` failed to link
     every program (``cannot find -lmimalloc``) once ``auto`` had found the library."""
@@ -86,3 +85,12 @@ def test_a_runtime_only_mimalloc_is_linked_by_its_file_name(monkeypatch):
 
     runtime = [CXX_RUNTIME] if sys.platform.startswith("linux") else []
     assert MiMalloc.cmake_libraries() == [*runtime, "-l:libmimalloc.so.3"]
+
+
+if __name__ == "__main__":
+    if MiMalloc.library_path() is not None:
+        test_heap_arrays_come_from_mimalloc()
+        test_a_mimalloc_program_binds_operator_delete_to_libstdcxx_not_mimalloc()
+    test_the_system_allocator_links_no_mimalloc()
+    with pytest.MonkeyPatch.context() as patch:
+        test_a_runtime_only_mimalloc_is_linked_by_its_file_name(patch)
