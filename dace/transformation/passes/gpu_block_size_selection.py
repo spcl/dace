@@ -15,8 +15,8 @@ line of a fixed thread count that the domain can fill. ``threadIdx.x`` maps to t
 ``gpu_block_size`` is stored in CUDA ``(x, y, z)`` order, i.e. reversed map-parameter order.
 
     * 1-D domain              -> a line of 256          (``[256, 1, 1]``)
-    * 2-D domain              -> a rectangle of 256     (``N x N`` -> ``[64, 4, 1]``)
-    * 3-D domain              -> a box of 512           (``N x N x N`` -> ``[64, 4, 2]``)
+    * 2-D domain              -> a rectangle of 256     (``N x N`` -> ``[32, 8, 1]`` on AMD, ``[16, 16, 1]`` on NVIDIA)
+    * 3-D domain              -> a box of 512           (``N x N x N`` -> ``[32, 4, 4]`` on AMD, ``[16, 8, 4]`` on NVIDIA)
 
 The coalesced axis -- the one indexing the most accesses at unit stride, ``x`` on a tie -- starts
 at half a warp (:func:`coalesced_lane_floor`: 16 on NVIDIA, 32 on a CDNA wavefront), so a warp's

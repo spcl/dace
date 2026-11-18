@@ -810,8 +810,8 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False, tile_programs: bool = Fal
        ``simplify`` is run here (the canonicalized SDFG is already simplified; ``apply_gpu_storage`` +
        ``apply_gpu_transformations`` are the only offload steps needed).
     3. **Block size** (:func:`select_gpu_device_block_size`): pick a thread-block matching the
-       iteration domain (``N x N`` -> ``16x16`` / ``32x16``; 1-D -> the ``128,1,1`` default, and a
-       tree-reduction map a deep ``512,1,1``) on every ``GPU_Device`` map, run AFTER offload so
+       iteration domain (a line of 256, a rectangle of 256, a box of 512, the coalesced axis at least half a
+       warp wide; a tree-reduction map a deep ``512,1,1``) on every ``GPU_Device`` map, run AFTER offload so
        each kernel map's final dimensionality is known.
 
     Streams: the canonicalized SDFG is offloaded onto the **single default stream**

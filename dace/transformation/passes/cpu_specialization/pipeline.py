@@ -39,7 +39,10 @@ Order within the stage, and why:
 1. The fork/join thresholds are read from the config as they stand: the schema defaults unless pinned.
    :class:`~dace.transformation.passes.cpu_specialization.calibrate_thresholds.CalibrateCpuThresholds`
    derives them from the host when called explicitly; running it here would change the process-wide
-   config for every SDFG compiled after the first.
+   config for every SDFG compiled after the first. Then map-invariant guards are hoisted
+   (:func:`~dace.transformation.interstate.move_map_invariant_if_up.hoist_invariant_guards`) and
+   :class:`~dace.transformation.passes.cpu_specialization.split_invariant_map_nests.SplitInvariantMapNests` splits
+   off an outer map with enough trips to feed the team alone.
 2. :class:`~dace.transformation.passes.cpu_specialization.chunk_anti_dependence.ChunkAntiDependence`
    -- trades the device-neutral anti-dependence snapshot for per-chunk seam buffers;
    sequential-within-chunk is a CPU scheduling decision (the matcher refuses GPU maps). Before the

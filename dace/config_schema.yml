@@ -159,8 +159,8 @@ required:
                             Points of an outer axis each thread of a multi-dimensional GPU kernel computes,
                             under an explicit thread block whose lanes walk the coalesced axis
                             (``TileKernelsCoalesced``); one-dimensional, warp-tiled and tree-reduction kernels
-                            keep their selected block. 1 disables. MI300A, 20 2-D / 3-D LLR kernels at M with 64-lane
-                            blocks: 4 is 1.05x geomean over 1 (stencils up to 1.25x).
+                            keep their selected block. 1 disables. Measured on MI300A, 20 2-D / 3-D LLR kernels at M
+                            (then with 64-lane blocks): 4 is 1.05x geomean over 1 (stencils up to 1.25x).
     compiler:
         type: dict
         title: Compiler
