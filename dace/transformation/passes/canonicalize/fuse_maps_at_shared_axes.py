@@ -10,12 +10,13 @@ Mirrored, ``for i: T[i] = f(i)`` followed by ``for i, k: g(T[i], k)`` splits the
 
 from typing import Any
 
-from dace import SDFG, SDFGState, properties, subsets
+from dace import SDFG, SDFGState, properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import forget_all_facts
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.map_expansion import MapExpansion
+from dace.transformation.dataflow.map_fusion_helper import index_pairs
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.passes import analysis as ap
 
@@ -41,37 +42,6 @@ def shared_axes(producer: nodes.Map, consumer: nodes.Map, pairs: dict[str, str] 
             return None
         chosen[cparam] = match
     return [chosen[c] for c in consumer.params]
-
-
-def bare_indices(edges: list, name: str, params: list[str]) -> dict[int, str]:
-    """Dimension -> parameter, for each dimension of ``name`` every one of ``edges`` indexes by that parameter alone."""
-    agreed: dict[int, str] | None = None
-    for edge in edges:
-        if edge.data.data != name or not isinstance(edge.data.subset, subsets.Range):
-            return {}
-        found = {
-            dim: str(begin)
-            for dim, (begin, end, _) in enumerate(edge.data.subset.ranges)
-            if begin == end and str(begin) in params
-        }
-        agreed = found if agreed is None else {d: p for d, p in agreed.items() if found.get(d) == p}
-    return agreed or {}
-
-
-def index_pairs(state: SDFGState, producer: nodes.MapEntry, write: Any, read: Any) -> dict[str, str]:
-    """Producer parameter -> consumer parameter, per dimension of the intermediate ``producer`` writes through
-    ``write`` (its exit -> the node) and the consumer reads through ``read`` (the node -> its entry) by one
-    parameter alone."""
-    if write.src_conn is None or not write.src_conn.startswith("OUT_") or read.dst_conn is None:
-        return {}
-    if not read.dst_conn.startswith("IN_"):
-        return {}
-    name = write.dst.data
-    inner_writes = list(state.in_edges_by_connector(write.src, "IN_" + write.src_conn[4:]))
-    inner_reads = list(state.out_edges_by_connector(read.dst, "OUT_" + read.dst_conn[3:]))
-    writes = bare_indices(inner_writes, name, producer.map.params)
-    reads = bare_indices(inner_reads, name, read.dst.map.params)
-    return {writes[d]: reads[d] for d in sorted(writes.keys() & reads.keys())}
 
 
 def reorder(entry: nodes.MapEntry, params: list[str]) -> None:
@@ -101,7 +71,7 @@ def candidates(state: SDFGState) -> list[tuple[nodes.MapEntry, nodes.AccessNode,
                     continue
                 if len(oe.dst.map.params) == len(producer.map.params):
                     continue
-                pairs = index_pairs(state, producer, ie, oe)
+                pairs = index_pairs(state, ie, oe)
                 axes = shared_axes(producer.map, oe.dst.map, {c: p for p, c in pairs.items()})
                 if axes is not None:
                     found.append((producer, node, oe.dst, axes, False))

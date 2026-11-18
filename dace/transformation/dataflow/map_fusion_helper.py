@@ -19,6 +19,7 @@ from dace.transformation import helpers
 def find_parameter_remapping(
     first_map: nodes.Map,
     second_map: nodes.Map,
+    preferred: dict[str, str] | None = None,
 ) -> dict[str, str] | None:
     """Computes the parameter remapping for the parameters of the _second_ map.
 
@@ -34,8 +35,10 @@ def find_parameter_remapping(
 
     :param first_map: The first map (these parameters will be replaced).
     :param second_map: The second map, these parameters acts as source.
+    :param preferred: Pairs (second parameter -> first parameter) taken before any other where their ranges agree,
+        e.g. the ones :func:`intermediate_index_pairs` reads off the data both Maps access.
 
-    :note: This function currently fails if the renaming is not unique. Consider the
+    :note: Without ``preferred`` this function currently fails if the renaming is not unique. Consider the
         case were the first map has the structure `for i, j in map[0:20, 0:20]` and it
         writes `T[i, j]`, while the second map is equivalent to
         `for l, k in map[0:20, 0:20]` which reads `T[l, k]`. For this case we have
@@ -84,12 +87,25 @@ def find_parameter_remapping(
     #  is needed then the parameter is not present in the mapping.
     final_mapping: dict[str, str] = {}
 
+    # Renaming between equal ranges never changes the iteration space, so a pair the caller knows is just as valid.
+    preferred_mapping: dict[str, str] = {}
+    for second_param, first_param in (preferred or {}).items():
+        if (
+            second_param in unmapped_second_params
+            and first_param in unused_first_params
+            and first_rngs[first_param] == second_rngs[second_param]
+        ):
+            unmapped_second_params.remove(second_param)
+            unused_first_params.remove(first_param)
+            if second_param != first_param:
+                preferred_mapping[second_param] = first_param
+
     # First we identify the parameters that already have the correct name.
     for param in set(first_params).intersection(second_params):
         first_rng = first_rngs[param]
         second_rng = second_rngs[param]
 
-        if first_rng == second_rng:
+        if first_rng == second_rng and param in unmapped_second_params and param in unused_first_params:
             # They have the same name and the same range, this is already a match.
             #  Because the names are already the same, we do not have to enter them
             #  in the `final_mapping`
@@ -98,7 +114,7 @@ def find_parameter_remapping(
 
     # Check if no remapping is needed.
     if len(unmapped_second_params) == 0:
-        return {}
+        return preferred_mapping
 
     # Now we go through all the parameters that we have not mapped yet.
     #  All of them will result in a remapping.
@@ -119,7 +135,7 @@ def find_parameter_remapping(
 
     assert len(unused_first_params) == 0
     assert len(final_mapping) == len(unmapped_second_params)
-    return final_mapping
+    return {**preferred_mapping, **final_mapping}
 
 
 def rename_map_parameters(
@@ -127,6 +143,7 @@ def rename_map_parameters(
     second_map: nodes.Map,
     second_map_entry: nodes.MapEntry,
     state: dace.SDFGState,
+    preferred: dict[str, str] | None = None,
 ) -> None:
     """Replaces the map parameters of the second map with names from the first.
 
@@ -138,11 +155,13 @@ def rename_map_parameters(
     :param second_map: The second map, this map will be replaced.
     :param second_map_entry: The entry node of the second map.
     :param state: The SDFGState on which we operate.
+    :param preferred: Passed on to `find_parameter_remapping()`, as the caller's `can_be_applied()` did.
     """
     # Compute the replacement dict.
     repl_dict: dict[str, str] = find_parameter_remapping(  # type: ignore[assignment]  # Guaranteed to be not `None`.
         first_map=first_map,
         second_map=second_map,
+        preferred=preferred,
     )
 
     if repl_dict is None:
@@ -166,6 +185,53 @@ def rename_map_parameters(
     #  parameter of the map, so we will do it the hard way.
     second_map.params = copy.deepcopy(first_map.params)
     second_map.range = copy.deepcopy(first_map.range)
+
+
+def bare_indices(edges: list, name: str, params: list[str]) -> dict[int, str]:
+    """Dimension -> parameter, for each dimension of ``name`` every one of ``edges`` indexes by that parameter alone."""
+    agreed: dict[int, str] | None = None
+    for edge in edges:
+        if edge.data.data != name or not isinstance(edge.data.subset, subsets.Range):
+            return {}
+        found = {
+            dim: str(begin)
+            for dim, (begin, end, _) in enumerate(edge.data.subset.ranges)
+            if begin == end and str(begin) in params
+        }
+        agreed = found if agreed is None else {d: p for d, p in agreed.items() if found.get(d) == p}
+    return agreed or {}
+
+
+def index_pairs(
+    state: dace.SDFGState, write: graph.MultiConnectorEdge, read: graph.MultiConnectorEdge
+) -> dict[str, str]:
+    """Producer parameter -> consumer parameter, per dimension of the intermediate a Map writes through ``write`` (its
+    exit -> the node) and another Map reads through ``read`` (the node -> its entry) by one parameter alone."""
+    if write.src_conn is None or not write.src_conn.startswith("OUT_") or read.dst_conn is None:
+        return {}
+    if not read.dst_conn.startswith("IN_"):
+        return {}
+    name = write.dst.data
+    inner_writes = list(state.in_edges_by_connector(write.src, "IN_" + write.src_conn[4:]))
+    inner_reads = list(state.out_edges_by_connector(read.dst, "OUT_" + read.dst_conn[3:]))
+    writes = bare_indices(inner_writes, name, write.src.map.params)
+    reads = bare_indices(inner_reads, name, read.dst.map.params)
+    return {writes[d]: reads[d] for d in sorted(writes.keys() & reads.keys())}
+
+
+def intermediate_index_pairs(
+    state: dace.SDFGState,
+    first_map_exit: nodes.MapExit,
+    intermediate: nodes.AccessNode,
+    second_map_entry: nodes.MapEntry,
+) -> dict[str, str]:
+    """Second Map parameter -> first Map parameter, per dimension of ``intermediate`` the first Map writes and the second
+    reads by one parameter alone: the pairing under which ``T[i, j]`` written and ``T[j, i]`` read is one element."""
+    write = next((e for e in state.in_edges(intermediate) if e.src is first_map_exit and not e.data.is_empty()), None)
+    read = next((e for e in state.out_edges(intermediate) if e.dst is second_map_entry and not e.data.is_empty()), None)
+    if write is None or read is None:
+        return {}
+    return {consumer: producer for producer, consumer in index_pairs(state, write, read).items()}
 
 
 def rename_capturing_inner_params(state: dace.SDFGState, map_entry: nodes.MapEntry, names: set[str]) -> None:
@@ -1210,6 +1276,7 @@ def can_topologically_be_fused(
     only_inner_maps: bool = False,
     only_toplevel_maps: bool = False,
     scope: dict[nodes.Node, nodes.Node | None] | None = None,
+    preferred: dict[str, str] | None = None,
 ) -> dict[str, str] | None:
     """Performs basic checks if the maps can be fused.
 
@@ -1231,6 +1298,7 @@ def can_topologically_be_fused(
     :param scope: The caller's own `graph.scope_dict()`, to save recomputing it. Sound because the
         caller takes it inside the same match probe and the graph is not mutated in between; pass
         `None` to have it read here.
+    :param preferred: Parameter pairs tried first, see `find_parameter_remapping()`.
 
     :note: It is invalid to call this function after nodes have been removed from the SDFG.
     :note: `only_inner_maps` and `only_toplevel_maps` are mutually exclusive; the transformations
@@ -1246,7 +1314,9 @@ def can_topologically_be_fused(
     #  of candidate pairs, and everything below it has to walk the state.
     #  We check here if we can rename the Map parameter of the second Map such that they
     #  match the one of the first Map.
-    param_repl = find_parameter_remapping(first_map=first_map_entry.map, second_map=second_map_entry.map)
+    param_repl = find_parameter_remapping(
+        first_map=first_map_entry.map, second_map=second_map_entry.map, preferred=preferred
+    )
     if param_repl is None:
         return None
 

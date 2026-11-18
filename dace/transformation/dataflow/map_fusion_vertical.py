@@ -421,6 +421,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             only_inner_maps=self.only_inner_maps,
             only_toplevel_maps=self.only_toplevel_maps,
             scope=scope,
+            # Two axes over one range are told apart by how both Maps index the intermediate (`T[j, i]` of `T[i, j]`)
+            preferred=mfhelper.intermediate_index_pairs(graph, first_map_exit, self.array, second_map_entry),
         )
         if param_repl is None:
             return False
@@ -647,6 +649,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         second_map_exit: nodes.MapExit = graph.exit_node(self.second_map_entry)
         first_map_entry: nodes.MapEntry = graph.entry_node(self.first_map_exit)
+        # The pairing `can_be_applied()` judged, read off the graph it saw
+        preferred = mfhelper.intermediate_index_pairs(graph, first_map_exit, self.array, second_map_entry)
 
         # The rewrite below offsets subsets all the way down the two memlet trees, see
         #  [issue 1708](https://github.com/spcl/dace/issues/1703); a probe only initializes the scope boundary.
@@ -663,6 +667,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             second_map=second_map_entry.map,
             second_map_entry=second_map_entry,
             state=graph,
+            preferred=preferred,
         )
 
         # Now compute the partition. Because we have already renamed the parameters

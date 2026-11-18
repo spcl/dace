@@ -27,6 +27,7 @@ of the refused cases.
 
 | Pass | Refusal | Where | Required? | Status |
 |---|---|---|---|---|
+| MapFusionVertical | parameters paired by name, then by order: with two axes over one range, `T[i, j]` written and `T[j, i]` read were paired as two elements | `map_fusion_helper.py:19` | no | **fixed** (second review, below) |
 | MapFusionVertical | different schedules | `dataflow/map_fusion_helper.py:1242` | no, but schedules are unset in canon | by design |
 | MapFusionVertical | ranges not structurally equal (no offset, no symbol relation) | `map_fusion_helper.py:92`, `:112`; prefilter `passes/fuse_maps.py:95` | conservative | by design: origins are normalized upstream (`NormalizeLoopAndMapOrigin`), steps by `align_maps_to_unit_step`. Symbols compare by name (`symbolic.py:390`), so a dtype or assumption difference no longer splits a range |
 | MapFusionVertical | maps in different scopes | `map_fusion_helper.py:1256` | yes for this rewrite | by design |
@@ -38,7 +39,7 @@ of the refused cases.
 | MapFusionVertical | conditional (dynamic) producer, unless reader runs under an equal guard (`guarded_alike`, `:2899`) | `map_fusion_vertical.py:1045` | no when fused in place (`in_place_intermediates`, `:2343`: a skipped element keeps its value) | by design: a performance guard (commit `6003805d8`, warpx 37 -> 1603 nested SDFGs) |
 | MapFusionVertical | two producers of the intermediate may overlap | `map_fusion_vertical.py:1108` | yes | by design |
 | MapFusionVertical | consumer read not covered by exactly one producer of the same iteration: gathers `t[idx[i]]` of the intermediate, data-dependent subsets, reads of another iteration | `map_fusion_vertical.py:1178` | yes (in place: unless no other iteration writes it) | by design |
-| MapFusionVertical | intermediate read again downstream (strict dataflow, reduced) | `map_fusion_vertical.py:1236` | no | canon runs `relaxed_dataflow=True` |
+| MapFusionVertical | shared intermediate read again downstream (strict dataflow, reduced) | `map_fusion_vertical.py:1240` | yes as implemented | by design. `relaxed_dataflow` does NOT lift it: it did until `71d0085fe`, which restored the refusal for a privatized (reduced) copy after fuzz seed 1093 read it stale. Only an in-place intermediate skips it |
 | MapFusionVertical | nested SDFG reads the intermediate through an InOut connector, or its strides cannot be rewritten | `map_fusion_vertical.py:2781`, `:2746` | conservative | by design |
 | OTFMapFusion | producer with more than one output | `dataflow/otf_map_fusion.py:69` | conservative (multiple outputs) | by design |
 | OTFMapFusion | intermediate written by a second node / producer not its only writer | `otf_map_fusion.py:71`, `:116` | yes (masked writes after the producer) | by design |
@@ -116,3 +117,56 @@ order choice.
   already removes them, so the CPU gain is small. The GPU gain is larger.
 - **Dynamic producer fused in place (`map_fusion_vertical.py:1045`).** Correct as is. Leave it, because the refusal
   guards the 1603-nested-SDFG regression.
+
+## Second review (2026-11-18)
+
+Static, like the first: nothing compiled or run. Each "required" verdict above was re-derived from the code. One was
+wrong: the downstream-access refusal is not lifted by `relaxed_dataflow` (row corrected).
+
+### Change made: parameter pairing read off the intermediate
+
+`find_parameter_remapping` (`map_fusion_helper.py:19`) pairs the second Map's parameters with the first's by name,
+then by position among equal ranges. Its own docstring names the failure: with two axes over one range there are two
+valid renamings and only one fuses. The shape is a square intermediate read transposed: `T[i, j] = f` over
+`0:N, 0:N`, then `B[i, j] = T[j, i]` over the same range. Name matching keeps `i -> i`, the consumer then reads the
+element another iteration writes, and the fusion is refused. The frontend names every elementwise map `__i0, __i1`, so
+the name step fires exactly in the common case. A non-square transpose fused already, because there the ranges tell
+the axes apart (`fusion_rename` in `map_fusion_vertical_test.py`).
+
+Now `MapFusionVertical` passes `preferred` pairs, read by `intermediate_index_pairs` (`map_fusion_helper.py:222`). A
+dimension of the intermediate that every producer write indexes by one parameter alone and every consumer read
+indexes by one parameter alone pairs those two parameters. The pair is taken first when the two ranges are equal.
+`can_be_applied` and `apply` compute it from the same unchanged graph (`map_fusion_vertical.py:425`, `:653`).
+`bare_indices` and `index_pairs` moved from `fuse_maps_at_shared_axes.py` into the helper, so both passes share one
+definition.
+
+Soundness: any renaming between equal ranges is an alpha-renaming of the second Map over the same iteration set, so
+the preference only chooses which valid renaming the unchanged legality checks judge. It also cannot lose a fusion
+the old pairing found. For a dimension that both sides index by single parameters, coverage holds only when the
+renamed consumer index equals the producer index, which is the preferred pair. Unequal ranges drop the preference.
+
+Counterexample checked: `B[i, j] = T[i, j] - T[j, i]`. The two reads disagree per dimension, so `bare_indices` gives no
+pair, the old pairing runs, and `T[j, i]` stays uncovered: refused, correctly. Test:
+`tests/transformations/map_fusion_index_pairing_test.py` (not run). Corpus: the frontend's 2-D `.T` is a `Transpose`
+library node that canon keeps, so the shape shows up where a lifted loop nest or an explicit map indexes `[j, i]` over
+a square extent (`qe_cegterg` `_conj_transpose`, `C[i, j] = conj(A[j, i])`, square when `n == m`; the TSVC `LEN_2D`
+kernels). No kernel was confirmed to hit it, because no canonical graph was built.
+
+### Proposals (not implemented)
+
+- **Range spelling.** `iteration_space` (`passes/fuse_maps.py:94`) and `find_parameter_remapping` compare range
+  tuples with structural `==`. Symbols are their names, so dtype and assumption duplicates no longer split a range.
+  `int_floor(x, 2)` from a parsed string and `floor(x/2)` from Python's `//` in a shape still compare unequal.
+  `symbolic.comparable` relaxes both to one head. Applying it per map in the prefilter and on the remapping's
+  mismatch path is sound, since the fused Map keeps the first Map's range. It is not done: no corpus kernel was shown
+  to reach fusion with both spellings, and the mismatch path is the hot one.
+- **Equal-rank partial sharing in `FuseMapsAtSharedAxes`.** `candidates` (`fuse_maps_at_shared_axes.py:72`) skips a
+  pair with equal axis counts. A producer over `(i, k)` and a consumer over `(i, j)` that reads `T[i, 0:K]` share only
+  `i`, and fusing them needs both maps split. That is the inner-axis split question again, so it waits for the same
+  ruling.
+
+### Refusals re-confirmed required
+
+Producer overlap (`:1108`), WCR producer, dynamic map ranges that bind different values, gathers `T[idx[i]]` of the
+intermediate (no producer iteration covers a data-dependent read), and reads of another iteration (stencils
+`T[i + 1]`). The guarded-producer refusal (`:1045`) and the conditional-arm producer are out of scope by user decision.
