@@ -559,6 +559,25 @@ def nodes_between(state: SDFGState, subgraph_nodes: Iterable[nodes.Node]) -> lis
     return [node for node in state.nodes() if node in between]
 
 
+def split_shared_access_nodes(state: SDFGState, members: Collection[nodes.Node]) -> None:
+    """Give each top-level access node of ``members`` that feeds a code node outside them an outside twin of its
+    container, which takes those edges and is fed from it: the nest then writes the container through its output into
+    the parent, which keeps it (fuse_diamond: a map outside reads the node between two nested maps; the container
+    moved into the nest, and the map outside read data the parent no longer had)."""
+    member_set = set(members)
+    for node in [n for n in members if isinstance(n, nodes.AccessNode) and state.entry_node(n) is None]:
+        leaving = [
+            e for e in state.out_edges(node) if e.dst not in member_set and not isinstance(e.dst, nodes.AccessNode)
+        ]
+        if not leaving:
+            continue
+        twin = state.add_access(node.data)
+        state.add_edge(node, None, twin, None, Memlet.from_array(node.data, state.sdfg.arrays[node.data]))
+        for e in leaving:
+            state.add_edge(twin, e.src_conn, e.dst, e.dst_conn, e.data)
+            state.remove_edge(e)
+
+
 def nest_state_subgraph(
     sdfg: SDFG,
     state: SDFGState,
@@ -592,6 +611,7 @@ def nest_state_subgraph(
         between = nodes_between(state, subgraph.nodes())
         if between:
             subgraph = SubgraphView(state, [*subgraph.nodes(), *between])
+        split_shared_access_nodes(state, subgraph.nodes())
 
     # Find the top-level scope
     scope_tree = state.scope_tree()

@@ -342,3 +342,35 @@ def test_a_nest_of_a_partial_write_claims_it_as_dynamic():
 
     (written,) = [e.data for e in state.out_edges(nested)]
     assert (written.data, written.dynamic) == ("B", True)
+
+
+@dace.program
+def diamond(a: dace.float64[N], u: dace.float64[N], v: dace.float64[N]):
+    t = np.empty_like(a)
+    for i in dace.map[0:N]:
+        t[i] = a[i] + 1.0
+    for i in dace.map[0:N]:
+        u[i] = t[i] * 2.0
+    for i in dace.map[0:N]:
+        v[i] = t[i] * 3.0
+
+
+def test_a_transient_a_map_outside_the_nest_reads_stays_in_the_parent():
+    """fuse_diamond: the nest takes the map writing ``t``, the node ``t`` and one map reading it; a map outside reads
+    the same node. ``t`` is the nest's output and stays a container of the parent (it moved inside and the outside
+    map read data the parent no longer had)."""
+    sdfg = diamond.to_sdfg(simplify=True)
+    (state,) = sdfg.states()
+    first, second, _ = sorted((n for n in state.nodes() if isinstance(n, MapEntry)), key=lambda e: e.map.label)
+    (t,) = [n for n in state.data_nodes() if n.data == "t"]
+    members = [first, *state.all_nodes_between(first, state.exit_node(first)), state.exit_node(first), t, second]
+    members += [*state.all_nodes_between(second, state.exit_node(second)), state.exit_node(second)]
+    members += [n for n in state.data_nodes() if n.data == "u"]
+
+    nested = nest_state_subgraph(sdfg, state, SubgraphView(state, members))
+
+    sdfg.validate()
+    assert "t" in sdfg.arrays and any(e.data.data == "t" for e in state.out_edges(nested))
+    a, u, v = np.random.rand(16), np.zeros(16), np.zeros(16)
+    sdfg(a=a, u=u, v=v, N=16)
+    assert np.allclose(u, (a + 1.0) * 2.0) and np.allclose(v, (a + 1.0) * 3.0)
