@@ -2161,8 +2161,9 @@ class LoopLift:
     last_refusal: LoopRefusal | None = None
     #: Whether a Z3 query proved a pair in the last probe (the canonicalization statistics' level 3).
     used_solver: bool = False
-    #: Leave a loop whose iteration range spans only SMALL symbols (e.g. ``range(n1 + n2)``) sequential.
-    keep_small_loops_sequential: bool = True
+    #: Leave a loop whose iteration range spans only SMALL symbols (e.g. ``range(n1 + n2)``) sequential. Off: whether
+    #: a small parallel loop gets threads is the specializations' decision, not the canonical form's.
+    keep_small_loops_sequential: bool = False
     #: Propagate each memlet routed through the new map; unset by a caller that propagates the lifted state after.
     propagate_edges: bool = True
     #: The map entry and state of the last rewrite.
@@ -3507,7 +3508,7 @@ class LoopToMap(LoopLift, xf.MultiStateTransformation):
 
     keep_small_loops_sequential = properties.Property(
         dtype=bool,
-        default=True,
+        default=False,
         desc="Leave a loop whose iteration range spans only SMALL symbols (e.g. ``range(n1 + n2)``) sequential",
     )
 

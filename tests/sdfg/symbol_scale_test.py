@@ -71,10 +71,10 @@ def loop_over(extent: str) -> tuple[dace.SDFG, dace.sdfg.state.LoopRegion]:
     return sdfg, loop
 
 
-def test_loop_over_small_symbols_stays_sequential():
+def test_loop_over_small_symbols_maps_unless_asked_to_stay_sequential():
     sdfg, loop = loop_over("n1 + n2")
-    assert not LoopToMap.can_be_applied_to(sdfg, loop=loop)
-    assert LoopToMap.can_be_applied_to(sdfg, options={"keep_small_loops_sequential": False}, loop=loop)
+    assert LoopToMap.can_be_applied_to(sdfg, loop=loop)
+    assert not LoopToMap.can_be_applied_to(sdfg, options={"keep_small_loops_sequential": True}, loop=loop)
 
 
 def test_loop_over_a_default_symbol_becomes_a_map():

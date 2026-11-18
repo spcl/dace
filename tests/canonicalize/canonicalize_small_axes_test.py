@@ -1,10 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Parallelization never puts a SMALL axis on a parallel map.
+"""Canonicalization maps a loop over a SMALL axis it proves independent; specialization decides it gets no threads.
 
 ``nblks`` is declared ``SMALL`` (a handful of blocks, much smaller than ``nproma``). Every path that turns a loop into
-a map -- the ``ParallelizeLoops`` sweep, a lift a caller has proven independent, the sibling-chain hold that waits for
-``WavefrontSkew``, the skew itself and the whole canonicalization pipeline -- leaves a loop over ``nblks`` sequential
-and still parallelizes the ``nproma`` loops.
+a map -- the ``ParallelizeLoops`` sweep, a lift a caller has proven independent, the sibling chain and the whole
+canonicalization pipeline -- maps the ``nblks`` loops like the ``nproma`` ones; the CPU specialization then never
+shares out ``nblks`` alone. The wavefront skew still refuses a SMALL front.
 """
 
 import numpy as np
@@ -67,21 +67,21 @@ def run_blocked(sdfg: dace.SDFG, shape: tuple[int, int], reference) -> None:
     assert np.allclose(B, reference(A))
 
 
-def test_parallelize_loops_keeps_the_block_loop_sequential():
+def test_parallelize_loops_maps_the_block_loop():
     sdfg = blocked_axpy.to_sdfg(simplify=True)
     assert ParallelizeLoops().apply_pass(sdfg, {})
     sdfg.validate()
-    assert small_map_params(sdfg) == []
+    assert small_map_params(sdfg), "the independent nblks loop is a map"
     assert any("nproma" in str(entry.map.range) for entry, _ in maps(sdfg))
-    assert [str(loop.loop_condition.as_string) for loop in loops(sdfg) if "nblks" in loop.loop_condition.as_string]
+    assert not loops(sdfg)
     run_blocked(sdfg, (NBLKS, NPROMA), lambda A: 2.0 * A + 1.0)
 
 
-def test_parallelize_loops_keeps_an_inner_block_loop_sequential():
+def test_parallelize_loops_maps_an_inner_block_loop():
     sdfg = blocked_columns.to_sdfg(simplify=True)
     assert ParallelizeLoops().apply_pass(sdfg, {})
     sdfg.validate()
-    assert small_map_params(sdfg) == []
+    assert small_map_params(sdfg), "the independent nblks loop is a map"
     assert any("nproma" in str(entry.map.range) for entry, _ in maps(sdfg))
     run_blocked(sdfg, (NPROMA, NBLKS), lambda A: A - 3.0 * A[:, :1])
 
@@ -99,12 +99,12 @@ def scaled_loop(extent: str) -> tuple[dace.SDFG, LoopRegion]:
     return sdfg, loop
 
 
-def test_a_proven_lift_keeps_a_small_loop_sequential():
-    """A caller's independence proof replaces the dependence test, not the scale rule."""
+def test_a_proven_lift_maps_a_small_loop():
+    """A caller's independence proof lifts a SMALL loop like any other."""
     sdfg, loop = scaled_loop("nblks")
-    assert not ParallelizeLoops().parallelize_loop(sdfg, loop, proven=True)
-    assert loops(sdfg) == [loop]
-    assert maps(sdfg) == []
+    assert ParallelizeLoops().parallelize_loop(sdfg, loop, proven=True)
+    assert loops(sdfg) == []
+    assert [entry.map.params for entry, _ in maps(sdfg)] == [["i"]]
 
 
 def test_a_proven_lift_of_a_large_loop_still_lifts():
@@ -132,12 +132,10 @@ def sibling_chain_reference(A: np.ndarray) -> np.ndarray:
 
 
 def test_a_small_sibling_does_not_hold_back_its_large_doall_sibling():
-    """Both siblings are DOALL: the chain is no wavefront. The SMALL sibling stays a loop for its scale only, so it
-    must not count as the refused sibling that holds the chain back for ``WavefrontSkew``."""
+    """Both siblings are DOALL: the chain is no wavefront, and neither sibling holds it back for ``WavefrontSkew``."""
     sdfg = sibling_chain_with_a_block_prefix.to_sdfg(simplify=True)
     ParallelizeLoops(hold_sibling_chains=True).apply_pass(sdfg, {})
     sdfg.validate()
-    assert small_map_params(sdfg) == []
     ranges = [str(entry.map.range) for entry, _ in maps(sdfg)]
     assert any("nblks" in r and "nproma" in r for r in ranges), ranges
     A = np.random.default_rng(3).random((NPROMA, NPROMA))
@@ -184,14 +182,14 @@ def blocked_two_stage_reference(A: np.ndarray) -> np.ndarray:
     return B
 
 
-def test_canonicalize_never_maps_a_block_axis():
+def test_canonicalize_maps_a_block_axis_it_proves_independent():
     for program, shape, reference in (
         (blocked_axpy, (NBLKS, NPROMA), lambda A: 2.0 * A + 1.0),
         (blocked_columns, (NPROMA, NBLKS), lambda A: A - 3.0 * A[:, :1]),
         (blocked_two_stage, (NBLKS, NPROMA), blocked_two_stage_reference),
     ):
         sdfg = canonicalize(program.to_sdfg(simplify=True), validate=True)
-        assert small_map_params(sdfg) == [], program.name
+        assert small_map_params(sdfg), program.name
         assert any("nproma" in str(entry.map.range) for entry, _ in maps(sdfg)), program.name
         run_blocked(sdfg, shape, reference)
 
@@ -220,11 +218,11 @@ def test_the_cpu_target_never_shares_out_a_block_axis():
 
 
 if __name__ == "__main__":
-    test_parallelize_loops_keeps_the_block_loop_sequential()
-    test_parallelize_loops_keeps_an_inner_block_loop_sequential()
-    test_a_proven_lift_keeps_a_small_loop_sequential()
+    test_parallelize_loops_maps_the_block_loop()
+    test_parallelize_loops_maps_an_inner_block_loop()
+    test_a_proven_lift_maps_a_small_loop()
     test_a_proven_lift_of_a_large_loop_still_lifts()
     test_a_small_sibling_does_not_hold_back_its_large_doall_sibling()
     test_wavefront_skew_refuses_a_nest_with_a_small_axis()
-    test_canonicalize_never_maps_a_block_axis()
+    test_canonicalize_maps_a_block_axis_it_proves_independent()
     test_the_cpu_target_never_shares_out_a_block_axis()
