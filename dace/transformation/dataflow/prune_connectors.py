@@ -148,9 +148,17 @@ class PruneConnectors(pm.SingleStateTransformation):
         if scope is not None and nsdfg_state.in_degree(nsdfg) == 0:
             nsdfg_state.add_nedge(scope, nsdfg, Memlet())
 
+        # Read before the pruning: an access node it leaves without input breaks the scope dictionary
+        exit_node = nsdfg_state.exit_node(scope) if scope is not None else None
+        written: list[nodes.AccessNode] = []
         for conn in prune_out:
             for e in nsdfg_state.out_edges_by_connector(nsdfg, conn):
+                if isinstance(e.dst, nodes.AccessNode):
+                    written.append(e.dst)
                 nsdfg_state.remove_memlet_path(e, remove_orphans=True)
+        if scope is not None:
+            for node in written:
+                self._settle_unwritten_node(nsdfg_state, node, scope, exit_node)
 
         for conn in prune_in:
             if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
@@ -160,6 +168,31 @@ class PruneConnectors(pm.SingleStateTransformation):
             if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
                 # If the data is now unused, we can purge it from the SDFG
                 nsdfg.sdfg.remove_data(conn)
+
+    @staticmethod
+    def _settle_unwritten_node(
+        state: SDFGState, node: nodes.AccessNode, scope: nodes.EntryNode, exit_node: nodes.ExitNode
+    ) -> None:
+        """Keep ``node``, an access node inside ``scope`` that a pruned output wrote, inside its scope.
+
+        The body never wrote the pruned output, so the node holds the container's current value. If the node only
+        wrote that value back through the scope's exit, the write-back changes nothing and goes with the node.
+        Otherwise the scope still reads the node, which an empty memlet from ``scope`` keeps inside the scope.
+
+        :param state: The state holding the nested SDFG.
+        :param node: An access node the pruned output fed.
+        :param scope: The entry of the scope around the nested SDFG.
+        :param exit_node: The exit of ``scope``.
+        """
+        if node not in state.nodes() or state.in_degree(node) > 0:
+            return
+        if all(e.dst is exit_node for e in state.out_edges(node)):
+            for e in list(state.out_edges(node)):
+                state.remove_memlet_path(e, remove_orphans=True)
+            if node in state.nodes() and state.degree(node) == 0:
+                state.remove_node(node)
+        else:
+            state.add_nedge(scope, node, Memlet())
 
 
 class PruneSymbols(pm.SingleStateTransformation):

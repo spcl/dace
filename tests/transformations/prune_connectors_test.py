@@ -663,6 +663,71 @@ def test_prune_connectors_drops_input_the_body_only_writes():
     assert np.array_equal(np_a, np_b)
 
 
+def _map_with_unwritten_output_through_access_node(read_after: bool) -> tuple[dace.SDFG, dace.SDFGState]:
+    """``map i: body -> b_local -> exit -> B``, where ``body`` declares ``out`` but never writes it."""
+    inner = dace.SDFG("prune_unwritten_via_node_inner")
+    inner.add_array("inp", [4], dace.float64)
+    inner.add_array("res", [4], dace.float64)
+    inner.add_array("out", [4], dace.float64)
+    inner.add_symbol("i", dace.int64)
+    body = inner.add_state()
+    copy_tasklet = body.add_tasklet("copy", {"x"}, {"y"}, "y = x")
+    body.add_edge(body.add_read("inp"), None, copy_tasklet, "x", dace.Memlet("inp[i]"))
+    body.add_edge(copy_tasklet, "y", body.add_write("res"), None, dace.Memlet("res[i]"))
+
+    sdfg = dace.SDFG("prune_unwritten_via_node")
+    for name in ("A", "B", "C", "D"):
+        sdfg.add_array(name, [4], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("m", dict(i="0:4"))
+    nsdfg = state.add_nested_sdfg(inner, {"inp": None}, {"res": None, "out": None}, symbol_mapping={"i": "i"})
+    state.add_memlet_path(state.add_read("A"), entry, nsdfg, dst_conn="inp", memlet=dace.Memlet("A[0:4]"))
+    state.add_memlet_path(nsdfg, exit_node, state.add_write("C"), src_conn="res", memlet=dace.Memlet("C[0:4]"))
+    local = state.add_access("B")
+    state.add_edge(nsdfg, "out", local, None, dace.Memlet("B[0:4]"))
+    state.add_memlet_path(local, exit_node, state.add_write("B"), memlet=dace.Memlet("B[i]"))
+    if read_after:
+        t = state.add_tasklet("use", {"v"}, {"w"}, "w = v")
+        state.add_edge(local, None, t, "v", dace.Memlet("B[i]"))
+        state.add_memlet_path(t, exit_node, state.add_write("D"), src_conn="w", memlet=dace.Memlet("D[i]"))
+    sdfg.validate()
+    return sdfg, state
+
+
+def test_pruning_an_output_drops_its_write_back_through_an_access_node():
+    """The pruned output fed an access node inside the map that only wrote back through the exit: that node and its
+    write-back go, instead of staying as an input-less node inside the scope (``scope_dict`` raised)."""
+    sdfg, state = _map_with_unwritten_output_through_access_node(read_after=False)
+    assert sdfg.apply_transformations(PruneConnectors) == 1
+    state.scope_dict()
+    sdfg.validate()
+    assert not any(isinstance(n, dace.nodes.AccessNode) and n.data == "B" for n in state.nodes())
+    A = np.arange(4, dtype=np.float64)
+    B = np.full(4, 7.0)
+    C = np.zeros(4)
+    D = np.zeros(4)
+    sdfg(A=A, B=B, C=C, D=D)
+    assert np.array_equal(C, A) and np.array_equal(B, np.full(4, 7.0))
+
+
+def test_pruning_an_output_keeps_an_access_node_the_body_reads():
+    """An access node the map body still reads after the pruned output reads the container's current value: it stays,
+    tied to the map entry, so it remains inside the scope."""
+    sdfg, state = _map_with_unwritten_output_through_access_node(read_after=True)
+    assert sdfg.apply_transformations(PruneConnectors) == 1
+    sd = state.scope_dict()
+    entry = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry))
+    local = next(n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == "B" and sd[n] is not None)
+    assert sd[local] is entry
+    sdfg.validate()
+    A = np.arange(4, dtype=np.float64)
+    B = np.full(4, 7.0)
+    C = np.zeros(4)
+    D = np.zeros(4)
+    sdfg(A=A, B=B, C=C, D=D)
+    assert np.array_equal(C, A) and np.array_equal(D, np.full(4, 7.0))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--N", default=64)
@@ -683,3 +748,5 @@ if __name__ == "__main__":
     test_prune_connectors_keeps_tasklet_code_reference()
     test_prune_connectors_drops_input_the_body_only_writes()
     test_pruning_the_only_input_keeps_the_body_in_its_map()
+    test_pruning_an_output_drops_its_write_back_through_an_access_node()
+    test_pruning_an_output_keeps_an_access_node_the_body_reads()
