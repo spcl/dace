@@ -85,16 +85,20 @@ and `pluto` on CPU, and of `triton` and `ppcg_hip` on GPU (`baselines-rev-1117a2
 
 ## CPU
 
+No CPU code was generated for these kernels (the codegen job was cancelled), so every entry below comes from the
+numpy sources, the pass code and the GPU code of the same canonical form (gem, trs4, cp2k_grid_integrate). Nothing
+here is confirmed against generated CPU code or re-measured.
+
 | kernel | canon / best | canon ms | best ms | status |
 |---|---|---|---|---|
 | cp2k_density_matrix_trs4 | 4.17x | 17.2 | 4.12 numba | by design |
 | cp2k_grid_integrate | 1.98x | 322.4 | 162.9 numba | by design (see GPU) |
 | jacobi_2d | 1.84x | 755.0 | 411.2 pluto | by design |
-| warpx_field_gather | 1.84x | 229.7 | 125.1 numba | hypothesis, fusion |
-| gem | 1.31x | 223.0 | 169.8 numba | under investigation |
-| ls3df_kleinman_bylander_nonlocal | 1.26x | 1107.0 | 875.5 cc_autopar | under investigation |
+| warpx_field_gather | 1.84x | 229.7 | 125.1 numba | hypothesis, fusion; needs the CPU code |
+| gem | 1.31x | 223.0 | 169.8 numba | proposed (`MarkSIMDMaps`) |
+| ls3df_kleinman_bylander_nonlocal | 1.26x | 1107.0 | 875.5 cc_autopar | open; same OpenBLAS as the baseline |
 | tsvc_2_s115 | 1.77x | 45.7 | 25.8 pluto | by design |
-| tsvc_2_vag | 1.45x | 29.0 | 20.1 numba | hypothesis, fusion |
+| tsvc_2_vag | 1.45x | 29.0 | 20.1 numba | hypothesis; needs the CPU code |
 | wf_triangular | 1.40x | 55.0 | 39.2 pluto | by design |
 | tsvc_2_s275 | 1.29x | 42.5 | 32.9 numba | accepted |
 | tsvc_2_s233 | 1.23x | 26.2 | 21.3 pluto | by design |
@@ -104,24 +108,66 @@ and `pluto` on CPU, and of `triton` and `ppcg_hip` on GPU (`baselines-rev-1117a2
   cp2k_grid_integrate, cp2k_density_matrix_trs4, ls3df_rayleigh_ritz_rotation, ls3df_scf, qe_cegterg, minife, nbody,
   qe_vexx_k, lulesh, seissol_tensor_contraction, quatrex_rgf. Two thread pools then compete for the cores; the CPU
   numbers of these kernels are suspect until a run with one runtime confirms them.
-- **cp2k_density_matrix_trs4.** Each block multiply is 8 to 10 maps. The index setup on the loop-invariant
-  `col_idx` is fused into the compute maps and redone every multiply, and each multiply copies `sink` in and out.
-  Loop-invariant code motion hoists whole states and top-level tasklets, not an invariant map inside a mixed state.
-  Canon does not hoist invariant maps out of loops; the agent does.
-- **jacobi_2d, tsvc_2_s115, wf_triangular, tsvc_2_s233.** Pluto tiles across time steps or blocks the triangular
-  solve. Canon never tiles across time steps. s115 runs one team with about 22.8k barriers at about 2 us each (about
-  45 ms, the measured 45.7 ms); closing it needs a blocked solve or doacross. wf_triangular is already tiled 64 x 64
-  by the wavefront skew; the rest is the tile interior and size.
-- **warpx_field_gather, tsvc_2_vag (hypothesis).** The per-particle index and weight planes of warpx, and a gather
-  buffer plus copy in vag, may stay materialized where numba runs one fused loop. If the code confirms it, the fix
-  belongs in the producing fusion pass.
-- **gem (under investigation).** The inner 3-element `d * d` reduction gets its own `omp simd` loop and `exp` is not
-  vectorized. With `omp simd` and math flags that allow a vector `exp` (libmvec) the atom loop should vectorize; the
-  blocker is being traced in the generated code and compile flags.
-- **ls3df_kleinman_bylander_nonlocal (under investigation).** Three GEMMs through OpenBLAS; the gap is expected to
-  be the BLAS library or its threading against the baseline's, being checked.
+- **gem (proposed).** The kernel is a points x atoms sum of `charge * exp(-kappa r) / (diel r)`; numba runs it as one
+  scalar loop per point. Canon shares out blocks x points and walks atoms in an inner sequential map
+  (`DecideCpuParallelAxes`, reducing-map rule), and the 3-element `d * d` sum is a map of its own inside it (the
+  GPU code of the same form shows it: `for __i2 < 3` with `#pragma omp simd reduction`). `MarkSIMDMaps` marks only a
+  leaf map: `map_body_is_leaf` (`mark_simd_maps.py:44`) refuses a body holding any map, so the 3-trip map takes the
+  `simd reduction` clause and the atom loop takes none. Without the clause gcc cannot vectorize the floating-point
+  sum over atoms (the flags carry `-fno-math-errno` and the libmvec declarations, but `-fassociative-math` is off,
+  `hpcagent_bench/flags.py:133`), so `exp` stays a scalar libm call; the clause on a 3-trip loop also makes gcc
+  vectorize that loop instead of unrolling it. Proposal: in `MarkSIMDMaps`, a nested map whose ranges are all
+  constant and small (`symbolic.is_small_extent`) counts as straight-line code of its parent, takes no clause of its
+  own, and is left to the compiler to unroll. The atom map is then a leaf that accumulates into one `phi` element,
+  takes `simd reduction(+:...)` (`reduces_into_fixed_elements`), and gcc vectorizes `exp` through libmvec. The one
+  check to add: the inner accumulator must be declared inside the atom loop body, private to each lane. Expected:
+  from 223 ms to below numba's 170 ms, since numba runs this loop scalar. Not implemented: it changes which loops
+  every CPU kernel vectorizes, and could not be compiled or timed here.
+- **ls3df_kleinman_bylander_nonlocal (open).** Three GEMMs. The baseline uses the same library: the numpy-to-C
+  emitter writes `cblas_dgemm` (`translators/numpyto_c/emit.py:1520`) and links `blas`, which resolves to the same
+  spack OpenBLAS (`languages.py:2011`, `envs/toolset.yaml:90`). `cc` (1507.6 ms) runs one thread and `cc_autopar`
+  (875.5 ms) the team (`flags.py:127`). So the gap is neither the vendor nor the 2-runtime issue; ls3df is not among the 11
+  flagged runs. What remains is in the canonical form around the calls: whether `beta.T @ psi` keeps the transpose
+  as a BLAS flag (`transposes_as_blas_flags`) or makes a copy of `beta` (843000 x 815, 5.5 GB), and whether `hpsi`
+  is written in place or through a temporary and a copy. This needs the generated code.
+- **warpx_field_gather, tsvc_2_vag (hypothesis).** The per-particle index and weight planes of warpx (`_tap3`'s
+  `ix_b/iy_b/iz_b` int64 planes, the `sx_*` shape-factor arrays and `np.where` selections), and the vag gather, may
+  stay materialized where numba runs one fused loop. No code exists to confirm either; no fix is made blind.
 - **tsvc_2_s275 (accepted).** If-conversion turns every skipped column into an unconditional read, select and write,
   about twice the traffic on half the columns, in exchange for a vectorized loop. Accepted as the default.
+
+Entries for the evaluation (canon leaves these gaps to the agent by design):
+
+- **cp2k_density_matrix_trs4: 4.17x, 17.2 ms against numba's 4.12 ms.** Root cause: every block multiply is 8 to 10
+  maps (GPU form: prod init, `row_of`/`row_cols`, the product with `c_pos`, the `sink` fill, the prefix memset, the
+  scatter add, the prefix, the filter). Index setup on the loop-invariant `col_idx` is fused into the compute maps
+  and redone every multiply, and `sink` is copied in and out each time. That is about 10 to 20 regions or barriers
+  per TRS4 step against numba's 5. Why canon leaves it: loop-invariant code motion hoists whole states and top-level
+  tasklets only (`loop_invariant_code_motion.py:239-321`, `:143-176`). Hoisting an invariant map out of a fused state
+  would unfuse it, and the source rebuilds the pattern inside its multiply. An agent would compute the CSR
+  pattern (`c_pos`, `valid`) once outside the TRS4 loop, write the product into `c_blocks` without `sink`, and fuse
+  the block product, scatter and filter into one per-row loop, as numba does.
+- **jacobi_2d: 1.84x, 755 ms against Pluto's 411 ms.** Root cause: one team around the time loop
+  (`HoistParallelRegion`) with two `omp for` sweeps and their barriers per step; each sweep streams `A` and `B`
+  once. `StripMineInterchange` refuses because the stencil reads distance 1 in both axes. Why canon leaves it: canon
+  never tiles across time steps. An agent would time-tile (diamond or skewed tiles) as Pluto does, which needs a tile
+  size.
+- **tsvc_2_s115: 1.77x, 45.7 ms against Pluto's 25.8 ms.** Root cause: a triangular solve; the `i` sweep is
+  parallel under the carried `j` loop, so the hoisted team pays one barrier per `j` trip: about 22.8k barriers at
+  about 2 us is the measured 45.7 ms. `StripMineInterchange` refuses because `a[j]` is read by every tile and written
+  by one. Why canon leaves it: removing the barriers needs a blocked solve, with a block size, or a doacross. An agent
+  would block `j`: solve the diagonal block, then update the rest of `a` with one parallel matrix-vector product per
+  block.
+- **wf_triangular: 1.40x, 55.0 ms against Pluto's 39.2 ms.** Root cause: the wavefront skew already tiles the nest
+  64 x 64 (`parallelization/wavefront/skew.py:73`), with a sequential tile diagonal and about 2N/64 barriers. The
+  rest is the tile interior, a row recurrence that does not vectorize, and the tile size. Why canon leaves it: tile
+  size and interior schedule are tuning. An agent would tune the tile and vectorize the interior across the tile's
+  anti-diagonal.
+- **tsvc_2_s233: 1.23x, 26.2 ms against Pluto's 21.3 ms.** Expected root cause (from the passes): the two `j` recurrences of each
+  `i` become two nests: the `aa` column recurrence, strip-mined into `i` tiles, and the `bb` row recurrence, parallel over `j` with
+  `i` inside. Each is one sweep with its own barrier, so the residual is cache reuse between the two sweeps over `cc`.
+  Why canon leaves it: fusing the two nests back needs the tile shape Pluto picks. An agent would tile `(i, j)` and
+  run both recurrences per tile.
 
 ## Tuning-style settings in the pipeline
 
