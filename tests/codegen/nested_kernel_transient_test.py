@@ -7,6 +7,13 @@ import pytest
 import dace
 
 
+def make_gpu_a_persistent(sdfg: dace.SDFG) -> None:
+    """Make the device copy of ``A`` persistent; the experimental codegen lifts it out of the kernel under a
+    name that merely contains ``gpu_A``."""
+    arrays = sdfg.cfg_list[-1].arrays
+    arrays[next(name for name in arrays if "gpu_A" in name)].lifetime = dace.AllocationLifetime.Persistent
+
+
 def _test_kernel_transient(persistent: bool):
 
     @dace.program
@@ -28,7 +35,7 @@ def _test_kernel_transient(persistent: bool):
     state.add_edge(n, "A", w, None, dace.Memlet("A"))
 
     if persistent:
-        sdfg.arrays["gpu_A"].lifetime = dace.AllocationLifetime.Persistent
+        make_gpu_a_persistent(sdfg)
 
     a = np.random.rand(128, 64)
     expected = np.copy(a)
@@ -55,7 +62,7 @@ def _test_transient(persistent: bool):
     sdfg.apply_gpu_transformations()
 
     if persistent:
-        sdfg.cfg_list[-1].arrays["gpu_A"].lifetime = dace.AllocationLifetime.Persistent
+        make_gpu_a_persistent(sdfg)
 
     a = np.random.rand(128, 64)
     expected = np.copy(a)
@@ -93,7 +100,7 @@ def _test_double_transient(persistent: bool):
     sdfg.apply_gpu_transformations()
 
     if persistent:
-        sdfg.cfg_list[-1].arrays["gpu_A"].lifetime = dace.AllocationLifetime.Persistent
+        make_gpu_a_persistent(sdfg)
 
     a = np.random.rand(128, 64)
     expected = np.copy(a)
