@@ -54,6 +54,7 @@ def test_a_loop_left_sequential_names_its_proof():
     stats = {}
     canonicalize(carried_window.to_sdfg(simplify=True), stats=stats)
     assert [loop["outcome"] for loop in stats["remaining"]] == ["sequential_witness"], stats
+    assert stats["classes"]["sequential"] == 1, stats
     assert stats["z3_seconds"] > 0, stats
 
 
@@ -62,6 +63,7 @@ def test_a_skewed_nest_is_level_two_and_times_isl():
     canonicalize(wavefront.to_sdfg(simplify=True), stats=stats)
     assert stats["outcomes"]["level2"] >= 1, stats
     assert {loop["outcome"] for loop in stats["remaining"]} == {"wavefront"}, stats
+    assert stats["classes"]["wavefront"] >= 1, stats
     assert stats["isl_seconds"] > 0, stats
 
 

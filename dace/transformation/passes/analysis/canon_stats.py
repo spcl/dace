@@ -19,8 +19,45 @@ import time
 from collections import Counter
 from typing import Any
 
-#: Stage units whose disappearing loops are guarded loops: a parallel version behind a runtime check.
-GUARDED = frozenset({"ScatterToGuardedMaps", "ParallelizeUnderConstraint"})
+#: Stage units whose disappearing loops are guarded loops: a parallel version behind a runtime check, or one whose
+#: premise is trapped at entry.
+GUARDED = frozenset({"ScatterToGuardedMaps", "ParallelizeUnderConstraint", "SegmentConfinedLoops"})
+
+#: The detailed outcome of a loop -> its outcome in the paper's vocabulary (parallel, reduction, guarded, wavefront,
+#: sequential, unknown). Lifted and restructured loops leave before derivation and have none; a guarded fallback is
+#: part of its guarded loop.
+OUTCOME_CLASS = {
+    "level1": "parallel",
+    "level3": "parallel",
+    "parallel_unlifted": "parallel",
+    "level2": "wavefront",
+    "wavefront": "wavefront",
+    "guarded": "guarded",
+    "sequential_witness": "sequential",
+    "sequential_pattern": "sequential",
+    "unknown": "unknown",
+    "never_examined": "unknown",
+    "early_exit": "unknown",
+    "pinned": "unknown",
+    "small": "unknown",
+}
+
+
+def is_guarded_arm(loop: Any) -> bool:
+    """Whether ``loop`` is the parallel arm of a versioned loop: a branch of a conditional whose other branch holds
+    the pinned sequential fallback (any versioning pass, ``BreakAntiDependence``'s offset sign included)."""
+    from dace.sdfg.state import ConditionalBlock, LoopRegion
+
+    branch = loop.parent_graph
+    conditional = branch.parent_graph
+    if not isinstance(conditional, ConditionalBlock):
+        return False
+    return any(
+        isinstance(node, LoopRegion) and node.pinned_sequential
+        for _, other in conditional.branches
+        if other is not branch
+        for node in other.nodes()
+    )
 
 
 def of(anchor: Any) -> "CanonStats | None":
@@ -59,7 +96,7 @@ def lifted(loop: Any, used_solver: bool) -> None:
         unit = stats.stage[1]
         if unit == "WavefrontSkew":
             level = "level2"
-        elif unit in GUARDED:
+        elif unit in GUARDED or is_guarded_arm(loop):
             level = "guarded"
         else:
             level = "level3" if used_solver else "level1"
@@ -177,6 +214,10 @@ class CanonStats:
     def as_dict(self) -> dict[str, Any]:
         outcomes = Counter(outcome for *_, outcome in self.settled)
         outcomes.update(outcome for _, outcome in self.remaining)
+        classes = Counter()
+        for outcome, count in outcomes.items():
+            if outcome in OUTCOME_CLASS:
+                classes[OUTCOME_CLASS[outcome]] += count
         return {
             "kernel": self.kernel,
             "seconds": round(self.seconds["total"], 6),
@@ -184,6 +225,7 @@ class CanonStats:
             "isl_seconds": round(self.seconds["isl"], 6),
             "loops_in": self.loops_in,
             "outcomes": dict(sorted(outcomes.items())),
+            "classes": dict(sorted(classes.items())),
             "settled": [
                 {"stage": stage, "unit": unit, "loop": loop, "outcome": outcome}
                 for stage, unit, loop, outcome in self.settled
