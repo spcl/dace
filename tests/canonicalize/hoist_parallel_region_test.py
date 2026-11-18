@@ -1563,3 +1563,21 @@ if __name__ == "__main__":
     test_a_loop_nested_inside_another_region_is_hoisted_in_its_own_graph()
     test_strip_mine_declines_an_extent_the_loop_assigns()
     test_the_outlined_loop_maps_only_the_symbols_it_reads()
+
+
+def test_a_row_sized_by_a_name_that_is_no_symbol_of_the_region_leaves_the_team_at_its_default_size():
+    """The team size is written where the region opens, so every name in it must be a symbol there. A row sized by a
+    name that is a container at that level (qe_cegterg's ``nvecx``, a one-element array whose value a nested body
+    reads as a symbol) would hand ``num_threads`` a pointer: the team keeps its default size instead."""
+    sdfg = loop_over_map_sdfg("sized_by_a_container")
+    sdfg.add_array("nlen", [1], dace.int64)
+    body = next(s for s in sdfg.states() if s.label == "body")
+    entry = next(n for n in body.nodes() if isinstance(n, nd.MapEntry))
+    entry.map.range = dace.subsets.Range.from_string("0:nlen")
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    (team,) = [
+        n
+        for n, unused_parent in sdfg.all_nodes_recursive()
+        if isinstance(n, nd.MapEntry) and n.map.schedule == dtypes.ScheduleType.CPU_Persistent
+    ]
+    assert team.map.omp_team_work == 0
