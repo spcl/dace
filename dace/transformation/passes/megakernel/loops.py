@@ -173,25 +173,36 @@ class MegakernelLoops(ppl.Pass):
         return fused or None
 
     def fuse_named(self, sdfg: SDFG, target) -> int | None:
-        """Fuses the run of blocks :attr:`blocks` names, or nothing when they are not consecutive blocks of one chain.
-        Gathering inlines, wraps and renames blocks, so a block is found by the guids of the named blocks and of the
-        kernels inside them, which survive."""
+        """Fuses the run of blocks :attr:`blocks` names, or nothing. Blocks of one region must follow one another
+        there; that is decided before gathering, which changes the SDFG, and their run moves into a region of its own,
+        so gathering fuses its states only with each other. Blocks of different regions (a schedule may nest each
+        loop on its own) are decided after gathering: they must lie in one chain whose run from the first to the last holds
+        every named kernel and no other. Gathering inlines, wraps and renames blocks, so they are found by guid."""
         named = [b for b in sdfg.all_control_flow_blocks(recursive=True) if b.label in self.blocks]
-        if {b.label for b in named} != self.blocks or not consecutive(named):
-            return None  # decided before gathering, which changes the SDFG
-        # The run gets a region of its own, so gathering fuses its states only with each other
-        marks = guids_in(wrapped(named))
+        if {b.label for b in named} != self.blocks:
+            return None
+        kernels = {n.guid for b in named for n, holder in b.all_nodes_recursive() if isinstance(n, nodes.MapEntry)}
+        marks = {b.guid for b in named} | kernels
+        region = named[0].parent_graph
+        if all(b.parent_graph is region for b in named):
+            if not consecutive(named):
+                return None
+            marks |= guids_in(wrapped(named))
         GatherKernelStates(self.device).apply_pass(sdfg, {})
         for chain in find_chains(sdfg, sdfg, target):
             held = [i for i, block in enumerate(chain.blocks) if marks & guids_in(block)]
             if not held:
                 continue
-            if held != list(range(held[0], held[-1] + 1)):
+            run = chain.blocks[held[0] : held[-1] + 1]
+            found = {k.guid for block in run for k in kernels_in(block, target)}
+            # blocks between the named ones may only be host glue (inlining leaves empty states): no kernel
+            if not kernels <= marks_of(run) or found - kernels:
                 return None
-            run = [chain.blocks[i] for i in held]
-            kernels = [k for block in run for k in kernels_in(block, target)]
             fused = self.fuse(
-                sdfg, MegakernelChain(chain.region, run, kernels), target, f"{chain.region.sdfg.name}_run_megakernel"
+                sdfg,
+                MegakernelChain(chain.region, run, [k for b in run for k in kernels_in(b, target)]),
+                target,
+                f"{chain.region.sdfg.name}_run_megakernel",
             )
             return fused or None
         return None
@@ -246,10 +257,15 @@ def consecutive(blocks: list[ControlFlowBlock]) -> bool:
     if any(b.parent_graph is not region for b in blocks):
         return False
     order = linear_chain(region)
-    if order is None:
+    if order is None or any(b not in order for b in blocks):
         return len(blocks) == 1
     held = sorted(order.index(b) for b in blocks)
     return held == list(range(held[0], held[0] + len(blocks)))
+
+
+def marks_of(run: list[ControlFlowBlock]) -> set[str]:
+    """The guids of every block and kernel map entry in ``run``."""
+    return set().union(*(guids_in(block) for block in run))
 
 
 def guids_in(block: ControlFlowBlock) -> set[str]:
