@@ -12,6 +12,7 @@ import dace
 from dace import cpf_lowering
 from dace.codegen.cpf import CONTRACT_LINES, EntrySignature, Rendering, compact_blocks, render
 from dace.sdfg.state import LoopRegion
+from dace.transformation.passes.canonicalize.annotate_loop_kinds import PARALLEL
 from tests.codegen.cpf.conftest import assert_matches, assert_standalone, build_standalone, call_standalone
 
 M = dace.symbol("M")
@@ -54,11 +55,13 @@ def test_a_loop_comment_is_its_class_and_reason_and_the_header_says_what_the_cla
     name = f"cpf_compact_classes_{'cpp' if language == 'c++' else 'c'}"
     result = rendered(cpf_compact_scatter, name, language)
     comments = comment_lines(result.code)
-    assert "// parallel -- the iterations are independent" in comments, comments
-    assert any(re.match(r"// unknown -- .*\bb\b", line) for line in comments), comments
+    assert f"// {PARALLEL}" in comments, comments
+    assert any(re.match(r"// unknown -- .*\bb\b.*; parallel if ", line) for line in comments), comments
+    # What each class means is said once, in the header, and never under a loop
     body = result.code.split(CONTRACT_LINES[-1], 1)[1]
+    assert all(line not in body for line in CONTRACT_LINES)
     for sentence in (cpf_lowering.SETTLED_PARALLEL, cpf_lowering.OPEN_UNKNOWN):
-        assert result.code.count(sentence) == 1 and sentence not in body, sentence
+        assert sentence not in result.code, sentence
     run_scatter(result, name, language)
 
 

@@ -131,23 +131,25 @@ def remaining_outcome(loop: Any) -> str:
     if note and ("wavefront" in note[0]) and note[0].startswith("sequential"):
         return "wavefront"
     hint = kinds.loop_hint(loop).splitlines()[0]
-    if hint.startswith("sequential -- carried"):
+    if hint.startswith(kinds.PROVEN_PREFIX):
         return "sequential_witness" if kinds.witnessed_carrying_access(loop) is not None else "sequential_pattern"
     # The fallback arm of a specialization: pinned, and an arm of the conditional the guard is.
     if loop.pinned_sequential and isinstance(loop.parent_graph.parent_graph, ConditionalBlock):
         return "guarded_fallback"
-    if kinds.NEVER_EXAMINED in hint:
+    refusal = kinds.refusal_reason(loop)
+    if isinstance(refusal, str):
         return "never_examined"
     # Decided, not open: a pass keeps the order on purpose, a canon rule keeps a small loop, an exit needs the order
     if loop.pinned_sequential:
         return "pinned"
-    if "spans SMALL symbols" in hint:
+    kind = None if refusal is None else refusal.kind
+    if kind is loop_to_map.Refusal.SMALL:
         return "small"
-    if "loop body contains a" in hint and "StructureView" not in hint:
+    if kind is loop_to_map.Refusal.UNSUPPORTED_BODY and "StructureView" not in refusal.message:
         return "early_exit"
-    if hint.startswith("unknown"):
-        refusal = kinds.refusal_reason(loop)
-        return "small" if getattr(refusal, "kind", None) is loop_to_map.Refusal.SMALL else "unknown"
+    # An ordered side effect stays counted with the open loops, as before its hint named the order
+    if hint.startswith("unknown") or kind is loop_to_map.Refusal.ORDERED_SIDE_EFFECT:
+        return "unknown"
     return "parallel_unlifted"
 
 

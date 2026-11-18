@@ -2257,9 +2257,8 @@ class CPUCodeGen(TargetCodeGenerator):
             )
         hint = (
             (
-                f"// conflicting accumulation on {target} -- NOT parallel-reduced: the writers can collide, so "
-                "this serializes.\n"
-                "// Reducing it into a tree is an optimization the canonicalization did not find.\n"
+                f"// atomic update: iterations may add to the same {target}, so the update is atomic. "
+                "Faster: per-thread copies combined after the loop.\n"
             )
             if cpf_lowering.hint_detail() is cpf_lowering.HintDetail.PROOFS
             else ""

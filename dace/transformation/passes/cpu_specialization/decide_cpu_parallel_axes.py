@@ -68,12 +68,12 @@ SEQUENTIAL_UNDER_A_MAP = (dtypes.ScheduleType.Default, dtypes.ScheduleType.Seque
 
 #: The line a map made sequential here adds under its ``parallel`` class line, so the rendered loop -- which loses
 #: its pragma -- says why. Each rule fills in its own reason.
-SEQUENTIAL_ON_CPU = "sequential on CPU -- {reason}"
-NESTED_REASON = "inside a parallel map"
-SMALL_REASON = "{count} small iterations"
-ONE_TRIP_REASON = "at most one trip"
-FEW_TRIPS_REASON = "{count} trips; the body maps share the team"
-DATA_SEGMENT_REASON = "data-dependent range {begin}:{end} under a sequential loop"
+SEQUENTIAL_ON_CPU = "no pragma on CPU (running it in parallel is legal): {reason}"
+NESTED_REASON = "it is inside a parallel loop"
+SMALL_REASON = "only {count} iterations"
+ONE_TRIP_REASON = "at most one iteration"
+FEW_TRIPS_REASON = "only {count} iterations; the parallel loops inside it use the threads"
+DATA_SEGMENT_REASON = "its range {begin}:{end} is read from data inside a sequential loop"
 
 
 def pinned_inner_trips(entry: nodes.MapEntry, children: dict[Any, list[nodes.Node]]) -> Any:

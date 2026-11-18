@@ -188,7 +188,8 @@ class HintDetail(enum.Enum):
 
     #: The whole hint: the class, the reason, the proof or its witness, the advice.
     PROOFS = "proofs"
-    #: The class alone, one word: ``par``, ``seq`` or ``unknown``. Nothing else is written as a comment.
+    #: The class: ``parallel`` (``parallel reduction``, ``parallel scan``), or ``sequential`` or ``unknown`` with its
+    #: reason. Nothing else is written as a comment.
     KINDS = "kinds"
     #: No hint at all: the code of :attr:`PROOFS`, without its loop comments (the comments-ablation variant).
     NONE = "none"
@@ -196,14 +197,15 @@ class HintDetail(enum.Enum):
 
 #: A hint's class prefix (``annotate_loop_kinds.CLASS_PREFIXES``) -> the one word :attr:`HintDetail.KINDS` writes.
 KIND_WORDS: tuple[tuple[str, str], ...] = (
-    ("parallel -- ", "par"),
-    ("sequential -- ", "seq"),
+    ("parallel -- reduction", "parallel reduction"),
+    ("parallel -- scan", "parallel scan"),
+    ("parallel -- ", "parallel"),
+    ("sequential -- ", "sequential"),
     ("unknown -- ", "unknown"),
 )
 
-#: What a settled ``parallel`` loop and an open ``unknown`` loop ask of the reader. Said once, in the rendering's
-#: header (``cpf.CONTRACT_LINES``); a hint stored before the loop templates dropped them still carries one of
-#: these as its own line, which :func:`hint_comment` leaves out.
+#: Lines an older hint carried under its class line, before the rendering's header (``cpf.CONTRACT_LINES``) took
+#: over saying what a class means; :func:`hint_comment` leaves them out of a hint stored with one.
 SETTLED_PARALLEL = "settled: proven, no need to re-check; focus: schedule, tiling, vectorization, fusion, data layout"
 OPEN_UNKNOWN = (
     "open: not proven either way; kept sequential to be safe, and may well be parallel -- a fact about the "
@@ -240,6 +242,23 @@ def kind_word(hint: str) -> str | None:
     return None
 
 
+#: The parts of a class line the kinds rendering leaves out: the example iterations and the alternative.
+KIND_EXTRAS = re.compile(r" \(example[^)]*\)|; alt: .*$")
+
+
+def kind_line(hint: str) -> str | None:
+    """The kinds rendering of ``hint``: its class word, and for a ``sequential`` or ``unknown`` loop the reason (its
+    class line without the example iterations and the alternative); ``None`` if no line names a class."""
+    word = kind_word(hint)
+    if word not in ("sequential", "unknown"):
+        return word
+    for line in str(hint).splitlines():
+        if " -- " in line and kind_word(line) == word:
+            reason = KIND_EXTRAS.sub("", line.split(" -- ", 1)[1]).strip()
+            return f"{word}: {reason}" if reason else word
+    return word
+
+
 def hint_comment(hint: str | None, indent: str = "") -> str:
     """Render a ``specialization_hint`` as a comment block, or ``''`` when there is none.
 
@@ -247,7 +266,8 @@ def hint_comment(hint: str | None, indent: str = "") -> str:
     parallel form -- a specializing pass, or a person -- and the ordinary build has a target
     already, so emitting it there would be noise in code nobody reads.
 
-    Under :attr:`HintDetail.KINDS` only the class word is written, and a hint naming no class writes nothing.
+    Under :attr:`HintDetail.KINDS` only the class is written (:func:`kind_line`: a ``sequential`` or ``unknown`` loop
+    keeps its reason), and a hint naming no class writes nothing.
     Under :attr:`HintDetail.NONE` nothing is written.
 
     Multi-line hints stay multi-line. The alternatives a hint describes are per-device and do not
@@ -256,8 +276,8 @@ def hint_comment(hint: str | None, indent: str = "") -> str:
     if not hint or not standalone() or _hint_detail is HintDetail.NONE:
         return ""
     if _hint_detail is HintDetail.KINDS:
-        word = kind_word(hint)
-        return f"{indent}// {word}\n" if word else ""
+        line = kind_line(hint)
+        return f"{indent}// {line}\n" if line else ""
     return "".join(
         f"{indent}// {line}\n"
         for line in str(hint).splitlines()

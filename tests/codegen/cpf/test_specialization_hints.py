@@ -36,14 +36,15 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     CONFLICT_MEANING,
+    EARLY_EXIT,
     MAP_DIMENSIONS,
-    NO_COUNTER,
     PARALLEL,
+    PROVEN_PREFIX,
     REDUCTION,
     SEQUENTIAL_PINNED,
     SEQUENTIAL_PROVEN,
-    UNKNOWN,
     WAVEFRONT_FRONT,
+    WHILE_LOOP,
     AnnotateLoopKinds,
     is_scratch,
     loop_header_names,
@@ -148,11 +149,11 @@ def test_a_scan_states_its_trade_although_the_expansion_consumes_the_node():
 
     rendered = comment_lines(render(sdfg).code)
     # CPF renders a host Scan through its parallel CPU expansion, so the trade is stated from that side.
-    assert "// parallel scan; canonicalization takes the parallel form." in rendered
-    assert "// Alternative: a sequential loop over parallel maps." in rendered
+    assert "// " + PARALLEL_SCAN_HINT.splitlines()[0] in rendered
+    assert "// " + PARALLEL_SCAN_HINT.splitlines()[1] in rendered
     # Folded into the node's description so one expansion is one trade, not one per map it leaves.
-    assert rendered.count("// Alternative: a sequential loop over parallel maps.") == 1
-    assert not [line for line in rendered if line.startswith("// sequential scan")]
+    assert rendered.count("// " + PARALLEL_SCAN_HINT.splitlines()[1]) == 1
+    assert not [line for line in rendered if line.startswith("// sequential -- scan")]
 
 
 @pytest.mark.parametrize("implementation, hint", [("pure", SEQUENTIAL_SCAN_HINT), ("CPU", PARALLEL_SCAN_HINT)])
@@ -393,7 +394,7 @@ def test_a_proven_carried_dependence_is_rendered_as_a_proof_and_names_it():
     """The strong half of the sequential case: ``LoopToMap`` proved the dependence, so the order
     is required, and the hint carries the analysis' own words rather than restating the loop."""
     rendered = comment_lines(named(carried_sdfg("cpf_kind_carried")))
-    proofs = [line for line in rendered if line.startswith("// sequential -- carried:")]
+    proofs = [line for line in rendered if line.startswith(f"// {PROVEN_PREFIX}")]
     assert proofs, rendered
     # The hint carries the ACCESS that carries the dependence, which is what a reader acts on.
     assert "b[" in proofs[0], proofs
@@ -401,20 +402,15 @@ def test_a_proven_carried_dependence_is_rendered_as_a_proof_and_names_it():
     assert not [line for line in rendered if line.startswith("// unknown")]
 
 
-def test_a_declined_dependence_test_is_not_rendered_as_a_proof():
-    """The weak half, and the reason the two are separate hints at all.
-
-    ``LoopToMap`` refuses a loop with a ``break`` at the control-flow check, long before it asks
-    anything about data. Calling that a carried dependence would be a claim the pipeline never
-    made, and would send a reader looking for a recurrence that is not there.
-    """
+def test_an_early_exit_is_sequential_with_its_cause_and_never_a_proven_dependence():
+    """``LoopToMap`` refuses a loop with a ``break`` at the control-flow check, long before it asks anything about
+    data. The order is still required -- no iteration after the exit may run -- so the loop is ``sequential`` and the
+    comment names the exit. Calling it a proven dependence would send a reader looking for a recurrence that is not
+    there."""
     rendered = comment_lines(named(breaking_sdfg("cpf_kind_unknown")))
-    unknown = [line for line in rendered if line.startswith("// unknown -- ")]
-    assert unknown, rendered
-    # The refusal names WHERE the test stopped, which is what separates unknown from proven.
-    assert "Break" in unknown[0], unknown
-    # "carried" is the proven wording, and an unknown loop must never borrow it.
-    assert not [line for line in rendered if line.startswith("// sequential -- carried:")]
+    assert "// " + EARLY_EXIT.format(statement="break") in rendered, rendered
+    assert not [line for line in rendered if line.startswith("// unknown")], rendered
+    assert not [line for line in rendered if line.startswith(f"// {PROVEN_PREFIX}")], rendered
 
 
 def branch_carried_sdfg(name: str) -> dace.SDFG:
@@ -439,7 +435,7 @@ def test_an_access_under_a_data_dependent_branch_proves_no_carried_dependence():
     ``carried: RAW on c[i]`` from its two branch bodies. The solver witness skips branch bodies; so must the
     constant-distance proof."""
     rendered = comment_lines(named(branch_carried_sdfg("cpf_kind_branch_carried")))
-    assert not [line for line in rendered if line.startswith("// sequential -- carried:")], rendered
+    assert not [line for line in rendered if line.startswith(f"// {PROVEN_PREFIX}")], rendered
 
 
 def carried_symbol_sdfg(name: str, branch: bool) -> dace.SDFG:
@@ -473,21 +469,21 @@ def carried_symbol_sdfg(name: str, branch: bool) -> dace.SDFG:
 
 def test_a_symbol_carried_on_every_iteration_is_rendered_as_a_proof():
     rendered = comment_lines(named(carried_symbol_sdfg("cpf_kind_symbol_carried", branch=False)))
-    assert [line for line in rendered if line.startswith("// sequential -- carried:")], rendered
+    assert [line for line in rendered if line.startswith(f"// {PROVEN_PREFIX}")], rendered
 
 
 def test_a_symbol_assigned_only_under_a_branch_proves_no_carried_dependence():
     """A branch that never runs hands nothing to the next iteration, so the carried symbol proves nothing there."""
     rendered = comment_lines(named(carried_symbol_sdfg("cpf_kind_symbol_branch", branch=True)))
-    assert not [line for line in rendered if line.startswith("// sequential -- carried:")], rendered
+    assert not [line for line in rendered if line.startswith(f"// {PROVEN_PREFIX}")], rendered
 
 
-def test_a_loop_that_was_never_examined_says_exactly_that():
-    """A while loop has no iteration variable, so nothing ever asked whether it carries a dependence.
-    That is as open as a declined test, so it is ``unknown`` too, with the reason saying why."""
+def test_a_while_loop_is_sequential_and_says_why():
+    """A while loop has no iteration variable to split the work by, and each test of its condition reads what the
+    previous iteration computed, so it is ``sequential`` with that reason, never an open ``unknown``."""
     rendered = comment_lines(named(unexamined_sdfg("cpf_kind_unexamined")))
-    assert "// " + UNKNOWN.format(reason=NO_COUNTER).splitlines()[0] in rendered, rendered
-    assert not [line for line in rendered if line.startswith("// sequential -- carried:")]
+    assert "// " + WHILE_LOOP in rendered, rendered
+    assert not [line for line in rendered if line.startswith(f"// {PROVEN_PREFIX}")]
 
 
 def test_a_wavefront_names_its_diagonal_and_its_front():
@@ -496,9 +492,9 @@ def test_a_wavefront_names_its_diagonal_and_its_front():
     rendered = comment_lines(named(skewed_sdfg("cpf_kind_wavefront", tile=0)))
     # The skew that produced the wavefront is named, since the rewrite renames the axes to t/p and
     # a reader cannot recover it from the loop.
-    diagonal = [line for line in rendered if line.startswith("// sequential -- wavefront diagonal (t = ")]
+    diagonal = [line for line in rendered if line.startswith("// sequential -- wavefront step: ")]
     assert diagonal and diagonal[0].endswith("; alt: the unskewed nest"), rendered
-    assert any(line.startswith("// parallel -- wavefront front (t = ") for line in rendered)
+    assert any(line.startswith("// parallel -- one wavefront step: ") for line in rendered)
 
 
 def test_a_tiled_wavefront_names_all_three_of_its_axes():
@@ -506,13 +502,11 @@ def test_a_tiled_wavefront_names_all_three_of_its_axes():
     parallel one -- the tile column, not the diagonal above it or the interior below."""
     rendered = comment_lines(named(skewed_sdfg("cpf_kind_wavefront_tiled", tile=32)))
     # Each axis names the tile it belongs to; the diagonal names the skew as well.
-    assert any(
-        line.startswith("// sequential -- wavefront tile diagonal (t = ") and "[32x32]" in line for line in rendered
-    )
-    assert any(line.startswith("// parallel -- wavefront tile column [32x32]") for line in rendered)
-    assert any(line.startswith("// sequential -- wavefront tile interior [32x32]") for line in rendered)
+    assert any(line.startswith("// sequential -- wavefront of tiles [32x32]: ") for line in rendered)
+    assert any(line.startswith("// parallel -- the tiles [32x32] of one wavefront step") for line in rendered)
+    assert any(line.startswith("// sequential -- inside one wavefront tile [32x32]") for line in rendered)
     # The tiled form is a different trade from the untiled one and must not borrow its wording.
-    assert not any(line.startswith("// sequential -- wavefront diagonal") for line in rendered)
+    assert not any(line.startswith("// sequential -- wavefront step") for line in rendered)
 
 
 def test_naming_the_loops_does_not_move_a_line_of_code():
@@ -547,7 +541,7 @@ def test_a_recorded_note_keeps_its_place_below_the_verdict():
     loops[0].specialization_hint = MAP_HINT
     AnnotateLoopKinds().apply_pass(sdfg, {})
     lines = loops[0].specialization_hint.splitlines()
-    assert lines[0].startswith("sequential -- carried:"), lines
+    assert lines[0].startswith(PROVEN_PREFIX), lines
     assert MAP_HINT.splitlines()[0] in lines, lines
 
     loops[0].specialization_hint = WAVEFRONT_FRONT.format(skew="(t = i + j)")
@@ -566,7 +560,7 @@ def test_the_canonicalize_pipeline_names_the_loops_it_leaves_behind():
     canonicalize(sdfg)
     rendered = comment_lines(render(sdfg).code)
     assert "// " + PARALLEL.splitlines()[0] in rendered, rendered
-    assert any(line.startswith("// sequential -- carried:") for line in rendered)
+    assert any(line.startswith(f"// {PROVEN_PREFIX}") for line in rendered)
 
 
 # Loops born after canonicalize: specialization, library expansion, codegen copy lowering.
@@ -608,7 +602,7 @@ def test_a_map_codegen_lowers_a_copy_into_is_labelled():
 def test_a_loop_left_unlabelled_by_canonicalize_is_labelled_by_the_rendering():
     """StripMineInterchange and seam splitting add loops after ``AnnotateLoopKinds`` ran."""
     rendered = comment_lines(render(carried_sdfg("cpf_kind_late")).code)
-    assert any(line.startswith("// sequential -- carried: RAW on b[") for line in rendered), rendered
+    assert any(line.startswith(f"// {PROVEN_PREFIX} on b[") for line in rendered), rendered
 
 
 def test_a_guarded_recurrence_is_not_proven_through_its_guard():
@@ -645,9 +639,10 @@ def test_an_inner_loop_carried_dependence_is_proven_in_one_outer_iteration():
     sdfg = row_recurrence.to_sdfg(simplify=True)
     AnnotateLoopKinds().apply_pass(sdfg, {})
     inner = [loop.specialization_hint.splitlines()[0] for loop in loops_of(sdfg) if loop.loop_variable == "j"]
-    assert len(inner) == 1 and inner[0].startswith("sequential -- carried: RAW on t["), inner
-    # The solver's witness, with the outer iteration it chose; the constant-distance proof names only j.
-    assert "(witness: i=" in inner[0], inner
+    assert len(inner) == 1 and inner[0].startswith(f"{PROVEN_PREFIX} on t["), inner
+    assert CONFLICT_MEANING["RAW"] in inner[0], inner
+    # The solver's example, with the outer iteration it chose; the constant-distance proof names only j.
+    assert "(example the solver found: i=" in inner[0], inner
 
 
 def test_a_time_loop_over_a_stencil_is_proven_and_names_the_skew_it_is_not_given():
@@ -666,8 +661,8 @@ def test_a_time_loop_over_a_stencil_is_proven_and_names_the_skew_it_is_not_given
     AnnotateLoopKinds().apply_pass(sdfg, {})
     hints = [loop.specialization_hint.splitlines() for loop in loops_of(sdfg)]
     assert len(hints) == 1, hints
-    assert hints[0][0].startswith("sequential -- carried: RAW on ") and "T=" in hints[0][0], hints
-    assert "time-tiled wavefront" in hints[0][1], hints
+    assert hints[0][0].startswith(f"{PROVEN_PREFIX} on ") and "T=" in hints[0][0], hints
+    assert CONFLICT_MEANING["RAW"] in hints[0][0] and "alt: skew this loop" in hints[0][0], hints
 
 
 def test_a_read_ahead_dependence_is_named_war_not_raw():
@@ -681,11 +676,16 @@ def test_a_read_ahead_dependence_is_named_war_not_raw():
     sdfg = ahead.to_sdfg(simplify=True)
     AnnotateLoopKinds().apply_pass(sdfg, {})
     (hint,) = [loop.specialization_hint for loop in loops_of(sdfg)]
-    reason = re.search(r"carried: (WAR on a\[i \+ 1\] \(witness: N=(\d+), i=(\d+) and i=(\d+)\))\n", hint)
+    first_line = hint.splitlines()[0]
+    reason = re.fullmatch(
+        r"(on a\[i \+ 1\]: (.*) \(example the solver found: N=(\d+), iterations i=(\d+) and i=(\d+)\))",
+        first_line.removeprefix(PROVEN_PREFIX + " "),
+    )
     assert reason, hint
-    assert hint == SEQUENTIAL_PROVEN.format(reason=reason.group(1), why=CONFLICT_MEANING["WAR"])
-    # The witness is an execution: the earlier iteration reads the element the next one overwrites
-    size, first, second = (int(g) for g in reason.groups()[1:])
+    assert reason.group(2) == CONFLICT_MEANING["WAR"], hint
+    assert first_line == SEQUENTIAL_PROVEN.format(reason=reason.group(1))
+    # The example is an execution: the earlier iteration reads the element the next one overwrites
+    size, first, second = (int(g) for g in reason.groups()[2:])
     assert second == first + 1 and second < size - 1, hint
 
 
@@ -702,10 +702,14 @@ def test_a_pattern_matched_dependence_names_its_witness_too():
     sdfg = offset_recurrence.to_sdfg(simplify=True)
     AnnotateLoopKinds().apply_pass(sdfg, {})
     (hint,) = [loop.specialization_hint for loop in loops_of(sdfg)]
-    reason = re.search(r"carried: (RAW on a\[(.*)\] \(witness: (\w+)=1 and (\w+)=2\))\n", hint)
+    first_line = hint.splitlines()[0]
+    reason = re.fullmatch(
+        r"(on a\[(.*)\]: (.*) \(example: iterations (\w+)=1 and (\w+)=2\))",
+        first_line.removeprefix(PROVEN_PREFIX + " "),
+    )
     assert reason, hint
-    assert reason.group(3) == reason.group(4)
-    assert hint == SEQUENTIAL_PROVEN.format(reason=reason.group(1), why=CONFLICT_MEANING["RAW"])
+    assert reason.group(3) == CONFLICT_MEANING["RAW"] and reason.group(4) == reason.group(5)
+    assert first_line == SEQUENTIAL_PROVEN.format(reason=reason.group(1))
 
 
 def test_no_carried_dependence_is_claimed_for_independent_elements():
@@ -759,9 +763,9 @@ def test_writes_the_test_cannot_separate_are_proven_by_a_witness():
     """``LoopToMap`` refuses ``a[5*i]`` against ``a[3*i]`` because they MAY overlap. The solver finds two iterations
     that DO write one element, for an array size it chooses, so the loop is sequential and the hint says why."""
     rendered = comment_lines(named(overlapping_writes_sdfg("cpf_kind_overlap")))
-    carried = [line for line in rendered if line.startswith("// sequential -- carried: WAW on a[")]
-    assert len(carried) == 1, rendered
-    witness = re.search(r"\(witness: N=(\d+), i=(\d+) and i=(\d+)\)$", carried[0])
+    carried = [line for line in rendered if line.startswith(f"// {PROVEN_PREFIX} on a[")]
+    assert len(carried) == 1 and CONFLICT_MEANING["WAW"] in carried[0], rendered
+    witness = re.search(r"\(example the solver found: N=(\d+), iterations i=(\d+) and i=(\d+)\)$", carried[0])
     assert witness, carried
     size, first, second = (int(g) for g in witness.groups())
     assert first < second < size, carried
@@ -779,7 +783,7 @@ def test_a_distance_set_by_an_argument_stays_unknown():
 
     rendered = comment_lines(named(shift_by.to_sdfg(simplify=True)))
     assert [line for line in rendered if line.startswith("// unknown -- ")], rendered
-    assert not [line for line in rendered if line.startswith("// sequential -- carried:")], rendered
+    assert not [line for line in rendered if line.startswith(f"// {PROVEN_PREFIX}")], rendered
 
 
 def test_a_conflict_only_under_a_branch_is_not_witnessed():
@@ -793,7 +797,7 @@ def test_a_conflict_only_under_a_branch_is_not_witnessed():
                 a[3 * i] = b[i] + 1.0
 
     rendered = comment_lines(named(guarded_stride.to_sdfg(simplify=True)))
-    assert not [line for line in rendered if line.startswith("// sequential -- carried:")], rendered
+    assert not [line for line in rendered if line.startswith(f"// {PROVEN_PREFIX}")], rendered
 
 
 def test_a_triangular_solve_is_proven_through_its_row_copy():
@@ -810,7 +814,9 @@ def test_a_triangular_solve_is_proven_through_its_row_copy():
     AnnotateLoopKinds().apply_pass(sdfg, {})
     hints = [loop.specialization_hint.splitlines()[0] for loop in loops_of(sdfg)]
     assert len(hints) == 1, hints
-    assert re.match(r"sequential -- carried: RAW on x\[0:\w+\] \(witness: N=\d+, \w+=0 and \w+=1\)$", hints[0]), hints
+    assert re.match(
+        rf"{PROVEN_PREFIX} on x\[0:\w+\]: .* \(example the solver found: N=\d+, iterations \w+=0 and \w+=1\)$", hints[0]
+    ), hints
 
 
 def test_a_guarded_loop_names_its_guard_on_both_arms():
@@ -829,8 +835,12 @@ def test_a_guarded_loop_names_its_guard_on_both_arms():
         n.specialization_hint.splitlines()[0] for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)
     ]
     loops = [loop.specialization_hint.splitlines()[0] for loop in loops_of(sdfg)]
-    assert any(re.match(r"parallel -- under guard: .*inc.*", line) for line in maps), maps
-    assert any(re.match(r"sequential -- fallback when not \(.*inc.*\)$", line) for line in loops), loops
+    assert any(re.match(r"parallel -- independent when .*inc.* \(checked before the loop\)$", line) for line in maps), (
+        maps
+    )
+    assert any(re.match(r"sequential -- runs when .*inc.*: independence is not proven", line) for line in loops), loops
+    # The fallback names the failing guard itself, never a negation of a negation
+    assert not any("not (not" in line for line in loops), loops
 
 
 def test_a_map_resting_on_an_unknown_sign_is_versioned_on_it():
@@ -850,7 +860,7 @@ def test_a_map_resting_on_an_unknown_sign_is_versioned_on_it():
     maps = [
         n.specialization_hint.splitlines()[0] for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)
     ]
-    assert "parallel -- the iterations are independent" in maps, maps
+    assert PARALLEL in maps, maps
     branches = [
         cond.as_string
         for region in sdfg.all_control_flow_regions()
@@ -898,17 +908,22 @@ def comment_blocks(code: str) -> list[list[str]]:
     return [block for block in blocks if block]
 
 
-def test_the_kinds_rendering_says_par_seq_or_unknown_and_nothing_else():
-    """The bare variant: one word per loop and map -- no proof, no witness, no advice, no header contract, no
-    library-node provenance."""
+def test_the_kinds_rendering_says_its_class_words_and_nothing_else():
+    """The light variant: per loop and map its class -- a ``sequential`` or ``unknown`` loop with its reason, a
+    ``parallel`` one with the word alone -- and no witness, no alternative, no header contract, no library-node
+    provenance."""
     kinds, proofs = (comment_lines(code)[1:] for code in kinds_and_proofs("cpf_kinds_only"))
-    words = [line for line in kinds if line in ("// par", "// seq", "// unknown")]
-    assert {"// par", "// seq"} <= set(words), kinds
+    known = set(dict(cpf_lowering.KIND_WORDS).values())
+    words = [line for line in kinds if line.removeprefix("// ").split(":", 1)[0] in known]
+    classes = {line.removeprefix("// ").split(":", 1)[0] for line in words}
+    assert {"parallel", "sequential"} <= classes, kinds
+    assert all(":" not in line for line in words if line.removeprefix("// ").startswith("parallel")), kinds
+    assert all(": " in line for line in words if line.removeprefix("// ").startswith("sequential")), kinds
     # What is left is the unit's own section labels, which the proofs rendering carries word for word.
     assert all(line in proofs for line in kinds if line not in words), kinds
-    reasoning = ("--", "witness", "settled", "open:", "proven", "carried", "assumes", "CPU:", "GPU:")
-    assert not [line for line in kinds if any(term in line for term in reasoning)], kinds
-    assert any("witness" in line for line in proofs), proofs
+    extras = ("--", "witness", "settled", "open:", "example", "alt:", "CPU:", "GPU:")
+    assert not [line for line in kinds if any(term in line for term in extras)], kinds
+    assert any("example" in line for line in proofs), proofs
 
 
 def test_no_rendering_carries_a_tasklet_or_scope_label():
@@ -929,7 +944,10 @@ def test_the_kinds_rendering_names_the_loops_the_proofs_rendering_classes():
     rendering, the class of the block's first classed line, in the same order."""
     kinds, proofs = kinds_and_proofs("cpf_kinds_match")
     classes = [next(filter(None, map(cpf_lowering.kind_word, block)), None) for block in comment_blocks(proofs)]
-    words = [word for block in comment_blocks(kinds) for word in block if word in ("par", "seq", "unknown")]
+    known = set(dict(cpf_lowering.KIND_WORDS).values())
+    words = [
+        word.split(":", 1)[0] for block in comment_blocks(kinds) for word in block if word.split(":", 1)[0] in known
+    ]
     assert words == [word for word in classes if word], (words, classes)
 
 
@@ -957,9 +975,10 @@ def test_the_none_rendering_has_no_loop_comment_and_the_same_code():
     sdfg.name = "cpf_hints_none"
     canonicalize(sdfg)
     none, kinds, proofs = (render(sdfg, hints=detail).code for detail in ("none", "kinds", "proofs"))
-    words = ("// par", "// seq", "// unknown")
-    assert not [line for line in comment_lines(none) if line in words], none
-    assert [line for line in comment_lines(kinds) if line not in words] == comment_lines(none), none
+    known = set(dict(cpf_lowering.KIND_WORDS).values())
+    is_class = lambda line: line.removeprefix("// ").split(":", 1)[0] in known
+    assert not [line for line in comment_lines(none) if is_class(line)], none
+    assert [line for line in comment_lines(kinds) if not is_class(line)] == comment_lines(none), none
     assert not [line for line in none.splitlines() if "//" in line and line.split("//")[0].strip()], none
     strip = lambda code: [line.split("  //")[0] for line in code.splitlines() if not line.strip().startswith("//")]
     assert strip(none) == strip(proofs)
@@ -986,9 +1005,9 @@ if __name__ == "__main__":
     test_a_parallel_map_says_it_is_parallel()
     test_a_multi_dimensional_map_names_every_loop_it_renders_as()
     test_a_proven_carried_dependence_is_rendered_as_a_proof_and_names_it()
-    test_a_declined_dependence_test_is_not_rendered_as_a_proof()
+    test_an_early_exit_is_sequential_with_its_cause_and_never_a_proven_dependence()
     test_an_access_under_a_data_dependent_branch_proves_no_carried_dependence()
-    test_a_loop_that_was_never_examined_says_exactly_that()
+    test_a_while_loop_is_sequential_and_says_why()
     test_a_wavefront_names_its_diagonal_and_its_front()
     test_a_tiled_wavefront_names_all_three_of_its_axes()
     test_naming_the_loops_does_not_move_a_line_of_code()
@@ -1011,7 +1030,7 @@ if __name__ == "__main__":
     test_a_guarded_loop_names_its_guard_on_both_arms()
     test_a_map_resting_on_an_unknown_sign_is_versioned_on_it()
     test_a_map_resting_on_no_trap_assumes_nothing()
-    test_the_kinds_rendering_says_par_seq_or_unknown_and_nothing_else()
+    test_the_kinds_rendering_says_its_class_words_and_nothing_else()
     test_no_rendering_carries_a_tasklet_or_scope_label()
     test_the_kinds_rendering_names_the_loops_the_proofs_rendering_classes()
     test_the_two_variants_render_the_same_code()

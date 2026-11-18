@@ -57,7 +57,7 @@ WITHIN_A_BLOCK = (
 )
 
 #: What a promoted warp-tile map is, for a CPF reader; any hint the producer left follows it.
-WARP_TILE_HINT = "parallel -- warp tile: spread over the threads of the block"
+WARP_TILE_HINT = "parallel -- warp tile: independent iterations, spread over the threads of the block"
 #: Added when a sequential loop re-enters the warp tile.
 WARP_TILE_BARRIER_HINT = "block barrier after the map: the enclosing loop reruns it"
 

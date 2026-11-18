@@ -1438,12 +1438,14 @@ def preamble(
 
 #: What the rendering already did and what is left, ahead of the per-loop verdicts it explains.
 CONTRACT_LINES = [
-    "// Already parallelized, with basic heuristics applied. Every loop names its class first, then its reason:",
-    "//   parallel, sequential -- settled; their parallelism needs no further reasoning.",
-    f"//     (parallel) {cpf_lowering.SETTLED_PARALLEL}",
-    "//   unknown              -- open; the only loops whose parallelism is worth reasoning about.",
-    f"//     (unknown) {cpf_lowering.OPEN_UNKNOWN}",
-    "// Spend the effort on heuristic optimizations and restructuring.",
+    "// Every loop comment names the loop's class first, then the reason.",
+    "//   parallel means proven: no iteration writes an element another iteration reads or writes. A reduction",
+    "//     or scan line says how the iterations combine instead; it needs a reduction clause, per-thread",
+    "//     copies, or the scan's two passes.",
+    "//   sequential means keep the order: the comment names the dependence (with an example) or why it is kept.",
+    "//   unknown means not proven either way; it runs in order. Its comment says what failed and what would",
+    "//     make it parallel; parallelize it only if no iteration touches an element another one writes.",
+    "// Each proof covers one loop as written: fusing or reordering loops needs its own dependence check.",
 ]
 
 #: What a finished rendering must not contain, and what each one means. CPF's own gate, checked on
@@ -1883,7 +1885,8 @@ def render(
                 ``AUTO`` is the widest one the host executes.
     :param hints: ``'proofs'`` (the default) comments every loop and map with its whole hint -- class, reason,
                   proof or witness, advice -- and every expansion with the library node it came from;
-                  ``'kinds'`` writes one ``// par``, ``// seq`` or ``// unknown`` per loop and map and nothing else;
+                  ``'kinds'`` writes one ``// parallel``, ``// sequential`` or ``// unknown`` per loop and map
+                  (``// parallel reduction`` and ``// parallel scan`` for those) and nothing else;
                   ``'none'`` writes no loop comment at all (same code).
     :param llm_friendly: respell the host unit under short generated names (:mod:`dace.codegen.cpf_compact`)
                          before it is verified and compiled; the entry point, its parameters and every export keep

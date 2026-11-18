@@ -22,9 +22,31 @@ from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 
 #: The class line of a parallel arm: the guard is the evidence the iterations are independent.
-GUARDED = "parallel -- under guard: {guard}"
-#: The class line of the sequential arm a guard falls back to.
-GUARD_FALLBACK = "sequential -- fallback when not ({guard})"
+GUARDED = "parallel -- independent when {guard} (checked before the loop)"
+#: The class line of the sequential arm a guard falls back to: the original loop, for the inputs the guard rejects.
+GUARD_FALLBACK = "sequential -- runs when {negated}: independence is not proven for these inputs, keep the order"
+
+
+def condition_text(condition: str) -> str:
+    """``condition`` simplified for a reader (``not (a > 0)`` reads ``a <= 0``), or as given if it does not parse."""
+    try:
+        text = symbolic.symstr(symbolic.pystr_to_symbolic(condition), cpp_mode=True)
+    except Exception:  # pylint: disable=broad-exception-caught
+        # A comment must not fail the specialization that asked for it
+        return condition
+    while text.startswith("(") and text.endswith(")") and balanced(text[1:-1]):
+        text = text[1:-1]
+    return text
+
+
+def balanced(text: str) -> bool:
+    """Whether every parenthesis in ``text`` closes inside it (so outer ones around it can go)."""
+    depth = 0
+    for char in text:
+        depth += {"(": 1, ")": -1}.get(char, 0)
+        if depth < 0:
+            return False
+    return depth == 0
 
 
 def label_arm(node, kind: str) -> None:
@@ -40,10 +62,10 @@ def label_arms(par_region: ControlFlowRegion, seq_region: ControlFlowRegion, gua
         if isinstance(block, SDFGState):
             for node in block.nodes():
                 if isinstance(node, nodes.MapEntry) and block.entry_node(node) is None:
-                    label_arm(node, GUARDED.format(guard=guard))
+                    label_arm(node, GUARDED.format(guard=condition_text(guard)))
     for region in seq_region.all_control_flow_regions():
         if isinstance(region, LoopRegion) and region.pinned_sequential:
-            label_arm(region, GUARD_FALLBACK.format(guard=guard))
+            label_arm(region, GUARD_FALLBACK.format(negated=condition_text(f"not ({guard})")))
 
 
 def _owner_sdfg(loop: LoopRegion) -> SDFG:

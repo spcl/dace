@@ -908,21 +908,15 @@ def single_block_scan_call(op: ScanOp, exclusive: bool, n_expr: str, seed: str) 
 
 #: The trade a Scan records: canonicalization takes the parallel form. Facts of the two lowerings only.
 PARALLEL_SCAN_HINT = (
-    "parallel scan; canonicalization takes the parallel form.\n"
-    "Alternative: a sequential loop over parallel maps.\n"
-    "CPU: the scan runs blocked over contiguous chunks on every thread of the team -- pass 1 reads the input "
-    "and folds each chunk, pass 2 reads the input again and writes the output; a team of one runs one pass. "
-    "The loop makes one pass over the input and the output, on one thread.\n"
-    "Both are correct."
+    "parallel -- scan: each output combines all earlier inputs. Two passes over contiguous chunks on every "
+    "thread: fold each chunk, then write the outputs; one thread makes one pass.\n"
+    "alt: one sequential pass over the input and the output, faster on few threads. Both are correct."
 )
 
 #: The same trade after a sequential expansion: the emitted scan is one loop.
 SEQUENTIAL_SCAN_HINT = (
-    "sequential scan; this expansion runs the recurrence as one loop.\n"
-    "Alternative: the parallel scan canonicalization chose.\n"
-    "CPU: the loop makes one pass over the input and the output, on one thread. The parallel scan runs blocked "
-    "over contiguous chunks on every thread of the team, reading the input twice.\n"
-    "Both are correct."
+    "sequential -- scan: each output combines all earlier inputs, one pass on one thread.\n"
+    "alt: the two-pass parallel scan over contiguous chunks. Both are correct."
 )
 
 

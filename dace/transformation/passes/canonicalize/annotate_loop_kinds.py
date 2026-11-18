@@ -56,12 +56,12 @@ CLASS_PREFIXES = ("parallel -- ", "sequential -- ", "unknown -- ")
 
 #: A Map. Data-parallel by construction, whatever schedule it ends up carrying. What a settled class means for the
 #: reader is said once, in the rendering's header (``cpf.CONTRACT_LINES``), not under every loop.
-PARALLEL = "parallel -- the iterations are independent"
+PARALLEL = "parallel -- independent: no iteration writes an element another iteration reads or writes"
 
 #: The class line of a Map that accumulates into a container through a WCR edge: its iterations are not
 #: independent, they reduce, and the operator and the accumulator are the evidence. ``{reductions}`` reads
 #: ``+ into s``, joined by ``and``.
-REDUCTION = "parallel -- reduction: {reductions}"
+REDUCTION = "parallel -- reduction: {reductions}; the other accesses are independent"
 
 #: The operator a reduction line names, by ``dtypes.ReductionType``; any other type is named by its member name.
 REDUCTION_SYMBOLS = {
@@ -78,17 +78,19 @@ REDUCTION_SYMBOLS = {
 
 #: Added under a multi-dimensional Map's class line: the rendering writes one nested ``for`` per dimension and
 #: the comment only above the outermost, so the inner ones are named here.
-MAP_DIMENSIONS = "covers {count} nested parallel loops over {params}"
+MAP_DIMENSIONS = "the {count} nested loops over {params} are all parallel"
 
 #: A loop whose carried dependence was proven. ``{reason}`` is the carrying ACCESS, since that is
 #: the part a reader acts on -- the prose around it repeated on every such loop and said the same
 #: thing each time.
-SEQUENTIAL_PROVEN = "sequential -- carried: {reason}\nsettled: proven, {why}"
+#: The fixed start of both proven-dependence lines.
+PROVEN_PREFIX = "sequential -- proven dependence"
+SEQUENTIAL_PROVEN = PROVEN_PREFIX + " {reason}"
 
 #: A carried dependence on a loop whose body is a Do-All nest (a time loop over a stencil): proven too, but a skew
 #: of the loop with the nest inside it would parallelize it -- canonicalization does not skew a time loop.
 SEQUENTIAL_PROVEN_OVER_DOALL = (
-    "sequential -- carried: {reason}\nsettled: proven, {why}; alt: a time-tiled wavefront (not applied to time loops)"
+    PROVEN_PREFIX + " {reason}; alt: skew this loop with the parallel loops inside it (a wavefront), not done here"
 )
 
 #: A loop the dependence test declined to answer, or never examined. NOT the same fact as the line
@@ -97,24 +99,39 @@ SEQUENTIAL_PROVEN_OVER_DOALL = (
 UNKNOWN = "unknown -- {reason}"
 
 #: The ``UNKNOWN`` reason of a loop the dependence test never answered for; the specific cause follows a colon.
-NEVER_EXAMINED = "never examined for dependences"
+NEVER_EXAMINED = "not analyzed for dependences"
 #: ... because the loop has no single iteration counter to test (a while loop).
-NO_COUNTER = f"{NEVER_EXAMINED}: no single iteration counter (a while loop)"
+NO_COUNTER = f"{NEVER_EXAMINED}: a while loop has no single counter to test"
+
+#: A while loop: its condition reads what the previous trip computed, so the trips run in order.
+WHILE_LOOP = "sequential -- while loop: each test of the condition reads what the previous iteration computed"
+#: A short loop over small fixed sizes that ``LoopToMap`` keeps in order by design: the order is a choice, not proven.
+SMALL_LOOP = (
+    "sequential -- kept in order: only a few iterations over small fixed sizes ({range}); not analyzed for "
+    "dependences, and forking would not pay"
+)
+#: ``LoopToMap``'s message for a loop over SMALL symbols names the range.
+SMALL_RANGE = re.compile(r"loop range (.+?) spans SMALL")
 
 #: A loop the dependence test finds independent that an earlier pass pinned sequential anyway (the
 #: fallback arm of a specialization). Rendered without a pragma, so it must not read as parallel.
-SEQUENTIAL_PINNED = "sequential -- pinned by an earlier pass (a fallback arm); the iterations are independent"
+SEQUENTIAL_PINNED = (
+    "sequential -- kept in order by an earlier pass; the dependence test finds its iterations independent"
+)
 
 #: The untiled skew: a sequential diagonal over a parallel front; ``alt`` names the other correct shape.
-WAVEFRONT_DIAGONAL = "sequential -- wavefront diagonal {skew}; alt: the unskewed nest"
-WAVEFRONT_FRONT = "parallel -- wavefront front {skew}"
+WAVEFRONT_DIAGONAL = (
+    "sequential -- wavefront step: each step reads what the previous step wrote; alt: the unskewed nest"
+)
+WAVEFRONT_FRONT = "parallel -- one wavefront step: its points do not depend on each other"
 
 #: The tiled skew: a sequential tile diagonal over a parallel tile column over a sequential interior.
 WAVEFRONT_TILE_DIAGONAL = (
-    "sequential -- wavefront tile diagonal {skew} {tile}; alt: the element diagonal or the unskewed nest"
+    "sequential -- wavefront of tiles {tile}: each step reads what the previous step wrote; "
+    "alt: the element wavefront or the unskewed nest"
 )
-WAVEFRONT_TILE_COLUMN = "parallel -- wavefront tile column {tile}"
-WAVEFRONT_TILE_INTERIOR = "sequential -- wavefront tile interior {tile}, original order"
+WAVEFRONT_TILE_COLUMN = "parallel -- the tiles {tile} of one wavefront step do not depend on each other"
+WAVEFRONT_TILE_INTERIOR = "sequential -- inside one wavefront tile {tile}: the original order carries the dependence"
 
 
 def skew_label(a: int, b: int, u: str, v: str) -> str:
@@ -159,12 +176,14 @@ def refusal_reason(loop: LoopRegion, session: Any = None) -> LoopRefusal | str |
     except Exception as error:  # pylint: disable=broad-exception-caught
         # A comment must not be able to fail the compilation that asked for it. Nothing downstream
         # reads a hint, so a probe with no answer leaves the loop unknown and says so.
-        return f"{NEVER_EXAMINED}: the dependence test failed ({type(error).__name__})"
+        return f"{NEVER_EXAMINED}: the dependence test failed ({type(error).__name__}), a compiler bug to report"
     finally:
         loop.pinned_sequential = pinned
     if applicable:
         return None
-    return NEVER_EXAMINED if probe.last_refusal is None else probe.last_refusal
+    if probe.last_refusal is None:
+        return f"{NEVER_EXAMINED}: the dependence test refused without a reason, a compiler bug to report"
+    return probe.last_refusal
 
 
 #: What each proven conflict means for the order, in the words a reader of the loop needs.
@@ -175,9 +194,18 @@ CONFLICT_MEANING = {
 }
 
 
-def proven_why(access: str) -> str:
-    """The order a proven conflict requires, from the kind ``access`` starts with (``RAW on ...``)."""
-    return CONFLICT_MEANING.get(access.split(" ", 1)[0], "one iteration depends on another one")
+#: A carrying access: its conflict kind, the element, and the example pair of iterations if one was found.
+CARRYING_ACCESS = re.compile(r"^(RAW|WAR|WAW) on (.+?)( \(example.*\))?$")
+
+
+def proven_reason(access: str) -> str:
+    """``on a[j]: <what the order protects> (example ...)`` from ``WAW on a[j] (example ...)``; another access
+    (a carried scalar) as ``: <access>``."""
+    found = CARRYING_ACCESS.match(access)
+    if found is None:
+        return f": {access}"
+    kind, element, example = found.groups()
+    return f"on {element}: {CONFLICT_MEANING[kind]}{example or ''}"
 
 
 def carrying_access(refusal: LoopRefusal | str) -> str:
@@ -187,6 +215,107 @@ def carrying_access(refusal: LoopRefusal | str) -> str:
         return refusal
     if refusal.kind is Refusal.CARRIED_DEPENDENCE and refusal.container is not None and refusal.reads:
         return f"RAW on {refusal.container}[{refusal.reads[0]}]"
+    if refusal.kind is Refusal.CARRIED_SYMBOL:
+        return f"{carried_symbol_text(refusal)} carries a value from one iteration to the next"
+    return refusal.message
+
+
+#: ``LoopToMap``'s message for a symbol an iteration assigns from its own previous value.
+SELF_RECURRENT = re.compile(r"\(assignment (.+)\)$")
+
+
+def carried_symbol_text(refusal: LoopRefusal) -> str:
+    """The carried symbol of a ``CARRIED_SYMBOL`` refusal in the loop's words: its assignment (``pos = pos + 1``),
+    else the symbols an iteration reads before it assigns them."""
+    found = SELF_RECURRENT.search(refusal.message)
+    if found is not None:
+        return found.group(1)
+    return ", ".join(sorted(refusal.symbols)) or "a scalar"
+
+
+#: A loop whose order the program itself requires, by the body's structure rather than an access pair: a call with
+#: an ordered side effect, or an exit after which no iteration may run.
+ORDERED_CALL = "sequential -- ordered call: {name} must run in iteration order"
+EARLY_EXIT = "sequential -- early exit ({statement}): iterations after the exit must not run"
+
+#: ``LoopToMap``'s ordered-side-effect message starts with the node's name.
+ORDERED_EFFECT = re.compile(r"^(.+?) has an ordered side effect")
+#: ``LoopToMap``'s unsupported-body message names the block type last.
+BODY_BLOCK = re.compile(r"contains a (\w+)")
+
+#: The longest index a reason quotes; a longer one (a tiled bound) is left out, the array name alone stays.
+SHORT_INDEX = 40
+
+
+def order_requirement(refusal: LoopRefusal) -> str | None:
+    """The class line of a loop whose order the program itself requires, or ``None``: an ordered call, or an exit that ends the loop
+    early. Neither is an open question, so neither is ``unknown``."""
+    if refusal.kind is Refusal.ORDERED_SIDE_EFFECT:
+        found = ORDERED_EFFECT.search(refusal.message)
+        name = found.group(1) if found is not None else "a call in the body"
+        return ORDERED_CALL.format(name=name)
+    if refusal.kind is Refusal.UNSUPPORTED_BODY:
+        found = BODY_BLOCK.search(refusal.message)
+        block = found.group(1) if found is not None else ""
+        if block in ("BreakBlock", "ReturnBlock"):
+            return EARLY_EXIT.format(statement="break" if block == "BreakBlock" else "return")
+    return None
+
+
+def quoted(container: str | None, subset: Any) -> str:
+    """``A[i + 1]``, or ``A`` alone when the index is longer than :data:`SHORT_INDEX`."""
+    if container is None:
+        return "an array"
+    index = str(subset) if subset is not None else ""
+    return f"{container}[{index}]" if index and len(index) <= SHORT_INDEX else container
+
+
+def unproven_reason(refusal: LoopRefusal) -> str:
+    """The reason of an ``unknown`` loop in the loop's words: which check failed, on which array or name. The test
+    found neither independence nor a conflicting pair of iterations."""
+    kind = refusal.kind
+    first_write = refusal.writes[0] if refusal.writes else None
+    first_read = refusal.reads[0] if refusal.reads else None
+    if kind is Refusal.NON_UNIQUE_WRITE:
+        return (
+            f"the solver could not show that each iteration writes a different element of "
+            f"{quoted(refusal.container, first_write)}; parallel if no two iterations write the same element "
+            "(for example, an index array without repeats)"
+        )
+    if kind is Refusal.DYNAMIC_WRITE:
+        return (
+            f"a conditional write to {quoted(refusal.container, first_write)} at an index the loop counter does not "
+            "fix; parallel if no two iterations write the same element"
+        )
+    if kind is Refusal.OVERLAPPING_WRITES:
+        return (
+            f"the dependence test could not show that writes to {refusal.container or 'an array'} from different "
+            "iterations never overlap; parallel if they are disjoint"
+        )
+    if kind is Refusal.CARRIED_DEPENDENCE:
+        return (
+            f"the dependence test could not show that a read of {quoted(refusal.container, first_read)} never "
+            "sees another iteration's write; parallel if no iteration reads an element another iteration writes"
+        )
+    if kind is Refusal.CARRIED_SYMBOL:
+        return (
+            f"{carried_symbol_text(refusal)} may carry a value from one iteration to the next (a branch may skip "
+            "it); parallel if every iteration assigns it before reading it, otherwise only as a scan"
+        )
+    if kind is Refusal.LIVE_OUT_SYMBOL:
+        names = ", ".join(sorted(refusal.symbols)) or "a scalar"
+        return f"{names} is read after the loop; parallel with the last iteration's value kept (lastprivate)"
+    if kind is Refusal.UNANALYZABLE_RANGE:
+        return (
+            f"{NEVER_EXAMINED}: the loop bounds or step could not be analyzed; integer bounds fixed before the loop "
+            "would let the test run"
+        )
+    if kind is Refusal.UNSUPPORTED_BODY:
+        found = BODY_BLOCK.search(refusal.message)
+        block = found.group(1) if found is not None else "block"
+        if block == "ContinueBlock":
+            return f"{NEVER_EXAMINED}: the body skips the rest of an iteration (continue); rewritten as an if, it can be analyzed"
+        return f"{NEVER_EXAMINED}: the body holds a {block}"
     return refusal.message
 
 
@@ -407,7 +536,7 @@ def pattern_witness(loop: LoopRegion, steps: Any) -> str:
         return ""
     first = symbolic.simplify(as_basic(start))
     second = symbolic.simplify(first + steps * as_basic(stride))
-    return f" (witness: {loop.loop_variable}={first} and {loop.loop_variable}={second})"
+    return f" (example: iterations {loop.loop_variable}={first} and {loop.loop_variable}={second})"
 
 
 class Site(NamedTuple):
@@ -655,9 +784,9 @@ def conflict_label(first: Site, second: Site, witness: dict[str, int], carrier: 
     kind = "WAW" if first.access.write and second.access.write else ("RAW" if first.access.write else "WAR")
     named = second if kind == "RAW" else first
     values = ", ".join(f"{name}={value}" for name, value in witness.items() if not name.startswith(carrier + "__"))
-    order = f"{carrier}={witness[carrier + '__a']} and {carrier}={witness[carrier + '__b']}"
+    order = f"iterations {carrier}={witness[carrier + '__a']} and {carrier}={witness[carrier + '__b']}"
     where = f"{values}, {order}" if values else order
-    return f"{kind} on {site_text(named)} (witness: {where})"
+    return f"{kind} on {site_text(named)} (example the solver found: {where})"
 
 
 def loop_hint(loop: LoopRegion, session: Any = None) -> str:
@@ -665,13 +794,21 @@ def loop_hint(loop: LoopRegion, session: Any = None) -> str:
     reason = refusal_reason(loop, session)
     if reason is None:
         return SEQUENTIAL_PINNED if loop.pinned_sequential else PARALLEL
+    if reason == NO_COUNTER:
+        return WHILE_LOOP
     if isinstance(reason, str):
         return UNKNOWN.format(reason=reason)
+    if reason.kind is Refusal.SMALL:
+        found = SMALL_RANGE.search(reason.message)
+        return SMALL_LOOP.format(range=found.group(1) if found is not None else "small sizes")
+    required = order_requirement(reason)
+    if required is not None:
+        return required
     access = proof_of_carry(loop, reason)
     if access is not None:
         text = SEQUENTIAL_PROVEN_OVER_DOALL if over_doall_nest(loop) else SEQUENTIAL_PROVEN
-        return text.format(reason=access, why=proven_why(access))
-    return UNKNOWN.format(reason=carrying_access(reason))
+        return text.format(reason=proven_reason(access))
+    return UNKNOWN.format(reason=unproven_reason(reason))
 
 
 def over_doall_nest(loop: LoopRegion) -> bool:
@@ -712,7 +849,7 @@ def has_branch(loop: LoopRegion) -> bool:
 
 
 #: Appended to a parallel map's class line when its independence rests on entry traps.
-ASSUMES = "; assumes {predicates}, trapped at entry"
+ASSUMES = "; independent only if {predicates} (the program aborts at entry otherwise)"
 
 #: ``if <violation>:`` opening every abort guard's code (see ``tasklet_utils.add_abort_guard``).
 GUARD_HEAD = re.compile(r"^if (.*):\s*$", re.MULTILINE)
@@ -772,7 +909,7 @@ def parallel_hint(state: SDFGState, entry: nodes.MapEntry, traps: list[tuple[str
 
 
 #: A contraction whose output is read only in part downstream. ``{read}`` and ``{size}`` are element counts.
-PARTIALLY_READ = "contraction: {read} of {size} elements read downstream"
+PARTIALLY_READ = "contraction: only {read} of its {size} output elements are read later"
 
 
 def partially_read_hint(state: SDFGState, node: nodes.LibraryNode) -> str | None:

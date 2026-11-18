@@ -177,7 +177,7 @@ def drain_block_reductions(
 class KernelScopeGenerator(ScopeGenerationStrategy):
     SCHEDULE = dtypes.ScheduleType.GPU_Device
     SCOPE_COMMENT = "Kernel scope"
-    SCOPE_HINT = "parallel -- kernel: the map iterations form the launch grid"
+    SCOPE_HINT = "parallel -- kernel: independent iterations, one GPU thread each (the launch grid)"
 
     def generate(
         self,
@@ -308,7 +308,7 @@ def tile_kernel_dimensions(entry: nodes.MapEntry) -> tuple[list, list]:
 class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
     SCHEDULE = dtypes.ScheduleType.GPU_ThreadBlock
     SCOPE_COMMENT = "ThreadBlock Scope"
-    SCOPE_HINT = "parallel -- thread block: one iteration per thread, trailing threads masked"
+    SCOPE_HINT = "parallel -- thread block: independent iterations, one per thread, trailing threads masked"
 
     def generate(
         self,
@@ -386,7 +386,7 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
 class WarpScopeGenerator(ScopeGenerationStrategy):
     SCHEDULE = dtypes.ScheduleType.GPU_Warp
     SCOPE_COMMENT = "WarpLevel Scope"
-    SCOPE_HINT = "parallel -- warp: one iteration per warp of the block"
+    SCOPE_HINT = "parallel -- warp: independent iterations, one per warp of the block"
 
     def generate(
         self,

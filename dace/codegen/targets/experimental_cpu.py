@@ -385,15 +385,23 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
     def emit_provenance(self, node, cfg, state_id, callsite_stream) -> None:
         """Write the ``// <original library node>`` line CPF recorded for an expansion, once per
-        description per unit. A no-op outside standalone rendering, and under any detail but ``HintDetail.PROOFS``."""
+        description per unit. A no-op outside standalone rendering. Under ``HintDetail.KINDS`` only a description that
+        names a class (a scan) writes it, as :func:`cpf_lowering.kind_line`; under ``HintDetail.NONE`` nothing."""
         record = cpf_lowering.describe(node.guid)
-        if record is None or cpf_lowering.hint_detail() is not cpf_lowering.HintDetail.PROOFS:
+        detail = cpf_lowering.hint_detail()
+        if record is None or detail is cpf_lowering.HintDetail.NONE:
             return
         origin, description = record
         if origin in self._emitted_provenance:
             return
+        lines = str(description).splitlines()
+        if detail is cpf_lowering.HintDetail.KINDS:
+            kind = cpf_lowering.kind_line(str(description))
+            lines = [kind] if kind else []
+        if not lines:
+            return
         self._emitted_provenance.add(origin)
-        for line in str(description).splitlines():
+        for line in lines:
             if line.strip():
                 callsite_stream.write("// %s" % line, cfg, state_id, node)
 
