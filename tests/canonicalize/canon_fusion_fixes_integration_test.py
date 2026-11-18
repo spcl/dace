@@ -33,7 +33,10 @@ def canon_only(program) -> dace.SDFG:
 def refuses_both_fusions(program) -> bool:
     """Whether FuseMapsAtSharedAxes and MapFusionVertical both leave the simplified program unchanged."""
     sdfg = program.to_sdfg(simplify=True)
-    return FuseMapsAtSharedAxes().apply_pass(sdfg, {}) is None and sdfg.apply_transformations_repeated(MapFusionVertical) == 0
+    return (
+        FuseMapsAtSharedAxes().apply_pass(sdfg, {}) is None
+        and sdfg.apply_transformations_repeated(MapFusionVertical) == 0
+    )
 
 
 def transients_of_size(sdfg: dace.SDFG, size) -> list[str]:
