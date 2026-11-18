@@ -230,10 +230,10 @@ def test_a_reduction_over_the_unshared_axis_completes_inside_the_fused_iteration
 def test_a_reduction_every_iteration_contributes_to_keeps_the_producer():
     """``T[0]`` collects all ``i``: no fused iteration holds the finished sum."""
     sdfg = total_sum_then_scale.to_sdfg(simplify=True)
-    before = [(list(m.params), str(m.range)) for m in top_level_maps(sdfg)]
+    before = sorted((list(m.params), str(m.range)) for m in top_level_maps(sdfg))
     assert FuseMapsAtSharedAxes().apply_pass(sdfg, {}) is None
     sdfg.validate()
-    assert [(list(m.params), str(m.range)) for m in top_level_maps(sdfg)] == before
+    assert sorted((list(m.params), str(m.range)) for m in top_level_maps(sdfg)) == before
     a = np.random.default_rng(6).random((10, 6))
     b = np.zeros(10)
     sdfg(A=a, B=b, N=10, M=6)
