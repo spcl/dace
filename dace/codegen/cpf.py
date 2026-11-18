@@ -1900,6 +1900,28 @@ def render(
         return render_unit(sdfg, validate, language, signature, check_compiles, isa, llm_friendly)
 
 
+#: The ISA test CPF writes around its target-specific code paths (the scan rescan, :mod:`dace.cpf_lowering`).
+X86_GUARD = "#if defined(__x86_64__) || defined(_M_X64)"
+#: One such guarded block: the x86 branch, then the other.
+X86_BLOCK = re.compile(re.escape(X86_GUARD) + r"\n(.*?)^#else\n(.*?)^#endif\n", re.DOTALL | re.MULTILINE)
+
+
+def renders_for_x86(isa: ISA) -> bool:
+    """Whether a unit rendered for ``isa`` runs on x86-64: the tile ISA when it names one, else the host."""
+    resolved = widest_function_isa() if isa is ISA.AUTO else isa
+    if resolved in (ISA.AVX2, ISA.AVX512):
+        return True
+    if resolved in (ISA.ARM_NEON, ISA.ARM_SVE):
+        return False
+    return platform.machine().lower() in ("x86_64", "amd64")
+
+
+def keep_target_path(code: str, x86: bool) -> str:
+    """``code`` with each block CPF guards by :data:`X86_GUARD` reduced to the branch of its target: a served
+    form runs on one machine, and the other branch is text an agent reads for nothing."""
+    return X86_BLOCK.sub(lambda m: m.group(1) if x86 else m.group(2), code)
+
+
 def render_unit(
     sdfg: SDFG,
     validate: bool,
@@ -1995,7 +2017,7 @@ def render_unit(
                 # Last of all: a pure layout change, so every pass above still sees the generator's text.
                 body = compact_blocks(body)
                 device_body = compact_blocks(device_body) if device_body else ""
-    code = preamble(body, dialect, frame.environments) + body
+    code = keep_target_path(preamble(body, dialect, frame.environments) + body, renders_for_x86(isa))
     names: tuple[tuple[str, str], ...] = ()
     if llm_friendly:
         entry_names = tuple(signature.order) if signature is not None else tuple(entry_arglist)
