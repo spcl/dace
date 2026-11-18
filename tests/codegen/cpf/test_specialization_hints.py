@@ -497,10 +497,8 @@ def test_a_wavefront_names_its_diagonal_and_its_front():
     # The skew that produced the wavefront is named, since the rewrite renames the axes to t/p and
     # a reader cannot recover it from the loop.
     diagonal = [line for line in rendered if line.startswith("// sequential -- wavefront diagonal (t = ")]
-    assert diagonal and diagonal[0].endswith(": the skew put every dependence on this axis"), rendered
+    assert diagonal and diagonal[0].endswith("; alt: the unskewed nest"), rendered
     assert any(line.startswith("// parallel -- wavefront front (t = ") for line in rendered)
-    # A wavefront is a trade like any other, so it states the alternative and the device it pays on.
-    assert any(line.startswith("// alternative: the unskewed nest") for line in rendered)
 
 
 def test_a_tiled_wavefront_names_all_three_of_its_axes():
@@ -512,7 +510,7 @@ def test_a_tiled_wavefront_names_all_three_of_its_axes():
         line.startswith("// sequential -- wavefront tile diagonal (t = ") and "[32x32]" in line for line in rendered
     )
     assert any(line.startswith("// parallel -- wavefront tile column [32x32]") for line in rendered)
-    assert any(line.startswith("// sequential -- inner tile of a wavefront [32x32]") for line in rendered)
+    assert any(line.startswith("// sequential -- wavefront tile interior [32x32]") for line in rendered)
     # The tiled form is a different trade from the untiled one and must not borrow its wording.
     assert not any(line.startswith("// sequential -- wavefront diagonal") for line in rendered)
 

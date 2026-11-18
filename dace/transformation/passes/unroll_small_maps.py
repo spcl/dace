@@ -13,6 +13,7 @@ import sympy
 
 from dace import SDFG, symbolic
 from dace.sdfg import nodes
+from dace.sdfg.narrowing import as_expr
 from dace.sdfg.state import SDFGState, SymbolResolver
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
@@ -24,7 +25,8 @@ from dace.transformation.interstate.loop_unroll import LoopUnroll
 def constant_trips(entry: nodes.MapEntry) -> int | None:
     """How many iterations ``entry``'s map runs, when every bound is a literal."""
     trips = 1
-    for begin, end, step in entry.map.range.ranges:
+    for bounds in entry.map.range.ranges:
+        begin, end, step = (as_expr(bound) for bound in bounds)  # a bound may carry an approximation
         count = sympy.sympify((end - begin) // step + 1)
         if not count.is_Integer:
             return None

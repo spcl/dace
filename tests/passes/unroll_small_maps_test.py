@@ -52,3 +52,20 @@ def test_a_map_over_a_large_range_is_left_alone():
 if __name__ == "__main__":
     test_a_species_map_around_plane_work_unrolls_into_plane_maps()
     test_a_map_over_a_large_range_is_left_alone()
+
+
+def test_trip_count_reads_a_bound_that_carries_an_approximation():
+    """A device map's bound can be an exact value with an approximation attached; the count is the exact one's, and a
+    symbolic one is no literal count at all (the HIP rendering of a nested launch raised here)."""
+    from dace import symbolic
+    from dace.sdfg import nodes as nd
+    from dace.transformation.passes.unroll_small_maps import constant_trips
+
+    sdfg = dace.SDFG("trips_with_approximation")
+    state = sdfg.add_state()
+    literal, unused_exit = state.add_map("literal", {"i": "0:4"})
+    literal.map.range = dace.subsets.Range([(0, symbolic.SymExpr(3, 7), 1)])
+    assert isinstance(literal, nd.MapEntry) and constant_trips(literal) == 4
+    symbolic_entry, unused_exit = state.add_map("symbolic", {"i": "0:N"})
+    symbolic_entry.map.range = dace.subsets.Range([(0, symbolic.SymExpr(dace.symbol("N") - 1, 63), 1)])
+    assert constant_trips(symbolic_entry) is None

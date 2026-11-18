@@ -110,7 +110,7 @@ class FuseCopyChains(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """:returns: how many chains became maps, or ``None`` if none did."""
         fused = 0
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for chain in copy_chains(state):
                 shaped = fusible(state, chain)
                 if shaped is None:
