@@ -111,10 +111,14 @@ class MegakernelLoops(ppl.Pass):
     device = properties.EnumProperty(
         dtype=dtypes.DeviceType, default=dtypes.DeviceType.GPU, desc="The device whose kernel loops are fused"
     )
+    loops = properties.SetProperty(
+        element_type=str, default=set(), desc="Labels of the loops to fuse; empty fuses every loop of kernels"
+    )
 
-    def __init__(self, device: dtypes.DeviceType = dtypes.DeviceType.GPU) -> None:
+    def __init__(self, device: dtypes.DeviceType = dtypes.DeviceType.GPU, loops: set[str] | None = None) -> None:
         super().__init__()
         self.device = device
+        self.loops = set(loops or ())
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -133,6 +137,8 @@ class MegakernelLoops(ppl.Pass):
         fused = 0
         for chain in loop_chains(find_chains(sdfg, sdfg, target)):
             loop = chain.blocks[0]
+            if self.loops and loop.label not in self.loops:
+                continue
             gpu = self.device == dtypes.DeviceType.GPU
             bound = launch_bound(loop, target) if gpu else None
             if gpu and bound is None:
