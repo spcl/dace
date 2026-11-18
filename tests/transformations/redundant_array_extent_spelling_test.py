@@ -105,17 +105,22 @@ def view_into_array_sdfg(name: str, view_first: bool) -> dace.SDFG:
     return sdfg
 
 
-def test_redundant_array_removes_a_view_of_its_array_whose_shape_is_spelled_floor():
+def test_a_view_written_into_its_array_whose_shape_is_spelled_floor_is_removed():
+    """``V(B) -> B``: RedundantArray refuses a View next to the array it views by design, RemoveSliceView removes it."""
     sdfg = view_into_array_sdfg("redundant_array_view_floor_spelling", view_first=True)
-    assert sdfg.apply_transformations(RedundantArray) == 1
+    assert sdfg.apply_transformations(RedundantArray) == 0
+    assert sdfg.apply_transformations(RemoveSliceView) == 1
     sdfg.validate()
     assert not any(n.data == "v" for n in sdfg.start_block.data_nodes())
     run_double(sdfg, 1)
 
 
-def test_redundant_second_array_removes_a_view_of_its_array_whose_shape_is_spelled_floor():
+def test_a_view_read_from_its_array_whose_shape_is_spelled_floor_is_removed():
+    """``A -> V(A)``: RedundantSecondArray refuses a View next to the array it views by design, RemoveSliceView
+    removes it."""
     sdfg = view_into_array_sdfg("redundant_second_array_view_floor_spelling", view_first=False)
-    assert sdfg.apply_transformations(RedundantSecondArray) == 1
+    assert sdfg.apply_transformations(RedundantSecondArray) == 0
+    assert sdfg.apply_transformations(RemoveSliceView) == 1
     sdfg.validate()
     assert not any(n.data == "v" for n in sdfg.start_block.data_nodes())
     run_double(sdfg, 2)
