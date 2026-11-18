@@ -27,9 +27,9 @@ and `pluto` on CPU, and of `triton` and `ppcg_hip` on GPU (`baselines-rev-1117a2
 |---|---|---|---|---|
 | gem | 64.0x | 165.5 | 2.58 triton | fixed, 1f9298431, not yet re-measured |
 | cloudsc | 45.7x | 73.9 | 1.62 triton | not yet analysed |
-| cp2k_grid_integrate | 38.5x | 2203.4 | 57.2 triton | by design, hint proposed |
+| cp2k_grid_integrate | 38.5x | 2203.4 | 57.2 triton | by design, hint 7fd2f6650 |
 | qe_vloc_psi_k_acc | 20.2x | 21.2 | 1.05 triton | proposed |
-| fv3_dycore | 10.9x | 256.0 | 23.6 triton | fusion fix in progress |
+| fv3_dycore | 10.9x | 256.0 | 23.6 triton | copies fixed, 6587cb40c, not yet re-measured |
 | lulesh | 9.4x | 40.8 | 4.36 triton | fixed, ce0afd4a4, not yet re-measured |
 | cp2k_density_matrix_trs4 | 8.6x | 24.3 | 2.82 triton | by design (owned by the scan work) |
 | lavamd | 4.9x | 198.2 | 40.4 triton | transient-removal fix in progress |
@@ -47,22 +47,28 @@ and `pluto` on CPU, and of `triton` and `ppcg_hip` on GPU (`baselines-rev-1117a2
 - **cp2k_grid_integrate.** One thread per task (about 2.6M tasks) is right, but each thread holds about 72 KB of
   private scratch: the tensordot chain fills 1125 + 2025 + 3645 elements and the final gather into `hab` reads about
   100 of them. The full contraction is the canonical form of the numpy source. Narrowing it to the elements read is
-  left to the agent; canon will record a `specialization_hint` at the contraction saying only a subset of its output
-  is read. The triton baseline also puts lanes over the 5^3 cube points, a width choice left to the agent.
+  left to the agent; `AnnotateLoopKinds` now records a `specialization_hint` on a contraction whose transient output
+  is read by fewer elements than it holds (both counts named, 7fd2f6650). The triton baseline also puts lanes over the 5^3 cube points, a width choice left to the agent.
 - **qe_vloc_psi_k_acc.** The whole band map runs on the host: a task loop that encloses an FFT the kernel cannot
   call is pinned to the host with its subtree (`offload_to_accelerator.py`), so each band runs CPU FFTW on stack
   grids and the inputs are copied to the host and back. Proposal: a `BatchMapFFTs` pass in `offload_to_gpu`, beside
   `BatchMapProducts`, that splits the band map around its FFTs and emits one batched hipFFT over stacked grids.
-  Expected 21 ms to 1-2 ms. Blocked on `MapFission` handling the scatter guard inside the band body.
+  Expected 21 ms to 1-2 ms. Blocked on `MapFission` handling the scatter guard inside the band body; pending a
+  decision. Until then it is an evaluation gap: an agent would stage all bands' grids at once and call the batched
+  vendor FFT pair, as the triton baseline does with `cupy.fft`.
 - **fv3_dycore.** Each time step issues about 204 device-to-device copies of `nk` elements, from `copy_corners_x/y`,
-  which spell out 36 single-column copies per call. Fix in progress: expand same-shape independent copies inside a
-  device state into maps and fuse them horizontally where their read and write sets are provably disjoint, about 6
-  kernels per step instead of about 200 copies. The remaining 33 launches per step are a launch-only loop (a
+  which spell out 36 single-column copies per call; the frontend chains them as access nodes of `q` joined by copy
+  edges. Fixed (6587cb40c): `FuseCopyChains`, run in `offload_to_gpu` before the device move, makes a chain whose
+  copies move the same extents, no destination meeting another copy's source or destination, one map with a tasklet
+  per copy: about 6 kernels per step instead of about 204 copies. The remaining 33 launches per step are a launch-only loop (a
   megakernel candidate).
 - **cp2k_density_matrix_trs4.** Per iteration: 20 launches, 10 stream syncs and two whole-array copies to the host,
   which then runs the `cumsum(...)[-1]` reductions serially. The source keeps the left-to-right summation order on
-  purpose. An ordered device reduction would remove the copies and syncs; it belongs to the scan lowering, which is
-  developed separately.
+  purpose (a reassociated `np.sum` fails validation, per the kernel's docstring), so canon keeps the scan, and
+  its last element is computed by a serial host loop over `3 * bs^2 * nbr` elements (`canon_gpu.cpu.cpp:613`). Between the GEMMs, small elementwise kernels (`_convert_to_int64_`, `_Add_` on the
+  3-element `c_pos` tables, `where`) are not fused. The host branches on convergence every iteration, so this is not
+  a launch-only loop. What an agent would do: run the ordered reduction on the device in one pass (one thread per
+  array, or a decoupled look-back scan), keep the iteration loop on the host, and fuse the elementwise chain.
 - **lavamd.** One thread per box with the particle-pair loop serial in the thread and global atomics into `fv`.
   The index tables `pointers` and `neighbor_offsets` have data-dependent sizes, so a fold kernel, a copy to the host
   and a sync run before the main kernel can be allocated. Fix in progress: recompute both at their use, which
