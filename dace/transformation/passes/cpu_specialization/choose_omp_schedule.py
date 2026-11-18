@@ -5,7 +5,9 @@ A ``CPU_Multicore`` map with the default schedule is split into equal static chu
 iteration costs the same, and wrong when an iteration's work depends on the data it reads: a loop over a CSR row
 (``for k in range(ptr[i], ptr[i + 1])``), a ``while`` loop, or an inner map whose range is read from memory. Then a
 static chunk of heavy iterations decides the runtime (spgemm_hash's numeric phase, whose rows are ordered by size:
-637 ms static, 337 ms guided). Such a map gets ``schedule(guided)``; every other map keeps its schedule.
+637 ms static, 337 ms guided). So it is when an inner trip count grows or shrinks with the iteration, a triangle
+(tsvc_2_s1232's ``range(j * VLEN, n)``, 7.4 ms static against 2.9 ms before the interchange put the long rows last).
+Such a map gets ``schedule(guided)``; every other map keeps its schedule.
 """
 
 from typing import Any
@@ -35,30 +37,46 @@ def reads_data(expr: Any, data_bound: set[str]) -> bool:
     return bool(expr.atoms(symbolic.Subscript)) or any(str(s) in data_bound for s in expr.free_symbols)
 
 
-def uneven_loop(loop: LoopRegion, data_bound: set[str]) -> bool:
-    """Whether ``loop``'s trip count can depend on data: a ``while`` loop, or bounds that read memory."""
+def uneven_loop(loop: LoopRegion, data_bound: set[str], iteration: set[str] = frozenset()) -> bool:
+    """Whether ``loop``'s trip count can differ between iterations of the map around it: a ``while`` loop, bounds
+    that read memory, or a trip count naming one of the ``iteration`` symbols (the map's parameters, as the loop's
+    SDFG names them)."""
     if not loop.loop_variable:
         return True
     start, end = loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop)
-    return reads_data(start, data_bound) or reads_data(end, data_bound)
+    if reads_data(start, data_bound) or reads_data(end, data_bound):
+        return True
+    return names_any(end - start, iteration)
+
+
+def names_any(expr: Any, names: set[str]) -> bool:
+    """Whether ``expr`` reads a symbol of ``names``."""
+    return any(str(s) in names for s in symbolic.pystr_to_symbolic(expr).free_symbols)
 
 
 def uneven_body(state: SDFGState, entry: nodes.MapEntry, data_bound: set[str]) -> bool:
-    """Whether an iteration of ``entry``'s map does data-dependent work: an inner map with a dynamic range input, or
-    a nested SDFG holding an uneven loop."""
+    """Whether the work of an iteration of ``entry``'s map depends on the iteration: an inner map with a dynamic
+    range input or an extent naming the map's parameters, or a nested SDFG holding a loop whose trip count is uneven
+    (:func:`uneven_loop`)."""
+    params = set(entry.map.params)
     for node in state.scope_subgraph(entry, include_entry=False, include_exit=False).nodes():
-        if isinstance(node, nodes.MapEntry) and any(not c.startswith("IN_") for c in node.in_connectors):
+        if isinstance(node, nodes.MapEntry) and (
+            any(not c.startswith("IN_") for c in node.in_connectors)
+            or any(names_any(extent, params) for extent in node.map.range.size())
+        ):
             return True
         if isinstance(node, nodes.NestedSDFG):
             inner = data_bound | data_bound_names(node.sdfg)
+            iteration = {name for name, value in node.symbol_mapping.items() if names_any(value, params)}
             for sd in node.sdfg.all_sdfgs_recursive():
-                if any(uneven_loop(r, inner) for r in sd.all_control_flow_regions() if isinstance(r, LoopRegion)):
+                regions = [r for r in sd.all_control_flow_regions() if isinstance(r, LoopRegion)]
+                if any(uneven_loop(r, inner, iteration) for r in regions):
                     return True
     return False
 
 
 class ChooseOmpSchedule(ppl.Pass):
-    """Give every ``CPU_Multicore`` map with the default OpenMP schedule whose iterations do data-dependent work
+    """Give every ``CPU_Multicore`` map with the default OpenMP schedule whose iterations do uneven work
     ``schedule(guided)``."""
 
     CATEGORY: str = "Optimization Preparation"
