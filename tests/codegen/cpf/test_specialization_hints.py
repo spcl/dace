@@ -669,7 +669,7 @@ def test_a_time_loop_over_a_stencil_is_proven_and_names_the_skew_it_is_not_given
     hints = [loop.specialization_hint.splitlines() for loop in loops_of(sdfg)]
     assert len(hints) == 1, hints
     assert hints[0][0].startswith("sequential -- carried: RAW on ") and "T=" in hints[0][0], hints
-    assert "a skew of this loop with the parallel nest inside it" in hints[0][1], hints
+    assert "time-tiled wavefront" in hints[0][1], hints
 
 
 def test_a_read_ahead_dependence_is_named_war_not_raw():
@@ -832,7 +832,7 @@ def test_a_guarded_loop_names_its_guard_on_both_arms():
     ]
     loops = [loop.specialization_hint.splitlines()[0] for loop in loops_of(sdfg)]
     assert any(re.match(r"parallel -- under guard: .*inc.*", line) for line in maps), maps
-    assert any(re.match(r"sequential -- fallback arm, runs when not \(.*inc.*\)$", line) for line in loops), loops
+    assert any(re.match(r"sequential -- fallback when not \(.*inc.*\)$", line) for line in loops), loops
 
 
 def test_a_map_resting_on_an_unknown_sign_is_versioned_on_it():

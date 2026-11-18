@@ -1143,15 +1143,7 @@ class BreakAntiDependence(ppl.Pass):
         # only the seam between chunks, where a full copy of the window is bandwidth the loop
         # itself would not have spent. A GPU has the bandwidth and would pay for the seam in
         # synchronization instead, so it keeps this form. Recorded, not decided, here.
-        loop.specialization_hint = (
-            f"anti-dependence on {name} broken by snapshotting the read window.\n"
-            "Alternative: buffer only the seam between chunks.\n"
-            "CPU: the seam buffer is worth trying -- the full copy is the expensive "
-            "half here.\n"
-            "GPU: the snapshot is usually the cheaper of the two; a seam costs "
-            "synchronization.\n"
-            "Both are correct. Measure before choosing."
-        )
+        loop.specialization_hint = f"anti-dependence on {name}: snapshot of the read window; alt: seam buffer (CPU)"
 
         # Redirect only the read-ahead edges to a fresh `snap` source, keeping any
         # destination subset (copy edges carry an `other_subset`).

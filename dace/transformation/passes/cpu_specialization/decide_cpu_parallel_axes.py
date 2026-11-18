@@ -68,15 +68,12 @@ SEQUENTIAL_UNDER_A_MAP = (dtypes.ScheduleType.Default, dtypes.ScheduleType.Seque
 
 #: The line a map made sequential here adds under its ``parallel`` class line, so the rendered loop -- which loses
 #: its pragma -- says why. Each rule fills in its own reason.
-SEQUENTIAL_ON_CPU = "run sequentially on CPU -- {reason}"
-NESTED_REASON = "a parallel map encloses it, and a region opens one OpenMP team level only"
-SMALL_REASON = "its {count} iterations are small"
-ONE_TRIP_REASON = "it runs at most once, so it is a guard rather than a loop"
-FEW_TRIPS_REASON = "its {count} iterations leave threads idle, so the maps in its body share out their work instead"
-DATA_SEGMENT_REASON = (
-    "its range {begin}:{end} is read from data inside a sequential loop, so every outer iteration would fork "
-    "over a few elements"
-)
+SEQUENTIAL_ON_CPU = "sequential on CPU -- {reason}"
+NESTED_REASON = "inside a parallel map"
+SMALL_REASON = "{count} small iterations"
+ONE_TRIP_REASON = "at most one trip"
+FEW_TRIPS_REASON = "{count} trips; the body maps share the team"
+DATA_SEGMENT_REASON = "data-dependent range {begin}:{end} under a sequential loop"
 
 
 def pinned_inner_trips(entry: nodes.MapEntry, children: dict[Any, list[nodes.Node]]) -> Any:

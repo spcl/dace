@@ -31,7 +31,7 @@ def contraction_hint(program) -> str | None:
 
 def test_a_contraction_read_at_a_few_gathered_points_says_so():
     hint = contraction_hint(gathered_contraction)
-    assert hint is not None and hint.startswith("full contraction -- downstream reads at most"), hint
+    assert hint is not None and hint.startswith("contraction: "), hint
     assert "of the 60 elements" in hint, hint
 
 

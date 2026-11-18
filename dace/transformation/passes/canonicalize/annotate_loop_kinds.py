@@ -61,7 +61,7 @@ PARALLEL = "parallel -- the iterations are independent"
 #: The class line of a Map that accumulates into a container through a WCR edge: its iterations are not
 #: independent, they reduce, and the operator and the accumulator are the evidence. ``{reductions}`` reads
 #: ``+ into s``, joined by ``and``.
-REDUCTION = "parallel -- reduction: {reductions}; every other access is independent"
+REDUCTION = "parallel -- reduction: {reductions}"
 
 #: The operator a reduction line names, by ``dtypes.ReductionType``; any other type is named by its member name.
 REDUCTION_SYMBOLS = {
@@ -78,24 +78,17 @@ REDUCTION_SYMBOLS = {
 
 #: Added under a multi-dimensional Map's class line: the rendering writes one nested ``for`` per dimension and
 #: the comment only above the outermost, so the inner ones are named here.
-MAP_DIMENSIONS = "covers the {count} nested loops over {params}: every one of them is parallel"
+MAP_DIMENSIONS = "covers {count} nested parallel loops over {params}"
 
 #: A loop whose carried dependence was proven. ``{reason}`` is the carrying ACCESS, since that is
 #: the part a reader acts on -- the prose around it repeated on every such loop and said the same
 #: thing each time.
-SEQUENTIAL_PROVEN = (
-    "sequential -- carried: {reason}\n"
-    "settled: proven, {why}; no schedule or annotation makes it parallel -- removing the dependence takes an "
-    "algorithmic change (break an anti dependence, privatize, rewrite the recurrence as a scan or reduction), "
-    "otherwise optimize the work inside"
-)
+SEQUENTIAL_PROVEN = "sequential -- carried: {reason}\nsettled: proven, {why}"
 
 #: A carried dependence on a loop whose body is a Do-All nest (a time loop over a stencil): proven too, but a skew
 #: of the loop with the nest inside it would parallelize it -- canonicalization does not skew a time loop.
 SEQUENTIAL_PROVEN_OVER_DOALL = (
-    "sequential -- carried: {reason}\n"
-    "settled: proven, {why}; a skew of this loop with the parallel nest inside it (a time-tiled wavefront) would "
-    "make it parallel, which canonicalization does not apply to a loop over a Do-All nest"
+    "sequential -- carried: {reason}\nsettled: proven, {why}; alt: a time-tiled wavefront (not applied to time loops)"
 )
 
 #: A loop the dependence test declined to answer, or never examined. NOT the same fact as the line
@@ -110,33 +103,18 @@ NO_COUNTER = f"{NEVER_EXAMINED}: no single iteration counter (a while loop)"
 
 #: A loop the dependence test finds independent that an earlier pass pinned sequential anyway (the
 #: fallback arm of a specialization). Rendered without a pragma, so it must not read as parallel.
-SEQUENTIAL_PINNED = (
-    "sequential -- pinned by an earlier pass; the dependence test finds the iterations independent\n"
-    "settled: the pass keeps the order on purpose (such as the fallback arm of a specialization)"
-)
+SEQUENTIAL_PINNED = "sequential -- pinned by an earlier pass (a fallback arm); the iterations are independent"
 
-#: The untiled skew: a sequential diagonal over a parallel front. The second line is the only
-#: advice a reader can act on -- which of the two correct shapes to run -- so it survives the cut
-#: while the restatement of what a skew is does not.
-WAVEFRONT_DIAGONAL = (
-    "sequential -- wavefront diagonal {skew}: the skew put every dependence on this axis\n"
-    "alternative: the unskewed nest, sequential in both axes -- worth timing on CPU, "
-    "rarely on GPU"
-)
-WAVEFRONT_FRONT = "parallel -- wavefront front {skew}: at a fixed diagonal the points are independent"
+#: The untiled skew: a sequential diagonal over a parallel front; ``alt`` names the other correct shape.
+WAVEFRONT_DIAGONAL = "sequential -- wavefront diagonal {skew}; alt: the unskewed nest"
+WAVEFRONT_FRONT = "parallel -- wavefront front {skew}"
 
 #: The tiled skew: a sequential tile diagonal over a parallel tile column over a sequential interior.
 WAVEFRONT_TILE_DIAGONAL = (
-    "sequential -- wavefront tile diagonal {skew} {tile}: the tile diagonal carries "
-    "every dependence\n"
-    "alternatives: the element diagonal, or the unskewed nest -- all three bit-identical; "
-    "a bigger tile trades kernel launches for block-local barriers"
+    "sequential -- wavefront tile diagonal {skew} {tile}; alt: the element diagonal or the unskewed nest"
 )
-WAVEFRONT_TILE_COLUMN = "parallel -- wavefront tile column {tile}: the tiles on one diagonal are independent"
-WAVEFRONT_TILE_INTERIOR = (
-    "sequential -- inner tile of a wavefront {tile}: the original order is kept verbatim, "
-    "so the tiled result is bit-identical"
-)
+WAVEFRONT_TILE_COLUMN = "parallel -- wavefront tile column {tile}"
+WAVEFRONT_TILE_INTERIOR = "sequential -- wavefront tile interior {tile}, original order"
 
 
 def skew_label(a: int, b: int, u: str, v: str) -> str:
@@ -794,11 +772,7 @@ def parallel_hint(state: SDFGState, entry: nodes.MapEntry, traps: list[tuple[str
 
 
 #: A contraction whose output is read only in part downstream. ``{read}`` and ``{size}`` are element counts.
-PARTIALLY_READ = (
-    "full contraction -- downstream reads at most {read} of the {size} elements it writes\n"
-    "why: canonicalization keeps the whole contraction; computing only the elements read is a narrowing left to a "
-    "specializing pass"
-)
+PARTIALLY_READ = "contraction: {read} of {size} elements read downstream"
 
 
 def partially_read_hint(state: SDFGState, node: nodes.LibraryNode) -> str | None:

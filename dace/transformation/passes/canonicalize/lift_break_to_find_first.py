@@ -68,14 +68,7 @@ from dace.transformation.passes.analysis.loop_analysis import (
 )
 
 #: Recorded on every lifted node: the alternative the lift did not take.
-FIND_FIRST_HINT = (
-    "find-first: a chunked, cancelling search -- chunks run in order of index and a hit stops every later chunk, "
-    "so an early hit costs about one chunk instead of the whole range.\n"
-    "Alternative: one full-range min-reduction over the firing indices, no cancellation.\n"
-    "Chunked wins when the hit is early; the full scan wins when the hit is late or absent and the chunk "
-    "bookkeeping is pure overhead.\n"
-    "Both are correct. Measure before choosing."
-)
+FIND_FIRST_HINT = "find-first: chunked cancelling search; alt: one min-reduction (faster on a late or no hit)"
 
 
 class Match:

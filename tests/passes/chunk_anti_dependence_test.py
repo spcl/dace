@@ -163,7 +163,7 @@ def test_the_rendered_sweep_says_it_is_sequential_on_purpose():
     AnnotateLoopKinds().apply_pass(sdfg, {})
     (sweep,) = [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
     assert sweep.pinned_sequential
-    assert sweep.specialization_hint.startswith("sequential -- in order inside one chunk"), sweep.specialization_hint
+    assert sweep.specialization_hint.startswith("sequential -- in chunk order"), sweep.specialization_hint
 
 
 def test_chunk_rewrite_is_bit_exact():

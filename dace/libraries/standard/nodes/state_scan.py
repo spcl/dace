@@ -40,14 +40,7 @@ OUT_CONNECTOR = "_out"
 GPU_BLOCK_THREADS = 128
 
 #: Recorded on every node: the device trade of the scan against the loop it replaces.
-STATE_SCAN_HINT = (
-    "state scan; canonicalization takes the parallel form.\n"
-    "Alternative: the sequential loop over the state.\n"
-    "CPU: the loop is usually the better of the two for a finite scan unless the cores outnumber the states -- "
-    "every block runs once per state; a GF(2) scan does twice the loop's work.\n"
-    "GPU: the scan is usually the better of the two.\n"
-    "Both are correct. Measure before choosing."
-)
+STATE_SCAN_HINT = "state scan; alt: the sequential loop (often faster on CPU; GF(2) scans do 2x work)"
 
 
 class StateScanKind(enum.Enum):

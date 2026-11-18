@@ -61,17 +61,11 @@ from dace.transformation.passes.iteration_domain import loop_trip_count
 LAUNCH_HINT_FLOOR = 1000
 
 #: The hint's opening words, matched to keep a re-run from recording the same finding twice.
-PERSISTENT_KERNEL_LEAD = "one kernel launch per trip of an enclosing sequential loop"
+PERSISTENT_KERNEL_LEAD = "launch per trip of a sequential loop"
 
 PERSISTENT_KERNEL = (
-    PERSISTENT_KERNEL_LEAD + ": {launches} launches per call, each "
-    "filling {blocks} blocks of {threads} threads and ending in a device-wide barrier.\n"
-    "Alternative: one persistent kernel that holds the grid across the whole loop and replaces each "
-    "launch boundary with a grid-wide barrier.\n"
-    "GPU: the persistent form is the one that removes the per-launch latency.\n"
-    "Not taken here: a grid-wide barrier needs a cooperative launch and a grid sized to what the "
-    "device can hold resident, neither of which this pass establishes. Recorded, not decided.\n"
-    "Both are correct. Measure before choosing."
+    PERSISTENT_KERNEL_LEAD
+    + ": {launches} launches per call of {blocks} x {threads}; alt (not taken): one persistent kernel, grid-wide barrier"
 )
 
 

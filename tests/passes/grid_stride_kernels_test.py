@@ -287,7 +287,7 @@ def test_the_persistent_kernel_is_recorded_where_it_was_not_taken():
     assert PERSISTENT_KERNEL_LEAD in hint
     assert "N launches per call" in hint, "the launch count is the whole point of the note"
     assert "persistent kernel" in hint and "grid-wide barrier" in hint
-    assert "Not taken here" in hint, "a hint that does not say it was declined reads as a directive"
+    assert "not taken" in hint, "a hint that does not say it was declined reads as a directive"
     # Recorded on the loop as well, because that is where a reader meets it: the CUDA target emits no
     # map hints, so the loop's copy is the one that reaches the rendered form.
     assert PERSISTENT_KERNEL_LEAD in loops(sdfg)[0].specialization_hint

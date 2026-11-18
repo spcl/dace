@@ -145,7 +145,7 @@ def test_a_data_segment_map_in_a_sequential_loop_goes_sequential(in_loop):
     entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
     if in_loop:
         assert entry.map.schedule == dtypes.ScheduleType.Sequential
-        assert "run sequentially on CPU -- its range b:e - 1 is read from data" in entry.specialization_hint
+        assert "sequential on CPU -- data-dependent range b:e - 1" in entry.specialization_hint
     else:
         assert entry.map.schedule == dtypes.ScheduleType.CPU_Multicore
 

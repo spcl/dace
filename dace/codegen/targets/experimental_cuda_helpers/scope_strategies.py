@@ -177,10 +177,7 @@ def drain_block_reductions(
 class KernelScopeGenerator(ScopeGenerationStrategy):
     SCHEDULE = dtypes.ScheduleType.GPU_Device
     SCOPE_COMMENT = "Kernel scope"
-    SCOPE_HINT = (
-        "parallel -- kernel: one GPU launch; the iterations of this map make up the launch grid (blockIdx)\n"
-        "proven parallel; settled -- focus: block size, tiling, memory access pattern"
-    )
+    SCOPE_HINT = "parallel -- kernel: the map iterations form the launch grid"
 
     def generate(
         self,
@@ -311,10 +308,7 @@ def tile_kernel_dimensions(entry: nodes.MapEntry) -> tuple[list, list]:
 class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
     SCHEDULE = dtypes.ScheduleType.GPU_ThreadBlock
     SCOPE_COMMENT = "ThreadBlock Scope"
-    SCOPE_HINT = (
-        "parallel -- thread block: the iterations of this map run on the threads of one block (threadIdx), one each\n"
-        "proven parallel; settled -- a thread past the bounds of a trailing block is masked off"
-    )
+    SCOPE_HINT = "parallel -- thread block: one iteration per thread, trailing threads masked"
 
     def generate(
         self,
@@ -392,10 +386,7 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
 class WarpScopeGenerator(ScopeGenerationStrategy):
     SCHEDULE = dtypes.ScheduleType.GPU_Warp
     SCOPE_COMMENT = "WarpLevel Scope"
-    SCOPE_HINT = (
-        "parallel -- warp: the iterations of this map run one per warp of the block (flat thread index / warp size)\n"
-        "proven parallel; settled -- the lanes of one warp execute in step and share its iteration"
-    )
+    SCOPE_HINT = "parallel -- warp: one iteration per warp of the block"
 
     def generate(
         self,

@@ -43,12 +43,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
 
 #: What a lifted segment loop is, for a CPF reader.
-SEGMENT_HINT = (
-    "parallel -- segment-confined: iteration {var} reads and writes only inside {pointer}[{var}] .. "
-    "{pointer}[{var} + 1]\nwhy: every written index is a member of the iteration's segment, the iteration variable, "
-    "or a worklist slot below the segment's width; the data facts that make the members members are checked once "
-    "at entry"
-)
+SEGMENT_HINT = "parallel -- segment-confined: {var} touches only {pointer}[{var}] .. {pointer}[{var} + 1]"
 
 
 def load(text: str) -> tuple[str, str] | None:

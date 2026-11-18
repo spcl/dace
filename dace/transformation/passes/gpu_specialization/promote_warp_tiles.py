@@ -57,16 +57,9 @@ WITHIN_A_BLOCK = (
 )
 
 #: What a promoted warp-tile map is, for a CPF reader; any hint the producer left follows it.
-WARP_TILE_HINT = (
-    "parallel -- warp tile: a map its producer proved parallel (tagged is_warp_tile), spread over the threads of "
-    "the block instead of one thread walking it\nwhy: the device offload serializes every map nested "
-    "in a kernel; the producer's proof lets this one use the block"
-)
+WARP_TILE_HINT = "parallel -- warp tile: spread over the threads of the block"
 #: Added when a sequential loop re-enters the warp tile.
-WARP_TILE_BARRIER_HINT = (
-    "a block barrier follows the map: the enclosing loop runs it again, and without the barrier "
-    "the next run could read what this one has not finished writing"
-)
+WARP_TILE_BARRIER_HINT = "block barrier after the map: the enclosing loop reruns it"
 
 
 def block_scope_inside(state, entry: nodes.MapEntry) -> bool:

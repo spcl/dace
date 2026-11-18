@@ -47,17 +47,9 @@ from dace.transformation.passes.minimize_stride_permutation import (
 )
 
 #: What a block-tiled kernel's lane map is, for a CPF reader.
-BLOCK_TILE_HINT = (
-    "parallel -- block tile: this kernel runs one block per outer iteration, and these are the lanes of the "
-    "block\nwhy: the inner parallel maps are strided across the lanes, so one outer iteration uses a "
-    "whole block instead of one thread; code outside them runs on every lane, or on lane 0 alone "
-    "between two barriers when it updates data other lanes read"
-)
+BLOCK_TILE_HINT = "parallel -- block tile: one block per outer iteration, these are its lanes"
 #: What a map strided across the lanes of a block-tiled kernel is, for a CPF reader.
-LANE_STRIDED_HINT = (
-    "parallel -- lane-strided: lane t of the block takes iterations t, t + B, ... (B lanes)\n"
-    "why: the map is parallel, and adjacent lanes touching adjacent elements coalesce the accesses"
-)
+LANE_STRIDED_HINT = "parallel -- lane-strided: lane t takes t, t + B, ..."
 
 #: Storage whose containers each lane holds its own copy of.
 LANE_PRIVATE_STORAGE = (dtypes.StorageType.Register, dtypes.StorageType.Default)

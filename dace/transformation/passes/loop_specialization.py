@@ -22,16 +22,9 @@ from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 
 #: The class line of a parallel arm: the guard is the evidence the iterations are independent.
-GUARDED = (
-    "parallel -- under guard: {guard}\n"
-    "settled: proven parallel whenever the guard holds; the guard is checked at entry and the sequential arm runs "
-    "otherwise"
-)
+GUARDED = "parallel -- under guard: {guard}"
 #: The class line of the sequential arm a guard falls back to.
-GUARD_FALLBACK = (
-    "sequential -- fallback arm, runs when not ({guard})\n"
-    "settled: kept in order on purpose; the parallel arm covers every value the guard admits"
-)
+GUARD_FALLBACK = "sequential -- fallback when not ({guard})"
 
 
 def label_arm(node, kind: str) -> None:

@@ -67,10 +67,7 @@ _CPU_SCHEDULES = (
 
 
 #: The class line of the in-chunk sweep, which reads the live array ahead of its own writes.
-CHUNK_SWEEP_HINT = (
-    "sequential -- in order inside one chunk: an iteration reads what a later iteration of its chunk overwrites\n"
-    "settled: kept in order on purpose; the chunks run in parallel, and the reads past a chunk come from its seam"
-)
+CHUNK_SWEEP_HINT = "sequential -- in chunk order (reads ahead of its writes); chunks parallel, seams buffered"
 
 
 def _min(a, b):
