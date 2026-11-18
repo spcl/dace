@@ -32,6 +32,17 @@ def scaled(A: dace.float64[N], B: dace.float64[N]):
         B[i] = 2.0 * A[i]
 
 
+#: The block shapes below are the AMD ones (a 64-lane wavefront): the structural tests pin that backend instead of
+#: following the GPU of the machine they run on.
+on_hip = pytest.mark.usefixtures("hip_backend")
+
+
+@pytest.fixture
+def hip_backend():
+    with dace.config.set_temporary("compiler", "cuda", "backend", value="hip"):
+        yield
+
+
 def offloaded(program, name: str) -> dace.SDFG:
     sdfg = program.to_sdfg(simplify=True)
     sdfg.name = name
@@ -45,6 +56,7 @@ def schedules(sdfg: dace.SDFG) -> dict:
     return {entry.map.schedule: entry for entry in entries}
 
 
+@on_hip
 @pytest.mark.parametrize("program, coalesced, outer", [(scaled_rows, "j", "i"), (scaled_columns_transposed, "i", "j")])
 def test_the_coalesced_axis_is_the_lanes_and_the_outer_axis_the_thread_loop(program, coalesced, outer):
     """The parameter indexing the unit-stride dimension becomes threadIdx.x, whatever its position in the map."""
@@ -57,8 +69,9 @@ def test_the_coalesced_axis_is_the_lanes_and_the_outer_axis_the_thread_loop(prog
         maps[dtypes.ScheduleType.GPU_ThreadBlock],
         maps[dtypes.ScheduleType.Sequential],
     )
-    # The domain-matched block the offload chose for a 2-D map: 256 threads, a 64-lane wavefront on the coalesced axis.
-    assert list(grid.map.gpu_block_size) == [64, 4, 1]
+    # The domain-matched block the offload chose for a 2-D map: 256 threads, half a 64-lane wavefront on the coalesced
+    # axis (the floor is half a warp, ce0afd4a4).
+    assert list(grid.map.gpu_block_size) == [32, 8, 1]
     assert block.map.params[-1].endswith(coalesced) and block.map.params[-2].endswith(outer), block.map.params
     assert thread.map.params == [outer, coalesced] and str(thread.map.range.size()[0]) != "1"
     sdfg.validate()
@@ -80,6 +93,7 @@ def last_row_zeroed(B: dace.float64[N + 1, M, M]):
         B[i, j, k] = 0.0
 
 
+@on_hip
 def test_an_axis_narrower_than_its_tile_is_tiled_by_its_extent():
     """One row tiled by rows of block rows reaches past the array in the memlets around the grid (cp2k trs4's sink)."""
     # Not canonicalized, which would drop the one-iteration axis: a pass after it narrows a map to one row
@@ -88,9 +102,13 @@ def test_an_axis_narrower_than_its_tile_is_tiled_by_its_extent():
     offload_to_gpu(sdfg)
     TileKernelsCoalesced(factor=4).apply_pass(sdfg, {})
     sdfg.validate()
-    # One row: no block rows over it, no thread loop along it
-    grid = schedules(sdfg)[dtypes.ScheduleType.GPU_Device]
-    assert list(grid.map.gpu_block_size)[1:] == [1, 1]
+    # One row: no grid axis over it, and the block dimension it maps to (CUDA order: the thread-block map's last
+    # parameter is x) is one thread wide.
+    maps = schedules(sdfg)
+    grid, block = maps[dtypes.ScheduleType.GPU_Device], maps[dtypes.ScheduleType.GPU_ThreadBlock]
+    assert not any(param.endswith("i") for param in grid.map.params), grid.map.params
+    row = [param.endswith("i") for param in reversed(block.map.params)].index(True)
+    assert list(grid.map.gpu_block_size)[row] == 1, (block.map.params, list(grid.map.gpu_block_size))
 
 
 @dace.program

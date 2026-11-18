@@ -14,7 +14,10 @@ M = dace.symbol("M")
 
 
 def _num_loops(sdfg: dace.SDFG) -> int:
-    return len([r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable])
+    """Loops with an iterator anywhere in ``sdfg``, nested SDFGs included (a lifted map's body keeps its inner loops)."""
+    return len(
+        [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable]
+    )
 
 
 def test_short_loop_unroll_gate_on_trip_count():
