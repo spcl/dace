@@ -63,6 +63,7 @@ from dace.transformation.passes.canonicalize.pipeline import run_structural_clea
 from dace.transformation.passes.canonicalize.shrink_map_local_transients import ShrinkMapLocalTransients
 from dace.transformation.passes.canonicalize.split_map_local_transients import SplitMapLocalTransients
 from dace.transformation.passes.canonicalize.transpose_into_blas_flag import transposes_as_blas_flags
+from dace.transformation.passes.cpu_specialization.chunk_stream_compaction import ChunkStreamCompaction
 from dace.transformation.passes.cpu_specialization.demote_level_maps import (
     demote_strided_level_maps,
     demote_uncoalesced_level_maps,
@@ -1020,6 +1021,9 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType) -> None:
         gpu_specialize_offloaded(sdfg)
     else:
         cpu_specialize(sdfg, validate=False)
+        # The CPU lowering of a lifted stream compaction: per-block counts and ordered per-block writes instead of
+        # the mask and rank buffers. After the stage, whose tests read the device-neutral three-phase form.
+        ChunkStreamCompaction().apply_pass(sdfg, {})
 
     # ``X = X + T`` onto the contraction writing ``T``: once on the lifted nodes, once on the BLAS nodes the
     # selection specializes them to, before either expands to a call.
