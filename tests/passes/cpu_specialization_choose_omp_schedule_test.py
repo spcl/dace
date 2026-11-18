@@ -2,7 +2,6 @@
 """``ChooseOmpSchedule`` schedules a parallel map ``guided`` exactly when its iterations do uneven work."""
 
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg import infer_types
