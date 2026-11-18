@@ -392,17 +392,16 @@ def unsynced_gpu_predecessors(region, block, sync_states) -> list[Any]:
 
 
 def collect_gpu_written_arrays(sdfg: SDFG) -> OrderedSet:
-    """Root-SDFG array names that a GPU-classified root block writes.
+    """Array names that a state queuing GPU work writes, at any depth of ``sdfg``'s control flow.
 
-    Every root block exposes ``read_and_write_sets()``, so we don't traverse interiors. The
-    write sets of GPU blocks are exactly the arrays downstream iedge reads must wait on.
+    The states are read one by one, not the root blocks: a loop that launches kernels and runs host
+    code is MIXED at the root, and the device-to-host copies inside it are exactly the arrays the
+    host reads must wait on.
     """
     out: OrderedSet[str] = OrderedSet()
-    for block in sdfg.nodes():
-        if classify_root_block(block) != NodeKind.GPU:
-            continue
-        _, ws = block.read_and_write_sets()
-        out |= ws
+    for state in sdfg.states():
+        if classify_state_top_level(state) in (NodeKind.GPU, NodeKind.MIXED):
+            out |= state.read_and_write_sets()[1]
     return out
 
 

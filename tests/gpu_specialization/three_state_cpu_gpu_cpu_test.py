@@ -205,7 +205,50 @@ def test_a_host_state_without_a_hazard_leaves_the_sync_to_the_exit():
     sdfg.validate()
 
 
+def host_branch_on_a_copied_back_scalar() -> dace.SDFG:
+    """A loop whose body queues a kernel and copies its scalar result back, then branches on it on the host.
+
+    The branch runs host code, so the loop is MIXED at the root: the copy's host destination is GPU output only
+    from inside the loop.
+    """
+    sdfg = dace.SDFG("host_branch_on_a_copied_back_scalar")
+    sdfg.add_array("A", [16], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_array("norm", [1], dace.float64, storage=dace.dtypes.StorageType.GPU_Global, transient=True)
+    sdfg.add_array("norm_host", [1], dace.float64, transient=True)
+    sdfg.add_array("hits", [1], dace.float64)
+    loop = dace.sdfg.state.LoopRegion("loop", "it < 4", "it", "it = 0", "it = it + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    kernel = loop.add_state("kernel", is_start_block=True)
+    me, mx = kernel.add_map("first", dict(i="0:1"), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    take = kernel.add_tasklet("take", {"a"}, {"b"}, "b = a")
+    kernel.add_memlet_path(kernel.add_read("A"), me, take, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    norm = kernel.add_access("norm")
+    kernel.add_memlet_path(take, mx, norm, src_conn="b", memlet=dace.Memlet("norm[i]"))
+    kernel.add_nedge(norm, kernel.add_write("norm_host"), dace.Memlet("norm[0]"))
+    branch = dace.sdfg.state.ConditionalBlock("branch")
+    loop.add_node(branch)
+    loop.add_edge(kernel, branch, dace.InterstateEdge())
+    body = dace.sdfg.state.ControlFlowRegion("small", sdfg=sdfg, parent=branch)
+    count = body.add_state("count", is_start_block=True)
+    bump = count.add_tasklet("bump", {}, {"o"}, "o = 1")
+    count.add_edge(bump, "o", count.add_write("hits"), None, dace.Memlet("hits[0]"))
+    branch.add_branch(dace.properties.CodeBlock("norm_host[0] < 1.0"), body)
+    return sdfg
+
+
+def test_a_host_branch_on_a_scalar_copied_back_inside_a_mixed_loop_waits_for_the_stream():
+    """The branch condition reads ``norm_host`` on the host: the asynchronous copy filling it must have finished."""
+    sdfg = host_branch_on_a_copied_back_scalar()
+    GPUStreamPipeline().apply_pass(sdfg, {})
+    (sync_state,) = [s for s in sdfg.states() if _sync_tasklets(s)]
+    region = sync_state.parent_graph
+    assert {e.src.label for e in region.in_edges(sync_state)} == {"kernel"}
+    assert {e.dst.label for e in region.out_edges(sync_state)} == {"branch"}
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_sync_at_root_with_nsdfg_inside_gpu_device_map()
     test_a_host_write_to_an_array_the_queued_copy_reads_waits_for_the_stream()
     test_a_host_state_without_a_hazard_leaves_the_sync_to_the_exit()
+    test_a_host_branch_on_a_scalar_copied_back_inside_a_mixed_loop_waits_for_the_stream()
