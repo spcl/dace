@@ -4,7 +4,9 @@ import warnings
 from collections.abc import Callable, Iterator
 from typing import Any
 
-from dace import SDFG, SDFGState, properties, transformation
+import sympy
+
+from dace import SDFG, SDFGState, properties, symbolic, transformation
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import forget_all_facts, memoize_facts
@@ -92,8 +94,13 @@ def _induced_matches(
 
 
 def iteration_space(map_node: nodes.Map) -> tuple[Any, frozenset]:
-    """What two Maps need in common for `find_parameter_remapping()` to exist: their schedule and their ranges."""
-    return map_node.schedule, frozenset(collections.Counter(tuple(r) for r in map_node.range.ranges).items())
+    """What two Maps need in common for `find_parameter_remapping()` to exist: their schedule and their ranges, a bound
+    spelled ``int_floor(x, 2)`` keyed like ``floor(x/2)`` as `mfhelper.same_range()` compares them."""
+    ranges = (
+        tuple(symbolic.comparable(b) if isinstance(b, sympy.Basic) and not b.is_Atom else b for b in r)
+        for r in map_node.range.ranges
+    )
+    return map_node.schedule, frozenset(collections.Counter(ranges).items())
 
 
 def align_step_equivalent_candidates(state: SDFGState) -> int:

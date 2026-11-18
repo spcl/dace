@@ -93,7 +93,7 @@ def find_parameter_remapping(
         if (
             second_param in unmapped_second_params
             and first_param in unused_first_params
-            and first_rngs[first_param] == second_rngs[second_param]
+            and same_range(first_rngs[first_param], second_rngs[second_param])
         ):
             unmapped_second_params.remove(second_param)
             unused_first_params.remove(first_param)
@@ -105,7 +105,7 @@ def find_parameter_remapping(
         first_rng = first_rngs[param]
         second_rng = second_rngs[param]
 
-        if first_rng == second_rng and param in unmapped_second_params and param in unused_first_params:
+        if same_range(first_rng, second_rng) and param in unmapped_second_params and param in unused_first_params:
             # They have the same name and the same range, this is already a match.
             #  Because the names are already the same, we do not have to enter them
             #  in the `final_mapping`
@@ -125,7 +125,7 @@ def find_parameter_remapping(
         # Now look in all not yet used parameters of the first map which to use.
         for candidate_param in list(unused_first_params):
             candidate_rng = first_rngs[candidate_param]
-            if candidate_rng == second_rng:
+            if same_range(candidate_rng, second_rng):
                 final_mapping[unmapped_second_param] = candidate_param
                 unused_first_params.remove(candidate_param)
                 break
@@ -136,6 +136,16 @@ def find_parameter_remapping(
     assert len(unused_first_params) == 0
     assert len(final_mapping) == len(unmapped_second_params)
     return {**preferred_mapping, **final_mapping}
+
+
+def same_range(first: tuple, second: tuple) -> bool:
+    """Whether two ``(begin, end, step)`` triples bound the same values: ``int_floor(x, 2)`` from a parsed string and
+    ``floor(x/2)`` from Python's ``//`` in a shape are one extent. The fused Map keeps the first Map's range."""
+    if first == second:
+        return True
+    return len(first) == len(second) and all(
+        a == b or symbolic.equal(a, b, is_length=False) is True for a, b in zip(first, second, strict=True)
+    )
 
 
 def rename_map_parameters(

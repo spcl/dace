@@ -170,3 +170,131 @@ kernels). No kernel was confirmed to hit it, because no canonical graph was buil
 Producer overlap (`:1108`), WCR producer, dynamic map ranges that bind different values, gathers `T[idx[i]]` of the
 intermediate (no producer iteration covers a data-dependent read), and reads of another iteration (stencils
 `T[i + 1]`). The guarded-producer refusal (`:1045`) and the conditional-arm producer are out of scope by user decision.
+
+## Third review (2026-11-18): safe sub-cases of the required refusals
+
+Static, like the first two: nothing compiled or run, every test below is unrun. The question was which structurally
+provable sub-cases of the five required refusals fuse without a cost trade. Two are implemented, one more existed
+already, and two have none worth implementing. The extent-spelling proposal of the second review and two user rulings
+on `FuseMapsAtSharedAxes` are implemented too.
+
+### Intermediate accessed again downstream (`map_fusion_vertical.py`, `_is_data_accessed_downstream`)
+
+What the refusal guards. A shared intermediate `T` fused through a privatized buffer is rebuilt behind the fused Map:
+the fused exit writes the node `T_a`, and `T_a` keeps every out edge except the ones into the second Map. A direct
+reader of `T_a` was never refused: the walk only counts another AccessNode of `T`. So the refusal is about a second
+node `T_b` of `T` reachable from `T_a`.
+
+Mechanism of `71d0085fe` / seed 1093 (inferred from the code: the commit carries no test and no reproducer is on
+disk). A `T_b` reached from `T_a` only through the second Map loses its order with `T_a`. Before the fusion the path
+`T_a -> second Map -> ... -> T_b` orders them. After it, both hang off the fused exit as siblings
+(`fused exit -> T_a` and `fused exit -> O -> ... -> T_b`), and no path joins them. Graph analyses that order
+accesses by paths then see two unordered accesses of `T`, which is where a stale read can come from. The existing test
+`test_fusion_dataflow_intermediate_downstream` is this shape: `T_b` written by a Map that reads only the second Map's
+output.
+
+Safe sub-case, implemented under `relaxed_dataflow` (canon's setting). A `T_b` that `T_a` still reaches on a path that
+avoids the second Map entry. Proof: the rewrite only replaces `first exit -> T_a` by `fused exit -> T_a` and drops
+`T_a -> second entry`. A path from `T_a` that does not enter the second Map runs through nodes the rewrite does not
+touch, since its scope can only be entered through its entry. So `fused Map < T_a < T_b` holds in the graph, and the
+fused Map writes `T` exactly as the first did (the shared write-back preconditions: no WCR, no dynamic write, the NSDFG
+coverage check). The second Map's reads of `T` now come from the buffer and are no longer ordered against `T_b`. If
+`T_b` was also reached through the second Map, the order holds through `T_a` again. If it was not, the original graph
+left the second Map and `T_b`'s writer unordered, and the fused one picks one valid order.
+Code: `_is_data_accessed_downstream(..., avoid=second_map_entry)`. It refuses only an access that every path reaches
+through `avoid`. Without `relaxed_dataflow` it behaves as before.
+Tests: `tests/transformations/map_fusion_safe_subcases_test.py`
+(`test_an_intermediate_written_again_past_another_reader_fuses_under_relaxed_dataflow`, numeric;
+`test_an_intermediate_written_again_only_past_the_second_map_stays_refused`, the seed-1093 shape).
+
+The write-through variant (no buffer, consumer reads in-iteration) already exists. A second-Map write, a conditional
+write, or a non-point-wise read-write makes the intermediate in place, and an in-place intermediate skips this
+refusal.
+
+### Reducing (WCR) producer
+
+What existed. `MapPartialReduceFusion` covers a `Reduce` library node with an identity: it builds
+`Map[kept]{acc = identity; Map[reduced] acc (+)= ...; T = acc}`. A raw WCR Map (`T[i] += A[i, k]`, from `LoopToMap` or
+`AccumulatorCopyChainToWCR`) did not fuse. `FuseMapsAtSharedAxes` splits it into `Map[i]{Map[k] T[i] += ...}`, which is
+exactly the inner-reduction shape, but `MapFusionVertical` refused every WCR producer edge.
+
+Why the general refusal holds. A privatized buffer has no start value: the WCR needs `T[i]`'s value before the
+reduction (an earlier zero fill), and the buffer would start from garbage. Also, if another iteration contributes to
+`T[i]`, no single fused iteration holds the finished sum.
+
+Safe sub-case, implemented under `relaxed_dataflow`. The intermediate is fused in place (the container keeps the start
+value), and no other iteration of the first Map reduces into the elements this iteration reduces into
+(`other_iterations_miss(first_map, [wcr subset], [wcr subset])`, the same test the in-place path already uses). Proof:
+in the fused body the consumer reads `T` from the node that the WCR edge enters, so it runs after every contribution
+of this iteration (an inner Map's exit completes before its successors). No other iteration touches those elements,
+so the value read is `start + sum over this iteration`, which is what the unfused consumer read. The rebuilt edge
+behind the fused Map is a plain ordering copy, so its `wcr` is cleared; a copied WCR would add `T` onto itself.
+Code: `in_place_intermediates` adds a WCR intermediate that the second Map reads. `partition_first_outputs` admits the
+WCR edge only on that condition. `handle_intermediate_set` clears `wcr` on the in-place rebuild. `T` stays full size:
+shrinking it would need a seed copy-in, which is a code change, not a fusion.
+Tests: `tests/passes/canonicalize/fuse_maps_at_shared_axes_test.py`
+(`test_a_reduction_over_the_unshared_axis_completes_inside_the_fused_iteration`, numeric;
+`test_a_reduction_every_iteration_contributes_to_keeps_the_producer`, `T[0] += A[i, k]`).
+
+### Overlapping producers (`:1108`)
+
+The check compares the per-iteration subsets of two producer edges of one iteration, in the first Map's parameters.
+An overlap is two writes of one element in one iteration of the first Map. Two cases:
+- The two writers are unordered in the body. Then the first Map already races, and only "equal values" would make it
+  defined. That is not a structural fact (one tasklet connector with two edges is the only provable form, and the
+  frontend does not emit it). Refused, required.
+- One writer reaches the other through the body (`T[i] = a; ...; T[i] = b` in sequence). The last writer is defined,
+  and fusing keeps that order: both edges are retargeted to the buffer node, which the consumer reads after both.
+  This is provably safe, but it needs three changes: `tiled_producer_subset` (equal volumes reject an overlap),
+  coverage by "exactly one producer" (`:1178`), and a path test between the producers. **Not implemented.** No corpus
+  shape was shown to reach it, and three changes to the core coverage logic with no reproducer go against the
+  minimal-diff rule.
+
+### Gathers and stencils (`:1178`)
+
+Both stay refused: covering them means recomputing the producer per consumer read, which is the recompute-vs-store
+trade (CPU specialization's `RecomputeIntermediates` makes it, canon does not).
+- Gather `T[idx[i]]`: the safe sub-case is an index that is not data-dependent after simplification (`idx` a known
+  identity or affine table). That is index forwarding upstream of fusion, not a fusion rule. Once forwarded, the read
+  is `T[i]` or `T[a*i + b]` and the existing coverage test judges it.
+- Stencil `T[i + 1]`: the only safe sub-case is an offset along an axis the producer writes whole per iteration (rows
+  `T[i, 0:M]` read at `T[i, j + 1]`). The coverage test already accepts it.
+
+### Extent spelling (second-review proposal, implemented)
+
+`mfhelper.same_range` compares two `(begin, end, step)` triples structurally, then by
+`symbolic.equal(a, b, is_length=False) is True`. `find_parameter_remapping` uses it at all three of its range
+compares (preferred pairs, name matches, candidates), and `shared_axes` in `FuseMapsAtSharedAxes` uses it at both of
+its compares. The `FuseMaps` prefilter `iteration_space` keys each non-atomic bound by `symbolic.comparable`, so
+`int_floor(x, 2)` and `floor(x/2)` land on one key. Only key-equal pairs reach the remapping, and the remapping
+accepts all of them. The fused Map keeps the first Map's range (`rename_map_parameters`). Open risk:
+`symbolic.equal` already identifies `int_floor` with `floor` everywhere, but the emitted `int_floor` truncates on
+negative numerators. For `0:x//2` both spellings give an empty map whenever `x < 0`. For `0:x//2 + 1` they differ at
+`x = -1`: truncation gives one iteration and floor gives none. An extent symbol is nonnegative in canon
+(`set_symbol_nonnegative_assumptions`), but nothing here proves `x >= 0` per range.
+Tests: `map_fusion_safe_subcases_test.py` (`test_floor_and_int_floor_spell_one_range`,
+`test_maps_over_one_extent_in_two_spellings_fuse` (numeric), `test_maps_over_different_floors_stay_apart`).
+
+### FuseMapsAtSharedAxes user rulings (2026-11-18)
+
+- **Inner shared axis (`:111`)**: canon does NOT reorder and fuse. `candidates` reports the pair to `inner_axis`.
+  After the state's last walk, `note_inner_axis_pair` appends one line to both map entries' `specialization_hint`,
+  once, below any existing hint:
+  `fusion: shares (p) with <producer> at an inner axis; alt: reorder <consumer> to (p, t), fuse, w per iteration`
+  (on the producer: `... with <consumer> at an inner axis of it; ...`). `AnnotateLoopKinds` keeps its class line
+  first, since `fusion:` is not a class prefix. The graph is unchanged. This closes the "proposed" row above and the
+  warpx item 4 proposal; the hint is what warpx's `_tap*` maps now carry.
+- **Equal-rank partial sharing**: kept as is (not fused, no hint). This closes the second review's proposal.
+Tests: `fuse_maps_at_shared_axes_test.py`
+(`test_a_consumer_sharing_an_inner_axis_keeps_its_order_and_both_maps_get_a_hint`,
+`test_an_existing_hint_keeps_its_line_and_the_fusion_note_follows`,
+`test_maps_of_equal_rank_sharing_only_an_outer_axis_stay_apart_without_a_hint`).
+
+### Integration
+
+`tests/canonicalize/canon_fusion_fixes_integration_test.py` runs small numpy kernels through `canonicalize` and
+`finalize_for_target(..., 'cpu')`, then compares against numpy. Each fix gets a positive case and a counterexample:
+the shared-axes column pairing (`4aa8b9969`), the transposed-read pairing (`40e531a57`), the in-place reduction, the
+downstream access, and the extent spelling. A full-size transient left behind means not fused. For a reduction, the
+signal is a WCR edge or `Reduce` inside the map writing the result. The downstream counterexample asserts values only:
+through the pipeline another fusion order (second and third Map first, then in place) can fuse it legally.

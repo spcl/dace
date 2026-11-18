@@ -1042,7 +1042,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     continue
                 if isinstance(producer_edge.src, nodes.AccessNode) and self.is_view(producer_edge.src, sdfg):
                     return None
-                if producer_edge.data.wcr is not None:
+                # A reduction into the container fused in place is complete when the fused body reads it, as long as
+                #  no other iteration reduces into this iteration's elements (the reduction axis is an inner Map).
+                if producer_edge.data.wcr is not None and not (
+                    intermediate_node.data in in_place
+                    and isinstance(producer_edge.data.dst_subset, subsets.Range)
+                    and self.other_iterations_miss(
+                        first_map_exit.map, [producer_edge.data.dst_subset], [producer_edge.data.dst_subset], facts
+                    )
+                ):
                     return None
                 # A conditional writer fused into a consumer under another guard wraps the consumer's statements in the
                 #  writer's guard, one nested SDFG each: warpx's per-particle maps went from 37 to 1603 nested SDFGs,
@@ -1237,11 +1245,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 #   if the intermediate is used further down in the same datadflow,
                 #   then we consider that the maps can not be fused. But we only
                 #   do this in the strict data flow mode.
+                # `relaxed_dataflow` admits an access the node still reaches past the second Map: the fused Map writes
+                #  the node before it as the first Map did. One reached only through the second Map would stand
+                #  beside the rebuilt node, unordered with it (fuzz seed 1093 read such a privatized copy stale).
                 if self.strict_dataflow and reduced:
                     if self._is_data_accessed_downstream(
                         data=intermediate_node.data,
                         graph=state,
                         begin=intermediate_node,  # is ignored itself.
+                        avoid=second_map_entry if self.relaxed_dataflow else None,
                     ):
                         return None
 
@@ -1724,6 +1736,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 final_pre_exit_memlet.other_subset = (
                     copy.deepcopy(producer_subset) if is_in_place else subsets.Range.from_array(new_inter_desc)
                 )
+                # In place the body reduced into the container already: the rebuilt edge only orders, it adds nothing
+                rebuilt_memlet = copy.deepcopy(out_edge.data)
+                if is_in_place:
+                    final_pre_exit_memlet.wcr = None
+                    rebuilt_memlet.wcr = None
 
                 new_pre_exit_conn = second_map_exit.next_connector()
                 state.add_edge(
@@ -1738,7 +1755,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     "OUT_" + new_pre_exit_conn,
                     inter_node,
                     out_edge.dst_conn,
-                    copy.deepcopy(out_edge.data),
+                    rebuilt_memlet,
                 )
                 second_map_exit.add_in_connector("IN_" + new_pre_exit_conn)
                 second_map_exit.add_out_connector("OUT_" + new_pre_exit_conn)
@@ -2355,8 +2372,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         facts: symbolic.Facts,
     ) -> set[str]:
         """The intermediates of ``names`` the first Map reads and writes other than point-wise, or the second Map writes
-        as well (a buffer's write-back would undo that write), or writes conditionally (what it skips keeps its value,
-        which a buffer would not hold): they are fused in place, see ``has_read_write_dependency()``."""
+        as well (a buffer's write-back would undo that write), or writes conditionally or reduces into (what it skips
+        keeps its value, which a buffer would not hold): they are fused in place, see ``has_read_write_dependency()``."""
         first_map_exit = state.exit_node(first_map_entry)
         reads = {node.data: node for node in self.get_access_set(first_map_entry, state)}
         writes = {node.data: node for node in self.get_access_set(first_map_exit, state)}
@@ -2370,11 +2387,21 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 accessed[0] + accessed[1], facts, first_map_entry.map.params
             ):
                 in_place.add(name)
+        second_map_entry = state.entry_node(second_map_exit)
         for edge in state.out_edges(first_map_exit):
             if edge.src_conn is None or not isinstance(edge.dst, nodes.AccessNode) or edge.dst.data in in_place:
                 continue
+            # A reduction the second Map reads starts from the container's value, which a buffer would not hold
+            producers = list(state.in_edges_by_connector(first_map_exit, "IN_" + edge.src_conn[4:]))
+            if (
+                self.relaxed_dataflow
+                and any(p.data.wcr is not None for p in producers)
+                and any(e.dst is second_map_entry for e in state.out_edges(edge.dst))
+            ):
+                in_place.add(edge.dst.data)
+                continue
             # If this Map is the only writer and nothing else keeps the element alive, reading a skipped one is undefined
-            if any(p.data.dynamic for p in state.in_edges_by_connector(first_map_exit, "IN_" + edge.src_conn[4:])) and (
+            if any(p.data.dynamic for p in producers) and (
                 self.is_shared_data(edge.dst, state, sdfg)
                 or edge.dst.desc(sdfg).lifetime != dtypes.AllocationLifetime.Scope
                 or self._in_a_cycle(state)
@@ -2574,6 +2601,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         data: str,
         graph: dace.SDFGState,
         begin: nodes.Node,
+        avoid: nodes.Node | None = None,
     ) -> bool:
         """Tests if there is an AccessNode for `data` downstream of `begin`.
 
@@ -2586,25 +2614,31 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         :param data: The name of the data to look for.
         :param graph: The graph to explore.
         :param begin: The node to start exploration; The node itself is ignored.
+        :param avoid: If given, only an AccessNode that every path from `begin` reaches through `avoid` counts.
         """
 
-        def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
-            return (edge.dst for edge in graph.out_edges(node))
+        def reached(skip: nodes.Node | None, first_only: bool) -> list[nodes.AccessNode]:
+            # Track visited nodes to avoid exponential blowup from visiting
+            # the same node multiple times via different paths in the DAG.
+            to_visit: list[nodes.Node] = [edge.dst for edge in graph.out_edges(begin)]
+            visited: set[nodes.Node] = set()
+            found: list[nodes.AccessNode] = []
+            while len(to_visit) > 0:
+                node = to_visit.pop()
+                if node in visited or node is skip:
+                    continue
+                visited.add(node)
+                if isinstance(node, nodes.AccessNode) and node.data == data:
+                    if first_only:
+                        return [node]
+                    found.append(node)
+                to_visit.extend(edge.dst for edge in graph.out_edges(node))
+            return found
 
-        # Track visited nodes to avoid exponential blowup from visiting
-        # the same node multiple times via different paths in the DAG.
-        to_visit: list[nodes.Node] = list(next_nodes(begin))
-        visited: set[nodes.Node] = set()
-        while len(to_visit) > 0:
-            node = to_visit.pop()
-            if node in visited:
-                continue
-            visited.add(node)
-            if isinstance(node, nodes.AccessNode) and node.data == data:
-                return True
-            to_visit.extend(next_nodes(node))
-
-        return False
+        if avoid is None:
+            return bool(reached(None, first_only=True))
+        around = {id(node) for node in reached(avoid, first_only=False)}
+        return any(id(node) not in around for node in reached(None, first_only=False))
 
     def get_access_set(
         self,

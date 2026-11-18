@@ -6,6 +6,7 @@
 consumer shares (equal ranges) and an inner map over the rest, and the outer map fuses vertically with the consumer.
 Mirrored, ``for i: T[i] = f(i)`` followed by ``for i, k: g(T[i], k)`` splits the consumer instead:
 ``for i: { t = f(i); for k: g(t, k) }``. A split that does not fuse is merged back into the original map.
+A consumer that shares the axes at inner ones keeps its loop order and both maps get a ``specialization_hint``.
 """
 
 from typing import Any
@@ -16,7 +17,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import forget_all_facts
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.map_expansion import MapExpansion
-from dace.transformation.dataflow.map_fusion_helper import index_pairs
+from dace.transformation.dataflow.map_fusion_helper import index_pairs, same_range
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.passes import analysis as ap
 
@@ -30,14 +31,16 @@ def shared_axes(producer: nodes.Map, consumer: nodes.Map, pairs: dict[str, str] 
     ranges = dict(zip(producer.params, producer.range.ranges, strict=False))
     crange_of = dict(zip(consumer.params, consumer.range.ranges, strict=False))
     # Two producer axes over one range are told apart by the dimension of the intermediate both maps index
-    chosen = {c: p for c, p in (pairs or {}).items() if c in crange_of and p in ranges and ranges[p] == crange_of[c]}
+    chosen = {
+        c: p for c, p in (pairs or {}).items() if c in crange_of and p in ranges and same_range(ranges[p], crange_of[c])
+    }
     if len(set(chosen.values())) != len(chosen):
         chosen = {}
     for cparam, crange in crange_of.items():
         if cparam in chosen:
             continue
         taken = set(chosen.values())
-        match = next((p for p, r in ranges.items() if p not in taken and r == crange), None)
+        match = next((p for p, r in ranges.items() if p not in taken and same_range(r, crange)), None)
         if match is None:
             return None
         chosen[cparam] = match
@@ -52,9 +55,12 @@ def reorder(entry: nodes.MapEntry, params: list[str]) -> None:
     entry.map.params = list(params)
 
 
-def candidates(state: SDFGState) -> list[tuple[nodes.MapEntry, nodes.AccessNode, nodes.MapEntry, list[str], bool]]:
+def candidates(
+    state: SDFGState, inner_axis: list | None = None
+) -> list[tuple[nodes.MapEntry, nodes.AccessNode, nodes.MapEntry, list[str], bool]]:
     """Top-level ``(producer entry, transient, consumer entry, shared axes, split consumer)`` tuples of ``state``: the
-    shared axes are parameters of the map with more axes, the consumer when ``split consumer``."""
+    shared axes are parameters of the map with more axes, the consumer when ``split consumer``. A consumer sharing
+    the producer's axes at inner ones goes to ``inner_axis`` instead, as ``(producer, transient, consumer, axes)``."""
     sdict = state.scope_dict()
     found = []
     for node in state.data_nodes():
@@ -80,7 +86,27 @@ def candidates(state: SDFGState) -> list[tuple[nodes.MapEntry, nodes.AccessNode,
                 axes = shared_axes(oe.dst.map, producer.map, pairs)
                 if axes is not None and set(axes) == set(oe.dst.map.params[: len(axes)]):
                     found.append((producer, node, oe.dst, axes, True))
+                elif axes is not None and inner_axis is not None:
+                    inner_axis.append((producer, node, oe.dst, axes))
     return found
+
+
+def record_hint(entry: nodes.MapEntry, hint: str) -> None:
+    """Append ``hint`` to ``entry``'s ``specialization_hint``, once."""
+    existing = entry.specialization_hint or ""
+    if hint not in existing:
+        entry.specialization_hint = f"{existing}\n{hint}" if existing else hint
+
+
+def note_inner_axis_pair(
+    producer: nodes.MapEntry, node: nodes.AccessNode, consumer: nodes.MapEntry, axes: list[str]
+) -> None:
+    """Hint, on both maps, the fusion a loop-order change would allow: canon keeps the consumer's order (user ruling)."""
+    order = ", ".join(axes + [p for p in consumer.map.params if p not in axes])
+    shared = ", ".join(axes)
+    alt = f"alt: reorder {consumer.map.label} to ({order}), fuse, {node.data} per iteration"
+    record_hint(consumer, f"fusion: shares ({shared}) with {producer.map.label} at an inner axis; {alt}")
+    record_hint(producer, f"fusion: shares ({shared}) with {consumer.map.label} at an inner axis of it; {alt}")
 
 
 @properties.make_properties
@@ -110,10 +136,13 @@ class FuseMapsAtSharedAxes(ppl.Pass):
             for state in sd.states():
                 # Keyed by transient and the map not split: a merge-back rebuilds the split map, never these two
                 tried: set[tuple[nodes.AccessNode, nodes.MapEntry]] = set()
+                # Filled by the last walk, the one over the graph as this state ends up
+                inner_axis: list[tuple[nodes.MapEntry, nodes.AccessNode, nodes.MapEntry, list[str]]] = []
                 progress = True
                 while progress:
                     progress = False
-                    for producer, node, consumer, axes, split_consumer in candidates(state):
+                    inner_axis.clear()
+                    for producer, node, consumer, axes, split_consumer in candidates(state, inner_axis):
                         kept = producer if split_consumer else consumer
                         if (node, kept) in tried:
                             continue
@@ -127,6 +156,8 @@ class FuseMapsAtSharedAxes(ppl.Pass):
                         # Either way the split map's entry was rebuilt: the remaining candidates name the old one
                         progress = True
                         break
+                for producer, node, consumer, axes in inner_axis:
+                    note_inner_axis_pair(producer, node, consumer, axes)
         return fused or None
 
     @staticmethod
