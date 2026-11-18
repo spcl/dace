@@ -793,6 +793,41 @@ def parallel_hint(state: SDFGState, entry: nodes.MapEntry, traps: list[tuple[str
     return first
 
 
+#: A contraction whose output is read only in part downstream. ``{read}`` and ``{size}`` are element counts.
+PARTIALLY_READ = (
+    "full contraction -- downstream reads at most {read} of the {size} elements it writes\n"
+    "why: canonicalization keeps the whole contraction; computing only the elements read is a narrowing left to a "
+    "specializing pass"
+)
+
+
+def partially_read_hint(state: SDFGState, node: nodes.LibraryNode) -> str | None:
+    """:data:`PARTIALLY_READ` for a contraction library node whose one output, a transient, is read only in
+    ``state`` and by fewer elements than it holds (not provably all of them), else ``None``."""
+    from dace.transformation.passes.canonicalize.nest_to_contraction import contraction_types
+
+    if not isinstance(node, contraction_types()):
+        return None
+    written = [e for e in state.out_edges(node) if not e.data.is_empty()]
+    if len(written) != 1 or not isinstance(written[0].dst, nodes.AccessNode):
+        return None
+    name, sdfg = written[0].dst.data, state.sdfg
+    desc = sdfg.arrays[name]
+    if not desc.transient:
+        return None
+    holders = [(s, n) for s in sdfg.states() for n in s.data_nodes() if n.data == name]
+    # Read in another state (perhaps once per trip of a loop), the reads cannot be summed here
+    if any(s is not state for s, _ in holders):
+        return None
+    reads = [e for _, n in holders for e in state.out_edges(n) if not e.data.is_empty()]
+    if not reads:
+        return None
+    read = sum((e.data.volume for e in reads), symbolic.pystr_to_symbolic(0))
+    if (read >= desc.total_size) == True:
+        return None
+    return PARTIALLY_READ.format(read=read, size=desc.total_size)
+
+
 @xf.explicit_cf_compatible
 class AnnotateLoopKinds(ppl.Pass):
     """Open every Map's and LoopRegion's ``specialization_hint`` with its class.
@@ -813,7 +848,7 @@ class AnnotateLoopKinds(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
-        """:returns: The number of loops newly labelled, or ``None`` if none was."""
+        """:returns: The number of loops and contractions newly labelled, or ``None`` if none was."""
         from dace.transformation.passes.parallelization.parallelize_loops import ProbeSession
 
         labelled = 0
@@ -821,6 +856,10 @@ class AnnotateLoopKinds(ppl.Pass):
         # Labelling changes only the hints, which no probe reads
         session = ProbeSession()
         for node, parent_graph in list(sdfg.all_nodes_recursive()):
+            if isinstance(node, nodes.LibraryNode) and not node.specialization_hint:
+                node.specialization_hint = partially_read_hint(parent_graph, node)
+                labelled += node.specialization_hint is not None
+                continue
             if not isinstance(node, (nodes.MapEntry, LoopRegion)):
                 continue
             hint = (node.specialization_hint or "").strip()
