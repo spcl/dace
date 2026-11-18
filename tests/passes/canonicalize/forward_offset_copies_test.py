@@ -6,6 +6,7 @@ import numpy as np
 
 import dace
 from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.forward_offset_copies import ForwardOffsetCopies
 
 N = dace.symbol("N")
@@ -124,6 +125,57 @@ def test_a_flat_view_of_the_copy_keeps_the_copy():
     assert np.array_equal(out, q[1:, 1:].ravel())
 
 
+def copy_then_loop_sdfg(name: str, write_in_loop: bool) -> dace.SDFG:
+    """``t = q[1:N+1]``, then a loop over ``k`` whose body sets ``out[i] = t[i] * 2``; with ``write_in_loop`` a second
+    body state sets ``q[:] = 0`` after the read, so the next trip would read the zeroed source."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("q", [N + 1], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    sdfg.add_transient("t", [N], dace.float64)
+    copy = sdfg.add_state("copy", is_start_block=True)
+    copy.add_nedge(copy.add_read("q"), copy.add_write("t"), dace.Memlet("q[1:N + 1] -> [0:N]"))
+    loop = LoopRegion("trips", "k < 3", "k", "k = 0", "k = k + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(copy, loop, dace.InterstateEdge())
+    use = loop.add_state("use", is_start_block=True)
+    use.add_mapped_tasklet(
+        "double",
+        {"i": "0:N"},
+        {"x": dace.Memlet("t[i]")},
+        "o = x * 2.0",
+        {"o": dace.Memlet("out[i]")},
+        external_edges=True,
+    )
+    if write_in_loop:
+        clobber = loop.add_state_after(use, "clobber")
+        clobber.add_mapped_tasklet(
+            "zero", {"i": "0:N + 1"}, {}, "o = 0.0", {"o": dace.Memlet("q[i]")}, external_edges=True
+        )
+    sdfg.reset_cfg_list()
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_shifted_copy_read_in_a_later_loop_reads_its_source():
+    sdfg = copy_then_loop_sdfg("shifted_copy_loop_reader", write_in_loop=False)
+    assert ForwardOffsetCopies().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert "t" not in sdfg.arrays
+    q, out = np.random.default_rng(2).random(9), np.zeros(8)
+    sdfg(q=q, out=out, N=8)
+    assert np.allclose(out, 2.0 * q[1:])
+
+
+def test_a_loop_writing_the_source_keeps_the_copy():
+    sdfg = copy_then_loop_sdfg("shifted_copy_loop_writer", write_in_loop=True)
+    assert ForwardOffsetCopies().apply_pass(sdfg, {}) is None
+    assert "t" in sdfg.arrays
+    q, out = np.random.default_rng(3).random(9), np.zeros(8)
+    expected = 2.0 * q[1:]
+    sdfg(q=q, out=out, N=8)
+    assert np.allclose(out, expected)
+
+
 if __name__ == "__main__":
     test_a_shifted_copy_read_in_a_later_state_reads_its_source()
     test_a_write_to_the_source_between_keeps_the_copy()
@@ -131,3 +183,5 @@ if __name__ == "__main__":
     test_rebound_offset_symbol_keeps_the_copy()
     test_a_reader_naming_its_destination_reads_at_the_offset()
     test_a_flat_view_of_the_copy_keeps_the_copy()
+    test_a_shifted_copy_read_in_a_later_loop_reads_its_source()
+    test_a_loop_writing_the_source_keeps_the_copy()

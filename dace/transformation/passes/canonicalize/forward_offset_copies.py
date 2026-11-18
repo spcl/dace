@@ -16,9 +16,10 @@ Contract, per copy edge ``A -> B``:
 * ``B`` is a transient array written only by this copy, over its whole extent, with the source range of the same
   shape (an offset, no reshape), in the storage of ``A`` (a host-device transfer is not an offset); it is not a
   view, reaches no nested SDFG, and no interstate edge or condition names it;
-* every reader of ``B`` is in a state of the copy's control-flow region (an acyclic one), reachable from it;
+* every reader of ``B`` is in a block of the copy's control-flow region (an acyclic one) reachable from it: a state
+  of the region, or one nested in a loop or branch of it, which then stands for the reader as a whole;
 * no block of that region on a path from the copy to a reader writes ``A``, nor does the copy's state or a
-  reader's state;
+  reader's block;
 * a symbol the offset names keeps its value up to every reader: no block after the copy rebinds it, and no map around
   a reader shadows it.
 """
@@ -117,8 +118,13 @@ class ForwardOffsetCopies(ppl.Pass):
             return None
         region: ControlFlowRegion = state.parent_graph
         readers = [st for st, n in uses if n is not dst]
-        if any(st.parent_graph is not region for st in readers):
-            return None
+        # A reader in a loop or branch after the copy is judged by that whole block: no iteration of it writes ``A``
+        blocks: dict[ControlFlowBlock, None] = {}
+        for st in readers:
+            block = block_in(region, st)
+            if block is None:
+                return None
+            blocks[block] = None
         # Every leaf of a reader's memlet trees is code or another access node, never a nested SDFG; one that
         # addresses the buffer through its strides (a view, a library node, a tasklet taking more than one element)
         # reads the source only when it is laid out like the copy.
@@ -136,12 +142,13 @@ class ForwardOffsetCopies(ppl.Pass):
                     )
                     if addressed and not laid_out:
                         return None
-        if _writes_besides(state, src.data, edge) or any(_writes(st, src.data) for st in set(readers) - {state}):
+        later = [block for block in blocks if block is not state]
+        if _writes_besides(state, src.data, edge) or any(_writes(block, src.data) for block in later):
             return None
         after = _reach(region, state, region.successors)
         if state in after:  # a cycle through the copy
             return None
-        for reader in set(readers) - {state}:
+        for reader in later:
             if reader not in after:
                 return None
             between = after & _reach(region, reader, region.predecessors)
@@ -186,6 +193,16 @@ class ForwardOffsetCopies(ppl.Pass):
             state.remove_node(edge.src)
         if not any(n.data == copy for st in sdfg.states() for n in st.data_nodes()):
             sdfg.remove_data(copy, validate=False)
+
+
+def block_in(region: ControlFlowRegion, state: SDFGState) -> ControlFlowBlock | None:
+    """The block of ``region`` that is or encloses ``state``, or ``None`` when ``state`` lies outside ``region``."""
+    block: ControlFlowBlock = state
+    while block.parent_graph is not region:
+        block = block.parent_graph
+        if block is None or isinstance(block, SDFG):
+            return None
+    return block
 
 
 def _reach(region: ControlFlowRegion, start: ControlFlowBlock, step) -> set[ControlFlowBlock]:

@@ -19,9 +19,10 @@ from dace.transformation import transformation as pm
 
 
 def _subset_has_shape(subset: subsets.Range, shape: Sequence[symbolic.SymbolicType]) -> bool:
-    """Check if `subset` has the size given in `shape`."""
+    """Check if `subset` has the size given in `shape`. Structural equality first; an extent spelled two ways
+    (``int_floor`` from a memlet, sympy ``floor`` from a shape annotation) is compared by value."""
     return subset.dims() == len(shape) and all(
-        (m == a) == True  # SymPy comparison
+        (m == a) == True or symbolic.equal(m, a, is_length=False) is True  # SymPy comparison
         for m, a in zip(subset.size(), shape)
     )
 
