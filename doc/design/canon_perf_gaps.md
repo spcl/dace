@@ -28,7 +28,7 @@ and `pluto` on CPU, and of `triton` and `ppcg_hip` on GPU (`baselines-rev-1117a2
 | gem | 64.0x | 165.5 | 2.58 triton | fixed, 1f9298431, untested (no GPU run; mapreduce_test passed once on the login node) |
 | cloudsc | 45.7x | 73.9 | 1.62 triton | not yet analysed |
 | cp2k_grid_integrate | 38.5x | 2203.4 | 57.2 triton | by design, hint 7fd2f6650 + 09f005b08, untested |
-| qe_vloc_psi_k_acc | 20.2x | 21.2 | 1.05 triton | proposed |
+| qe_vloc_psi_k_acc | 20.2x | 21.2 | 1.05 triton | by design (not taken) |
 | fv3_dycore | 10.9x | 256.0 | 23.6 triton | copies fixed, 6587cb40c, untested |
 | lulesh | 9.4x | 40.8 | 4.36 triton | fixed, ce0afd4a4, not yet re-measured |
 | cp2k_density_matrix_trs4 | 8.6x | 24.3 | 2.82 triton | by design (owned by the scan work) |
@@ -53,8 +53,8 @@ and `pluto` on CPU, and of `triton` and `ppcg_hip` on GPU (`baselines-rev-1117a2
   call is pinned to the host with its subtree (`offload_to_accelerator.py`), so each band runs CPU FFTW on stack
   grids and the inputs are copied to the host and back. Proposal: a `BatchMapFFTs` pass in `offload_to_gpu`, beside
   `BatchMapProducts`, that splits the band map around its FFTs and emits one batched hipFFT over stacked grids.
-  Expected 21 ms to 1-2 ms. Blocked on `MapFission` handling the scatter guard inside the band body; pending a
-  decision. Until then it is an evaluation gap: an agent would stage all bands' grids at once and call the batched
+  Expected 21 ms to 1-2 ms. Blocked on `MapFission` handling the scatter guard inside the band body. Not taken (user, 2026-11-18: too deep), so it stays a
+  gap for the evaluation: an agent would stage all bands' grids at once and call the batched
   vendor FFT pair, as the triton baseline does with `cupy.fft`.
 - **fv3_dycore.** Each time step issues about 204 device-to-device copies of `nk` elements, from `copy_corners_x/y`,
   which spell out 36 single-column copies per call; the frontend chains them as access nodes of `q` joined by copy
@@ -73,15 +73,21 @@ and `pluto` on CPU, and of `triton` and `ppcg_hip` on GPU (`baselines-rev-1117a2
   The index tables `pointers` and `neighbor_offsets` have data-dependent sizes, so a fold kernel, a copy to the host
   and a sync run before the main kernel can be allocated. The lift and the fold are `MoveArrayOutOfKernel`
   (`extent_bounds` / `compute_bound`, `move_array_out_of_kernel.py:480-560`): a per-thread array whose extent names a
-  symbol read from data gets one global slot per thread, sized by a fold of that symbol's maximum. Proposed (not
-  implemented, it needs runs to get right): recompute the index tables at their use. The consumer reads
-  `neighbor_offsets[c, w]` through the flattened `bj[i1]` with `c = i1 // ppb`, `w = i1 % ppb`, and
-  `neighbor_offsets[c, w] = box_offsets[pointers[c]] + within_box[w]`, where `pointers[c]` is `l` for `c == 0` and
-  `neighbor_list[l, c - 1]` otherwise. Forwarding that expression (a select, then two gathers) into the consumer's
-  index removes both tables, so `MoveArrayOutOfKernel` has nothing to lift: no allocation, no fold kernel, no copy
-  to the host, no sync. The box body is then an init map plus one reduction map, which `BlockTileKernels` can stride
-  over the particles. The diagnosis job (751988) was cancelled, so which `BlockTileKernels` check refuses today is
-  not confirmed.
+  symbol read from data gets one global slot per thread, sized by a fold of that symbol's maximum.
+  Proposed design (not implemented): bound the extent from the in-bounds rule that `BoundDataDependentExtents`
+  already uses. `count = neighbor_counts[l]` ends the subset `neighbor_list[l, 0:count]`, and an out-of-bounds access
+  is undefined, so `count <= max_neighbors`. Today `capacity()` accepts only a literal bound (up to
+  `THREAD_CAPACITY`), and `max_neighbors` is a symbol of the signature. The change: let the bound be an expression in
+  symbols that are defined before the launch, so `pointers` takes `total_size = 1 + max_neighbors` and
+  `neighbor_offsets` takes `(1 + max_neighbors) * particles_per_box`. Shapes and subsets stay exact. Then
+  `MoveArrayOutOfKernel` sizes the per-thread slot from `total_size` (`size_known_at_launch` already accepts such a
+  size), so `extent_bounds` folds nothing: no fold kernel, no copy to the host, no sync. The capacity equals the fold's
+  result whenever one box has a full neighbour list. Why this fits canonicalization: it is a structural fact (the
+  rule on undefined out-of-bounds access), it removes transients and a host round trip, and it needs no cost model.
+  Rejected alternative: recomputing `neighbor_offsets` at each read (`box_offsets[pointers[c]] + w` forwarded into
+  `bj`). That removes the table, but it trades one load for a select and two gathers per particle pair. That is a
+  recompute-or-store choice, so it is left to the agent. Separate, unconfirmed: which `BlockTileKernels` check keeps
+  the particle-pair loop serial in one thread. The diagnosis job (751988) was cancelled.
 
 ## CPU
 
@@ -98,7 +104,7 @@ here is confirmed against generated CPU code or re-measured.
 | gem | 1.31x | 223.0 | 169.8 numba | fixed in `MarkSIMDMaps`, untested |
 | ls3df_kleinman_bylander_nonlocal | 1.26x | 1107.0 | 875.5 cc_autopar | open; same OpenBLAS as the baseline |
 | tsvc_2_s115 | 1.77x | 45.7 | 25.8 pluto | by design |
-| tsvc_2_vag | 1.45x | 29.0 | 20.1 numba | hypothesis; needs the CPU code |
+| tsvc_2_vag | 1.45x | 29.0 | 20.1 numba | no canon gap (one gather); needs the CPU code |
 | wf_triangular | 1.40x | 55.0 | 39.2 pluto | by design |
 | tsvc_2_s275 | 1.29x | 42.5 | 32.9 numba | accepted |
 | tsvc_2_s233 | 1.23x | 26.2 | 21.3 pluto | by design |
@@ -128,9 +134,24 @@ here is confirmed against generated CPU code or re-measured.
   `beta.T`. What is left on the canon side: whether `hpsi` is the last GEMM's output or a temporary copied into it
   (2.7 GB at XL), and BLAS threading inside the dace process (OpenMP OpenBLAS under the generated code's own team).
   Needs the generated code and a per-call timing; recorded until a run is possible.
-- **warpx_field_gather, tsvc_2_vag (hypothesis).** The per-particle index and weight planes of warpx (`_tap3`'s
-  `ix_b/iy_b/iz_b` int64 planes, the `sx_*` shape-factor arrays and `np.where` selections), and the vag gather, may
-  stay materialized where numba runs one fused loop. No code exists to confirm either; no fix is made blind.
+- **warpx_field_gather (hypothesis, diagnosis first).** The per-particle index and weight planes (`_tap3`'s
+  `ix_b/iy_b/iz_b` int64 planes, the `sx_*` shape-factor arrays and `np.where` selections) may stay materialized
+  where numba runs one fused loop. Producer and consumer share the particle range, so shared-range fusion would
+  apply. The likely blocker is that `compute_shape_factor_into` writes `sx` inside branches on the run-time scalar
+  `depos_order`, and the gather that reads it lies outside those branches. Fusing across the branch would mean
+  duplicating the gather into each of the five order branches. That is code growth, a cost choice, so it does not
+  belong in canon. The canon fix is in scope only if the generated code shows a structural blocker that is cheaper
+  than that, such as a missed fusion within one branch. Needs a codegen run.
+- **tsvc_2_vag (hypothesis withdrawn).** The kernel is one gather, `a[i] = b[ip[i]]`, so there is nothing to fuse.
+  The 1.45x is the cost of the gather loop itself: threading and fork/join, or a vector gather against numba's
+  scalar loop. That is specialization and the measurement environment, not canonicalization. Needs the CPU code.
+- **Megakernel for jfnk_bratu and bdf_newton_krylov (not taken).** Both iterate GMRES and Newton loops that exit on
+  device data (`if rel < tol ... break`, `if fnow <= newton_rtol * f0: break`). Between their kernels sit host scalar
+  Givens and Hessenberg updates. The approved megakernel rule takes only a sequential loop whose body is GPU kernels
+  plus control flow on symbols alone, so neither loop qualifies. Taking them would need a grid-wide reduction, a
+  broadcast exit flag and device-side scalar work: the "later" case of that rule, and specialization rather than
+  canonicalization. Recorded as an evaluation gap: an agent would fuse each Arnoldi step into one kernel and keep
+  the exit test on the host.
 - **tsvc_2_s275 (accepted).** If-conversion turns every skipped column into an unconditional read, select and write,
   about twice the traffic on half the columns, in exchange for a vectorized loop. Accepted as the default.
 
@@ -169,7 +190,11 @@ Entries for the evaluation (canon leaves these gaps to the agent by design):
 
 ## Tuning-style settings in the pipeline
 
-Listed for review; none of them is removed yet. Kept by decision: `ChooseOmpSchedule`, `SpecializeSmallGemms`,
+Recommendation (2026-11-18, pending the user): keep all of them. Each is a fixed rule that does not adapt per kernel
+(small work stays sequential, a strip-mine tile fits L2, a team is not wider than its work), which is the
+"general, mostly working" specialization the paper describes. `calibrate_thresholds.py` is an offline tool that
+records where the `machine.py` constants come from; the pipeline never runs it. The wavefront tile is part of the
+wavefront implementation and is not split into specialization. Kept by decision: `ChooseOmpSchedule`, `SpecializeSmallGemms`,
 thread coarsening by 4 (`tile_kernels_coalesced.py`, `coarsen_kernel_threads.py`), `CoarsenScatterKernels`,
 `PrivatizeScatterPerBlock` and the grid-stride hint. Removed: `BoundMaskedMaps` from `cpu_specialize` (8a50409ba).
 
