@@ -119,13 +119,15 @@ here is confirmed against generated CPU code or re-measured.
   small map at the top level keeps its own clause. Test: `tests/codegen/simd_pragma_test.py`
   (`test_a_small_literal_inner_map_into_a_local_vectorizes_the_enclosing_loop`). Expected: from 223 ms to below
   numba's 170 ms. Not compiled or timed yet.
-- **ls3df_kleinman_bylander_nonlocal (open).** Three GEMMs. The baseline uses the same library: the numpy-to-C
-  emitter writes `cblas_dgemm` (`translators/numpyto_c/emit.py:1520`) and links `blas`, which resolves to the same
-  spack OpenBLAS (`languages.py:2011`, `envs/toolset.yaml:90`). `cc` (1507.6 ms) runs one thread and `cc_autopar`
-  (875.5 ms) the team (`flags.py:127`). So the gap is neither the vendor nor the 2-runtime issue; ls3df is not among the 11
-  flagged runs. What remains is in the canonical form around the calls: whether `beta.T @ psi` keeps the transpose
-  as a BLAS flag (`transposes_as_blas_flags`) or makes a copy of `beta` (843000 x 815, 5.5 GB), and whether `hpsi`
-  is written in place or through a temporary and a copy. This needs the generated code.
+- **ls3df_kleinman_bylander_nonlocal (open).** `hpsi[:] = beta @ (dij @ (beta.T @ psi))`: three GEMMs, about
+  5e11 flops at the fuzzed sizes, so every column is bound by its BLAS calls. Baseline medians on the same shapes
+  (`fuzzed_shape` is seeded, identical across columns): numba 1118 ms, cc 1508 ms, cc_autopar 876 ms; canon 1107 ms,
+  level with numba. cc and cc_autopar emit the same `cblas_dgemm` calls against the same spack OpenBLAS
+  (`translators/numpyto_c/emit.py:1520`), so their 1.7x spread is threading or placement, not code. The transpose
+  is already a BLAS flag (`transpose_into_blas_flag.py`, written for this kernel), so canon materializes no
+  `beta.T`. What is left on the canon side: whether `hpsi` is the last GEMM's output or a temporary copied into it
+  (2.7 GB at XL), and BLAS threading inside the dace process (OpenMP OpenBLAS under the generated code's own team).
+  Needs the generated code and a per-call timing; recorded until a run is possible.
 - **warpx_field_gather, tsvc_2_vag (hypothesis).** The per-particle index and weight planes of warpx (`_tap3`'s
   `ix_b/iy_b/iz_b` int64 planes, the `sx_*` shape-factor arrays and `np.where` selections), and the vag gather, may
   stay materialized where numba runs one fused loop. No code exists to confirm either; no fix is made blind.
