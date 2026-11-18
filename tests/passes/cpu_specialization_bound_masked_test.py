@@ -93,6 +93,11 @@ def expected_force(x, counts, neigh):
 def test_absorbed_keeps_one_masked_slot():
     sdfg = specialized(absorbed_force, "bound_masked_absorbed")
     assert len(bounded(sdfg)) == 1
+    # A masked slot adds 0.0 * d, which a non-finite d keeps non-finite. Under the default -fno-signed-zeros GCC 16
+    # folds that product to 0, so the poison would vanish in the compiler rather than in the pass under test.
+    args = dace.Config.get("compiler", "cpu", "args").replace("-fno-signed-zeros", "")
+    with dace.config.set_temporary("compiler", "cpu", "args", value=args):
+        compiled = sdfg.compile()
     rng = np.random.default_rng(3)
     n, m = 7, 5
     x = rng.random((n, 3))
@@ -104,7 +109,7 @@ def test_absorbed_keeps_one_masked_slot():
         if poison is not None:
             y[0, 1] = poison  # What every masked slot reads, as a non-finite position
         f = np.zeros_like(y)
-        sdfg(x=y, counts=counts, neigh=neigh, f=f, N=n, M=m)
+        compiled(x=y, counts=counts, neigh=neigh, f=f, N=n, M=m)
         np.testing.assert_array_equal(np.isnan(f), np.isnan(expected_force(y, counts, neigh)))
         np.testing.assert_allclose(f, expected_force(y, counts, neigh))
 
