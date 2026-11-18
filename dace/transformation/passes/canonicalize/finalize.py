@@ -84,6 +84,7 @@ from dace.transformation.passes.length_one_array_scalar_conversion import Conver
 from dace.transformation.passes.minimize_transients import MinimizeTransients
 from dace.transformation.passes.offloading.batch_map_products import BatchMapProducts
 from dace.transformation.passes.offloading.batch_row_scans import BatchRowScans
+from dace.transformation.passes.offloading.fuse_copy_chains import FuseCopyChains
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.specialize_small_gemms import (
     SMALL_MATMUL_DIM,
@@ -832,6 +833,8 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False, tile_programs: bool = Fal
     """
     Config.set("compiler", "cuda", "max_concurrent_streams", value=-1)
     run_structural_cleanup(sdfg)
+    # Before the offload makes each copy of a chain its own transfer: independent copies are one kernel.
+    FuseCopyChains().apply_pass(sdfg, {})
     # Before the offload reads a map around a device-wide scan as a host loop of launches.
     BatchRowScans().apply_pass(sdfg, {})
     # Likewise a map around a matrix-vector product or dot: one batched vendor call instead
