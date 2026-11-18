@@ -32,6 +32,7 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.cpu_specialization.fuse_scan_chains import expose_symbols
 
 #: Iterations one block covers. A block's guard reads are re-read by phase 3 from cache when the block's inputs fit
 #: in L2 at a few arrays of eight bytes.
@@ -181,6 +182,19 @@ def scalarize(clone: nodes.NestedSDFG, connector: str) -> None:
                         scalarize(node, connector)
 
 
+def in_scope(state: SDFGState, phases: tuple[Phase, ...]) -> dict[str, Any]:
+    """Every symbol the phases' bodies can read, with its type: the SDFG's own, those an enclosing loop or interstate
+    edge assigns (an outer iterator, a cursor base), minus the phases' own map parameters, which the block loop
+    replaces."""
+    own = {phase.entry.map.params[0] for phase in phases}
+    found: dict[str, Any] = {}
+    for phase in phases:
+        for name, stype in state.symbols_defined_at(phase.body).items():
+            if name not in own and not isinstance(stype, data.Data):
+                found.setdefault(name, stype)
+    return found
+
+
 class ChunkStreamCompaction(ppl.Pass):
     """Rewrite each lifted three-phase compaction into the chunked count / offsets / write shape."""
 
@@ -250,7 +264,7 @@ class ChunkStreamCompaction(ppl.Pass):
             if state.degree(node) == 0:
                 state.remove_node(node)
 
-    def block_sdfg(self, name: str, sdfg: SDFG, containers: list[str]) -> SDFG:
+    def block_sdfg(self, name: str, sdfg: SDFG, containers: list[str], symbols: dict[str, Any]) -> SDFG:
         """An empty block-body SDFG declaring ``containers`` as non-transient copies of ``sdfg``'s and every outer
         symbol, plus the block index ``block``."""
         inner = SDFG(name)
@@ -258,7 +272,7 @@ class ChunkStreamCompaction(ppl.Pass):
             desc = copy.deepcopy(sdfg.arrays[container])
             desc.transient = False
             inner.add_datadesc(container, desc)
-        for symbol, stype in sdfg.symbols.items():
+        for symbol, stype in symbols.items():
             inner.add_symbol(symbol, stype)
         inner.add_symbol("block", dace.int64)
         return inner
@@ -296,7 +310,8 @@ class ChunkStreamCompaction(ppl.Pass):
         """Phase 1: per block, the number of taken iterations, into ``counts[block]``."""
         dtype = sdfg.arrays[counts].dtype
         mask_dtype = sdfg.arrays[m.mask_node.data].dtype
-        inner = self.block_sdfg("compaction_count_block", sdfg, sorted(outer_reads) + [counts])
+        scope = in_scope(state, (m.mask,))
+        inner = self.block_sdfg("compaction_count_block", sdfg, sorted(outer_reads) + [counts], scope)
         inner.add_scalar("taken", mask_dtype, transient=True)
         inner.add_scalar("run", dtype, transient=True)
         start = inner.add_state("start", is_start_block=True)
@@ -324,7 +339,7 @@ class ChunkStreamCompaction(ppl.Pass):
             "compaction_count", {"block": f"0:{sym2cpp(blocks)}"}, schedule=dtypes.ScheduleType.CPU_Multicore
         )
         nested = state.add_nested_sdfg(
-            inner, set(outer_reads), {counts}, symbol_mapping={s: s for s in sdfg.symbols} | {"block": "block"}
+            inner, set(outer_reads), {counts}, symbol_mapping={s: s for s in scope} | {"block": "block"}
         )
         for name, access in outer_reads.items():
             state.add_memlet_path(
@@ -338,12 +353,15 @@ class ChunkStreamCompaction(ppl.Pass):
 
     def offset_phase(self, state, sdfg, m, blocks, counts, starts, count_node):
         """Phase 2: every block's first rank and the total, in order."""
-        nblocks = sym2cpp(blocks)
+        # Plain integer arithmetic: tasklet text reaches every dialect as written, and CPF's C has no ``int_ceil``.
+        nblocks = f"(({sym2cpp(m.length)}) + {BLOCK - 1}) / {BLOCK}"
+        del blocks
         code = (
             f"long long running = 0;\n"
             f"for (long long b = 0; b < {nblocks}; ++b) {{ s[b] = running; running += c[b]; }}\n"
             f"t = running;"
         )
+        expose_symbols(state, [sym2cpp(m.length)])
         tasklet = state.add_tasklet(
             "compaction_starts",
             {"c": dtypes.pointer(sdfg.arrays[counts].dtype)},
@@ -377,7 +395,8 @@ class ChunkStreamCompaction(ppl.Pass):
         rank_dtype = sdfg.arrays[m.rank_node.data].dtype
         mask_dtype = sdfg.arrays[m.mask_node.data].dtype
         containers = sorted(set(outer_reads) | set(outer_writes) | {starts})
-        inner = self.block_sdfg("compaction_write_block", sdfg, containers)
+        scope = in_scope(state, (m.mask, m.scatter))
+        inner = self.block_sdfg("compaction_write_block", sdfg, containers, scope)
         inner.add_scalar("taken", mask_dtype, transient=True)
         inner.add_scalar("run", rank_dtype, transient=True)
         start = inner.add_state("start", is_start_block=True)
@@ -414,7 +433,7 @@ class ChunkStreamCompaction(ppl.Pass):
             inner,
             set(outer_reads) | {starts},
             set(outer_writes),
-            symbol_mapping={s: s for s in sdfg.symbols} | {"block": "block"},
+            symbol_mapping={s: s for s in scope} | {"block": "block"},
         )
         for name, access in outer_reads.items():
             state.add_memlet_path(

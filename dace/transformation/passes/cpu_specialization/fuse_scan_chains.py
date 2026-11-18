@@ -175,6 +175,27 @@ def match_producer(state: SDFGState, buffer: nodes.AccessNode, sdfg: SDFG, start
     return Producer(entry, exit_node, pyexpr2cpp(expression).replace(POSITION, "{i}"), reads)
 
 
+def expose_symbols(state: SDFGState, expressions: list[str]) -> None:
+    """Make every symbol ``expressions`` name visible in ``state``'s SDFG.
+
+    A C++ tasklet reports no free symbols (its code is not parsed), so a symbol written into its text is passed to
+    no nested SDFG on the way down: declare it in each enclosing nested SDFG that lacks it and map it through, up to
+    the first SDFG that already has it.
+    """
+    names: set[str] = set()
+    for expression in expressions:
+        names |= {str(s) for s in symbolic.pystr_to_symbolic(expression).free_symbols}
+    sdfg = state.sdfg
+    for name in sorted(names):
+        current = sdfg
+        while name not in current.symbols and current.parent_nsdfg_node is not None:
+            outer = current.parent_sdfg
+            stype = outer.symbols.get(name, dtypes.int64)
+            current.add_symbol(name, stype)
+            current.parent_nsdfg_node.symbol_mapping[name] = name
+            current = outer
+
+
 class FuseScanChains(ppl.Pass):
     """Fuse each fusable producer map into the ``Scan`` it feeds (module docstring)."""
 
@@ -262,6 +283,7 @@ class FuseScanChains(ppl.Pass):
                 "}",
             ]
         )
+        expose_symbols(state, [length, out_start, producer.expression.replace("{i}", "0").replace("in_", "")])
         in_connectors = {connector(name): dtypes.pointer(sdfg.arrays[name].dtype) for name in producer.reads}
         if INIT_CONNECTOR_NAME in inputs:
             in_connectors[SEED] = sdfg.arrays[inputs[INIT_CONNECTOR_NAME].data.data].dtype

@@ -57,3 +57,35 @@ def test_the_chunked_form_packs_in_order_and_counts(n: int):
 
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
+
+
+M = dace.symbol("M", dtype=dace.int64)
+
+
+@dace.program
+def compact_rows(src: dace.float64[M, N], packed: dace.float64[M, N], count: dace.int64[M]):
+    for r in range(M):
+        j = 0
+        for i in range(N):
+            if src[r, i] > 0.0:
+                packed[r, j] = src[r, i]
+                j = j + 1
+        count[r] = j
+
+
+def test_a_compaction_under_an_outer_loop_reads_the_outer_iterator_in_its_blocks():
+    """The block bodies read ``r``, which only the enclosing loop defines: the chunked form must pass it down."""
+    sdfg = compact_rows.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    finalize_for_target(sdfg, "cpu", validate=True)
+    assert any(name.startswith("compaction_counts") for _, name, _ in sdfg.arrays_recursive())
+    rows, n = 3, 2 * BLOCK + 5
+    rng = np.random.default_rng(7)
+    src = rng.standard_normal((rows, n))
+    packed = np.zeros((rows, n))
+    count = np.zeros(rows, dtype=np.int64)
+    sdfg(src=src, packed=packed, count=count, M=rows, N=n)
+    for r in range(rows):
+        want = src[r][src[r] > 0.0]
+        assert int(count[r]) == want.size
+        np.testing.assert_array_equal(packed[r, : want.size], want)
