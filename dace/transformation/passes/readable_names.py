@@ -64,7 +64,10 @@ def is_free(name: str, taken: OrderedSet[str]) -> bool:
 
 
 def fresh(stem: str, taken: OrderedSet[str]) -> str:
-    """``stem``, or ``stem<N>`` (``stem_<N>`` after a digit), whichever is first free; it joins ``taken``."""
+    """``stem``, or ``stem<N>`` (``stem_<N>`` after a digit), whichever is first free; it joins ``taken``. A stem
+    with a reserved prefix (``cpf_tmp``) has no free numbered form, so it becomes ``tmp``."""
+    if stem.startswith(RESERVED_PREFIXES):
+        stem = "tmp"
     name, n = stem, 1
     while not is_free(name, taken):
         name = f"{stem}_{n}" if stem[-1].isdigit() else f"{stem}{n}"
