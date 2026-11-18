@@ -25,14 +25,14 @@ and `pluto` on CPU, and of `triton` and `ppcg_hip` on GPU (`baselines-rev-1117a2
 
 | kernel | canon / best | canon ms | best ms | status |
 |---|---|---|---|---|
-| gem | 64.0x | 165.5 | 2.58 triton | fixed, 1f9298431, not yet re-measured |
+| gem | 64.0x | 165.5 | 2.58 triton | fixed, 1f9298431, untested (no GPU run; mapreduce_test passed once on the login node) |
 | cloudsc | 45.7x | 73.9 | 1.62 triton | not yet analysed |
-| cp2k_grid_integrate | 38.5x | 2203.4 | 57.2 triton | by design, hint 7fd2f6650 |
+| cp2k_grid_integrate | 38.5x | 2203.4 | 57.2 triton | by design, hint 7fd2f6650 + 09f005b08, untested |
 | qe_vloc_psi_k_acc | 20.2x | 21.2 | 1.05 triton | proposed |
-| fv3_dycore | 10.9x | 256.0 | 23.6 triton | copies fixed, 6587cb40c, not yet re-measured |
+| fv3_dycore | 10.9x | 256.0 | 23.6 triton | copies fixed, 6587cb40c, untested |
 | lulesh | 9.4x | 40.8 | 4.36 triton | fixed, ce0afd4a4, not yet re-measured |
 | cp2k_density_matrix_trs4 | 8.6x | 24.3 | 2.82 triton | by design (owned by the scan work) |
-| lavamd | 4.9x | 198.2 | 40.4 triton | transient-removal fix in progress |
+| lavamd | 4.9x | 198.2 | 40.4 triton | proposed |
 | minife | 2.6x | 645.9 | 251.5 triton | not yet analysed |
 
 - **gem.** `MapReduceFusion` kept the reduction's identity write inside the block map because a write of the same
@@ -71,8 +71,17 @@ and `pluto` on CPU, and of `triton` and `ppcg_hip` on GPU (`baselines-rev-1117a2
   array, or a decoupled look-back scan), keep the iteration loop on the host, and fuse the elementwise chain.
 - **lavamd.** One thread per box with the particle-pair loop serial in the thread and global atomics into `fv`.
   The index tables `pointers` and `neighbor_offsets` have data-dependent sizes, so a fold kernel, a copy to the host
-  and a sync run before the main kernel can be allocated. Fix in progress: recompute both at their use, which
-  removes the allocation, the fold and the sync and leaves a body the block tiler can spread over particles.
+  and a sync run before the main kernel can be allocated. The lift and the fold are `MoveArrayOutOfKernel`
+  (`extent_bounds` / `compute_bound`, `move_array_out_of_kernel.py:480-560`): a per-thread array whose extent names a
+  symbol read from data gets one global slot per thread, sized by a fold of that symbol's maximum. Proposed (not
+  implemented, it needs runs to get right): recompute the index tables at their use. The consumer reads
+  `neighbor_offsets[c, w]` through the flattened `bj[i1]` with `c = i1 // ppb`, `w = i1 % ppb`, and
+  `neighbor_offsets[c, w] = box_offsets[pointers[c]] + within_box[w]`, where `pointers[c]` is `l` for `c == 0` and
+  `neighbor_list[l, c - 1]` otherwise. Forwarding that expression (a select, then two gathers) into the consumer's
+  index removes both tables, so `MoveArrayOutOfKernel` has nothing to lift: no allocation, no fold kernel, no copy
+  to the host, no sync. The box body is then an init map plus one reduction map, which `BlockTileKernels` can stride
+  over the particles. The diagnosis job (751988) was cancelled, so which `BlockTileKernels` check refuses today is
+  not confirmed.
 
 ## CPU
 
