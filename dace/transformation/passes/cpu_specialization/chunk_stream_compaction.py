@@ -72,6 +72,15 @@ def single_body_map(state: SDFGState, entry: nodes.MapEntry) -> Phase | None:
     return Phase(entry, state.exit_node(entry), inner[0])
 
 
+def inside_map(sdfg: SDFG) -> bool:
+    """Whether ``sdfg`` is the body of a map at some level of nesting."""
+    while sdfg.parent_nsdfg_node is not None:
+        if sdfg.parent.entry_node(sdfg.parent_nsdfg_node) is not None:
+            return True
+        sdfg = sdfg.parent_sdfg
+    return False
+
+
 def only_access(sdfg: SDFG, node: nodes.AccessNode) -> bool:
     """Whether ``node`` is the one access node of its container anywhere in ``sdfg``."""
     return all(n is node for state in sdfg.states() for n in state.data_nodes() if n.data == node.data)
@@ -210,6 +219,8 @@ class ChunkStreamCompaction(ppl.Pass):
         done = 0
         for node, state in list(sdfg.all_nodes_recursive()):
             if isinstance(node, Scan) and isinstance(state, SDFGState) and node in state.nodes():
+                if inside_map(state.sdfg):
+                    continue  # each iteration of an enclosing parallel map compacts sequentially
                 found = match(state, node, state.sdfg)
                 if found is not None:
                     self.rewrite(state, state.sdfg, found)

@@ -73,12 +73,13 @@ def compact_rows(src: dace.float64[M, N], packed: dace.float64[M, N], count: dac
         count[r] = j
 
 
-def test_a_compaction_under_an_outer_loop_reads_the_outer_iterator_in_its_blocks():
-    """The block bodies read ``r``, which only the enclosing loop defines: the chunked form must pass it down."""
+def test_a_compaction_in_each_row_of_a_parallel_row_loop_is_not_chunked():
+    """Independent rows become one parallel map; a compaction inside it runs sequentially in its iteration, so
+    no parallel block map is nested in the row map, and every row still packs in order."""
     sdfg = compact_rows.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     finalize_for_target(sdfg, "cpu", validate=True)
-    assert any(name.startswith("compaction_counts") for _, name, _ in sdfg.arrays_recursive())
+    assert not any(name.startswith("compaction_counts") for unused_sdfg, name, unused_desc in sdfg.arrays_recursive())
     rows, n = 3, 2 * BLOCK + 5
     rng = np.random.default_rng(7)
     src = rng.standard_normal((rows, n))
@@ -89,3 +90,37 @@ def test_a_compaction_under_an_outer_loop_reads_the_outer_iterator_in_its_blocks
         want = src[r][src[r] > 0.0]
         assert int(count[r]) == want.size
         np.testing.assert_array_equal(packed[r, : want.size], want)
+
+
+@dace.program
+def compact_rows_carried(src: dace.float64[M, N], packed: dace.float64[M, N], count: dace.int64[M]):
+    scale = 1.0
+    for r in range(M):
+        j = 0
+        for i in range(N):
+            if src[r, i] > 0.0:
+                packed[r, j] = scale * src[r, i]
+                j = j + 1
+        count[r] = j
+        scale = 0.5 * scale + src[r, 0]
+
+
+def test_a_compaction_under_a_sequential_outer_loop_reads_the_outer_iterator_in_its_blocks():
+    """The row loop carries ``scale``, so it stays a loop and the compaction inside it is chunked; the block
+    bodies read ``r`` and ``scale``, which only the enclosing loop defines: the chunked form must pass them down."""
+    sdfg = compact_rows_carried.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    finalize_for_target(sdfg, "cpu", validate=True)
+    assert any(name.startswith("compaction_counts") for unused_sdfg, name, unused_desc in sdfg.arrays_recursive())
+    rows, n = 3, 2 * BLOCK + 5
+    rng = np.random.default_rng(7)
+    src = rng.standard_normal((rows, n))
+    packed = np.zeros((rows, n))
+    count = np.zeros(rows, dtype=np.int64)
+    sdfg(src=src, packed=packed, count=count, M=rows, N=n)
+    scale = 1.0
+    for r in range(rows):
+        want = scale * src[r][src[r] > 0.0]
+        assert int(count[r]) == want.size
+        np.testing.assert_array_equal(packed[r, : want.size], want)
+        scale = 0.5 * scale + src[r, 0]

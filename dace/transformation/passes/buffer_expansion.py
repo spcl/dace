@@ -120,7 +120,7 @@ def rescues(sdfg: SDFG, loop: LoopRegion, refused_on: str | None) -> bool:
     privatizable buffer of ``loop``. Reads the graph only."""
     desc = sdfg.arrays.get(refused_on) if refused_on is not None else None
     if (
-        not isinstance(desc, data.Array)
+        not isinstance(desc, (data.Array, data.Scalar))
         or isinstance(desc, data.View)
         or not desc.transient
         or desc.lifetime not in _REINDEXABLE_LIFETIMES
@@ -129,7 +129,9 @@ def rescues(sdfg: SDFG, loop: LoopRegion, refused_on: str | None) -> bool:
     expander = BufferExpansion()
     if expander._loop_index(loop) is None:
         return False
-    return bool(expander._privatizable_buffers(sdfg, loop, names={refused_on}))
+    # A scalar is judged as the length-1 array expand_iteration_private makes of it.
+    scalars = {refused_on} if isinstance(desc, data.Scalar) else set()
+    return bool(expander._privatizable_buffers(sdfg, loop, scalars=scalars, names={refused_on}))
 
 
 def expand_iteration_private(sdfg: SDFG, loop: LoopRegion, names: list[str]) -> None:

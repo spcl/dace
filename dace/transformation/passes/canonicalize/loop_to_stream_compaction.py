@@ -550,6 +550,22 @@ class LoopToStreamCompaction(ppl.Pass):
 
     def cursor_arrays_are_isolated(self, loop: LoopRegion, cursor: str, sdfg: SDFG) -> bool:
         """Cursor-indexed arrays must be write-only-through-the-cursor, or read-only."""
+        cursor_written, cursor_read, plain_written, read = self.cursor_accesses(loop, cursor, sdfg)
+        for name in cursor_written:
+            if name in read or name in cursor_read:
+                return False  # in-place compaction: the parallel scatter races its own input
+            if name in plain_written:
+                return False  # a second, non-cursor write to the compaction target
+        for name in cursor_read:
+            if name in plain_written:
+                return False  # the gathered source is rewritten inside the loop
+        return True
+
+    def cursor_accesses(
+        self, loop: LoopRegion, cursor: str, sdfg: SDFG
+    ) -> tuple[dict[str, int], dict[str, int], dict[str, int], dict[str, int]]:
+        """Access counts per container in ``loop``: written through ``cursor``, read through it, written
+        otherwise, read otherwise."""
         cursor_written: dict[str, int] = {}
         cursor_read: dict[str, int] = {}
         plain_written: dict[str, int] = {}
@@ -581,15 +597,7 @@ class LoopToStreamCompaction(ppl.Pass):
             uses_cursor = cursor in {str(s) for s in required(memlet.subset).free_symbols}
             target = cursor_read if uses_cursor else read
             target[memlet.data] = target.get(memlet.data, 0) + 1
-        for name in cursor_written:
-            if name in read or name in cursor_read:
-                return False  # in-place compaction: the parallel scatter races its own input
-            if name in plain_written:
-                return False  # a second, non-cursor write to the compaction target
-        for name in cursor_read:
-            if name in plain_written:
-                return False  # the gathered source is rewritten inside the loop
-        return True
+        return cursor_written, cursor_read, plain_written, read
 
     def cursor_writes_move_with_iteration(self, loop: LoopRegion, levels: tuple[NestLevel, ...], cursor: str) -> bool:
         """Does a cursor-indexed write also read a symbol that changes from one iteration to the next?
@@ -805,6 +813,7 @@ class LoopToStreamCompaction(ppl.Pass):
             branch.add_node(lift.root, is_start_block=True)
             width.add_branch(condition, branch)
             lifts.append((lift._replace(parent=branch), count_dtype))
+        own_scratch(wide.root, root, m.sdfg)
         return lifts
 
     def rewrite(
@@ -817,6 +826,7 @@ class LoopToStreamCompaction(ppl.Pass):
         # rename must carry the dtype the ORIGINAL level declares, level by level.
         iterator_dtypes = [self.iterator_dtype(level.loop, sdfg, resolver) for level in m.levels]
         shape = self.rank_shape(m)
+        targets = frozenset(self.cursor_accesses(root, m.cursor, sdfg)[0])
         mask_name, _ = sdfg.add_array(MASK_PREFIX + root.label, shape, MASK_DTYPE, transient=True, find_new_name=True)
         idx_name, _ = sdfg.add_array(IDX_PREFIX + root.label, shape, count_dtype, transient=True, find_new_name=True)
         total_name, _ = sdfg.add_scalar(TOTAL_PREFIX + root.label, count_dtype, transient=True, find_new_name=True)
@@ -853,20 +863,22 @@ class LoopToStreamCompaction(ppl.Pass):
             parent.add_edge(exit_state, edge.dst, edge.data)
         parent.remove_node(root)
 
-        self.parallelize(mask_nest, sdfg, permissive=False)
+        self.parallelize(mask_nest, sdfg)
         # The updates the probe took as WCR; only phase 3 runs them (phase 1 dropped them with the guard and tail).
         for name in sorted(m.accumulators):
             convert_updates(scatter_nest, name)
-        self.parallelize(scatter_nest, sdfg, permissive=True)
+        self.parallelize(scatter_nest, sdfg, targets)
         # Symbols, descriptors, regions and interstate edges all changed; every table built from
         # this SDFG's base is stale.
         resolver.invalidate_sdfg(sdfg)
 
     def clone_loop(self, m: CompactionMatch, suffix: str) -> LoopRegion:
-        """Copy the matched nest into the parent region; ownership is what makes it editable."""
+        """Copy the matched nest into the parent region; ownership is what makes it editable. The copy owns its
+        scratch (:meth:`own_scratch`)."""
         loop = copy.deepcopy(m.root)
         loop.label = m.root.label + suffix
         m.parent.add_node(loop, ensure_unique_name=True)
+        own_scratch(loop, m.root, m.sdfg)
         return loop
 
     def clone_path(self, m: CompactionMatch, root: LoopRegion) -> tuple[list[LoopRegion], ControlFlowBlock]:
@@ -1007,16 +1019,52 @@ class LoopToStreamCompaction(ppl.Pass):
             count, "_out", state.add_write(total), None, mm.Memlet(data=total, subset=subsets.Range([(0, 0, 1)]))
         )
 
-    def parallelize(self, loop: LoopRegion, sdfg: SDFG, permissive: bool) -> None:
+    def parallelize(self, loop: LoopRegion, sdfg: SDFG, targets: frozenset[str] = frozenset()) -> None:
         """Best effort -- the three-phase form is correct whether or not the phases become Maps.
 
-        ``permissive`` is the cursor-disjointness proof this pass owns and ``LoopToMap`` cannot
-        reconstruct: phase 3 writes through ``rank``, which is strictly increasing on the taken
-        iterations. Phase 1 needs no waiver, so it is lifted strictly.
+        ``targets`` are the arrays phase 3 writes through ``rank``, which is strictly increasing on the taken
+        iterations: the disjointness proof this pass owns and ``LoopToMap`` cannot reconstruct. Only their
+        conflicts are waived; every other write (a scalar the body stages a value through) still gets the
+        dependence test, so it is privatized or the loop stays sequential. Phase 1 waives nothing.
         """
         from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
-        ParallelizeLoops(permissive=permissive).parallelize_loop(sdfg, loop)
+        parallelize = ParallelizeLoops()
+        parallelize.expand_buffers = True  # a scalar each iteration writes before it reads becomes private
+        parallelize.parallelize_loop(sdfg, loop, contract_arrays=targets)
+
+
+def own_scratch(copy_: LoopRegion, original: LoopRegion, sdfg: SDFG) -> None:
+    """Give ``copy_``, a deep copy of ``original`` placed in the graph, its own copy of every transient that only
+    ``original`` accesses. Each phase and each count-width twin then holds its scratch alone, so a parallelization
+    of one finds that scratch confined to its loop and privatizes it, instead of meeting the other copies' accesses."""
+    inside = {node.data for state in original.states() for node in state.data_nodes()}
+    outside: set[str] = set()
+    for state in sdfg.states():
+        if not within(state, original) and not within(state, copy_):
+            outside |= {node.data for node in state.data_nodes()}
+    for region in sdfg.all_control_flow_regions():
+        if all(region is not mine and not within(region, mine) for mine in (original, copy_)):
+            for edge in region.edges():
+                outside |= edge.data.free_symbols
+    names = sorted(
+        name
+        for name in inside - outside
+        if sdfg.arrays[name].transient and not isinstance(sdfg.arrays[name], data.View)
+    )
+    renames = {name: sdfg.add_datadesc(name, copy.deepcopy(sdfg.arrays[name]), find_new_name=True) for name in names}
+    if renames:
+        copy_.replace_dict(renames)
+
+
+def within(block: ControlFlowBlock, region: AbstractControlFlowRegion) -> bool:
+    """Whether ``region`` encloses ``block`` in ``block``'s own SDFG."""
+    parent = block.parent_graph
+    while isinstance(parent, AbstractControlFlowRegion) and not isinstance(parent, SDFG):
+        if parent is region:
+            return True
+        parent = parent.parent_graph
+    return False
 
 
 __all__ = ["LoopToStreamCompaction"]
