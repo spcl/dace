@@ -514,3 +514,25 @@ if __name__ == "__main__":
     import sys
 
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+#: Spans several tiles of the blocked scan: ``tile_bytes`` caps a thread's block at 1 MB (131072 int64), so with
+#: up to 64 threads a tile is at most 8.4M elements; 3 * 131072 * 4 + 17 forces several tiles on small teams and a
+#: ragged last tile everywhere.
+MULTI_TILE_N = 3 * 131072 * 4 + 17
+
+
+@pytest.mark.parametrize("exclusive", [False, True])
+@pytest.mark.parametrize("op", [ScanOp.SUM, ScanOp.PRODUCT, ScanOp.MIN, ScanOp.MAX])
+def test_scan_over_several_tiles_matches_numpy(op: ScanOp, exclusive: bool):
+    rng = np.random.default_rng(3)
+    if op is ScanOp.PRODUCT:
+        arr = rng.choice(np.array([-1, 1], dtype=np.int64), MULTI_TILE_N)
+    else:
+        arr = rng.integers(-1000, 1000, MULTI_TILE_N, dtype=np.int64)
+    identity = {ScanOp.SUM: 0, ScanOp.PRODUCT: 1, ScanOp.MIN: 10**9, ScanOp.MAX: -(10**9)}[op]
+    sdfg = _build_scan_sdfg(dace.int64, MULTI_TILE_N, op, exclusive, "CPU", identity=identity if exclusive else None)
+    out = np.zeros(MULTI_TILE_N, dtype=np.int64)
+    sdfg(arr_in=arr, arr_out=out)
+    expected = _numpy_exclusive(arr, op, identity) if exclusive else _numpy_inclusive(arr, op)
+    np.testing.assert_array_equal(out, expected)
