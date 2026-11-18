@@ -20,11 +20,18 @@ import sympy
 from dace import SDFG, SDFGState, dtypes, properties, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.megakernel.discovery import TARGETS, MegakernelChain, find_chains, kernels_in, states_in
+from dace.transformation.passes.megakernel.discovery import (
+    TARGETS,
+    MegakernelChain,
+    find_chains,
+    kernels_in,
+    linear_chain,
+    states_in,
+)
 from dace.transformation.passes.megakernel.gather_kernels import GatherKernelStates
 from dace.transformation.passes.megakernel.megakernel import MegaKernelOptimization
 
@@ -64,26 +71,48 @@ def loop_range(loop: LoopRegion) -> tuple:
     return begin, end
 
 
-def launch_bound(loop: LoopRegion, target) -> sympy.Expr | None:
-    """The largest iteration space any kernel of ``loop`` runs in one iteration, free of the loop variable, or
-    ``None`` when no such bound is known."""
-    bounds = [loop_free_bound(iteration_space(k), loop) for k in kernels_in(loop, target)]
+def launch_bound(blocks: list[ControlFlowBlock], target) -> sympy.Expr | None:
+    """The largest iteration space any kernel of ``blocks`` runs at once, free of the variables of the loops among
+    them, or ``None`` when no such bound is known."""
+    bounds = []
+    for block in blocks:
+        inner = [] if isinstance(block, SDFGState) else block.all_control_flow_regions(recursive=True)
+        loops = [r for r in [block, *inner] if is_loop(r)]
+        for kernel in kernels_in(block, target):
+            work: sympy.Expr | None = iteration_space(kernel)
+            for loop in loops:
+                work = None if work is None else loop_free_bound(work, loop)
+            bounds.append(work)
     if not bounds or any(b is None for b in bounds):
         return None
     return sympy.Max(*bounds)
 
 
-def per_launch_copy(loop: LoopRegion) -> tuple[LoopRegion, dict]:
-    """``loop`` as it launches its kernels today, with the descriptors of the containers it accesses: fusing ``loop``
-    moves its transients into the megakernel, and the copy still needs its own."""
-    fallback = copy.deepcopy(loop)
-    accessed = {node.data for state in states_in(fallback) for node in state.data_nodes()}
-    return fallback, {name: copy.deepcopy(desc) for name, desc in loop.sdfg.arrays.items() if name in accessed}
+def is_loop(block: ControlFlowBlock) -> bool:
+    return isinstance(block, LoopRegion) and bool(block.loop_variable)
 
 
-def guard_with_fallback(host: SDFGState, fallback: LoopRegion, fits: str) -> None:
+def per_launch_copy(chain: MegakernelChain) -> tuple[ControlFlowBlock, dict]:
+    """The blocks of ``chain`` as they launch their kernels today (one block, or a region running them in order), with
+    the descriptors of the containers they access: fusing moves their transients into the megakernel, and the copy
+    still needs its own."""
+    copies = [copy.deepcopy(block) for block in chain.blocks]
+    if len(copies) == 1:
+        fallback: ControlFlowBlock = copies[0]
+    else:
+        fallback = ControlFlowRegion(f"{chain.blocks[0].label}_run", sdfg=chain.region.sdfg)
+        fallback.add_node(copies[0], is_start_block=True)
+        for i, (before, after) in enumerate(zip(chain.blocks, chain.blocks[1:])):
+            (edge,) = chain.region.edges_between(before, after)
+            fallback.add_edge(copies[i], copies[i + 1], copy.deepcopy(edge.data))
+    accessed = {node.data for block in copies for state in states_in(block) for node in state.data_nodes()}
+    arrays = chain.region.sdfg.arrays
+    return fallback, {name: copy.deepcopy(desc) for name, desc in arrays.items() if name in accessed}
+
+
+def guard_with_fallback(host: SDFGState, fallback: ControlFlowBlock, fits: str) -> None:
     """Replaces ``host`` (the state launching the megakernel) by a conditional: ``host`` when ``fits`` holds, the
-    original per-launch ``fallback`` loop otherwise."""
+    original per-launch ``fallback`` otherwise."""
     region: ControlFlowRegion = host.parent_graph
     guard = ConditionalBlock(f"{host.label}_fits")
     region.add_node(guard, is_start_block=region.start_block is host)
@@ -103,7 +132,8 @@ def guard_with_fallback(host: SDFGState, fallback: LoopRegion, fits: str) -> Non
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class MegakernelLoops(ppl.Pass):
-    """Runs every sequential loop of kernels as one persistent kernel (module docstring)."""
+    """Runs every sequential loop of kernels as one persistent kernel (module docstring); or, given ``blocks``, the one
+    run of consecutive blocks they name."""
 
     CATEGORY: str = "Optimization Preparation"
 
@@ -111,16 +141,17 @@ class MegakernelLoops(ppl.Pass):
     device = properties.EnumProperty(
         dtype=dtypes.DeviceType, default=dtypes.DeviceType.GPU, desc="The device whose kernel loops are fused"
     )
-    loops = properties.SetProperty(
+    blocks = properties.SetProperty(
         element_type=str,
         default=set(),
-        desc="Labels of the loops to fuse (a loop of kernels holding one of them is fused); empty fuses every loop",
+        desc="Labels of consecutive blocks (states of kernels, loops) to run as one persistent kernel; empty runs every "
+        "loop of kernels as one each",
     )
 
-    def __init__(self, device: dtypes.DeviceType = dtypes.DeviceType.GPU, loops: set[str] | None = None) -> None:
+    def __init__(self, device: dtypes.DeviceType = dtypes.DeviceType.GPU, blocks: set[str] | None = None) -> None:
         super().__init__()
         self.device = device
-        self.loops = set(loops or ())
+        self.blocks = set(blocks or ())
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -130,35 +161,102 @@ class MegakernelLoops(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict) -> int | None:
         target = TARGETS[self.device]
+        if self.blocks:
+            return self.fuse_named(sdfg, target)
         # Cheapest structural check first: no sequential loop holds a kernel, nothing to do
-        if not any(
-            isinstance(r, LoopRegion) and kernels_in(r, target) for r in sdfg.all_control_flow_regions(recursive=True)
-        ):
+        if not any(is_loop(r) and kernels_in(r, target) for r in sdfg.all_control_flow_regions(recursive=True)):
             return None
-        # Gathering inlines and wraps loops under new labels; their guids survive, so the named loops are kept by guid
-        named = {r.guid for r in sdfg.all_control_flow_regions(recursive=True) if r.label in self.loops}
         GatherKernelStates(self.device).apply_pass(sdfg, {})
         fused = 0
         for chain in loop_chains(find_chains(sdfg, sdfg, target)):
-            loop = chain.blocks[0]
-            if self.loops and not named & {r.guid for r in loop.all_control_flow_regions(recursive=True)}:
-                continue
-            gpu = self.device == dtypes.DeviceType.GPU
-            bound = launch_bound(loop, target) if gpu else None
-            if gpu and bound is None:
-                continue
-            fallback, descriptors = per_launch_copy(loop) if gpu else (None, {})
-            loop_sdfg = loop.sdfg
-            mk = MegaKernelOptimization(device=self.device)
-            mk.block_size = self.block_size
-            fused_chain = mk.fuse_chain(sdfg, chain, target, f"{chain.region.sdfg.name}_loop_megakernel_{fused}")
-            if fused_chain is None:
-                continue
-            host, nblk = fused_chain
-            if gpu:
-                for name, desc in descriptors.items():
-                    if name not in loop_sdfg.arrays:
-                        loop_sdfg.add_datadesc(name, desc)
-                guard_with_fallback(host, fallback, f"({symbolic.symstr(bound)}) <= {nblk} * {self.block_size}")
-            fused += 1
+            fused += self.fuse(sdfg, chain, target, f"{chain.region.sdfg.name}_loop_megakernel_{fused}")
         return fused or None
+
+    def fuse_named(self, sdfg: SDFG, target) -> int | None:
+        """Fuses the run of blocks :attr:`blocks` names, or nothing when they are not consecutive blocks of one chain.
+        Gathering inlines, wraps and renames blocks, so a block is found by the guids of the named blocks and of the
+        kernels inside them, which survive."""
+        named = [b for b in sdfg.all_control_flow_blocks(recursive=True) if b.label in self.blocks]
+        if {b.label for b in named} != self.blocks or not consecutive(named):
+            return None  # decided before gathering, which changes the SDFG
+        # The run gets a region of its own, so gathering fuses its states only with each other
+        marks = guids_in(wrapped(named))
+        GatherKernelStates(self.device).apply_pass(sdfg, {})
+        for chain in find_chains(sdfg, sdfg, target):
+            held = [i for i, block in enumerate(chain.blocks) if marks & guids_in(block)]
+            if not held:
+                continue
+            if held != list(range(held[0], held[-1] + 1)):
+                return None
+            run = [chain.blocks[i] for i in held]
+            kernels = [k for block in run for k in kernels_in(block, target)]
+            fused = self.fuse(
+                sdfg, MegakernelChain(chain.region, run, kernels), target, f"{chain.region.sdfg.name}_run_megakernel"
+            )
+            return fused or None
+        return None
+
+    def fuse(self, sdfg: SDFG, chain: MegakernelChain, target, handle: str) -> int:
+        """Runs ``chain`` as one persistent kernel, on the GPU behind a test that its largest kernel fits the resident
+        threads, with the per-launch blocks as the fallback. 1 when fused, else 0 (nothing changed)."""
+        gpu = self.device == dtypes.DeviceType.GPU
+        bound = launch_bound(chain.blocks, target) if gpu else None
+        if gpu and bound is None:
+            return 0
+        fallback, descriptors = per_launch_copy(chain) if gpu else (None, {})
+        region_sdfg = chain.region.sdfg
+        mk = MegaKernelOptimization(device=self.device)
+        mk.block_size = self.block_size
+        fused_chain = mk.fuse_chain(sdfg, chain, target, handle)
+        if fused_chain is None:
+            return 0
+        host, nblk = fused_chain
+        if gpu:
+            for name, desc in descriptors.items():
+                if name not in region_sdfg.arrays:
+                    region_sdfg.add_datadesc(name, desc)
+            guard_with_fallback(host, fallback, f"({symbolic.symstr(bound)}) <= {nblk} * {self.block_size}")
+        return 1
+
+
+def wrapped(blocks: list[ControlFlowBlock]) -> ControlFlowRegion:
+    """The consecutive ``blocks`` moved, in their order, into a new region that takes their place."""
+    region = blocks[0].parent_graph
+    order = linear_chain(region) or blocks
+    run = sorted(blocks, key=order.index)
+    inner = ControlFlowRegion(f"{run[0].label}_run", sdfg=region.sdfg)
+    region.add_node(inner, is_start_block=region.start_block is run[0])
+    for edge in region.in_edges(run[0]):
+        region.add_edge(edge.src, inner, edge.data)
+    for edge in region.out_edges(run[-1]):
+        region.add_edge(inner, edge.dst, edge.data)
+    between = [region.edges_between(a, b)[0].data for a, b in zip(run, run[1:])]
+    for block in run:
+        region.remove_node(block)
+    inner.add_node(run[0], is_start_block=True)
+    for (before, after), data in zip(zip(run, run[1:]), between):
+        inner.add_node(after)
+        inner.add_edge(before, after, data)
+    return inner
+
+
+def consecutive(blocks: list[ControlFlowBlock]) -> bool:
+    """Whether ``blocks`` follow one another, unconditionally, in one region."""
+    region = blocks[0].parent_graph
+    if any(b.parent_graph is not region for b in blocks):
+        return False
+    order = linear_chain(region)
+    if order is None:
+        return len(blocks) == 1
+    held = sorted(order.index(b) for b in blocks)
+    return held == list(range(held[0], held[0] + len(blocks)))
+
+
+def guids_in(block: ControlFlowBlock) -> set[str]:
+    """The guids of ``block``, of the blocks inside it and of its kernels' map entries."""
+    regions = [] if isinstance(block, SDFGState) else block.all_control_flow_blocks(recursive=True)
+    return (
+        {block.guid}
+        | {b.guid for b in regions}
+        | {n.guid for n, holder in block.all_nodes_recursive() if isinstance(n, nodes.MapEntry)}
+    )
