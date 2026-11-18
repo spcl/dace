@@ -25,7 +25,7 @@ def downstream_sdfg(name: str, third_reads_intermediate: bool) -> tuple[dace.SDF
         sdfg.add_array(arr, (10,), dace.float64)
     sdfg.add_array("T", (10,), dace.float64, transient=True)
     a, t, o, t_again = (state.add_access(n) for n in ("A", "T", "O", "T"))
-    _, _, first_exit = state.add_mapped_tasklet(
+    first_tasklet, first_entry, first_exit = state.add_mapped_tasklet(
         "producer",
         {"i": "0:10"},
         inputs={"__a": Memlet("A[i]")},
@@ -35,7 +35,7 @@ def downstream_sdfg(name: str, third_reads_intermediate: bool) -> tuple[dace.SDF
         output_nodes={"T": t},
         external_edges=True,
     )
-    _, second_entry, _ = state.add_mapped_tasklet(
+    second_tasklet, second_entry, second_exit = state.add_mapped_tasklet(
         "consumer",
         {"j": "0:10"},
         inputs={"__t": Memlet("T[j]")},
@@ -131,7 +131,7 @@ def spelled_sdfg(name: str, divisor: int) -> dace.SDFG:
         output_nodes={"T": t},
         external_edges=True,
     )
-    _, entry, _ = state.add_mapped_tasklet(
+    tasklet, entry, exit_node = state.add_mapped_tasklet(
         "second",
         {"j": "0:H//2"},
         inputs={"__t": Memlet("T[j]")},

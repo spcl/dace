@@ -4,6 +4,7 @@
 import copy
 import warnings
 from collections.abc import Sequence
+from typing import Any
 
 from dace import data, dtypes, subsets, symbolic
 from dace import graphlib as nx
@@ -18,13 +19,24 @@ from dace.transformation import transformation as pm
 # Helper methods #############################################################
 
 
+def same_extent(a: Any, b: Any) -> bool:
+    """Whether two extents, bounds, shapes or ranges are one value: structurally first, then by value, so an extent
+    spelled ``int_floor`` in a memlet and ``floor`` in a shape annotation (``int_ceil`` and ``ceiling``, ``ipow`` and
+    ``**``, one name under two assumption sets) compares equal."""
+    if isinstance(a, subsets.Range) and isinstance(b, subsets.Range):
+        return a.dims() == b.dims() and all(
+            same_extent(x, y) for mine, theirs in zip(a.ranges, b.ranges) for x, y in zip(mine, theirs)
+        )
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) == len(b) and all(same_extent(x, y) for x, y in zip(a, b))
+    if isinstance(a, subsets.Subset) or isinstance(b, subsets.Subset):
+        return bool(a == b)
+    return bool(a == b) or symbolic.equal(a, b, is_length=False) is True
+
+
 def _subset_has_shape(subset: subsets.Range, shape: Sequence[symbolic.SymbolicType]) -> bool:
-    """Check if `subset` has the size given in `shape`. Structural equality first; an extent spelled two ways
-    (``int_floor`` from a memlet, sympy ``floor`` from a shape annotation) is compared by value."""
-    return subset.dims() == len(shape) and all(
-        (m == a) == True or symbolic.equal(m, a, is_length=False) is True  # SymPy comparison
-        for m, a in zip(subset.size(), shape)
-    )
+    """Check if `subset` has the size given in `shape`, by value (:func:`same_extent`)."""
+    return subset.dims() == len(shape) and same_extent(list(subset.size()), list(shape))
 
 
 def squeezed_shape(shape: Sequence[symbolic.SymbolicType]) -> list[symbolic.SymbolicType]:
@@ -728,7 +740,7 @@ class RedundantArray(pm.SingleStateTransformation):
                 # If the View points to the Access and has the same shape,
                 # it can be removed, unless there is a reduction!
                 e = sdutil.get_view_edge(graph, in_array)
-                if e and e.dst is out_array and in_desc.shape == out_desc.shape:
+                if e and e.dst is out_array and same_extent(in_desc.shape, out_desc.shape):
                     from dace.libraries.standard import Reduce
 
                     for e in graph.in_edges(in_array):
@@ -741,7 +753,7 @@ class RedundantArray(pm.SingleStateTransformation):
                 # If the View points to the Access (and has a different shape?)
                 # then we should (probably) not remove the Access.
                 e = sdutil.get_view_edge(graph, out_array)
-                if e and e.src is in_array and in_desc.shape != out_desc.shape:
+                if e and e.src is in_array and not same_extent(in_desc.shape, out_desc.shape):
                     return False
 
                 # Check that the View's immediate successors are Accesses.
@@ -922,7 +934,7 @@ class RedundantArray(pm.SingleStateTransformation):
             return False
 
         # Reshaping implies that the shape is different.
-        if dst_desc.shape == src_desc.shape:
+        if same_extent(dst_desc.shape, src_desc.shape):
             return False
 
         # A reshaping Memlet must read the whole source array and write the whole destination array.
@@ -963,7 +975,7 @@ class RedundantArray(pm.SingleStateTransformation):
         if isinstance(in_desc, data.View) and isinstance(out_desc, data.View):
             simple_case = True
             for e in graph.in_edges(in_array):
-                if e.data.dst_subset is not None and a1_subset != e.data.dst_subset:
+                if e.data.dst_subset is not None and not same_extent(a1_subset, e.data.dst_subset):
                     simple_case = False
                     break
             if simple_case:
@@ -1348,7 +1360,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 # If the View points to the Access (and has a different shape?)
                 # then we should (probably) not remove the Access.
                 e = sdutil.get_view_edge(graph, in_array)
-                if e and e.dst is out_array and in_desc.shape != out_desc.shape:
+                if e and e.dst is out_array and not same_extent(in_desc.shape, out_desc.shape):
                     return False
                 # Check that the View's immediate ancestors are Accesses.
                 # Otherwise, the application of the transformation will result
@@ -1363,7 +1375,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 # If the View points to the Access and has the same shape,
                 # it can be removed
                 e = sdutil.get_view_edge(graph, out_array)
-                if e and e.src is in_array and in_desc.shape == out_desc.shape:
+                if e and e.src is in_array and same_extent(in_desc.shape, out_desc.shape):
                     return True
                 return False
             else:
@@ -1719,7 +1731,7 @@ class SqueezeViewRemove(pm.SingleStateTransformation):
             return False
 
         # Check that subsets are equivalent
-        if array_subset != view_subset:
+        if not same_extent(array_subset, view_subset):
             return False
 
         # Verify strides after squeeze
@@ -1808,7 +1820,7 @@ class UnsqueezeViewRemove(pm.SingleStateTransformation):
             return False
 
         # Check that subsets are equivalent
-        if array_subset != view_subset:
+        if not same_extent(array_subset, view_subset):
             return False
 
         # Verify strides after squeeze
@@ -2215,13 +2227,12 @@ def _is_identity_view(view_desc: data.Data, viewed_desc: data.Data, subset: subs
         return False
     if view_desc.dtype != viewed_desc.dtype or len(view_desc.shape) != len(viewed_desc.shape):
         return False
-    for a, b in zip(
+    if not same_extent(
         (*view_desc.shape, *view_desc.strides, *view_desc.offset),
         (*viewed_desc.shape, *viewed_desc.strides, *viewed_desc.offset),
     ):
-        if (a == b) != True:
-            return False
-    return subset == subsets.Range.from_array(viewed_desc)
+        return False
+    return same_extent(subset, subsets.Range.from_array(viewed_desc))
 
 
 class RemoveSliceView(pm.SingleStateTransformation):
@@ -2453,15 +2464,20 @@ class RemoveIntermediateWrite(pm.SingleStateTransformation):
                     state.remove_edge(edge)
 
 
+def same_size(extent: Any, size: Any) -> bool:
+    """Whether ``extent`` is ``size`` once simplified, or by value (:func:`same_extent`)."""
+    return symbolic.simplify(extent - size) == 0 or same_extent(extent, size)
+
+
 def staged_dims(source: subsets.Range, shape) -> list[int] | None:
     """The dimensions of ``source`` a copy of it into an array of ``shape`` keeps, in order; the rest are single
     indices the copy drops. ``None`` when ``source`` is not ``shape`` with single indices inserted."""
     kept = []
     for dim, (begin, end, step) in enumerate(source.ranges):
         extent = end - begin + 1
-        if len(kept) < len(shape) and step == 1 and symbolic.simplify(extent - shape[len(kept)]) == 0:
+        if len(kept) < len(shape) and step == 1 and same_size(extent, shape[len(kept)]):
             kept.append(dim)
-        elif symbolic.simplify(extent - 1) != 0:
+        elif not same_size(extent, 1):
             return None
     return kept if len(kept) == len(shape) else None
 
@@ -2560,7 +2576,7 @@ class RedundantMapReadCopy(pm.SingleStateTransformation):
         source, written = (
             (memlet.other_subset, memlet.subset) if memlet.data == node.data else (memlet.subset, memlet.other_subset)
         )
-        if source is None or (written is not None and written != subsets.Range.from_array(desc)):
+        if source is None or (written is not None and not same_extent(written, subsets.Range.from_array(desc))):
             return None
         kept = staged_dims(source, desc.shape)
         if kept is None:

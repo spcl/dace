@@ -135,6 +135,29 @@ def test_matmul_keeps_a_view_with_a_unit_row():
     assert views(sdfg) == ["av"]
 
 
+def test_a_whole_operand_spelled_with_int_floor_is_read_in_place_of_the_view():
+    """The Reduce reads all of ``pv``, its memlet spelled ``int_floor`` against the View's ``floor`` extent: a whole
+    operand, so the View goes."""
+    S = dace.symbol("S")
+    sdfg = dace.SDFG("rv_libop_reduce_floor_spelling")
+    sdfg.add_array("P", ["(S - 7) // 2 + 1", 2], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
+    sdfg.add_view("pv", [(S - 7) // 2 + 1], dace.float64, strides=[2])
+    state = sdfg.add_state()
+    red = Reduce("red", "lambda a, b: a + b", axes=None, identity=0)
+    state.add_node(red)
+    pv = state.add_access("pv")
+    state.add_edge(state.add_read("P"), None, pv, "views", dace.Memlet("P[0:(S - 7) // 2 + 1, 1]"))
+    state.add_edge(pv, None, red, "_in", dace.Memlet("pv[0:(S - 7) // 2 + 1]"))
+    state.add_edge(red, "_out", state.add_write("out"), None, dace.Memlet("out[0]"))
+    sdfg.validate()
+    RemoveViews().apply_pass(sdfg, {})
+    assert not views(sdfg)
+    P, out = np.random.default_rng(7).random(((21 - 7) // 2 + 1, 2)), np.zeros(1)
+    sdfg(P=P, out=out, S=21)
+    assert np.allclose(out[0], P[:, 1].sum())
+
+
 @dace.program
 def matmul_into_plane(A: dace.float64[M, K], B: dace.float64[K, N], X: dace.float64[L, M, N]):
     X[1, :, :] = A @ B
@@ -188,5 +211,6 @@ if __name__ == "__main__":
     test_partial_reduce_of_a_plane_renumbers_its_axis()
     test_tensordot_keeps_a_view_that_drops_a_dimension()
     test_matmul_keeps_a_view_with_a_unit_row()
+    test_a_whole_operand_spelled_with_int_floor_is_read_in_place_of_the_view()
     test_the_canonical_form_has_no_view_next_to_the_node(matmul_into_plane)
     test_the_canonical_form_has_no_view_next_to_the_node(sum_of_strided_column)

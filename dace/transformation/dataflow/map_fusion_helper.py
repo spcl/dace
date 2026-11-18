@@ -14,6 +14,7 @@ from dace.sdfg import nodes as nodes
 from dace.sdfg import utils as sdutils
 from dace.sdfg.state import SymbolResolver
 from dace.transformation import helpers
+from dace.transformation.dataflow.redundant_array import same_extent
 
 
 def find_parameter_remapping(
@@ -141,11 +142,7 @@ def find_parameter_remapping(
 def same_range(first: tuple, second: tuple) -> bool:
     """Whether two ``(begin, end, step)`` triples bound the same values: ``int_floor(x, 2)`` from a parsed string and
     ``floor(x/2)`` from Python's ``//`` in a shape are one extent. The fused Map keeps the first Map's range."""
-    if first == second:
-        return True
-    return len(first) == len(second) and all(
-        a == b or symbolic.equal(a, b, is_length=False) is True for a, b in zip(first, second, strict=True)
-    )
+    return same_extent(tuple(first), tuple(second))
 
 
 def rename_map_parameters(

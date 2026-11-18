@@ -99,6 +99,11 @@ def within(low: Any, high: Any, first: Any, last: Any, ranges: dict[str, Interva
     ]
 
 
+def nonzero_trips(size: Any, nonempty: set[str]) -> bool:
+    """Whether a trip count ``size`` is a positive literal or one of the extents taken to be nonzero."""
+    return bool(size.is_number and size > 0) or str(size) in nonempty
+
+
 def state_relations(
     state: SDFGState, ranges: dict[str, Interval], nonempty: set[str], assigned: set[str]
 ) -> list[symbolic.Relation]:
@@ -110,7 +115,7 @@ def state_relations(
     def runs(scope: nodes.EntryNode | None) -> bool:
         if scope not in known:
             sizes = [parsed(size) for size in scope.map.range.size()]
-            known[scope] = all(size.is_number or str(size) in nonempty for size in sizes) and runs(scopes[scope])
+            known[scope] = all(nonzero_trips(size, nonempty) for size in sizes) and runs(scopes[scope])
         return known[scope]
 
     for node in state.nodes():
@@ -154,7 +159,7 @@ def guaranteed_relations(
         elif isinstance(block, LoopRegion):
             bounds = array_facts.loop_range(block)
             size = None if bounds is None else parsed(bounds[1]) - parsed(bounds[0]) + 1
-            if size is not None and (size.is_number or str(size) in nonempty):
+            if size is not None and nonzero_trips(size, nonempty):
                 relations += guaranteed_relations(block, ranges, nonempty, assigned)
         elif isinstance(block, ConditionalBlock) and block.branches[-1][0] is None:
             arms = [guaranteed_relations(body, ranges, nonempty, assigned) for _, body in block.branches]
@@ -176,7 +181,11 @@ def one_value_per_path(sdfg: SDFG) -> tuple[dict[str, Interval], dict[str, Any],
     ranges, values, single = {}, {}, set()
     for name, assigned in sites.items():
         owners = {region.parent_graph for region, _ in assigned}
-        if len(assigned) == 1 or (len(owners) == 1 and isinstance(next(iter(owners)), ConditionalBlock)):
+        # One assignment per arm of one conditional: two in one arm run on one path
+        regions = {id(region): None for region, _ in assigned}
+        if len(assigned) == 1 or (
+            len(owners) == 1 and isinstance(next(iter(owners)), ConditionalBlock) and len(regions) == len(assigned)
+        ):
             single.add(name)
         if len(assigned) != 1:
             continue
@@ -278,17 +287,13 @@ def argument_extents(sdfg: SDFG) -> set[str]:
     return {str(s) for desc in sdfg.arrays.values() if not desc.transient for s in desc.free_symbols}
 
 
-def access_bounds(sdfg: SDFG, assigned: set[str]) -> dict[str, Any]:
+def access_bounds(sdfg: SDFG, assigned: set[str], desc: dt.Array) -> dict[str, Any]:
     """For each symbol of ``assigned`` that ``sdfg`` assigns once on every path, an upper bound in symbols it does not
     assign, from an in-bounds access every path runs: ``nl[l, 0:count]``, of ``nl`` shaped ``(n, w)``, gives
-    ``count <= w``."""
+    ``count <= w``. A trip count among ``desc``'s own extents counts as nonzero, as one that is zero leaves ``desc``
+    empty; another transient's extent proves nothing about ``desc``."""
     ranges, _, single = one_value_per_path(sdfg)
-    nonempty = {
-        str(parsed(extent))
-        for desc in sdfg.arrays.values()
-        if isinstance(desc, dt.Array) and desc.transient and {str(s) for s in desc.free_symbols} & assigned
-        for extent in desc.shape
-    }
+    nonempty = {str(parsed(extent)) for extent in desc.shape}
     extents = argument_extents(sdfg)
     bounds: dict[str, Any] = {}
     for relation in guaranteed_relations(sdfg, ranges, nonempty, assigned):
@@ -420,7 +425,6 @@ class BoundDataDependentExtents(ppl.Pass):
             assigned = interstate_bound_names(nested)
             if not assigned:
                 continue
-            bounds: dict[str, Any] | None = None
             for name, desc in nested.arrays.items():
                 if (
                     not desc.transient
@@ -432,7 +436,7 @@ class BoundDataDependentExtents(ppl.Pass):
                 nonnegative = self.nonnegative(nested, known)
                 shape = [extent_upper_bound(extent, assigned, nonnegative) for extent in desc.shape]
                 if any(extent is None for extent in shape):
-                    bounds = access_bounds(nested, assigned) if bounds is None else bounds
+                    bounds = access_bounds(nested, assigned, desc)
                     shape = [
                         extent_access_bound(extent, assigned, bounds, argument_extents(nested))
                         if bound is None

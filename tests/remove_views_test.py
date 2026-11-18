@@ -667,6 +667,43 @@ def test_flatten_view():
         assert num_after < num_before
 
 
+def test_flatten_of_an_extent_spelled_floor_is_linearized():
+    """``A``'s rows declared with Python's ``//`` (``floor``), the view edge written ``int_floor``: the edge covers
+    ``A``, so the flat View is linearized away."""
+    S = dace.symbol("S")
+    rows = (S - 7) // 2 + 1
+    sdfg = dace.SDFG("test_flatten_view_floor_spelling")
+    sdfg.add_array("A", [rows, 5], dace.float64)
+    sdfg.add_array("B", [5 * rows], dace.float64)
+    sdfg.add_view("V", [5 * rows], dace.float64)
+    state = sdfg.add_state()
+    v = state.add_access("V")
+    state.add_edge(
+        state.add_read("A"),
+        None,
+        v,
+        "views",
+        Memlet(data="A", subset="0:(S - 7) // 2 + 1, 0:5", other_subset="0:5 * ((S - 7) // 2 + 1)"),
+    )
+    state.add_mapped_tasklet(
+        "copy",
+        {"i": "0:5 * ((S - 7) // 2 + 1)"},
+        {"inp": Memlet("V[i]")},
+        "out = inp",
+        {"out": Memlet("B[i]")},
+        external_edges=True,
+        input_nodes={"V": v},
+    )
+    sdfg.validate()
+    assert RemoveViews().apply_pass(sdfg, {}) == {"V"}
+    assert _count_views(sdfg) == 0
+    sdfg.validate()
+    A = np.random.default_rng(8).random(((21 - 7) // 2 + 1, 5))
+    B = np.zeros(A.size)
+    sdfg(A=A.copy(), B=B, S=21)
+    np.testing.assert_allclose(B, A.ravel())
+
+
 def test_view_in_interstate_edge():
     """View referenced from an interstate-edge assignment, consumed later via a symbol.
 
@@ -1257,6 +1294,7 @@ if __name__ == "__main__":
     test_column_view_w_offset()
     test_strided_column_view()
     test_flatten_view()
+    test_flatten_of_an_extent_spelled_floor_is_linearized()
     test_view_in_interstate_edge()
     test_view_edge_from_map_entry()
     test_view_edge_into_map_exit()

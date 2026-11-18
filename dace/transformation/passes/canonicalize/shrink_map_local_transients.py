@@ -13,6 +13,7 @@ from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.dataflow.redundant_array import same_extent
 from dace.transformation.passes.canonicalize.prune_unreferenced_transients import code_text
 
 #: Storages whose buffer is a plain allocation this pass may resize.
@@ -109,7 +110,7 @@ def uniform_subset(edges: list[gr.MultiConnectorEdge[Memlet]]) -> subsets.Range 
             return None
         if shared is None:
             shared = memlet.subset
-        elif memlet.subset != shared:
+        elif not same_extent(memlet.subset, shared):
             return None
     return shared
 
@@ -122,8 +123,8 @@ def map_body_accesses(
 
     :param uses: :func:`uses_by_name` of the SDFG owning the descriptor.
     :param name: Descriptor name.
-    :returns: ``(state, edges, symbols)``, or ``None`` when an access leaves the body, reaches a nested SDFG or the
-        body's exit, or sits under a scope that is not a map.
+    :returns: ``(state, edges, symbols)``, or ``None`` when an access leaves the body, reaches a nested SDFG, a View or
+        the body's exit, or sits under a scope that is not a map.
     """
     if len(uses.get(name, ())) != 1:
         return None
@@ -145,6 +146,9 @@ def map_body_accesses(
     for edge in edges:
         for node in (edge.src, edge.dst):
             if node is body_exit or isinstance(node, nodes.NestedSDFG) or not inside(node):
+                return None
+            # A View keeps the strides it was given, which a resized buffer no longer has
+            if isinstance(node, nodes.AccessNode) and isinstance(node.desc(state.sdfg), data.View):
                 return None
     defined: dict[str, None] = {}
     for node in state.nodes():
@@ -176,7 +180,7 @@ def shared_dimensions(
         elif len(ranges) != len(shared):
             return None
         for dim, (mine, kept) in enumerate(zip(ranges, shared)):
-            if kept is not None and subsets.Range([mine]) != subsets.Range([kept]):
+            if kept is not None and not same_extent(mine, kept):
                 shared[dim] = None
     if shared is None:
         return None
@@ -301,7 +305,7 @@ def names_the_box(inner: subsets.Range, mapping: dict[str, Any], box: subsets.Ra
             if any(s.name not in mapping for s in bound.free_symbols):
                 return False
             bound = bound.subs({s: mapping[s.name] for s in bound.free_symbols}, simultaneous=True)
-            if symbolic.simplify(bound - expected) != 0:
+            if symbolic.simplify(bound - expected) != 0 and not same_extent(bound, expected):
                 return False
     return True
 

@@ -58,6 +58,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.narrowing import as_expr
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.dataflow.redundant_array import same_extent
 
 _PASS = "RemoveViews"
 _DEBUGPRINT = config.Config.get("debugprint") in (True, "1", "true", "yes")
@@ -801,7 +802,7 @@ class RemoveViews(ppl.Pass):
             node, conn = (e.src, e.src_conn) if e.dst is vnode else (e.dst, e.dst_conn)
             if not isinstance(node, nd.LibraryNode):
                 continue
-            whole = e.data.data == vnode.data and e.data.wcr is None and e.data.subset == full
+            whole = e.data.data == vnode.data and e.data.wcr is None and same_extent(e.data.subset, full)
             dims = node.operand_dims(conn, viewed_subset, adesc, vdesc) if whole else None
             if dims is None:
                 return None
@@ -993,7 +994,7 @@ class RemoveViews(ppl.Pass):
                 if m.data == view_node.data:
                     old = f"{m.data}[{m.subset}]"
                     m.data = viewed_node.data
-                    if m.subset is not None and m.subset == full_view_range:
+                    if m.subset is not None and same_extent(m.subset, full_view_range):
                         # Full view range: copy the view edge subset
                         # directly to preserve the original end / step.
                         m.subset = copy.deepcopy(viewed_subset)
@@ -1177,7 +1178,7 @@ class RemoveViews(ppl.Pass):
         # the entire array.  If the view edge is a partial subset
         # (e.g. a strided slice), vstrides are virtual, not physical.
         full_range = subsets.Range.from_array(adesc)
-        if viewed_subset != full_range:
+        if not same_extent(viewed_subset, full_range):
             if _DEBUGPRINT:
                 print(
                     f"[{_PASS}]     {strat_name}: view edge subset"
@@ -1233,7 +1234,7 @@ class RemoveViews(ppl.Pass):
                         if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == conn
                     ]
                     if groups is not None and part is not None and ranks:
-                        if part == subsets.Range.from_array(vdesc):
+                        if same_extent(part, subsets.Range.from_array(vdesc)):
                             if not groups.elements_affine():
                                 return False
                         else:
@@ -1307,7 +1308,7 @@ class RemoveViews(ppl.Pass):
                 conn = te.dst_conn if is_viewed_src else te.src_conn
                 if isinstance(leaf, nd.Tasklet) and conn and leaf.language == dtypes.Language.Python and leaf.code.code:
                     # A part of the view keeps its shape (checked above): its subscripts are its own
-                    if groups is not None and te.data.subset != subsets.Range.from_array(adesc):
+                    if groups is not None and not same_extent(te.data.subset, subsets.Range.from_array(adesc)):
                         continue
                     old_code = leaf.code.as_string
                     rw = _ReshapeIndexRewriter(conn, vstrides, astrides, array_shape, groups)

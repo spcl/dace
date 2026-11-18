@@ -8,7 +8,7 @@ import numpy as np
 
 import dace
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize.forward_offset_copies import ForwardOffsetCopies
 
 N = dace.symbol("N")
@@ -214,6 +214,33 @@ def test_a_copy_whose_extent_is_spelled_floor_is_forwarded():
     assert np.allclose(out, 2.0 * q[1:])
 
 
+def test_an_offset_symbol_rebound_inside_a_branch_keeps_the_copy():
+    """``t = q[k:k + N]``, then a branch whose arm sets ``k = k + 1`` before it reads ``t``: ``q`` at ``k`` there is the
+    next window."""
+    sdfg = dace.SDFG("shifted_copy_rebound_in_branch")
+    sdfg.add_array("q", [N + 4], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    sdfg.add_transient("t", [N], dace.float64)
+    sdfg.add_symbol("k", dace.int64)
+    copy = sdfg.add_state("copy", is_start_block=True)
+    copy.add_nedge(copy.add_read("q"), copy.add_write("t"), dace.Memlet("q[k:k + N] -> [0:N]"))
+    branch = ConditionalBlock("branch")
+    sdfg.add_node(branch)
+    sdfg.add_edge(copy, branch, dace.InterstateEdge())
+    arm = ControlFlowRegion("arm", sdfg=sdfg)
+    branch.add_branch(None, arm)
+    head = arm.add_state("head", is_start_block=True)
+    use = arm.add_state("use")
+    arm.add_edge(head, use, dace.InterstateEdge(assignments={"k": "k + 1"}))
+    use.add_mapped_tasklet(
+        "read", {"i": "0:N"}, {"x": dace.Memlet("t[i]")}, "o = x", {"o": dace.Memlet("out[i]")}, external_edges=True
+    )
+    sdfg.reset_cfg_list()
+    sdfg.validate()
+    assert ForwardOffsetCopies().apply_pass(sdfg, {}) is None
+    assert "t" in sdfg.arrays
+
+
 if __name__ == "__main__":
     test_a_shifted_copy_read_in_a_later_state_reads_its_source()
     test_a_write_to_the_source_between_keeps_the_copy()
@@ -224,3 +251,4 @@ if __name__ == "__main__":
     test_a_shifted_copy_read_in_a_later_loop_reads_its_source()
     test_a_loop_writing_the_source_keeps_the_copy()
     test_a_copy_whose_extent_is_spelled_floor_is_forwarded()
+    test_an_offset_symbol_rebound_inside_a_branch_keeps_the_copy()

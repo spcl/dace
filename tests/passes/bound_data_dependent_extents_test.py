@@ -4,7 +4,8 @@
 import numpy as np
 
 import dace
-from dace.sdfg.state import LoopRegion
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.sdfg.utils import has_literal_capacity
 from dace.transformation.passes.bound_data_dependent_extents import BoundDataDependentExtents, set_capacities
 
@@ -174,6 +175,77 @@ def test_an_access_on_one_branch_only_gives_no_bound():
     assert [str(extent) for extent in sdfg.arrays["vals"].shape] == ["n"]
 
 
+def trip_guarded_copy(name: str, trips: str) -> dace.SDFG:
+    """``n = sizes[0]``, ``c = sizes[1]``, then a loop of ``trips`` iterations copying ``A[0:n]`` into ``vals[n]``;
+    a second transient ``other[c]`` is sized by ``c``."""
+    sdfg = dace.SDFG(name)
+    for symbol in ("n", "c", "m"):
+        sdfg.add_symbol(symbol, dace.int64)
+    sdfg.add_array("sizes", [2], dace.int64)
+    sdfg.add_array("A", ["m"], dace.float64)
+    sdfg.add_transient("vals", ["n"], dace.float64)
+    sdfg.add_transient("other", ["c"], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state_after(first, "second", assignments={"n": "sizes[0]", "c": "sizes[1]"})
+    loop = LoopRegion("trips", f"j < {trips}", "j", "j = 0", "j = j + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(second, loop, dace.InterstateEdge())
+    body = loop.add_state("copy", is_start_block=True)
+    body.add_edge(body.add_read("A"), None, body.add_write("vals"), None, dace.Memlet("A[0:n]"))
+    sdfg.reset_cfg_list()
+    return sdfg
+
+
+def test_a_loop_over_the_transients_own_extent_bounds_it():
+    """``n = 0`` leaves ``vals`` empty, and otherwise the loop runs the copy, which shows ``n <= m``."""
+    sdfg = trip_guarded_copy("trip_guarded_own_extent", "n")
+    assert BoundDataDependentExtents().apply_pass(sdfg, {}) == 1
+    assert [str(extent) for extent in sdfg.arrays["vals"].shape] == ["m"]
+
+
+def test_a_loop_over_another_transients_extent_bounds_nothing():
+    """With ``c = 0`` the copy never runs, so ``n`` may exceed ``m`` while ``vals`` still holds ``n``."""
+    sdfg = trip_guarded_copy("trip_guarded_other_extent", "c")
+    assert BoundDataDependentExtents().apply_pass(sdfg, {}) is None
+    assert [str(extent) for extent in sdfg.arrays["vals"].shape] == ["n"]
+
+
+def test_a_loop_of_no_trips_bounds_nothing():
+    sdfg = trip_guarded_copy("trip_guarded_no_trips", "0")
+    assert BoundDataDependentExtents().apply_pass(sdfg, {}) is None
+    assert [str(extent) for extent in sdfg.arrays["vals"].shape] == ["n"]
+
+
+def test_a_symbol_assigned_twice_in_one_arm_bounds_nothing():
+    """Both arms copy ``A[0:n]`` with ``n = sizes[0]``, but one arm then sets ``n = sizes[1]`` and writes ``vals``:
+    that value of ``n`` no access bounds."""
+    sdfg = dace.SDFG("reassigned_in_one_arm")
+    for symbol in ("n", "m"):
+        sdfg.add_symbol(symbol, dace.int64)
+    sdfg.add_array("sizes", [2], dace.int64)
+    sdfg.add_array("A", ["m"], dace.float64)
+    sdfg.add_transient("vals", ["n"], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    branch = ConditionalBlock("branch")
+    sdfg.add_node(branch)
+    sdfg.add_edge(first, branch, dace.InterstateEdge())
+    for label, condition in (("then", CodeBlock("m > 3")), ("otherwise", None)):
+        arm = ControlFlowRegion(label, sdfg=sdfg)
+        branch.add_branch(condition, arm)
+        head = arm.add_state(f"{label}_head", is_start_block=True)
+        copy = arm.add_state(f"{label}_copy")
+        arm.add_edge(head, copy, dace.InterstateEdge(assignments={"n": "sizes[0]"}))
+        copy.add_edge(copy.add_read("A"), None, copy.add_write("vals"), None, dace.Memlet("A[0:n]"))
+        if condition is not None:
+            again = arm.add_state(f"{label}_again")
+            arm.add_edge(copy, again, dace.InterstateEdge(assignments={"n": "sizes[1]"}))
+            tasklet = again.add_tasklet("one", {}, {"o"}, "o = 1.0")
+            again.add_edge(tasklet, "o", again.add_write("vals"), None, dace.Memlet("vals[0]"))
+    sdfg.reset_cfg_list()
+    assert BoundDataDependentExtents().apply_pass(sdfg, {}) is None
+    assert [str(extent) for extent in sdfg.arrays["vals"].shape] == ["n"]
+
+
 if __name__ == "__main__":
     test_an_in_bounds_access_of_a_literal_array_gives_a_capacity_and_keeps_the_shape()
     test_an_access_of_a_symbolic_array_gives_no_capacity()
@@ -183,3 +255,7 @@ if __name__ == "__main__":
     test_an_in_bounds_access_of_an_argument_bounds_the_extent_by_the_argument_extent()
     test_an_extent_scaled_by_an_argument_extent_takes_the_bound()
     test_an_access_on_one_branch_only_gives_no_bound()
+    test_a_loop_over_the_transients_own_extent_bounds_it()
+    test_a_loop_over_another_transients_extent_bounds_nothing()
+    test_a_loop_of_no_trips_bounds_nothing()
+    test_a_symbol_assigned_twice_in_one_arm_bounds_nothing()

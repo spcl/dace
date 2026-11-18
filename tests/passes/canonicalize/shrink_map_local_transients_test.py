@@ -8,7 +8,11 @@ import pytest
 
 import dace
 from dace.transformation.passes.canonicalize.finalize import finalize_transient_storage
-from dace.transformation.passes.canonicalize.shrink_map_local_transients import ShrinkMapLocalTransients
+from dace.transformation.passes.canonicalize.shrink_map_local_transients import (
+    ShrinkMapLocalTransients,
+    shared_dimensions,
+    uniform_subset,
+)
 
 N = dace.symbol("N", dace.int64)
 
@@ -249,10 +253,13 @@ def test_a_scratch_a_nest_indexes_elsewhere_keeps_its_extent():
 K = dace.symbol("K", dace.int64)
 
 
-def row_scratch_sdfg(name: str, fortran: bool = False, read_after: bool = False) -> dace.SDFG:
+def row_scratch_sdfg(
+    name: str, fortran: bool = False, read_after: bool = False, through_view: bool = False
+) -> dace.SDFG:
     """Per row ``i``: an inner map over ``k`` stores ``A[i, k] * 2`` to ``t[i, k]``, a second one reads ``t[i, k] + 1``
     into ``B[i, k]``; ``t`` is ``(N, K)`` and the body's accesses to it are ``t[i, 0:K]`` and ``t[i, k]``. With
-    ``read_after`` a state after the map copies ``t`` into ``C``."""
+    ``read_after`` a state after the map copies ``t`` into ``C``; with ``through_view`` the second map reads ``t[i, :]``
+    through a View of stride ``N``."""
     sdfg = dace.SDFG(name)
     sdfg.add_array("A", [N, K], dace.float64)
     sdfg.add_array("B", [N, K], dace.float64)
@@ -270,7 +277,13 @@ def row_scratch_sdfg(name: str, fortran: bool = False, read_after: bool = False)
         state.add_read("A"), entry, produce_entry, produce, dst_conn="a", memlet=dace.Memlet("A[i, k]")
     )
     state.add_memlet_path(produce, produce_exit, scratch, src_conn="s", memlet=dace.Memlet("t[i, k]"))
-    state.add_memlet_path(scratch, consume_entry, consume, dst_conn="s", memlet=dace.Memlet("t[i, k]"))
+    if through_view:
+        sdfg.add_view("v", [K], dace.float64, strides=[N])
+        view = state.add_access("v")
+        state.add_edge(scratch, None, view, "views", dace.Memlet("t[i, 0:K]"))
+        state.add_memlet_path(view, consume_entry, consume, dst_conn="s", memlet=dace.Memlet("v[k]"))
+    else:
+        state.add_memlet_path(scratch, consume_entry, consume, dst_conn="s", memlet=dace.Memlet("t[i, k]"))
     state.add_memlet_path(
         consume, consume_exit, exit_node, state.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i, k]")
     )
@@ -322,6 +335,41 @@ def test_a_row_scratch_read_after_the_map_keeps_its_extent():
     assert tuple(str(s) for s in sdfg.arrays["t"].shape) == ("N", "K")
 
 
+def test_a_column_major_row_scratch_read_through_a_view_keeps_its_extent():
+    """The View of ``t[i, 0:K]`` keeps the stride ``N`` it was given; shrunk to ``(1, K)``, ``t``'s row is packed."""
+    sdfg = row_scratch_sdfg("row_scratch_fortran_view", fortran=True, through_view=True)
+    assert ShrinkMapLocalTransients().apply_pass(sdfg, {}) is None
+    assert tuple(str(s) for s in sdfg.arrays["t"].shape) == ("N", "K")
+    a, b = run_rows(sdfg, 7)
+    np.testing.assert_allclose(b, a * 2.0 + 1.0)
+
+
+def two_spellings_state(name: str) -> tuple[dace.SDFGState, list]:
+    """Two edges naming ``t[i, 0:(K - 1) // 2 + 1]``: one parsed (``int_floor``), one built with Python's ``//``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [N, K], dace.float64)
+    sdfg.add_transient("t", [N, K], dace.float64)
+    state = sdfg.add_state()
+    i = dace.symbol("i")
+    parsed = dace.Memlet("t[i, 0:(K - 1) // 2 + 1]")
+    built = dace.Memlet(data="t", subset=dace.subsets.Range([(i, i, 1), (0, (K - 1) // 2, 1)]))
+    t = state.add_access("t")
+    first = state.add_edge(state.add_read("A"), None, t, None, parsed)
+    second = state.add_edge(t, None, state.add_write("A"), None, built)
+    return state, [first, second]
+
+
+def test_one_box_spelled_two_ways_is_one_box():
+    _, edges = two_spellings_state("uniform_subset_spelling")
+    assert uniform_subset(edges) is not None
+
+
+def test_a_dimension_spelled_two_ways_is_shared():
+    _, edges = two_spellings_state("shared_dimensions_spelling")
+    shared = shared_dimensions(edges, {})
+    assert shared is not None and all(kept is not None for kept in shared), shared
+
+
 if __name__ == "__main__":
     test_map_body_local_transient_shrinks_to_the_box_it_names()
     test_finalize_leaves_no_symbolically_sized_stack_array()
@@ -335,3 +383,6 @@ if __name__ == "__main__":
     test_a_row_scratch_drops_the_dimension_its_map_indexes()
     test_a_column_major_row_scratch_keeps_its_layout()
     test_a_row_scratch_read_after_the_map_keeps_its_extent()
+    test_a_column_major_row_scratch_read_through_a_view_keeps_its_extent()
+    test_one_box_spelled_two_ways_is_one_box()
+    test_a_dimension_spelled_two_ways_is_shared()
