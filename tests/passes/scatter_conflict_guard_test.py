@@ -219,6 +219,34 @@ def test_guard_follows_the_loop_that_writes_the_index():
     assert any(isinstance(e.src, LoopRegion) for e in sdfg.in_edges(check)), [e.src for e in sdfg.in_edges(check)]
 
 
+@dace.program
+def scatter_in_the_index_state(a: dace.float64[N], b: dace.float64[N], ip: dace.int64[N]):
+    for i in dace.map[0:N]:
+        ip[i] = (i * 3) % N
+    for i in dace.map[0:N]:
+        a[ip[i]] = b[i]
+
+
+def test_guard_splits_a_state_that_scatters_through_the_index_it_computes():
+    """qe_vexx_k, once LoopToMap maps the loop around its scatter: the map computing the index array and the map
+    scattering through it share a state. The guard goes between them, so its flag is assigned before the scatter
+    reads it (a guard after the whole state left the flag a free symbol of the program)."""
+    sdfg = scatter_in_the_index_state.to_sdfg(simplify=True)
+    (state,) = sdfg.states()
+    assert sum(isinstance(n, dace.nodes.MapEntry) for n in state.nodes()) == 2, "both maps share one state"
+
+    trap = insert_scatter_guard(sdfg, "ip", emit_trap=False)
+
+    sdfg.validate()
+    check = next(s for s in sdfg.states() if "_scatter_guard_check_" in s.label)
+    (into_check,) = sdfg.in_edges(check)
+    (out_of_check,) = sdfg.out_edges(check)
+    writes = [n for n in into_check.src.data_nodes() if n.data == "ip" and into_check.src.in_degree(n) > 0]
+    reads = [n for n in out_of_check.dst.data_nodes() if n.data == "ip" and out_of_check.dst.out_degree(n) > 0]
+    assert writes and reads, "the index is written before the check and read after it"
+    assert trap in out_of_check.data.assignments and trap not in sdfg.free_symbols
+
+
 def test_guard_pass_emits_for_each_named_idx():
     """``GuardScatterConflicts(['ip'])`` emits one guard per named array."""
     sdfg = tsvc_vas.to_sdfg(simplify=True)

@@ -31,8 +31,10 @@ from dace.frontend.python import astutils
 from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg import tasklet_utils as tutil
+from dace.sdfg.graph import SubgraphView
 from dace.sdfg.narrowing import as_expr
 from dace.sdfg.state import ControlFlowBlock, LoopRegion, is_written
+from dace.transformation import helpers
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -300,6 +302,7 @@ def insert_scatter_guard(
     def_states = {
         top_level_block(state, region) for state in _find_definition_states(sdfg, idx_name) & set(region.states())
     }
+    def_states = split_definitions_from_readers(region, idx_name, def_states)
     original_start = region.start_block
 
     check_state, trap_state, count_name, trap_sym = build_guard_states(
@@ -307,6 +310,30 @@ def insert_scatter_guard(
     )
     _splice_guard_into_cfg(region, idx_name, check_state, trap_state, count_name, trap_sym, def_states, original_start)
     return None if emit_trap else trap_sym
+
+
+def split_definitions_from_readers(
+    region: SDFG, idx_name: str, def_states: set[ControlFlowBlock]
+) -> set[ControlFlowBlock]:
+    """``def_states`` with every state of ``region`` that reads ``idx_name`` after writing it split in two: the
+    writes and what they depend on move to a new state before it, which replaces it in the result.
+
+    The guard is spliced after the latest definer, so a reader in the definer's own state would run before the guard
+    and read its flag unassigned: a map whose body scatters through ``idx_name``, once ``LoopToMap`` mapped the loop
+    around the scatter into the state that computes the index array.
+    """
+    split: set[ControlFlowBlock] = set()
+    for block in def_states:
+        writers = (
+            [n for n in block.data_nodes() if n.data == idx_name and is_written(block, n)]
+            if isinstance(block, SDFGState) and block.parent_graph is region
+            else []
+        )
+        if not any(block.out_degree(w) > 0 for w in writers):
+            split.add(block)
+            continue
+        split.add(helpers.state_fission(SubgraphView(block, writers), allow_isolated_nodes=False))
+    return split
 
 
 def _find_definition_states(sdfg: SDFG, idx_name: str) -> set[SDFGState]:
