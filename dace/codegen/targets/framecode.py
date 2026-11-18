@@ -153,7 +153,9 @@ class DaCeCodeGenerator:
         # resolve all symbols and constants
         # first handle root
         sdfg.reset_cfg_list()
-        self._symbols_and_constants[sdfg.cfg_id] = sdfg.free_symbols.union(sdfg.constants_prop.keys())
+        # The symbols the generated function receives (``arglist``'s set): a symbol only an interstate edge assigns
+        # is not among them, so an array it sizes is allocated after the assignment, not at entry.
+        self._symbols_and_constants[sdfg.cfg_id] = set(self.free_symbols(sdfg)).union(sdfg.constants_prop.keys())
         # then recurse
         for nested, state in sdfg.all_nodes_recursive():
             if isinstance(nested, nodes.NestedSDFG):
@@ -162,7 +164,7 @@ class DaCeCodeGenerator:
                 nsdfg = nested.sdfg
 
                 # found a new nested sdfg: resolve symbols and constants
-                result = nsdfg.free_symbols.union(nsdfg.constants_prop.keys())
+                result = set(self.free_symbols(nsdfg)).union(nsdfg.constants_prop.keys())
 
                 # A symbol of the parent reaches the nested SDFG only through the symbol mapping, as a same-named one
                 # of the nested SDFG is its own, which the nested SDFG may assign itself.
