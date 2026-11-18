@@ -490,6 +490,78 @@ def test_a_write_after_the_map_through_its_own_node_follows_the_writeback():
     assert s[0] == 200.0
 
 
+def test_a_reduction_map_inside_another_map_is_left_alone():
+    """CloudSC's species sum: an inner map reduces into ``acc[i]``, a slot the OUTER map's parameter picks. A seed
+    state before and a writeback state after would sit outside the outer map, where ``i`` names nothing, so the
+    helper refuses and the graph stays valid (it had broken the outer map's scope, ``Memlet creates an invalid
+    path``)."""
+    sdfg = dace.SDFG("nested_slot_reduction")
+    sdfg.add_array("acc", [4], dace.float64)
+    sdfg.add_array("x", [4, 5], dace.float64)
+    state = sdfg.add_state()
+    outer_entry, outer_exit = state.add_map("outer", {"i": "0:4"})
+    inner_entry, inner_exit = state.add_map("inner", {"k": "0:5"})
+    tasklet = state.add_tasklet("t", {"v"}, {"o"}, "o = v")
+    state.add_memlet_path(
+        state.add_read("x"), outer_entry, inner_entry, tasklet, dst_conn="v", memlet=dace.Memlet("x[i, k]")
+    )
+    slot = state.add_access("acc")
+    state.add_memlet_path(
+        tasklet, inner_exit, slot, src_conn="o", memlet=dace.Memlet("acc[i]", wcr="lambda a, b: a + b")
+    )
+    state.add_memlet_path(slot, outer_exit, state.add_write("acc"), memlet=dace.Memlet("acc[i]"))
+    sdfg.validate()
+
+    wcr_edge = next(e for e in state.in_edges(inner_exit) if e.data.wcr is not None)
+    assert not privatize_reduction_accumulator(state, inner_exit, wcr_edge)
+    sdfg.validate()
+    x = np.arange(20, dtype=np.float64).reshape(4, 5)
+    acc = np.ones(4)
+    sdfg(acc=acc, x=x)
+    assert np.allclose(acc, 1.0 + x.sum(axis=1))
+
+
+def test_a_nested_reduction_seeded_in_its_state_is_left_alone():
+    """The same species sum after a memset of ``acc`` in the state: the in-state seed sits in the top scope, and an
+    edge from it to the inner map's entry would bypass the outer map's entry. CloudSC broke this way after map
+    fusion put the memset and the column map in one state."""
+    sdfg = dace.SDFG("nested_slot_reduction_seeded")
+    sdfg.add_array("acc", [4], dace.float64)
+    sdfg.add_array("x", [4, 5], dace.float64)
+    state = sdfg.add_state()
+    init = state.add_access("acc")
+    state.add_mapped_tasklet(
+        "zero",
+        {"j": "0:4"},
+        {},
+        "o = 0.0",
+        {"o": dace.Memlet("acc[j]")},
+        output_nodes={"acc": init},
+        external_edges=True,
+    )
+    outer_entry, outer_exit = state.add_map("outer", {"i": "0:4"})
+    inner_entry, inner_exit = state.add_map("inner", {"k": "0:5"})
+    tasklet = state.add_tasklet("t", {"v"}, {"o"}, "o = v")
+    state.add_memlet_path(
+        state.add_read("x"), outer_entry, inner_entry, tasklet, dst_conn="v", memlet=dace.Memlet("x[i, k]")
+    )
+    state.add_nedge(init, outer_entry, dace.Memlet())
+    slot = state.add_access("acc")
+    state.add_memlet_path(
+        tasklet, inner_exit, slot, src_conn="o", memlet=dace.Memlet("acc[i]", wcr="lambda a, b: a + b")
+    )
+    state.add_memlet_path(slot, outer_exit, state.add_write("acc"), memlet=dace.Memlet("acc[i]"))
+    sdfg.validate()
+
+    wcr_edge = next(e for e in state.in_edges(inner_exit) if e.data.wcr is not None)
+    assert not privatize_reduction_accumulator(state, inner_exit, wcr_edge)
+    sdfg.validate()
+    x = np.arange(20, dtype=np.float64).reshape(4, 5)
+    acc = np.full(4, 7.0)
+    sdfg(acc=acc, x=x)
+    assert np.allclose(acc, x.sum(axis=1))
+
+
 if __name__ == "__main__":
     test_array_slot_dot_product_privatized()
     test_two_reductions_get_unique_scalar_names()
@@ -501,3 +573,5 @@ if __name__ == "__main__":
     test_a_map_nest_reducing_into_one_slot_accumulates_into_the_scalar()
     test_a_write_after_the_map_is_no_seed()
     test_a_write_after_the_map_through_its_own_node_follows_the_writeback()
+    test_a_reduction_map_inside_another_map_is_left_alone()
+    test_a_nested_reduction_seeded_in_its_state_is_left_alone()

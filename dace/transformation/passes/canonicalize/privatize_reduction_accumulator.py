@@ -115,6 +115,12 @@ def privatize_reduction_accumulator(
     if any(e.data.data != arr_node.data or e.data.subset != write_subset for e in inner):
         return False
 
+    # The seed and the writeback go outside the map: into states before and after this one, or onto nodes of this
+    # state's top scope. A map nested in another scope reduces into a slot that scope's parameters may pick (``acc[i]``
+    # under ``map i``), and the seed would bypass that scope's entry, so a nested map stays as it is.
+    if state.entry_node(map_entry) is not None:
+        return False
+
     parent_graph: ControlFlowRegion = state.parent_graph
 
     # Is the seed value WRITTEN INSIDE THIS STATE (kernel's own ``acc[c] = init``
