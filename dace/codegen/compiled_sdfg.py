@@ -486,6 +486,14 @@ class CompiledSDFG:
             # failed initializer went on to be called with a null handle.
             if res.value is None:
                 raise RuntimeError("DaCe application failed to initialize")
+            # A failed device allocation in the initializer is only recorded: the handle comes back valid, and
+            # the first kernel then dereferences the null buffer.
+            if self._gpu_last_error is not None and (error := self._gpu_last_error(res)) != 0:
+                if self._exit is not None:
+                    self._exit(res)
+                raise RuntimeError(
+                    f'DaCe application "{self._sdfg.name}" failed to initialize: {self._get_error_text(error)}'
+                )
 
             self._libhandle = res
             self._initialized = True
