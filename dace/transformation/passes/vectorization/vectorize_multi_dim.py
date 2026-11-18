@@ -132,14 +132,16 @@ from dace.transformation.passes.vectorization.tasklet_preprocessing_passes impor
 from dace.transformation.passes.vectorization.utils.arrays import demote_connector_views
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
 from dace.transformation.passes.vectorization.utils.map_predicates import (
+    NO_VECTORIZE_MARKER,
     innermost_enclosing_map_label,
     mark_maps_no_vectorize,
 )
 from dace.transformation.passes.vectorization.utils.mask_scaffold import thread_symbols_into_nsdfg
 from dace.transformation.passes.vectorization.utils.pass_invariants import (
     lane_varying_interstate_guard,
+    map_body_wcr_violations,
+    nested_sdfg_wcr_violations,
     no_lane_collapsing_nested_sdfgs,
-    no_wcr_in_map_body,
     no_wcr_inside_nested_sdfgs,
     no_widened_scalar_tasklets,
 )
@@ -508,9 +510,21 @@ class _AssertNoBodyWCR(ppl.Pass):
         return []
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
-        for violation in (no_wcr_in_map_body(sdfg), no_wcr_inside_nested_sdfgs(sdfg)):
-            if violation is not None:
-                raise VectorizeUnsupported(f"loose WCR in the region to be tiled: {violation}")
+        # A loose WCR sits in one map's body: refuse that map and tile the rest. Only a violation outside every map
+        # refuses the kernel.
+        violations = [(message, (label,)) for message, label in map_body_wcr_violations(sdfg)]
+        violations += list(nested_sdfg_wcr_violations(sdfg))
+        # A map an earlier refusal marked stays scalar, so what its body holds is not in the region to be tiled
+        violations = [
+            (message, labels)
+            for message, labels in violations
+            if not labels or not all(label.endswith(NO_VECTORIZE_MARKER) for label in labels)
+        ]
+        if violations:
+            maps = tuple(OrderedSet(label for _, labels in violations for label in labels))
+            if any(not labels for _, labels in violations):
+                maps = ()
+            raise VectorizeUnsupported(f"loose WCR in the region to be tiled: {violations[0][0]}", maps=maps)
         return None
 
 

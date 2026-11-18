@@ -304,6 +304,13 @@ def no_wcr_in_map_body(scope: SDFG | SDFGState) -> str | None:
     holds a node with no out-edge, and an invariant that reads the emptied walk as "the body" skips
     the map and reports itself satisfied. A checker that cannot fail is worth nothing.
     """
+    for message, _map in map_body_wcr_violations(scope):
+        return message
+    return None
+
+
+def map_body_wcr_violations(scope: SDFG | SDFGState) -> Iterator[tuple[str, str]]:
+    """Every WCR edge :func:`no_wcr_in_map_body` refuses, as ``(message, label of the map whose body holds it)``."""
     for sd, state in _iter_states(scope):
         for node in state.nodes():
             if not isinstance(node, MapEntry):
@@ -320,12 +327,12 @@ def no_wcr_in_map_body(scope: SDFG | SDFGState) -> str | None:
                 # flagged. See _is_lifted_reduction_wcr.
                 if _is_lifted_reduction_wcr(sd, state, edge) or is_scatter_add(state, edge):
                     continue
-                return (
+                message = (
                     f"{sd.name}.{state.label}: edge {edge.src} -> {edge.dst} carries WCR "
                     f"``{edge.data.wcr}`` inside a map body (convert it to an explicit "
                     f"read-modify-write via WCRToAugAssign before vectorizing)"
                 )
-    return None
+                yield message, node.map.label
 
 
 def _reduction_chain_origin(state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> MultiConnectorEdge[Memlet] | None:
@@ -492,6 +499,19 @@ def no_wcr_inside_nested_sdfgs(scope: SDFG | SDFGState, allow_boundary_duplicate
     vectorizer's entry guard admits it because nesting inlines and lowers such a body; the post-nesting guard
     does not, so a duplicate the nesting could not resolve still refuses.
     """
+    for message, _maps in nested_sdfg_wcr_violations(scope, allow_boundary_duplicates):
+        return message
+    return None
+
+
+def nested_sdfg_wcr_violations(
+    scope: SDFG | SDFGState, allow_boundary_duplicates: bool = False
+) -> Iterator[tuple[str, tuple[str, ...]]]:
+    """Every WCR edge :func:`no_wcr_inside_nested_sdfgs` refuses, as ``(message, labels of the innermost map around
+    it)``: a map inside the nested SDFG if the edge sits in one, else the map around the nested SDFG (``()`` for
+    none)."""
+    from dace.transformation.passes.vectorization.utils.map_predicates import innermost_enclosing_map_label
+
     for sd, state in _iter_states(scope):
         if sd.parent_nsdfg_node is None:
             continue
@@ -502,12 +522,14 @@ def no_wcr_inside_nested_sdfgs(scope: SDFG | SDFGState, allow_boundary_duplicate
                 continue
             if allow_boundary_duplicates and boundary_carries_same_wcr(sd, edge):
                 continue
-            return (
+            message = (
                 f"{sd.name}.{state.label}: edge {edge.src} -> {edge.dst} carries WCR "
                 f"``{edge.data.wcr}`` inside a nested SDFG (lift genuine reductions to the "
                 f"NSDFG -> MapExit boundary; convert in-place RMW via WCRToAugAssign before tiling)"
             )
-    return None
+            inner = state.entry_node(edge.dst) or state.entry_node(edge.src)
+            maps = (inner.map.label,) if isinstance(inner, MapEntry) else innermost_enclosing_map_label(sd)
+            yield message, maps
 
 
 # K-dim pipeline invariants (require widths / K context).
