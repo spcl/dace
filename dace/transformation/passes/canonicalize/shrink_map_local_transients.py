@@ -114,6 +114,80 @@ def uniform_subset(edges: list[gr.MultiConnectorEdge[Memlet]]) -> subsets.Range 
     return shared
 
 
+def map_body_accesses(
+    uses: Uses, name: str
+) -> tuple[SDFGState, list[gr.MultiConnectorEdge[Memlet]], dict[str, None]] | None:
+    """The state and edges of ``name`` when its access nodes sit in ONE map body and every edge naming it lies in that
+    body or in a map nested in it, with the symbols those nested maps define.
+
+    :param uses: :func:`uses_by_name` of the SDFG owning the descriptor.
+    :param name: Descriptor name.
+    :returns: ``(state, edges, symbols)``, or ``None`` when an access leaves the body, reaches a nested SDFG or the
+        body's exit, or sits under a scope that is not a map.
+    """
+    if len(uses.get(name, ())) != 1:
+        return None
+    ((state, edges, nodes_here),) = uses[name]
+    sdict = state.scope_dict()
+    body = sdict[nodes_here[0]] if nodes_here else None
+    if not isinstance(body, nodes.MapEntry) or any(sdict[n] is not body for n in nodes_here):
+        return None
+    if named_by_other_side(state, name):
+        return None
+
+    def inside(node: nodes.Node) -> bool:
+        scope = sdict[node]
+        while scope is not None and scope is not body:
+            scope = sdict[scope]
+        return scope is body
+
+    body_exit = state.exit_node(body)
+    for edge in edges:
+        for node in (edge.src, edge.dst):
+            if node is body_exit or isinstance(node, nodes.NestedSDFG) or not inside(node):
+                return None
+    defined: dict[str, None] = {}
+    for node in state.nodes():
+        if isinstance(node, nodes.EntryNode) and node is not body and inside(node):
+            if not isinstance(node, nodes.MapEntry):
+                return None
+            defined.update(dict.fromkeys(node.map.params))
+            defined.update(dict.fromkeys(c for c in node.in_connectors if not c.startswith("IN_")))
+    return state, edges, defined
+
+
+def shared_dimensions(
+    edges: list[gr.MultiConnectorEdge[Memlet]], defined: dict[str, None]
+) -> list[tuple | None] | None:
+    """Per dimension, the range every edge names when it is one unit-step range through symbols outside ``defined``,
+    else ``None`` (the dimension stays whole); ``None`` overall when an edge is a copy or no dimension is shared.
+
+    :param edges: Edges naming one descriptor.
+    :param defined: Symbols a scope inside the body defines: a range naming one differs between their values.
+    """
+    shared: list[tuple | None] | None = None
+    for edge in edges:
+        memlet = edge.data
+        if memlet.other_subset is not None or not isinstance(memlet.subset, subsets.Range):
+            return None
+        ranges = memlet.subset.ranges
+        if shared is None:
+            shared = list(ranges)
+        elif len(ranges) != len(shared):
+            return None
+        for dim, (mine, kept) in enumerate(zip(ranges, shared)):
+            if kept is not None and subsets.Range([mine]) != subsets.Range([kept]):
+                shared[dim] = None
+    if shared is None:
+        return None
+    for dim, kept in enumerate(shared):
+        if kept is None:
+            continue
+        if kept[2] != 1 or any(symbolic.free_symbols_and_functions(b) & defined.keys() for b in kept[:2]):
+            shared[dim] = None
+    return shared if any(kept is not None for kept in shared) else None
+
+
 def device_level_accesses(sdfg: SDFG, accesses: list[tuple[SDFGState, gr.MultiConnectorEdge[Memlet]]]) -> bool:
     """Whether every access in ``accesses`` runs in device code, under a ``GPU_Device`` map.
 
@@ -289,44 +363,88 @@ class ShrinkMapLocalTransients(ppl.Pass):
             for name, desc in list(sd.arrays.items()):
                 if not self.is_candidate(sd, name, desc):
                     continue
-                in_map = map_local_accesses(uses, name)
-                if in_map is not None:
-                    accesses = [(in_map[0], edge) for edge in in_map[1]]
-                else:
-                    accesses = nest_invariant_accesses(sd, uses, name)
-                    if accesses is None:
-                        continue
-                on_device = desc.storage == dtypes.StorageType.GPU_Global
-                if on_device and not device_level_accesses(sd, accesses):
-                    continue
-                shared = uniform_subset([edge for _, edge in accesses])
-                if shared is None:
-                    continue
-                if in_map is None and not box_is_invariant(sd, shared):
-                    continue
-                size = tuple(shared.size())
-                if len(size) != len(desc.shape) or not shrinks_the_buffer(desc, size):
-                    continue
-                if named_in_text(sd, name, code):
-                    continue
-                nested = bound_in_nests(accesses, shared, code)
-                if nested is None:
-                    continue
-                desc.set_shape(size)
-                if on_device:
-                    # Thread-private by construction: every access sits under a kernel and names
-                    # one iteration's box. Left in GPU_Global it would be one
-                    # buffer shared by every thread.
-                    desc.storage = dtypes.StorageType.Register(force=True)
-                for inner, inner_name, _ in nested:
-                    inner.arrays[inner_name].set_shape(size)
-                    if on_device:
-                        inner.arrays[inner_name].storage = desc.storage
-                for edge in [edge for _, edge in accesses] + [edge for _, _, edges in nested for edge in edges]:
-                    edge.data.subset = subsets.Range([(0, dim - 1, 1) for dim in size])
-                    edge.data.volume = required(edge.data.subset).num_elements()
-                shrunk += 1
+                if self.shrink_to_one_box(sd, uses, name, desc, code) or self.shrink_shared_dimensions(
+                    sd, uses, name, desc, code
+                ):
+                    shrunk += 1
         return shrunk or None
+
+    @staticmethod
+    def shrink_to_one_box(sdfg: SDFG, uses: Uses, name: str, desc: data.Array, code: dict[int, str]) -> bool:
+        """Resize ``name`` to the one box all its accesses name, in ``sdfg`` and the nests it is bound into."""
+        in_map = map_local_accesses(uses, name)
+        if in_map is not None:
+            accesses = [(in_map[0], edge) for edge in in_map[1]]
+        else:
+            accesses = nest_invariant_accesses(sdfg, uses, name)
+            if accesses is None:
+                return False
+        on_device = desc.storage == dtypes.StorageType.GPU_Global
+        if on_device and not device_level_accesses(sdfg, accesses):
+            return False
+        shared = uniform_subset([edge for _, edge in accesses])
+        if shared is None:
+            return False
+        if in_map is None and not box_is_invariant(sdfg, shared):
+            return False
+        size = tuple(shared.size())
+        if len(size) != len(desc.shape) or not shrinks_the_buffer(desc, size):
+            return False
+        if named_in_text(sdfg, name, code):
+            return False
+        nested = bound_in_nests(accesses, shared, code)
+        if nested is None:
+            return False
+        desc.set_shape(size)
+        if on_device:
+            # Thread-private by construction: every access sits under a kernel and names
+            # one iteration's box. Left in GPU_Global it would be one
+            # buffer shared by every thread.
+            desc.storage = dtypes.StorageType.Register(force=True)
+        for inner, inner_name, _ in nested:
+            inner.arrays[inner_name].set_shape(size)
+            if on_device:
+                inner.arrays[inner_name].storage = desc.storage
+        for edge in [edge for _, edge in accesses] + [edge for _, _, edges in nested for edge in edges]:
+            edge.data.subset = subsets.Range([(0, dim - 1, 1) for dim in size])
+            edge.data.volume = required(edge.data.subset).num_elements()
+        return True
+
+    @staticmethod
+    def shrink_shared_dimensions(sdfg: SDFG, uses: Uses, name: str, desc: data.Array, code: dict[int, str]) -> bool:
+        """Resize ``name`` in the dimensions every access names alike (``t[i, 0:K]`` written, ``t[i, k]`` read under
+        ``map[i]``: the ``i`` dimension), keeping the others whole.
+
+        Each iteration of the body owns its buffer and touches only the shared range in such a dimension, so moving
+        that range to the origin renames the elements one iteration touches one to one.
+        """
+        if desc.storage == dtypes.StorageType.GPU_Global or any(o != 0 for o in desc.offset):
+            return False
+        # The kept dimensions keep their layout: a packed row- or column-major buffer stays one
+        fortran = len(desc.shape) > 1 and not desc.is_packed_c_strides()
+        if fortran and not desc.is_packed_fortran_strides():
+            return False
+        found = map_body_accesses(uses, name)
+        if found is None:
+            return False
+        _, edges, defined = found
+        shared = shared_dimensions(edges, defined)
+        if shared is None or len(shared) != len(desc.shape):
+            return False
+        size = tuple(extent if kept is None else kept[1] - kept[0] + 1 for extent, kept in zip(desc.shape, shared))
+        if not shrinks_the_buffer(desc, size) or named_in_text(sdfg, name, code):
+            return False
+        desc.set_shape(size)
+        if fortran:
+            desc.set_strides_from_layout(*range(len(size)))
+        for edge in edges:
+            edge.data.subset = subsets.Range(
+                [
+                    mine if kept is None else (0, mine[1] - mine[0], 1)
+                    for mine, kept in zip(edge.data.subset.ranges, shared)
+                ]
+            )
+        return True
 
     def is_candidate(self, sdfg: SDFG, name: str, desc: data.Data) -> bool:
         """Whether ``name`` is a plain resizable transient array of ``sdfg``.

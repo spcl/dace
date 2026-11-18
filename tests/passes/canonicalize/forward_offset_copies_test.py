@@ -2,6 +2,8 @@
 """``ForwardOffsetCopies``: a shifted copy read in later states is read from its source at the shifted index, and
 the copy goes; a write to the source between the copy and a read keeps it."""
 
+import copy as copy_module
+
 import numpy as np
 
 import dace
@@ -176,6 +178,42 @@ def test_a_loop_writing_the_source_keeps_the_copy():
     assert np.allclose(out, expected)
 
 
+def test_a_copy_whose_extent_is_spelled_floor_is_forwarded():
+    """``t``'s extent is Python's ``//`` (sympy ``floor``) and the copy's range the parser's (``int_floor``): one
+    value, so the copy covers ``t`` and is forwarded."""
+    extent = (N - 7) // 2 + 1
+    sdfg = dace.SDFG("shifted_copy_floor_extent")
+    sdfg.add_array("q", [extent + 1], dace.float64)
+    sdfg.add_array("out", [extent], dace.float64)
+    sdfg.add_transient("t", [extent], dace.float64)
+    copy = sdfg.add_state("copy")
+    copy.add_nedge(
+        copy.add_read("q"), copy.add_write("t"), dace.Memlet("q[1:(N - 7) // 2 + 2] -> [0:(N - 7) // 2 + 1]")
+    )
+    use = sdfg.add_state_after(copy, "use")
+    use.add_mapped_tasklet(
+        "double",
+        {"i": "0:(N - 7) // 2 + 1"},
+        {"x": dace.Memlet("t[i]")},
+        "o = x * 2.0",
+        {"o": dace.Memlet("out[i]")},
+        external_edges=True,
+    )
+    sdfg.validate()
+    reference = copy_module.deepcopy(sdfg)
+    reference.name = "shifted_copy_floor_extent_reference"
+    assert ForwardOffsetCopies().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert "t" not in sdfg.arrays
+    size = 21
+    q = np.random.default_rng(4).random((size - 7) // 2 + 2)
+    out, expected = np.zeros(q.size - 1), np.zeros(q.size - 1)
+    reference(q=q, out=expected, N=size)
+    sdfg(q=q, out=out, N=size)
+    assert np.allclose(out, expected)
+    assert np.allclose(out, 2.0 * q[1:])
+
+
 if __name__ == "__main__":
     test_a_shifted_copy_read_in_a_later_state_reads_its_source()
     test_a_write_to_the_source_between_keeps_the_copy()
@@ -185,3 +223,4 @@ if __name__ == "__main__":
     test_a_flat_view_of_the_copy_keeps_the_copy()
     test_a_shifted_copy_read_in_a_later_loop_reads_its_source()
     test_a_loop_writing_the_source_keeps_the_copy()
+    test_a_copy_whose_extent_is_spelled_floor_is_forwarded()

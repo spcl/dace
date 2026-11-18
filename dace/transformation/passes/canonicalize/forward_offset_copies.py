@@ -109,9 +109,14 @@ class ForwardOffsetCopies(ppl.Pass):
         src_subset, dst_subset = edge.data.get_src_subset(edge, state), edge.data.get_dst_subset(edge, state)
         if not isinstance(src_subset, subsets.Range) or not isinstance(dst_subset, subsets.Range):
             return None
-        if dst_subset != subsets.Range.from_array(b) or any(s != 1 for _, _, s in src_subset.ranges):
+        whole = subsets.Range.from_array(b).ranges
+        if any(s != 1 for _, _, s in src_subset.ranges) or any(s != 1 for _, _, s in dst_subset.ranges):
             return None
-        if any(x != y for x, y in zip(src_subset.size(), dst_subset.size())):
+        if not all(
+            same_value(d0, w0) and same_value(d1, w1) for (d0, d1, _), (w0, w1, _) in zip(dst_subset.ranges, whole)
+        ):
+            return None
+        if not all(same_value(x, y) for x, y in zip(src_subset.size(), dst_subset.size())):
             return None
         uses = accesses[dst.data]
         if any(n is not dst and is_written(st, n) for st, n in uses) or state.in_degree(dst) != 1:
@@ -193,6 +198,12 @@ class ForwardOffsetCopies(ppl.Pass):
             state.remove_node(edge.src)
         if not any(n.data == copy for st in sdfg.states() for n in st.data_nodes()):
             sdfg.remove_data(copy, validate=False)
+
+
+def same_value(x, y) -> bool:
+    """Whether two bounds or extents are one value: structurally first, then by value (``int_floor`` against
+    ``floor``, ``ipow`` against ``**``)."""
+    return bool(x == y) or symbolic.equal(x, y, is_length=False) is True
 
 
 def block_in(region: ControlFlowRegion, state: SDFGState) -> ControlFlowBlock | None:

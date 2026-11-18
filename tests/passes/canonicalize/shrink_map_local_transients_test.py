@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A map-body-local transient must shrink to the box its accesses name."""
 
+import copy
+
 import numpy as np
 import pytest
 
@@ -244,6 +246,82 @@ def test_a_scratch_a_nest_indexes_elsewhere_keeps_its_extent():
     assert ShrinkMapLocalTransients().apply_pass(sdfg, {}) is None
 
 
+K = dace.symbol("K", dace.int64)
+
+
+def row_scratch_sdfg(name: str, fortran: bool = False, read_after: bool = False) -> dace.SDFG:
+    """Per row ``i``: an inner map over ``k`` stores ``A[i, k] * 2`` to ``t[i, k]``, a second one reads ``t[i, k] + 1``
+    into ``B[i, k]``; ``t`` is ``(N, K)`` and the body's accesses to it are ``t[i, 0:K]`` and ``t[i, k]``. With
+    ``read_after`` a state after the map copies ``t`` into ``C``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [N, K], dace.float64)
+    sdfg.add_array("B", [N, K], dace.float64)
+    sdfg.add_transient("t", [N, K], dace.float64)
+    if fortran:
+        sdfg.arrays["t"].set_strides_from_layout(0, 1)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("rows", {"i": "0:N"})
+    produce_entry, produce_exit = state.add_map("produce", {"k": "0:K"})
+    consume_entry, consume_exit = state.add_map("consume", {"k": "0:K"})
+    produce = state.add_tasklet("produce", {"a"}, {"s"}, "s = a * 2.0")
+    consume = state.add_tasklet("consume", {"s"}, {"b"}, "b = s + 1.0")
+    scratch = state.add_access("t")
+    state.add_memlet_path(
+        state.add_read("A"), entry, produce_entry, produce, dst_conn="a", memlet=dace.Memlet("A[i, k]")
+    )
+    state.add_memlet_path(produce, produce_exit, scratch, src_conn="s", memlet=dace.Memlet("t[i, k]"))
+    state.add_memlet_path(scratch, consume_entry, consume, dst_conn="s", memlet=dace.Memlet("t[i, k]"))
+    state.add_memlet_path(
+        consume, consume_exit, exit_node, state.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i, k]")
+    )
+    if read_after:
+        sdfg.add_array("C", [N, K], dace.float64)
+        after = sdfg.add_state_after(state, "after")
+        after.add_nedge(after.add_read("t"), after.add_write("C"), dace.Memlet("t[0:N, 0:K]"))
+    sdfg.validate()
+    return sdfg
+
+
+def run_rows(sdfg: dace.SDFG, seed: int) -> tuple[np.ndarray, np.ndarray]:
+    a = np.random.default_rng(seed).random((7, 5))
+    b = np.zeros((7, 5))
+    sdfg(A=a, B=b, N=7, K=5)
+    return a, b
+
+
+def test_a_row_scratch_drops_the_dimension_its_map_indexes():
+    sdfg = row_scratch_sdfg("row_scratch_shrinks")
+    reference = copy.deepcopy(sdfg)
+    reference.name = "row_scratch_shrinks_reference"
+    assert ShrinkMapLocalTransients().apply_pass(sdfg, {}) == 1
+    desc = sdfg.arrays["t"]
+    assert (str(desc.shape[0]), str(desc.shape[1])) == ("1", "K"), desc.shape
+    subsets_named = {str(e.data.subset) for e in sdfg.start_block.edges() if e.data.data == "t"}
+    assert subsets_named == {"0, 0:K", "0, k"}, subsets_named
+    sdfg.validate()
+    a, b = run_rows(sdfg, 5)
+    _, expected = run_rows(reference, 5)
+    np.testing.assert_allclose(b, expected)
+    np.testing.assert_allclose(b, a * 2.0 + 1.0)
+
+
+def test_a_column_major_row_scratch_keeps_its_layout():
+    sdfg = row_scratch_sdfg("row_scratch_fortran", fortran=True)
+    assert ShrinkMapLocalTransients().apply_pass(sdfg, {}) == 1
+    desc = sdfg.arrays["t"]
+    assert desc.is_packed_fortran_strides(), desc.strides
+    sdfg.validate()
+    a, b = run_rows(sdfg, 6)
+    np.testing.assert_allclose(b, a * 2.0 + 1.0)
+
+
+def test_a_row_scratch_read_after_the_map_keeps_its_extent():
+    """After the map every row of ``t`` is live at once: one row's buffer cannot hold them."""
+    sdfg = row_scratch_sdfg("row_scratch_read_after", read_after=True)
+    assert ShrinkMapLocalTransients().apply_pass(sdfg, {}) is None
+    assert tuple(str(s) for s in sdfg.arrays["t"].shape) == ("N", "K")
+
+
 if __name__ == "__main__":
     test_map_body_local_transient_shrinks_to_the_box_it_names()
     test_finalize_leaves_no_symbolically_sized_stack_array()
@@ -254,3 +332,6 @@ if __name__ == "__main__":
     test_a_copy_naming_the_other_container_keeps_the_extent()
     test_a_scratch_a_nest_indexes_at_the_box_shrinks_with_the_nest_descriptor()
     test_a_scratch_a_nest_indexes_elsewhere_keeps_its_extent()
+    test_a_row_scratch_drops_the_dimension_its_map_indexes()
+    test_a_column_major_row_scratch_keeps_its_layout()
+    test_a_row_scratch_read_after_the_map_keeps_its_extent()

@@ -1,7 +1,7 @@
 # Transient removal audit
 
 Static audit of the canonicalization passes that remove, shrink, privatize or forward a transient (2026-11-18,
-fix-1117). Nothing here was compiled or run: the two fixes and their tests are untested. Line numbers refer to the
+fix-1117; second pass the same day). Nothing here was compiled or run: every fix and test is untested. Line numbers refer to the
 working tree after the fixes.
 
 ## Where the passes run
@@ -39,7 +39,7 @@ try. Paths are under `dace/transformation/`.
 |---|---|---|---|---|
 | `RedundantArray`, `RedundantSecondArray` | the copy covers the removed array only up to the spelling of its extent (`int_floor` in the memlet, sympy `floor` in a shape annotation; `Lb**2` against `ipow`) | `dataflow/redundant_array.py:21` (`_subset_has_shape`, used at :603, :931, :1019, :1255, :1471, :1957, :2115, so the slice removals and the reshape test gain it too) | no | **fixed**: structural compare first, then `symbolic.equal` |
 | `ForwardOffsetCopies` | a reader of the shifted copy sits in a loop or branch after the copy instead of a top-level state of the copy's region | `canonicalize/forward_offset_copies.py:119-127` | no | **fixed**: the enclosing block stands for the reader; it must not write the source anywhere |
-| `ForwardOffsetCopies` | destination subset is not structurally `Range.from_array`, source and destination sizes differ structurally | `forward_offset_copies.py:112-114` | no (same spelling issue) | proposed: `covers_precise` / `symbolic.equal` |
+| `ForwardOffsetCopies` | destination subset is not structurally `Range.from_array`, source and destination sizes differ structurally | `forward_offset_copies.py:112-120` | no (same spelling issue) | **fixed** (second pass): bounds and sizes compared by `same_value` (structural, then `symbolic.equal(..., is_length=False)`), unit steps checked on both sides |
 | `ForwardOffsetCopies` | a gather (`t[i] = a[idx[i]]`) or strided copy | `forward_offset_copies.py:112` (`step != 1`), the copy must be an edge | yes for the offset form | by design: forwarding a gather trades one load of `t` for two loads, a recompute-or-store choice |
 | `ForwardOffsetCopies`, `RedundantArray`, `MinimizeTransients` | source and copy in different storages (host/device twins) | `forward_offset_copies.py:105`, `redundant_array.py:723`, `:1343`, `minimize_transients.py:177` | yes | by design |
 | `ArrayElimination` | the container is accessed in another state reachable from this one (copy in one state, readers in a later one) | `passes/array_elimination.py:259` | yes for an in-state fold | by design; the cross-state offset copy is `ForwardOffsetCopies`' job |
@@ -50,11 +50,33 @@ try. Paths are under `dace/transformation/`.
 | `RedundantSecondArray` | the copy is not the only write (`in_degree != 1`) | `redundant_array.py:1180` | yes | by design |
 | `EliminateCopyBack` | the producer is not a map exit (a tasklet or library node writing `t`, then `A[S] = t`) | `canonicalize/eliminate_copy_back.py:127` | no | by design: `RedundantArray` takes that shape |
 | `EliminateCopyBack` | strided copy, or the transient has a second access node | `eliminate_copy_back.py:133`, `:138` | yes | by design |
-| `ShrinkMapLocalTransients` | the accesses name different subsets of the per-iteration box (`t[i, 0:K]` written, `t[i, k]` read in an inner map) | `canonicalize/shrink_map_local_transients.py:112` | no | proposed: drop the dimensions every access indexes by the same enclosing-map expression, keep the rest whole |
-| `ShrinkMapLocalTransients` | accesses in two states; a WCR or `other_subset` access | `shrink_map_local_transients.py:71`, `:106` | yes (`SplitMapLocalTransients` renames per scope first) | by design |
+| `ShrinkMapLocalTransients` | the accesses name different subsets of the per-iteration box (`t[i, 0]` and `t[i, 1]`), or sit in a map nested in the body (`t[i, 0:K]` written by an inner map, `t[i, k]` read in another) | `shrink_map_local_transients.py:78` (one scope), `:112` (one subset) | no | **fixed** (second pass): `shrink_shared_dimensions` (`:414`, helpers `map_body_accesses` `:117`, `shared_dimensions` `:159`) shrinks each dimension every edge names by one structurally equal unit-step range through no symbol an inner map defines, keeps the rest whole and the packed layout; not for `GPU_Global`, offset descriptors, nested-SDFG endpoints, the body's exit |
+| `ShrinkMapLocalTransients` | accesses in two states; an `other_subset` access | `shrink_map_local_transients.py:71`, `:106` | yes (`SplitMapLocalTransients` renames per scope first; a copy names the other side's index) | by design |
+| `ShrinkMapLocalTransients` | a WCR access | `shrink_map_local_transients.py:106` | no: renaming the one box an iteration touches is a bijection, a read-modify-write included | the one-box path still refuses; the per-dimension path takes it |
 | `MinimizeTransients` coalescing | the transient lives in more than one state, or is accumulated into (WCR) | `minimize_transients.py:179`, `:245` | yes (values must match while both live) | by design |
 | `DeadDataflowElimination` | a non-transient write; a multi-element pointer connector of a tasklet; a nested SDFG or library node that also reads the container | `passes/dead_dataflow_elimination.py:404`, `:433`, `:443` | yes | by design |
 | `DeadCarriedStoreElimination` | nested SDFG, conditional, WCR, non-affine access | `canonicalize/dead_carried_store.py:21-24` | yes (a false positive drops a needed store) | by design |
+
+## Views
+
+| pass | refuses when | file:line | required? | why |
+|---|---|---|---|---|
+| `RemoveViews` | `StructureView` / `ContainerView`, or a dtype-reinterpreting view | `passes/remove_views.py:107`, `:132` | yes | no element-for-element splice exists |
+| `RemoveViews` | an ordering edge on the side the splice ignores, with no data edge to re-home it onto | `remove_views.py:143` | yes | dropping it drops a happens-before |
+| `RemoveViews` | the view binds a nested SDFG connector | `remove_views.py:871` (`_binds_nested_sdfg` `:823`) | yes under No-View | the connector descriptor is the container it is bound to; splicing needs the nest's descriptor rewritten (`c186a341b`) |
+| `RemoveViews` | a library node reads the view whole and has no `operand_dims` for the slice | `remove_views.py:794-810`, `:861` | by design | the view gives the node its operand shape until expansion |
+| `RemoveViews` | a symbolic reshape whose accesses would divide by a run-time size (lavamd `neighbor_offsets.reshape(-1)`, extent `(1 + count) * particles_per_box`) | strategies 2/3, `2446a10f4` | by design | the view is free; a `//` and `%` per access is not |
+| `RemoveViews` | an interstate subscript of the view the rewriter cannot express | `_interstate_feasible` | yes | the view would survive in the condition |
+| `RedundantArray` (view twin) | strides differ and the other end is a view or a nested SDFG | `redundant_array.py:803-821` | yes | see the table above |
+
+View chains (a view of a view) fold one link per fixpoint round; the viewed descriptor may itself be a `View`, nothing
+refuses it. A view of a non-transient folds like any other: it names no storage of its own.
+
+Spelling (`int_floor` against `floor`) still compared structurally, not changed: `RemoveViews.library_node_operands`
+(`e.data.subset == full`, `remove_views.py:804`, refuses the fold), `_is_identity_view` (`redundant_array.py:2219-2224`)
+and `RedundantMapReadCopy.staging` (`written != Range.from_array(desc)` `:2563`, `staged_dims` `simplify(a - b) == 0`
+`:2462`). A view's shape is minted from the memlet it is cut by, so both sides carry the parser's spelling; a mismatch
+needs a shape annotation with `//` on an expression, which none of the corpus views has.
 
 ## Corpus drivers
 
@@ -67,7 +89,12 @@ try. Paths are under `dace/transformation/`.
 - **cp2k_grid_integrate** scratch: a contraction output read in part. Narrowing it is a recompute choice (hinted,
   `canon_perf_gaps.md`), not a removal. **trs4** `sink`, copied in and out per multiply: not analysed here; it needs
   the canonical SDFG to see which check keeps the copies.
-- **lavamd**: see below.
+- **lavamd**: the per-box scratch (`pointers`, `first_j`, `neighbor_offsets`) has a data-dependent extent; a
+  lifted box loop leaves them map-body local, sized by `count`, which the lead-owned extent bound handles (below).
+  `rv[bj]` and `qv[bj]` are gathers: kept by design.
+- **row scratch under a map** (`t[i, :]` produced by one inner map, read by another; cloudsc per-column
+  temporaries after a column map is lifted, minife row loops): previously kept at full extent, one `(N, K)` stack
+  buffer per iteration; the per-dimension shrink gives `(1, K)`. Not confirmed on the canonical SDFGs.
 
 ## For the lead-owned files
 
