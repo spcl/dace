@@ -112,7 +112,9 @@ class MegakernelLoops(ppl.Pass):
         dtype=dtypes.DeviceType, default=dtypes.DeviceType.GPU, desc="The device whose kernel loops are fused"
     )
     loops = properties.SetProperty(
-        element_type=str, default=set(), desc="Labels of the loops to fuse; empty fuses every loop of kernels"
+        element_type=str,
+        default=set(),
+        desc="Labels of the loops to fuse (a loop of kernels holding one of them is fused); empty fuses every loop",
     )
 
     def __init__(self, device: dtypes.DeviceType = dtypes.DeviceType.GPU, loops: set[str] | None = None) -> None:
@@ -133,11 +135,13 @@ class MegakernelLoops(ppl.Pass):
             isinstance(r, LoopRegion) and kernels_in(r, target) for r in sdfg.all_control_flow_regions(recursive=True)
         ):
             return None
+        # Gathering inlines and wraps loops under new labels; their guids survive, so the named loops are kept by guid
+        named = {r.guid for r in sdfg.all_control_flow_regions(recursive=True) if r.label in self.loops}
         GatherKernelStates(self.device).apply_pass(sdfg, {})
         fused = 0
         for chain in loop_chains(find_chains(sdfg, sdfg, target)):
             loop = chain.blocks[0]
-            if self.loops and loop.label not in self.loops:
+            if self.loops and not named & {r.guid for r in loop.all_control_flow_regions(recursive=True)}:
                 continue
             gpu = self.device == dtypes.DeviceType.GPU
             bound = launch_bound(loop, target) if gpu else None
