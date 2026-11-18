@@ -1,10 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Chunk a lifted stream compaction on the CPU: count per block, offsets, write per block.
+"""Chunk a lifted stream compaction: count per block, offsets, write per block.
 
 :class:`~dace.transformation.passes.canonicalize.loop_to_stream_compaction.LoopToStreamCompaction` leaves the
 device-neutral three-phase form: a map writing ``mask[i]`` (the guard, 0 or 1), an exclusive ``Scan`` of the mask
 into ``rank`` and a ``Reduce`` of it into ``total``, and a map scattering every taken iteration to slot
-``base + K * rank[i]``. On a GPU that is the right shape. On a CPU the ``int8`` mask and the ``int64`` rank are a
+``base + K * rank[i]``. On a GPU that shape is right while its buffers fit on the device. On a CPU the ``int8`` mask and the ``int64`` rank are a
 write and two or three reads of memory per element that a chunked compaction never makes: each thread counts the
 taken iterations of a contiguous block (the guard alone), one short sequential pass turns the counts into the
 blocks' first ranks and the total, and each thread then runs its block in order with a running rank, writing
@@ -23,7 +23,7 @@ import re
 from typing import Any, NamedTuple
 
 import dace
-from dace import SDFG, SDFGState, data, dtypes, subsets, symbolic
+from dace import SDFG, SDFGState, data, dtypes, properties, subsets, symbolic
 from dace import memlet as mm
 from dace.codegen.common import sym2cpp
 from dace.libraries.standard.nodes.reduce import Reduce
@@ -37,6 +37,10 @@ from dace.transformation.passes.cpu_specialization.fuse_scan_chains import expos
 #: Iterations one block covers. A block's guard reads are re-read by phase 3 from cache when the block's inputs fit
 #: in L2 at a few arrays of eight bytes.
 BLOCK = 16384
+
+#: Iterations one GPU thread covers: a block is one thread's sequential walk, so blocks are what the kernel parallelizes,
+#: and the two per-block buffers stay three orders of magnitude below the mask and rank buffers they replace.
+GPU_BLOCK = 1024
 
 
 class Phase(NamedTuple):
@@ -195,10 +199,26 @@ def in_scope(state: SDFGState, phases: tuple[Phase, ...]) -> dict[str, Any]:
     return found
 
 
+@properties.make_properties
 class ChunkStreamCompaction(ppl.Pass):
-    """Rewrite each lifted three-phase compaction into the chunked count / offsets / write shape."""
+    """Rewrite each lifted three-phase compaction into the chunked count / offsets / write shape.
+
+    On a GPU the block maps keep the ``Default`` schedule for the offload to make them kernels, one thread per block:
+    the mask and rank buffers are as long as the iteration space, which a compaction over a nest of loops (dbcsr's
+    block pairs) can make larger than the device.
+    """
 
     CATEGORY: str = "CPU Specialization"
+
+    block = properties.Property(dtype=int, default=BLOCK, desc="Iterations one block covers")
+    schedule = properties.EnumProperty(
+        dtype=dtypes.ScheduleType, default=dtypes.ScheduleType.CPU_Multicore, desc="Schedule of the two block maps"
+    )
+
+    def __init__(self, block: int = BLOCK, schedule: dtypes.ScheduleType = dtypes.ScheduleType.CPU_Multicore):
+        super().__init__()
+        self.block = block
+        self.schedule = schedule
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -218,7 +238,7 @@ class ChunkStreamCompaction(ppl.Pass):
 
     def rewrite(self, state: SDFGState, sdfg: SDFG, m: Match) -> None:
         count_dtype = sdfg.arrays[m.total_node.data].dtype
-        blocks = symbolic.int_ceil(m.length, BLOCK)
+        blocks = symbolic.int_ceil(m.length, self.block)
         counts, _ = sdfg.add_array("compaction_counts", [blocks], count_dtype, transient=True, find_new_name=True)
         starts, _ = sdfg.add_array("compaction_starts", [blocks], count_dtype, transient=True, find_new_name=True)
         mask_reads, mask_writes = body_edges(state, m.mask)
@@ -279,8 +299,8 @@ class ChunkStreamCompaction(ppl.Pass):
 
     def block_loop(self, inner: SDFG, before: dace.SDFGState, length: Any, loop_var: str) -> LoopRegion:
         """The sequential loop over one block's iterations, after ``before``."""
-        first = f"block * {BLOCK}"
-        last = f"min({sym2cpp(length)}, (block + 1) * {BLOCK})"
+        first = f"block * {self.block}"
+        last = f"min({sym2cpp(length)}, (block + 1) * {self.block})"
         loop = LoopRegion(
             "block_iterations",
             f"{loop_var} < {last}",
@@ -335,9 +355,7 @@ class ChunkStreamCompaction(ppl.Pass):
         end.add_edge(end.add_read("run"), None, copy_out, "r", mm.Memlet("run[0]"))
         end.add_edge(copy_out, "o", end.add_write(counts), None, mm.Memlet(f"{counts}[block]"))
 
-        entry, exit_node = state.add_map(
-            "compaction_count", {"block": f"0:{sym2cpp(blocks)}"}, schedule=dtypes.ScheduleType.CPU_Multicore
-        )
+        entry, exit_node = state.add_map("compaction_count", {"block": f"0:{sym2cpp(blocks)}"}, schedule=self.schedule)
         nested = state.add_nested_sdfg(
             inner, set(outer_reads), {counts}, symbol_mapping={s: s for s in scope} | {"block": "block"}
         )
@@ -354,7 +372,7 @@ class ChunkStreamCompaction(ppl.Pass):
     def offset_phase(self, state, sdfg, m, blocks, counts, starts, count_node):
         """Phase 2: every block's first rank and the total, in order."""
         # Plain integer arithmetic: tasklet text reaches every dialect as written, and CPF's C has no ``int_ceil``.
-        nblocks = f"(({sym2cpp(m.length)}) + {BLOCK - 1}) / {BLOCK}"
+        nblocks = f"(({sym2cpp(m.length)}) + {self.block - 1}) / {self.block}"
         del blocks
         code = (
             f"long long running = 0;\n"
@@ -426,9 +444,7 @@ class ChunkStreamCompaction(ppl.Pass):
         advance_state.add_edge(advance_state.add_read("taken"), None, add, "t", mm.Memlet("taken[0]"))
         advance_state.add_edge(add, "o", advance_state.add_write("run"), None, mm.Memlet("run[0]"))
 
-        entry, exit_node = state.add_map(
-            "compaction_write", {"block": f"0:{sym2cpp(blocks)}"}, schedule=dtypes.ScheduleType.CPU_Multicore
-        )
+        entry, exit_node = state.add_map("compaction_write", {"block": f"0:{sym2cpp(blocks)}"}, schedule=self.schedule)
         nested = state.add_nested_sdfg(
             inner,
             set(outer_reads) | {starts},

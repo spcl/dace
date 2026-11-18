@@ -63,7 +63,7 @@ from dace.transformation.passes.canonicalize.pipeline import run_structural_clea
 from dace.transformation.passes.canonicalize.shrink_map_local_transients import ShrinkMapLocalTransients
 from dace.transformation.passes.canonicalize.split_map_local_transients import SplitMapLocalTransients
 from dace.transformation.passes.canonicalize.transpose_into_blas_flag import transposes_as_blas_flags
-from dace.transformation.passes.cpu_specialization.chunk_stream_compaction import ChunkStreamCompaction
+from dace.transformation.passes.cpu_specialization.chunk_stream_compaction import GPU_BLOCK, ChunkStreamCompaction
 from dace.transformation.passes.cpu_specialization.demote_level_maps import (
     demote_strided_level_maps,
     demote_uncoalesced_level_maps,
@@ -852,6 +852,9 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False, tile_programs: bool = Fal
         MoveLoopIntoMapGated(target="gpu").apply_pass(sdfg, {})
     # Before the offload decides what a kernel can own: a buffer sized per iteration by data is allocated by the host.
     BoundDataDependentExtents().apply_pass(sdfg, {})
+    # Before the offload makes the block maps kernels: a compaction's mask and rank buffers are as long as its iteration
+    # space, which a compaction over a nest of loops can make larger than the device.
+    ChunkStreamCompaction(block=GPU_BLOCK, schedule=dtypes.ScheduleType.Default).apply_pass(sdfg, {})
     apply_gpu_storage(sdfg)
     # One validation for the whole offload, after the last step, instead of one per step.
     # Its own ``simplify`` would validate: simplified here instead, without validation.
