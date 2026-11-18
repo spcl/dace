@@ -85,12 +85,15 @@ from dace.transformation.passes.minimize_transients import MinimizeTransients
 from dace.transformation.passes.offloading.batch_map_products import BatchMapProducts
 from dace.transformation.passes.offloading.batch_row_scans import BatchRowScans
 from dace.transformation.passes.offloading.fuse_copy_chains import FuseCopyChains
+from dace.transformation.passes.parallelization_prep import ShortLoopUnroll
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.specialize_small_gemms import (
     SMALL_MATMUL_DIM,
     SpecializeSmallGemms,
     matmul_extents_small,
 )
+from dace.transformation.passes.symbol_ssa import SymbolSSA
+from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
 #: Map the canonicalize target string to the codegen device type.
 TARGET_DEVICE = {"cpu": dtypes.DeviceType.CPU, "gpu": dtypes.DeviceType.GPU}
@@ -780,6 +783,15 @@ def recompute_fuse_for_gpu(sdfg: SDFG) -> int:
     return sdfg.apply_transformations_repeated(OTFMapFusion, validate=False, validate_all=False)
 
 
+def unroll_short_loops(sdfg: SDFG) -> None:
+    """Fully unroll every constant-trip loop of at most ``optimizer.canonicalization.unroll_limit`` iterations
+    (``ShortLoopUnroll``): straight-line code instead of a small recurrence or reduction loop. A target's choice, so the
+    canonical form keeps the loops; run before the offload, so a kernel sees the unrolled body."""
+    ShortLoopUnroll().apply_pass(sdfg, {})
+    UniqueLoopIterators().apply_pass(sdfg, {})
+    SymbolSSA().apply_pass(sdfg, {})
+
+
 def offload_to_gpu(sdfg: SDFG, validate: bool = False, tile_programs: bool = False) -> None:
     """Move a canonicalized SDFG onto the GPU, in place: recompute-fuse, device offload, block size.
 
@@ -832,6 +844,7 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False, tile_programs: bool = Fal
     :param tile_programs: Whether the kernels run as tile programs.
     """
     Config.set("compiler", "cuda", "max_concurrent_streams", value=-1)
+    unroll_short_loops(sdfg)
     run_structural_cleanup(sdfg)
     # Before the offload makes each copy of a chain its own transfer: independent copies are one kernel.
     FuseCopyChains().apply_pass(sdfg, {})
@@ -992,6 +1005,8 @@ def finalize_for_target(sdfg: SDFG, target: str = "cpu", validate: bool = False)
         raise ValueError(f"target must be one of {sorted(TARGET_DEVICE)}; got {target!r}")
     device = TARGET_DEVICE[target]
     with equalized(sdfg):
+        if device == dtypes.DeviceType.CPU:
+            unroll_short_loops(sdfg)  # the GPU path ran it before its offload
         finalize_stages(sdfg, device)
     if validate:
         assert_no_nested_parallel_maps(sdfg, device)

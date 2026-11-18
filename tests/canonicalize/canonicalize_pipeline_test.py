@@ -201,14 +201,14 @@ def test_canonicalize_strided_map_normalized():
     copy.deepcopy(strided.to_sdfg(simplify=True))(a=a.copy(), b=ref)
 
     sdfg = strided.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True)
+    canonicalize(sdfg, validate=True, unroll_limit=10)
     out = np.zeros(40)
     sdfg(a=a.copy(), b=out)
     assert np.allclose(out, ref)
     exp = np.zeros(40)
     exp[3:31:4] = a[3:31:4] + 5.0
     assert np.allclose(out, exp)
-    # Constant trip count, so normalization unrolls the strided map into straight-line states.
+    # Constant trip count, so normalization (asked to unroll) unrolls the strided map into straight-line states.
     assert (nmaps(sdfg), nloops(sdfg)) == (0, 0), f"the strided map was not unrolled: {nmaps(sdfg)} maps"
 
 

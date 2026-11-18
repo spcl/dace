@@ -138,7 +138,6 @@ from dace.transformation.passes.parallelization.parallelize import Parallelize
 from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 from dace.transformation.passes.parallelization_prep import (
     DEFAULT_PEEL_LIMIT,
-    DEFAULT_UNROLL_LIMIT,
     BestEffortLoopPeeling,
     ModuloBandSplit,
     ShortLoopUnroll,
@@ -1135,7 +1134,7 @@ def finish() -> Stages:
 
 
 def build_stages(
-    unroll_limit: int = DEFAULT_UNROLL_LIMIT,
+    unroll_limit: int = 0,
     peel_limit: int = DEFAULT_PEEL_LIMIT,
     interchange_carry_with_map: bool = True,
     scatter_to_guarded_maps: bool = True,
@@ -1322,7 +1321,8 @@ class CanonicalizationPipeline(ppl.Pass):
                          default. Set ``validate`` to check the result, and this as well to find
                          WHICH stage broke it.
     :param unroll_limit: Fully unroll constant-trip loops with at most this many
-                         iterations (0 disables).
+                         iterations. 0 (default): the canonical form keeps them, and the
+                         specializations unroll them (``unroll_short_loops`` in ``finalize``).
     :param peel_limit: Best-effort loop peeling before parallelize (0 disables); defaults to
                        ``optimizer.canonicalization.peel_limit``.
     :param perfect_loop_nesting: Run ``PerfectLoopNesting`` at the end of ``normalize_statements``. ON by
@@ -1381,7 +1381,9 @@ class CanonicalizationPipeline(ppl.Pass):
         "None (default) disables dumping entirely.",
     )
     unroll_limit = properties.Property(
-        dtype=int, default=DEFAULT_UNROLL_LIMIT, desc="Unroll constant-trip loops <= this many iterations (0 disables)."
+        dtype=int,
+        default=0,
+        desc="Unroll constant-trip loops <= this many iterations (0, the default, leaves them to the specializations).",
     )
     peel_limit = properties.Property(
         dtype=int, default=DEFAULT_PEEL_LIMIT, desc="Best-effort loop peeling before parallelize (0 disables)."
@@ -1454,7 +1456,7 @@ class CanonicalizationPipeline(ppl.Pass):
         self,
         validate: bool = False,
         validate_all: bool = False,
-        unroll_limit: int = DEFAULT_UNROLL_LIMIT,
+        unroll_limit: int = 0,
         peel_limit: int | None = None,
         target: str = "cpu",
         interchange_carry_with_map: bool | None = None,
@@ -1616,7 +1618,7 @@ def canonicalize(
     sdfg: SDFG,
     validate: bool = False,
     validate_all: bool = False,
-    unroll_limit: int = DEFAULT_UNROLL_LIMIT,
+    unroll_limit: int = 0,
     peel_limit: int | None = None,
     target: str = "cpu",
     interchange_carry_with_map: bool | None = None,

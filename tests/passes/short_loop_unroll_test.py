@@ -6,7 +6,11 @@ import numpy as np
 
 import dace
 from dace.sdfg.state import LoopRegion
+from dace.transformation.passes.canonicalize import canonicalize
+from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.parallelization_prep import ShortLoopUnroll
+
+M = dace.symbol("M")
 
 
 def _num_loops(sdfg: dace.SDFG) -> int:
@@ -100,6 +104,28 @@ def test_short_loop_unroll_branchy_and_straightline_value_preserving() -> None:
     assert out[0] == expected
 
 
+@dace.program
+def short_recurrence(A: dace.float64[M, 3]):
+    for i in range(M):
+        for k in range(1, 3):
+            A[i, k] = np.sin(A[i, k - 1])
+
+
+def test_the_canonical_form_keeps_a_short_loop_and_the_cpu_finalize_unrolls_it():
+    """Unrolling is a target's choice: canonicalization keeps the two-trip recurrence, the CPU finalize unrolls it."""
+    sdfg = canonicalize(short_recurrence.to_sdfg(simplify=True))
+    assert _num_loops(sdfg) >= 1
+    finalize_for_target(sdfg, "cpu")
+    assert _num_loops(sdfg) == 0
+    A = np.random.default_rng(1).random((4, 3))
+    want = A.copy()
+    for k in range(1, 3):
+        want[:, k] = np.sin(want[:, k - 1])
+    sdfg(A=A, M=4)
+    assert np.allclose(A, want)
+
+
 if __name__ == "__main__":
     test_short_loop_unroll_gate_on_trip_count()
     test_short_loop_unroll_branchy_and_straightline_value_preserving()
+    test_the_canonical_form_keeps_a_short_loop_and_the_cpu_finalize_unrolls_it()
