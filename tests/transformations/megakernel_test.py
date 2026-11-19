@@ -14,7 +14,7 @@ import dace
 from dace.libraries.standard.nodes import ComputePersistentKernelRange
 from dace.libraries.standard.nodes.sync import Sync
 from dace.properties import CodeBlock
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.megakernel import MegaKernelOptimization
 from dace.transformation.passes.megakernel.discovery import GPU, find_chains, linear_chain
@@ -122,6 +122,23 @@ def test_host_work_between_loops_splits_them_into_two_chains():
     sdfg.validate()
 
     assert [chain.blocks for chain in chains_of(sdfg)] == [[first], [second]]
+
+
+def test_a_loop_that_breaks_still_finds_its_kernel():
+    """A jump block (``break``) holds no state, so it reads and writes nothing (poisson_cg_3d's solver loop)."""
+    sdfg = gpu_sdfg("megakernel_break")
+    loop = add_time_loop(sdfg, "solve")
+    guard = ConditionalBlock("converged")
+    loop.add_node(guard)
+    loop.add_edge(loop.start_block, guard, dace.InterstateEdge())
+    branch = ControlFlowRegion("stop", sdfg=sdfg)
+    branch.add_node(BreakBlock("stop_break"), is_start_block=True)
+    guard.add_branch(CodeBlock("t > 3"), branch)
+    sdfg.validate()
+
+    kernels = [kernel for chain in chains_of(sdfg) for kernel in chain.kernels]
+
+    assert [entry.map.label for entry in kernels] == ["solve_kernel_map"]
 
 
 def test_a_loop_whose_condition_reads_data_keeps_only_its_body():

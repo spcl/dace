@@ -129,6 +129,8 @@ def device_state(state: SDFGState, target: Target) -> bool:
 def states_in(block: ControlFlowBlock) -> list[SDFGState]:
     if isinstance(block, SDFGState):
         return [block]
+    if isinstance(block, (BreakBlock, ContinueBlock, ReturnBlock)):
+        return []  # a jump holds no state
     return [b for b in block.all_control_flow_blocks() if isinstance(b, SDFGState)]
 
 
