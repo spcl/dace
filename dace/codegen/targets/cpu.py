@@ -4057,7 +4057,12 @@ class CPUCodeGen(TargetCodeGenerator):
             is_scalar = isinstance(desc, data.Scalar)
             declare = None
             if is_scalar:
-                clause_target = var_name
+                # A scalar the scope holds by pointer (an outlined body's argument) is reduced as its one element
+                try:
+                    by_pointer = self._dispatcher.defined_vars.get(var_name)[0] == DefinedType.Pointer
+                except KeyError:
+                    by_pointer = False
+                clause_target = f"{var_name}[0:1]" if by_pointer else var_name
             elif array_reductions_enabled(sdfg):
                 # An array-section reduction privatizes its section per thread for the region; only
                 # a provably contiguous buffer is eligible, anything else falls through to the atomic
