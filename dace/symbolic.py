@@ -3852,6 +3852,8 @@ _PYSTR2SYM_locals = {
     "var": sympy.Symbol("var"),
     "root": sympy.Symbol("root"),
     "arg": sympy.Symbol("arg"),
+    # sympy's ``poly`` function would swallow a variable of that name (a CRC polynomial)
+    "poly": sympy.Symbol("poly"),
     "Is": Is,
     "IsNot": IsNot,
     "BitwiseAnd": bitwise_and,
