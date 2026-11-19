@@ -115,6 +115,38 @@ def nvcc_library(rendering: Rendering, directory: pathlib.Path, name: str) -> pa
     return library
 
 
+def test_the_conflict_atomic_compiles_for_one_and_two_byte_accumulators(tmp_path: pathlib.Path):
+    """A ``bool`` accumulator (bfs' visited flags, bellman_ford's change flag) once hit the ``static_assert`` that
+    wants a 4- or 8-byte word; nvcc compiles the helper for each width, without a GPU."""
+    nvcc = shutil.which("nvcc")
+    if nvcc is None:
+        pytest.skip("nvcc is not on PATH")
+    from dace.cpf_lowering import HIP_DEVICE_BLOCKS
+
+    source = tmp_path / "atomic.cu"
+    source.write_text(
+        "#include <cstdint>\n#include <cstring>\n#include <type_traits>\n#include <cuda_fp16.h>\n"
+        + HIP_DEVICE_BLOCKS["cpf_gpu_atomic"]
+        + "struct any_of { __device__ bool operator()(bool a, bool b) const { return a || b; } };\n"
+        "struct plus { template <typename T> __device__ T operator()(T a, T b) const { return a + b; } };\n"
+        "__global__ void widths(bool *flag, char *c, __half *h, float *f, double *d) {\n"
+        "    cpf_gpu_atomic(flag, true, any_of());\n"
+        "    cpf_gpu_atomic(c, 1, plus());\n"
+        "    cpf_gpu_atomic(h, 1.0f, plus());\n"
+        "    cpf_gpu_atomic(f, 1.0f, plus());\n"
+        "    cpf_gpu_atomic(d, 1.0, plus());\n"
+        "}\n"
+    )
+
+    result = subprocess.run(
+        [nvcc, "-std=c++17", "-arch=sm_80", "-c", str(source), "-o", str(tmp_path / "atomic.o")],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize("label,program", PROGRAMS, ids=PROGRAM_IDS)
 def test_an_offloaded_kernel_renders_as_cuda_units_with_the_host_entry_prototype(label: str, program: DaceProgram):
     name = f"cpf_cuda_{label}"

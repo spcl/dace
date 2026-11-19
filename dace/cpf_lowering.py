@@ -1499,7 +1499,21 @@ __device__ inline To cpf_bit_cast(const From &from) {
 }
 template <typename T, typename V, typename Op>
 __device__ inline void cpf_gpu_atomic(T *address, V value, Op op) {
-    if constexpr (sizeof(T) == 2) {
+    if constexpr (sizeof(T) == 1) {
+        // a one-byte accumulator (bool, char): the same swap of its aligned 32-bit word, one byte of it
+        const uintptr_t at = reinterpret_cast<uintptr_t>(address);
+        unsigned int *word = reinterpret_cast<unsigned int *>(at & ~uintptr_t(3));
+        const unsigned int shift = static_cast<unsigned int>(at & 3) * 8u;
+        const T operand = static_cast<T>(value);
+        unsigned int old = *word;
+        unsigned int assumed;
+        do {
+            assumed = old;
+            const T updated = op(cpf_bit_cast<T>(static_cast<unsigned char>(assumed >> shift)), operand);
+            const unsigned int bits = static_cast<unsigned int>(cpf_bit_cast<unsigned char>(updated)) << shift;
+            old = atomicCAS(word, assumed, (assumed & ~(0xFFu << shift)) | bits);
+        } while (assumed != old);
+    } else if constexpr (sizeof(T) == 2) {
         const uintptr_t at = reinterpret_cast<uintptr_t>(address);
         unsigned int *word = reinterpret_cast<unsigned int *>(at & ~uintptr_t(3));
         const unsigned int shift = (at & 2) ? 16u : 0u;
