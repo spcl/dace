@@ -4591,6 +4591,17 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return None
         return tuple(self.c_type(argument) for argument in arguments)
 
+    def c_integral(self, expr) -> bool:
+        """Whether ``expr`` prints as a C integer value."""
+        dtype = self.c_type(expr)
+        return dtype in cpf_lowering.C_INTEGER_RANKS or dtype in cpf_lowering.C_INTEGER_PROMOTIONS
+
+    def double_cast(self, value: str) -> str:
+        """``value`` converted to double: a functional cast in C++, a cast expression in C."""
+        if self.dialect is cpf_lowering.Dialect.STANDALONE_C:
+            return "((double)(%s))" % value
+        return "double(%s)" % value
+
     def c_power_exponent_type(self, base_type: str | None) -> str:
         return cpf_lowering.pow_exponent_type(base_type, "float32" if self.fp_ctype == "float" else "float64")
 
@@ -4632,6 +4643,8 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             if types is None or any(dtype is None for dtype in types):
                 return None
             if expr.exp.is_Integer:
+                if expr.exp.is_negative and self.c_integral(expr.args[0]):
+                    return "float64"
                 return cpf_lowering.c_common_type(types[:1])
             if expr.exp == sympy.Rational(1, 2):
                 return cpf_lowering.c_math_result_type("sqrt", types[:1])
@@ -4827,6 +4840,9 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             negative = int_exp < 0
             if negative:
                 int_exp = -int_exp
+                if self.cpp_mode and self.c_integral(expr.args[0]):
+                    # Python's ``int ** -k`` is a float: an integer reciprocal truncates to zero.
+                    base = self.double_cast(base)
             res = f"({base})"
             for _ in range(1, int_exp):
                 res += f" * ({base})"
