@@ -421,3 +421,18 @@ def test_a_time_step_loop_is_not_tiled():
     middle axis would tile, running every step per plane at stride ``M * M``; a step costs one barrier instead."""
     sdfg = finalized(stencil_steps, "stencil_steps")
     assert not is_tiled(sdfg), "a time-step loop must keep its per-step team, not tile a strided axis"
+
+
+def test_the_thread_count_reaches_a_map_two_nested_sdfgs_down():
+    """The thread count is declared at the top level only (frame code defines it); a nested SDFG two levels down
+    that sizes its stripes by it declares it, and every nested SDFG above maps it by name (qe_vexx_k)."""
+    top, middle, inner = dace.SDFG("top"), dace.SDFG("middle"), dace.SDFG("inner")
+    top.add_symbol(smi.THREADS_SYMBOL.name, dace.int64)
+    outer_node = top.add_state().add_nested_sdfg(middle, {}, {})
+    inner_node = middle.add_state().add_nested_sdfg(inner, {}, {})
+
+    smi.reach(inner, smi.THREADS_SYMBOL)
+
+    assert smi.THREADS_SYMBOL.name in inner.symbols and smi.THREADS_SYMBOL.name in middle.symbols
+    assert str(inner_node.symbol_mapping[smi.THREADS_SYMBOL.name]) == smi.THREADS_SYMBOL.name
+    assert str(outer_node.symbol_mapping[smi.THREADS_SYMBOL.name]) == smi.THREADS_SYMBOL.name

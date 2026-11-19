@@ -1240,6 +1240,8 @@ def cut_into_tiles(statement: Statement, tile: Any, size: Any) -> None:
     :param tile: the tile loop's parameter symbol.
     :param size: positions per tile.
     """
+    if THREADS_SYMBOL.name in symbolic.symlist(size):
+        reach(statement.state.sdfg, THREADS_SYMBOL)
     for target in statement.targets:
         owner = target.owner
         ranges = list(owner.map.range.ranges)
@@ -1254,6 +1256,16 @@ def cut_into_tiles(statement: Statement, tile: Any, size: Any) -> None:
                 target.nested.symbol_mapping[symbol.name] = symbol
                 if symbol.name not in target.nested.sdfg.symbols:
                     target.nested.sdfg.add_symbol(symbol.name, declared.get(symbol.name, NUM_THREADS_DTYPE))
+
+
+def reach(sdfg: SDFG, symbol: symbolic.symbol) -> None:
+    """Make ``symbol`` (the thread count, which frame code defines) readable in ``sdfg``: declared there and mapped by
+    name through every nested SDFG above it, up to the top level, which declares it itself."""
+    while sdfg.parent_nsdfg_node is not None:
+        if symbol.name not in sdfg.symbols:
+            sdfg.add_symbol(symbol.name, NUM_THREADS_DTYPE)
+        sdfg.parent_nsdfg_node.symbol_mapping.setdefault(symbol.name, symbol)
+        sdfg = sdfg.parent_sdfg
 
 
 @properties.make_properties
