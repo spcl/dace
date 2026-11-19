@@ -158,7 +158,7 @@ def test_reading_both_orientations_keeps_the_square_intermediate():
     assert np.allclose(b, (a + 1.0) - (a + 1.0).T)
 
 
-# FuseMapsAtSharedAxes + MapFusionVertical, a reduction over the unshared axis fused in place (Task 1)
+# FuseMapsAtSharedAxes + MapFusionVertical, a reducing producer stays separate (Task 1)
 
 
 @dace.program
@@ -179,9 +179,10 @@ def canon_fusion_total_sum(A: dace.float64[N, M], B: dace.float64[N]):
         B[i] = T[0] * 2.0
 
 
-def test_row_sums_reduce_inside_the_map_that_scales_them():
+def test_row_sums_stay_a_separate_reduction():
+    """Fused, each row sum would run sequentially inside the scaling map (8 rows: 19x slower on GH200)."""
     sdfg = canon_cpu(canon_fusion_row_sums)
-    assert reduces_inside_map_writing(sdfg, "B")
+    assert not reduces_inside_map_writing(sdfg, "B")
     a = np.random.default_rng(4).random((10, 6))
     b = np.zeros(10)
     sdfg(A=a, B=b, N=10, M=6)

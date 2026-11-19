@@ -222,19 +222,10 @@ Why the general refusal holds. A privatized buffer has no start value: the WCR n
 reduction (an earlier zero fill), and the buffer would start from garbage. Also, if another iteration contributes to
 `T[i]`, no single fused iteration holds the finished sum.
 
-Safe sub-case, implemented under `relaxed_dataflow`. The intermediate is fused in place (the container keeps the start
-value), and no other iteration of the first Map reduces into the elements this iteration reduces into
-(`other_iterations_miss(first_map, [wcr subset], [wcr subset])`, the same test the in-place path already uses). Proof:
-in the fused body the consumer reads `T` from the node that the WCR edge enters, so it runs after every contribution
-of this iteration (an inner Map's exit completes before its successors). No other iteration touches those elements,
-so the value read is `start + sum over this iteration`, which is what the unfused consumer read. The rebuilt edge
-behind the fused Map is a plain ordering copy, so its `wcr` is cleared; a copied WCR would add `T` onto itself.
-Code: `in_place_intermediates` adds a WCR intermediate that the second Map reads. `partition_first_outputs` admits the
-WCR edge only on that condition. `handle_intermediate_set` clears `wcr` on the in-place rebuild. `T` stays full size:
-shrinking it would need a seed copy-in, which is a code change, not a fusion.
-Tests: `tests/passes/canonicalize/fuse_maps_at_shared_axes_test.py`
-(`test_a_reduction_over_the_unshared_axis_completes_inside_the_fused_iteration`, numeric;
-`test_a_reduction_every_iteration_contributes_to_keeps_the_producer`, `T[0] += A[i, k]`).
+A safe sub-case (intermediate fused in place, no other iteration reducing into the same elements) was implemented in
+`9eb13f896` and removed again: fused, the reduction runs sequentially inside every consumer iteration. On GH200 an
+8-column sum went from 17.4 ms to 339 ms, and 64 columns gained nothing (64.0 ms against 64.2 ms). Test:
+`tests/canonicalize/canon_fusion_fixes_integration_test.py` (`test_row_sums_stay_a_separate_reduction`).
 
 ### Overlapping producers (`:1108`)
 
@@ -294,7 +285,7 @@ Tests: `fuse_maps_at_shared_axes_test.py`
 
 `tests/canonicalize/canon_fusion_fixes_integration_test.py` runs small numpy kernels through `canonicalize` and
 `finalize_for_target(..., 'cpu')`, then compares against numpy. Each fix gets a positive case and a counterexample:
-the shared-axes column pairing (`4aa8b9969`), the transposed-read pairing (`40e531a57`), the in-place reduction, the
+the shared-axes column pairing (`4aa8b9969`), the transposed-read pairing (`40e531a57`), the reduction kept separate, the
 downstream access, and the extent spelling. A full-size transient left behind means not fused. For a reduction, the
 signal is a WCR edge or `Reduce` inside the map writing the result. The downstream counterexample asserts values only:
 through the pipeline another fusion order (second and third Map first, then in place) can fuse it legally.
