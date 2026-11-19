@@ -319,6 +319,17 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
         # them to decide pointer vs. value. Storage defaults above already hold.
         infer_types.infer_connector_types(sdfg)
 
+    # The experimental CUDA code generator selects memory engine copies in its preprocessing, which runs after the
+    # expansion below has already given every copy node a default implementation
+    if config.Config.get("compiler", "cuda", "implementation") == "experimental" and config.Config.get_bool(
+        "compiler", "cuda", "memory_engine_copies"
+    ):
+        from dace.transformation import pass_pipeline as ppl
+        from dace.transformation.passes.insert_memory_engine_bulk_copies import InsertMemoryEngineBulkCopies
+
+        ppl.Pipeline([InsertMemoryEngineBulkCopies()]).apply_pass(sdfg, {})
+        infer_types.infer_connector_types(sdfg)
+
     # GPU device maps nested in kernels become guarded or grid-strided parts of their kernel
     from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
 
