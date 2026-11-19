@@ -310,6 +310,30 @@ def test_a_loop_shorter_than_the_block_count_still_scans_exactly():
     np.testing.assert_array_equal(actual, expected)
 
 
+@dace.program
+def dfa_into_out(trans: dace.int64[NS, NA], symbols: dace.int64[N], out: dace.int64[NS]):
+    state = 0
+    for i in range(N):
+        state = trans[state, symbols[i]]
+        out[state] += 1
+
+
+def test_a_program_with_an_array_named_out_lifts_and_counts_the_same():
+    """The seed tasklet's connector must not take the name of an array of the program (max_pooling_2d's ``out``)."""
+    rng = np.random.default_rng(5)
+    trans, symbols = automaton(rng, 8, 3, 5)
+    expected = np.zeros(8, np.int64)
+    reference_dfa(trans, symbols, expected)
+    sdfg = before_lifting(dfa_into_out)
+    LoopToStateScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    actual = np.zeros(8, np.int64)
+
+    sdfg(trans=trans, symbols=symbols, out=actual, N=5, NS=8, NA=3)
+
+    np.testing.assert_array_equal(actual, expected)
+
+
 @pytest.mark.parametrize(
     "implementation, schedule",
     [

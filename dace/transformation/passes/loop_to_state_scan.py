@@ -113,9 +113,11 @@ def lift(loop: LoopRegion, node: StateScan, found: StepSlice) -> None:
     node.begin = begin
     node.end = end
     scan_state.add_node(node)
-    take = scan_state.add_tasklet("start_state", {}, {"out": None}, f"out = {found.symbol}")
+    # the program may have an array named like the connector, which validation refuses
+    conn = sdfg.find_new_symbol("out")
+    take = scan_state.add_tasklet("start_state", {}, {conn: None}, f"{conn} = {found.symbol}")
     start = scan_state.add_access(seed)
-    scan_state.add_edge(take, "out", start, None, Memlet(f"{seed}[0]"))
+    scan_state.add_edge(take, conn, start, None, Memlet(f"{seed}[0]"))
     scan_state.add_edge(start, None, node, INIT_CONNECTOR, Memlet(f"{seed}[0]"))
     for name in sorted(found.tables):
         scan_state.add_edge(scan_state.add_read(name), None, node, name, Memlet.from_array(name, sdfg.arrays[name]))
