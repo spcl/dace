@@ -840,10 +840,13 @@ class ExpandTransformation(PatternTransformation):
         if isinstance(expansion, SDFG):
             # Connector names only: a type inferred for the library node (a scalar for a one-element
             # memlet) no longer holds once the connector stands for the whole container it is connected to
+            # The node's symbolic properties (a BLAS alpha) may reach the expansion only through C++ code, which
+            # free-symbol detection does not read: map them, so a rename of the parent's symbol reaches them too.
             expansion = state.add_nested_sdfg(
                 expansion,
                 dict.fromkeys(node.in_connectors),
                 dict.fromkeys(node.out_connectors),
+                symbol_mapping={s: s for s in sorted(node.free_symbols)},
                 name=node.name,
                 debuginfo=node.debuginfo,
             )

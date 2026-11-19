@@ -170,6 +170,16 @@ def rewrite_text(text: str | None, repl: dict[str, str]) -> str | None:
     return pattern.sub(lambda m: repl[m.group(1)], text)
 
 
+def read_after(sdfg: SDFG, loop: LoopRegion, name: str) -> bool:
+    """Whether ``sdfg`` reads ``name`` outside ``loop``: the iterator's final value is live after it (a nest that
+    exports it), so a rename inside the loop alone would leave that read naming nothing."""
+    inside = OrderedSet(loop.all_control_flow_blocks())
+    inside_edges = OrderedSet(loop.all_interstate_edges())
+    blocks = (b for b in sdfg.all_control_flow_blocks() if b not in inside and isinstance(b, SDFGState))
+    edges = (e for e in sdfg.all_interstate_edges() if e not in inside_edges)
+    return any(name in b.free_symbols for b in blocks) or any(name in e.data.free_symbols for e in edges)
+
+
 def bare_name(value: object) -> str | None:
     text = str(value)
     return text if text.isidentifier() else None
@@ -261,7 +271,7 @@ class FunctionRenamer:
                 own: dict[str, str] = {}
                 inner_table = {**table, **block.new_symbols(table)}
                 name = block.loop_variable
-                if name and is_generated(name):
+                if name and is_generated(name) and not read_after(self.sdfg, block, name):
                     own[name] = iteration_name(
                         len(enclosing), self.taken | self.outer_symbols | OrderedSet(enclosing), name
                     )
