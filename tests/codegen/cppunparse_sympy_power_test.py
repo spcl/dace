@@ -33,6 +33,22 @@ def test_fractional_exponent_is_real_in_standalone_dialects():
             assert symbolic.symstr(base ** (count / 3), cpp_mode=True) == f"({unparsed})"
 
 
+def test_negative_power_of_an_integer_is_real():
+    # Python's ``int ** -k`` is a float; an integer reciprocal truncates it to zero (the inverse FFT's ``N**(-3)``)
+    expected = {
+        cpf_lowering.Dialect.RUNTIME: "reciprocal(dace::math::ipow(dace::float64(neg_pow_n), 3))",
+        cpf_lowering.Dialect.STANDALONE: "(1 / (ipow(double(neg_pow_n), 3)))",
+        cpf_lowering.Dialect.STANDALONE_C: "(1 / (cpf_ipow_float64(((double)(neg_pow_n)), 3)))",
+    }
+    for dialect, unparsed in expected.items():
+        with cpf_lowering.dialect_scope(dialect):
+            for source in ("neg_pow_n ** -3", "neg_pow_n ** (-3.0)"):
+                tree = ast.parse(source, mode="eval").body
+                symbols = {"neg_pow_n": dace.int64}
+                assert cppunparse.cppunparse(tree, expr_semicolon=False, defined_symbols=symbols) == unparsed
+
+
 if __name__ == "__main__":
     test_an_ipow_of_a_symbol_converts_to_its_cpp_spelling()
     test_fractional_exponent_is_real_in_standalone_dialects()
+    test_negative_power_of_an_integer_is_real()

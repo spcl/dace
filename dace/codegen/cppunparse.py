@@ -439,6 +439,8 @@ class CPPUnparser:
             return None
         power = numeric_power_value(node.right)
         if power is not None and int(power) == power:
+            if power < 0 and self.c_integral(node.left):
+                return "float64"
             return cpf_lowering.c_common_type((base,))
         if power is not None and float(power) in (0.5, -0.5):
             return cpf_lowering.c_math_result_type("sqrt", (base,))
@@ -446,6 +448,11 @@ class CPPUnparser:
             return cpf_lowering.c_math_result_type("pow", (base, base))
         exponent = self.c_type(node.right)
         return None if exponent is None else cpf_lowering.c_math_result_type("pow", (base, exponent))
+
+    def c_integral(self, node: ast.AST) -> bool:
+        """Whether ``node`` prints as a C integer value."""
+        dtype = self.c_type(node)
+        return dtype is not None and cpf_lowering.c_common_type((dtype,)) in cpf_lowering.C_INTEGER_RANKS
 
     def c_name_dtype(self, name: str):
         """The type the caller declared ``name`` with, or ``None``."""
@@ -1407,9 +1414,13 @@ class CPPUnparser:
             if power is not None and int(power) == power:
                 negative = power < 0
                 power = int(-power if negative else power)
+                left = t.left
+                if negative and self.c_integral(left):
+                    # Python's ``int ** -k`` is a float: an integer reciprocal truncates to zero.
+                    left = ast.Call(func=ast.Name(id="float64", ctx=ast.Load()), args=[left], keywords=[])
                 if cpf_lowering.standalone_c() and not negative:
                     # A literal non-negative power is a product, which C spells without argument types.
-                    operand = "(%s)" % self.render(t.left)
+                    operand = "(%s)" % self.render(left)
                     self.write("1" if power == 0 else operand if power == 1 else "(%s)" % " * ".join([operand] * power))
                     return
                 base = (
@@ -1417,8 +1428,8 @@ class CPPUnparser:
                     if power == 0
                     else runtime_call(
                         "dace::math::ipow",
-                        [self.render(t.left), str(power)],
-                        self.c_argument_types([t.left, ast.Constant(value=power)]),
+                        [self.render(left), str(power)],
+                        self.c_argument_types([left, ast.Constant(value=power)]),
                     )
                 )
                 self.write(runtime_call("reciprocal", [base]) if negative else "(%s)" % base)
