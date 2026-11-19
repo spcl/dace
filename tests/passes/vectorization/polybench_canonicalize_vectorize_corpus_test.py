@@ -46,7 +46,6 @@ UNTILED_KERNELS = frozenset(
         "adi",
         "atax",
         "bicg",
-        "correlation",
         "doitgen",
         "k3mm",
         "syr2k",
