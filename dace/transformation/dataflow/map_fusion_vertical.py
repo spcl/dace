@@ -1043,9 +1043,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 if isinstance(producer_edge.src, nodes.AccessNode) and self.is_view(producer_edge.src, sdfg):
                     return None
                 # A reduction into the container fused in place is complete when the fused body reads it, as long as
-                #  no other iteration reduces into this iteration's elements (the reduction axis is an inner Map).
+                #  no other iteration reduces into this iteration's elements (the reduction axis is an inner Map). Not
+                #  over a small kept axis (a literal below 64 or SMALL): its few iterations cannot share out, and the
+                #  reduction, now inner, runs sequentially (an 8-column sum: 19x slower on GH200).
                 if producer_edge.data.wcr is not None and not (
                     intermediate_node.data in in_place
+                    and not symbolic.is_small_extent(second_map_entry.map.range.num_elements(), facts)
                     and isinstance(producer_edge.data.dst_subset, subsets.Range)
                     and self.other_iterations_miss(
                         first_map_exit.map, [producer_edge.data.dst_subset], [producer_edge.data.dst_subset], facts

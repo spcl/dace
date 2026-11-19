@@ -188,6 +188,26 @@ def test_row_sums_reduce_inside_the_map_that_scales_them():
     assert np.allclose(b, 2.0 * a.sum(axis=1))
 
 
+@dace.program
+def canon_fusion_eight_row_sums(A: dace.float64[8, M], B: dace.float64[8]):
+    T = np.zeros(8, dtype=np.float64)
+    for i, k in dace.map[0:8, 0:M]:
+        T[i] += A[i, k]
+    for i in dace.map[0:8]:
+        B[i] = T[i] * 2.0
+
+
+def test_row_sums_over_a_small_kept_axis_stay_a_separate_reduction():
+    """Eight rows: fused, the eight iterations cannot share out and each sum runs sequentially inside (19x slower on
+    GH200), so the reduction keeps its own map."""
+    sdfg = canon_cpu(canon_fusion_eight_row_sums)
+    assert not reduces_inside_map_writing(sdfg, "B")
+    a = np.random.default_rng(14).random((8, 50))
+    b = np.zeros(8)
+    sdfg(A=a, B=b, M=50)
+    assert np.allclose(b, 2.0 * a.sum(axis=1))
+
+
 def test_a_total_sum_completes_before_the_map_that_reads_it():
     sdfg = canon_cpu(canon_fusion_total_sum)
     assert not reduces_inside_map_writing(sdfg, "B")
