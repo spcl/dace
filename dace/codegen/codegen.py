@@ -10,8 +10,9 @@ from dace.codegen.instrumentation import InstrumentationProvider
 from dace.codegen.targets import framecode
 from dace.config import Config
 from dace.sdfg import SDFG, infer_types
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
+from dace.transformation.passes.multiple_buffering import LowerMultipleBuffering
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
@@ -295,6 +296,12 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
         # where explicit control flow was not used, continue to work as expected.
         FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
 
+    # Lower multiple buffering into plain loops, before anything below reads or copies the loop bodies
+    if any(
+        isinstance(cfg, LoopRegion) and cfg.pipeline_depth >= 2 for cfg in sdfg.all_control_flow_regions(recursive=True)
+    ):
+        LowerMultipleBuffering().apply_pass(sdfg, {})
+
     # Before generating the code, run type inference on the SDFG connectors
     infer_types.infer_connector_types(sdfg)
 
@@ -317,6 +324,17 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
         InsertExplicitCopies().apply_pass(sdfg, {})
         # The nodes just inserted carry no inferred connector types, and the expansion below reads
         # them to decide pointer vs. value. Storage defaults above already hold.
+        infer_types.infer_connector_types(sdfg)
+
+    # The experimental CUDA code generator selects memory engine copies in its preprocessing, which runs after the
+    # expansion below has already given every copy node a default implementation
+    if config.Config.get("compiler", "cuda", "implementation") == "experimental" and config.Config.get_bool(
+        "compiler", "cuda", "memory_engine_copies"
+    ):
+        from dace.transformation import pass_pipeline as ppl
+        from dace.transformation.passes.insert_memory_engine_bulk_copies import InsertMemoryEngineBulkCopies
+
+        ppl.Pipeline([InsertMemoryEngineBulkCopies()]).apply_pass(sdfg, {})
         infer_types.infer_connector_types(sdfg)
 
     # GPU device maps nested in kernels become guarded or grid-strided parts of their kernel
