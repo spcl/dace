@@ -74,7 +74,7 @@ def test_the_queue_follows_the_warp_size(backend: str, warp_size: int, state: in
         dace.config.Config.set("compiler", "cuda", "dynamic_map_block_size", value="128,1,1")
         code = "\n".join(c.code for c in sdfg.generate_code())
     assert f"dace::DynamicMap<true, 128, {warp_size}, int>::block_claim(" in code
-    assert f"__shared__ int __dace_dynmap_state[{state}];" in code
+    assert f"__shared__ __align__(128) int __dace_dynmap_state[{state}];" in code
     # A warp barrier publishes the lists of the warps on CUDA
     assert ("__syncwarp();" in code) == (backend == "cuda")
 
@@ -99,7 +99,7 @@ def test_the_dynamic_maps_of_a_kernel_share_one_queue_state():
             node.map.schedule = dace.ScheduleType.GPU_ThreadBlock_Dynamic
     code = "\n".join(c.code for c in sdfg.generate_code())
     assert code.count("::open(") == 2
-    assert code.count("__shared__ int __dace_dynmap_state[") == 1
+    assert code.count("__shared__ __align__(128) int __dace_dynmap_state[") == 1
 
 
 def test_what_is_ordered_after_a_dynamic_map_still_runs_after_it():

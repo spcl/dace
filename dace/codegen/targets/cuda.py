@@ -88,6 +88,16 @@ def _expr(val):
     return val
 
 
+#: Connectors through which memory engine copies and waits use an mbarrier in ``GPU_Shared`` memory
+_MBARRIER_CONNECTORS = ("_tma_bar", "_bar")
+
+
+def _only_feeds_mbarrier_operations(state: SDFGState, node: nodes.AccessNode) -> bool:
+    """Whether every read of ``node`` is the mbarrier of a memory engine copy or wait, which synchronize through the
+    barrier itself and need no ``__syncthreads()`` before them."""
+    return all(state.memlet_path(e)[-1].dst_conn in _MBARRIER_CONNECTORS for e in state.out_edges(node))
+
+
 def cpu_to_gpu_cpred(sdfg, state, src_node, dst_node):
     """Copy predicate from CPU to GPU that determines when a copy is illegal.
     Returns True if copy is illegal, False otherwise.
@@ -565,7 +575,9 @@ class CUDACodeGen(TargetCodeGenerator):
                 )
             if nodedesc.start_offset != 0:
                 raise NotImplementedError("Start offset unsupported for shared memory")
-            result_decl.write(f"__shared__ {nodedesc.dtype.ctype} {dataname}[{sym2cpp(arrsize)}];\n")
+            result_decl.write(
+                f"__shared__ __align__({STATIC_SHARED_MEMORY_ALIGNMENT}) {nodedesc.dtype.ctype} {dataname}[{sym2cpp(arrsize)}];\n"
+            )
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
             if node.setzero:
                 self._reset_shared(dataname, nodedesc, cfg, state_id, node, result_alloc)
@@ -1557,6 +1569,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     and node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared
                     and state.in_degree(node) == 0
                     and state.out_degree(node) > 0
+                    and not _only_feeds_mbarrier_operations(state, node)
                 ):
                     if not self._scope_has_collaborative_copy:
                         callsite_stream.write("__syncthreads();", cfg, state.block_id)
@@ -1846,6 +1859,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         kernel_args_typed = [
             ("const " if k in const_params else "") + v.as_arg(name=k) for k, v in prototype_kernel_args.items()
         ]
+        # Only the ``__global__`` prototype may carry ``__grid_constant__``, not the host launcher
+        kernel_proto_args_typed = [
+            ("const __grid_constant__ " if is_grid_constant(v) else "const " if k in const_params else "")
+            + v.as_arg(name=k)
+            for k, v in prototype_kernel_args.items()
+        ]
 
         kernel_stream = CodeIOStream()
         self.generate_kernel_scope(
@@ -1872,7 +1891,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Write kernel prototype
         self._localcode.write(
             "__global__ void {} {} {}({}) {{\n".format(
-                maxnreg_str, launch_bounds, kernel_name, ", ".join(kernel_args_typed + extra_kernel_args_typed)
+                maxnreg_str, launch_bounds, kernel_name, ", ".join(kernel_proto_args_typed + extra_kernel_args_typed)
             ),
             cfg,
             state_id,
@@ -3022,6 +3041,16 @@ def _topy(arr):
 
 # The dynamic shared memory of a kernel, which the flat buffers of ``gpu_shared_memory`` refer to
 _DYNAMIC_SHARED_MEMORY_SYMBOL = "__dace_dynsmem_extern"
+
+#: Alignment (bytes) of static shared memory arrays; the memory engine (TMA) needs 128 bytes.
+STATIC_SHARED_MEMORY_ALIGNMENT = 128
+
+
+def is_grid_constant(desc: dt.Data) -> bool:
+    """True if ``desc`` must be a ``__grid_constant__`` kernel parameter.
+
+    For now this only includes the TMA descriptor."""
+    return isinstance(desc, dt.Scalar) and desc.dtype.ctype == "CUtensorMap"
 
 
 def _widen_register(register: str, dtype: dtypes.typeclass) -> str:

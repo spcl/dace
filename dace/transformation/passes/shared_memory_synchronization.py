@@ -6,9 +6,14 @@ import warnings
 
 import dace
 from dace import SDFG, SDFGState, dtypes, properties
+from dace.libraries.standard.nodes.copy.common import (
+    MEMORY_ENGINE_BARRIER_INPUT_NAME,
+    MEMORY_ENGINE_BARRIER_OUTPUT_NAME,
+)
 from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.libraries.tileops.expansions import TILE_THREADS_MAP
 from dace.optionals import required
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_map_entry
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG, Node, Tasklet
 from dace.sdfg.scope import is_in_scope
@@ -68,6 +73,11 @@ class DefaultSharedMemorySync(ppl.Pass):
     Barriers stay outside thread-block maps, where thread divergence would deadlock them. So a shared-memory write in
     a sequential map or loop nested in a thread-block map only warns, a write-then-read inside one thread-block map
     is not synchronized, and nested thread-block maps sync at the outermost exit.
+
+    Memory engine (TMA) writes get no barrier: a load completes on an mbarrier, whose wait makes the data visible to
+    every waiting thread (and placing it is up to the copy or ``InsertAsyncWaits``), and the tasklets initializing
+    or invalidating mbarriers synchronize themselves. They are recognized by their ``_tma_bar`` input and
+    ``_tma_bar_out`` output connectors.
     """
 
     def apply_pass(self, sdfg: SDFG, _):
@@ -102,6 +112,8 @@ class DefaultSharedMemorySync(ppl.Pass):
         ):
             return False
         if all(edge.data.is_empty() for edge in state.in_edges(node)):
+            return False
+        if all(is_memory_engine_write(edge, state) for edge in state.in_edges(node) if not edge.data.is_empty()):
             return False
         return is_in_scope(state.sdfg, state, node, [dtypes.ScheduleType.GPU_Device]) and not is_in_scope(
             state.sdfg, state, node, [dtypes.ScheduleType.GPU_ThreadBlock]
@@ -180,6 +192,21 @@ class DefaultSharedMemorySync(ppl.Pass):
             for succ in state.successors(node):
                 state.add_edge(sync, None, succ, None, dace.Memlet())
             state.add_edge(node, None, sync, None, dace.Memlet())
+
+
+def is_memory_engine_write(edge: MultiConnectorEdge[dace.Memlet], state: SDFGState) -> bool:
+    """Whether ``edge`` is written by a memory engine load or an mbarrier initialization, which synchronize through
+    their mbarriers and need no block barrier.
+
+    :param edge: An edge writing an access node.
+    :param state: The state holding ``edge``.
+    """
+    src = state.memlet_path(edge)[0].src
+    if not isinstance(src, Tasklet):
+        return False
+    return (
+        MEMORY_ENGINE_BARRIER_INPUT_NAME in src.in_connectors or MEMORY_ENGINE_BARRIER_OUTPUT_NAME in src.out_connectors
+    )
 
 
 def nested_in_threadblock_map(state: SDFGState, map_entry: MapEntry) -> bool:

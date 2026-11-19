@@ -11,5 +11,6 @@ from dace.libraries.standard.nodes.copy.expansions.memcpy_cuda1d import ExpandMe
 from dace.libraries.standard.nodes.copy.expansions.memcpy_cuda2d import ExpandMemcpyCUDA2D
 from dace.libraries.standard.nodes.copy.expansions.memcpy_cuda_nd import ExpandMemcpyCUDANDStrided
 from dace.libraries.standard.nodes.copy.expansions.memcpy_cuda_hull import ExpandMemcpyCUDAHull, ExpandMemcpyCUDAStaged
+from dace.libraries.standard.nodes.copy.expansions.memory_engine_bulk import ExpandMemoryEngineBulk
 from dace.libraries.standard.nodes.copy.expansions.shmem_collective import ExpandSharedMemoryCollective
 from dace.libraries.standard.nodes.copy.expansions.tasklet import ExpandTasklet

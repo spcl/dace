@@ -85,7 +85,11 @@ class GPUCodegenPreprocessPipeline(Pipeline):
     """One-shot GPU-codegen preparation: every transformation that brings an SDFG to a state the
     experimental CUDA codegen can emit. The constructor documents the sequencing constraints."""
 
-    def __init__(self):
+    def __init__(self, memory_engine_copies: bool | None = None):
+        """
+        :param memory_engine_copies: run ``InsertMemoryEngineBulkCopies``; ``None`` defers to
+                                     ``compiler.cuda.memory_engine_copies``.
+        """
         # Local imports: avoid circular import in ``dace.transformation`` package init.
         from dace.transformation.passes.demote_kernel_internal_arrays_to_scalars import (
             DemoteKernelInternalArraysToScalars,
@@ -100,7 +104,9 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         from dace.transformation.passes.gpu_specialization.grid_stride_kernels import GridStrideKernels
         from dace.transformation.passes.gpu_specialization.privatize_scatter_per_block import PrivatizeScatterPerBlock
         from dace.transformation.passes.gpu_specialization.promote_warp_tiles import PromoteWarpTiles
+        from dace.transformation.passes.insert_async_waits import InsertAsyncWaits
         from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
+        from dace.transformation.passes.insert_memory_engine_bulk_copies import InsertMemoryEngineBulkCopies
         from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
         from dace.transformation.passes.minimize_transients import MinimizeTransients
         from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
@@ -125,12 +131,19 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         #     grid-strides the kernels it privatizes itself, and its buffers are only ever addressed by codegen.
         #   * SynchronizeStreamUnawareGPUCallbacks after wiring -- its fence takes no stream connector.
         #   * ReinferConnectorTypes last -- earlier passes mutate NestedSDFG connector descriptors.
+        #   * InsertMemoryEngineBulkCopies (optional) between InsertExplicitCopies, which creates the copy
+        #     nodes, and ExpandLibraryNodes; before AddThreadBlockMaps, whose thread-block map would enclose
+        #     the copies, which the memory engine rejects. InsertAsyncWaits right after it, before expansion.
         strategy = AutoGPUStreamScheduler(synchronize_on_exit=Config.get("compiler", "cuda", "synchronize_on_exit"))
         scalar_promotion = PromoteScalarOutputsToArrays()
         scalar_promotion.gpu = True
         # The code generator validates the lowered SDFG when asked; the pass would validate it again.
         lower_nested_maps = NestedGPUDeviceMapLowering()
         lower_nested_maps.validate = False
+        if memory_engine_copies is None:
+            memory_engine_copies = Config.get_bool("compiler", "cuda", "memory_engine_copies")
+        # Memory engine loads are asynchronous by default: Their waits are placed before expansion
+        copy_selection = [InsertMemoryEngineBulkCopies(), InsertAsyncWaits()] if memory_engine_copies else []
         super().__init__(
             [
                 InferDefaultSchedulesAndStorages(),
@@ -140,6 +153,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
                 MakeTransientsPersistent(),
                 MinimizeTransients(),
                 InsertExplicitCopies(),
+                *copy_selection,
                 ExpandLibraryNodes(),
                 strategy,
                 GPUStreamWiring(strategy),

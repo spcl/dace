@@ -4878,6 +4878,14 @@ class LoopRegion(ControlFlowRegion):
         desc="The loop header when ``conflict_free_writes`` was recorded",
         serialize_if=lambda loop: bool(loop.conflict_free_header),
     )
+    pipeline_depth = Property(
+        dtype=int,
+        default=0,
+        category="Scheduling",
+        desc="Number of buffers the staged loads of this loop rotate through (multiple buffering). 0 or 1 disables "
+        "it. ``LowerMultipleBuffering`` lowers loops with a depth of 2 or more, and ``InsertAsyncWaits`` pipelines their "
+        "asynchronous memory engine (TMA) loads.",
+    )
 
     def __init__(
         self,
@@ -4891,6 +4899,7 @@ class LoopRegion(ControlFlowRegion):
         update_before_condition: bool = True,
         unroll: bool = False,
         unroll_factor: int = 0,
+        pipeline_depth: int = 0,
     ):
         super().__init__(label, sdfg)
 
@@ -4916,6 +4925,7 @@ class LoopRegion(ControlFlowRegion):
         self.update_before_condition = update_before_condition
         self.unroll = unroll
         self.unroll_factor = unroll_factor
+        self.pipeline_depth = pipeline_depth
         self._new_symbols_key = None
         self._new_symbols_value = {}
 
