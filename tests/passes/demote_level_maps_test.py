@@ -195,6 +195,7 @@ def test_a_row_map_reducing_into_its_own_element_stays_the_gpu_kernel():
     sdfg = row_reductions.to_sdfg(simplify=True)
     assert demote_uncoalesced_level_maps(sdfg) == 0
 
+
 @dace.program
 def scale_eight_columns(A: dace.float64[N, 8], C: dace.float64[N, 8]):
     for j in dace.map[0:8]:
