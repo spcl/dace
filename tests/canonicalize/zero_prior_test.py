@@ -14,10 +14,10 @@ from dace.libraries.blas import Einsum
 from dace.libraries.blas.nodes.gemv import Gemv
 from dace.libraries.blas.nodes.matmul import MatMul
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
-from dace.transformation.dataflow.lift_einsum import LiftEinsum
-from dace.transformation.passes.canonicalize.loop_to_einsum import LoopToEinsum
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
+from dace.transformation.dataflow.lift_einsum import LiftEinsum
+from dace.transformation.passes.canonicalize.loop_to_einsum import LoopToEinsum
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 N, K = (dace.symbol(s) for s in "NK")
