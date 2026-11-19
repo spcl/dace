@@ -345,7 +345,7 @@ def scope_misses(
                     continue
                 seen.add(name)
                 desc = state.parent.arrays[name]
-                nbytes = pystr_to_symbolic(desc.total_size_in_bytes)
+                nbytes = pystr_to_symbolic(desc.total_size_in_bytes).subs(mapping)
                 lib_node_misses += sp.ceiling(nbytes / clt.L)
             scope_misses += lib_node_misses
             update_map(op_in_map, get_uuid(node, state), lib_node_misses)
@@ -739,7 +739,9 @@ def analyze_sdfg_op_in(
         sympy_fs = {}
         for k, v in cache_miss_measurements.items():
             final_f, sympy_f, r_s = fit_curve(x_values[:-test_set_size], v[:-test_set_size], symbol_name)
-            op_in_map[k] = simplify(sympy_f * L, sdfg.facts())
+            # simplify takes only the expression; the stale second argument referenced
+            # SDFG.facts(), which does not exist, and crashed the range-simulation path
+            op_in_map[k] = simplify(sympy_f * L)
             sympy_fs[k] = sympy_f
             if k == get_uuid(sdfg):
                 # compute MAPE on total SDFG
