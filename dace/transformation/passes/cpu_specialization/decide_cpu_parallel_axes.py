@@ -291,14 +291,29 @@ def privatize_interior_transients(owner: SDFG, state: SDFGState, entry: nodes.Ma
         written = [n for n in local if any(not e.data.is_empty() for e in state.in_edges(n))]
         if isinstance(owner.arrays[name], data.View) or len(written) != len(local):
             return False
-        shared.append((name, local))
-    for name, local in shared:
+        # A memlet names its container on every edge of its path (a copy ``s -> map entry -> t`` is named ``t``
+        # through the entry), so the whole tree is renamed; one ending at an access of the container outside the
+        # scope would then name the wrong container.
+        path_edges = [
+            tree.edge
+            for node in local
+            for edge in state.all_edges(node)
+            for tree in state.memlet_tree(edge).root().traverse_children(include_self=True)
+            if tree.edge.data.data == name
+        ]
+        if any(
+            isinstance(end, nodes.AccessNode) and end.data == name and id(end) not in inside
+            for e in path_edges
+            for end in (e.src, e.dst)
+        ):
+            return False
+        shared.append((name, local, path_edges))
+    for name, local, path_edges in shared:
         fresh = owner.add_datadesc(name, copy.deepcopy(owner.arrays[name]), find_new_name=True)
         for node in local:
             node.data = fresh
-            for edge in state.all_edges(node):
-                if edge.data.data == name:
-                    edge.data.data = fresh
+        for edge in path_edges:
+            edge.data.data = fresh
     return True
 
 
