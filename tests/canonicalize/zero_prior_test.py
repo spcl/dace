@@ -11,9 +11,13 @@ import numpy as np
 
 import dace
 from dace.libraries.blas import Einsum
+from dace.libraries.blas.nodes.gemv import Gemv
+from dace.libraries.blas.nodes.matmul import MatMul
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.transformation.dataflow.lift_einsum import LiftEinsum
 from dace.transformation.passes.canonicalize.loop_to_einsum import LoopToEinsum
+from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 N, K = (dace.symbol(s) for s in "NK")
@@ -173,13 +177,22 @@ def gemver(
     w += alpha * A @ x
 
 
-def test_gemver_reduction_inits_fused_into_other_maps_become_overwrites():
-    """Fusion joins each matvec's zero init into a map computing something else (``beta * y``): only that store is
-    the identity, so the einsums overwrite and the stores go while the rest of the map stays."""
+def test_gemver_matvecs_are_lifted_and_overwrite_their_outputs():
+    """Both matvecs are lifted, each as a contraction node or as a parallel accumulation: an einsum overwrites its
+    output (its zero init is dropped), a ``MatMul`` writes a fresh one, and ``alpha * A @ x`` may run as an
+    accumulating map over its elementwise matrix without the ``N x N`` temporary. A matvec left as a loop fails."""
     sdfg = gemver.to_sdfg(simplify=True)
     canonicalize(sdfg, target="cpu", validate=True)
-    betas = [n.beta for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Einsum)]
-    assert betas and all(dace.symbolic.equal_valued(0, b) for b in betas), betas
+    assert not [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+    contractions = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, (Einsum, MatMul, Gemv))]
+    accumulations = [
+        n
+        for n, state in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.MapExit) and any(e.data.wcr is not None for e in state.out_edges(n))
+    ]
+    assert len(contractions) + len(accumulations) >= 2, (contractions, accumulations)
+    betas = [n.beta for n in contractions if isinstance(n, Einsum)]
+    assert all(dace.symbolic.equal_valued(0, b) for b in betas), betas
     n = 11
     rng = np.random.default_rng(2)
     args = dict(
@@ -203,4 +216,4 @@ if __name__ == "__main__":
     test_partial_zeros_are_folded_onto()
     test_nonzero_fill_is_folded_onto()
     test_zeros_ahead_of_an_accumulate_loop_become_an_overwrite()
-    test_gemver_reduction_inits_fused_into_other_maps_become_overwrites()
+    test_gemver_matvecs_are_lifted_and_overwrite_their_outputs()
