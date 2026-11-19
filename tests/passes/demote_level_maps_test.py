@@ -195,6 +195,29 @@ def test_a_row_map_reducing_into_its_own_element_stays_the_gpu_kernel():
     sdfg = row_reductions.to_sdfg(simplify=True)
     assert demote_uncoalesced_level_maps(sdfg) == 0
 
+@dace.program
+def scale_eight_columns(A: dace.float64[N, 8], C: dace.float64[N, 8]):
+    for j in dace.map[0:8]:
+        for i in dace.map[0:N]:
+            C[i, j] = A[i, j] * 2.0
+
+
+def test_a_plane_map_sequential_inside_the_level_map_is_rescheduled_once_demoted():
+    """Inside the column map the row map was sequential only because the column map enclosed it: once the columns
+    are a loop, the rows are top-level again and the schedule inference decides them (else all ran on one thread)."""
+    from dace.sdfg import nodes
+
+    sdfg = scale_eight_columns.to_sdfg(simplify=True)
+    for node, state in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.MapEntry) and node.map.params == ["i"]:
+            node.map.schedule = dace.ScheduleType.Sequential
+    assert demote_strided_level_maps(sdfg) == 1
+    rows = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry) and n.map.params == ["i"]]
+    assert rows and all(n.map.schedule == dace.ScheduleType.Default for n in rows)
+    a, c = np.random.default_rng(3).random((20, 8)), np.zeros((20, 8))
+    sdfg(A=a, C=c, N=20)
+    assert np.allclose(c, 2.0 * a)
+
 
 if __name__ == "__main__":
     test_a_row_map_over_csr_segments_stays_a_map()

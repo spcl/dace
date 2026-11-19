@@ -296,12 +296,23 @@ def demote_level_maps(sdfg: SDFG, pays: Callable[[str, list[Plane]], bool], reli
                 and some_plane_spans_every_level(sdfg, param, level.planes)
             ):
                 nested = [n for n in state.scope_children()[entry] if isinstance(n, nodes.NestedSDFG)]
-                candidates.append((entry, nested, level.distribute))
+                labels = {plane.map.label for _, _, plane in level.planes}
+                candidates.append((entry, nested, level.distribute, labels))
     # By node, not by state: inlining one body moves the rest of its state's dataflow into a fresh state.
-    for entry, nested, distribute in candidates:
+    for entry, nested, distribute, labels in candidates:
         loop = demote(sdfg, entry)
         for node in nested:
             inline_into(node)
+        # The planes were sequential only because the level map enclosed them; at the top level of the loop body the
+        # schedule inference decides them (an 8-column sum demoted over its columns ran its rows on one thread).
+        for node, owner in loop.all_nodes_recursive():
+            if (
+                isinstance(node, nodes.MapEntry)
+                and node.map.label in labels
+                and owner.entry_node(node) is None
+                and node.map.schedule == dtypes.ScheduleType.Sequential
+            ):
+                node.map.schedule = dtypes.ScheduleType.Default
         if distribute:
             parent = loop.parent_graph
             before = set(parent.nodes())
