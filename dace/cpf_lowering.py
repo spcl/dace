@@ -1322,10 +1322,16 @@ BASE_HEADERS: tuple[str, ...] = (
 #: includes them needs nothing a caller compiling for an AMD GPU does not already have -- the same
 #: standing OpenMP has on the host side, and the reason they are not what CPF exists to avoid.
 #: hipCUB supplies the device scan, reduce and arg-reduce the library nodes expand into.
-HIP_BASE_HEADERS: tuple[str, ...] = ("<hip/hip_runtime.h>", "<hip/hip_bf16.h>", "<hipcub/hipcub.hpp>")
+HIP_BASE_HEADERS: tuple[str, ...] = (
+    "<hip/hip_runtime.h>",
+    "<hip/hip_bf16.h>",
+    "<hipcub/hipcub.hpp>",
+    "<hip/hip_cooperative_groups.h>",
+)
 
 #: What a CUDA unit adds to :data:`BASE_HEADERS`, on the same footing: both ship with the CUDA toolkit.
-CUDA_BASE_HEADERS: tuple[str, ...] = ("<cuda_runtime.h>", "<cuda_bf16.h>", "<cub/cub.cuh>")
+#: Cooperative groups carry a megakernel's grid barrier (``Sync`` of the grid scope).
+CUDA_BASE_HEADERS: tuple[str, ...] = ("<cuda_runtime.h>", "<cuda_bf16.h>", "<cub/cub.cuh>", "<cooperative_groups.h>")
 
 #: What ``dace/dace.h`` supplies that a DEVICE unit still needs, written out inline.
 #:

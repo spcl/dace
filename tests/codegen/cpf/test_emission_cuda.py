@@ -157,6 +157,7 @@ def test_an_offloaded_kernel_renders_as_cuda_units_with_the_host_entry_prototype
     assert_standalone_units(rendering, name)
     for unit in (rendering.code, rendering.device_code):
         assert "#include <cuda_runtime.h>" in unit, "the CUDA toolkit headers"
+        assert "#include <cooperative_groups.h>" in unit, "a megakernel's grid barrier needs cooperative groups"
         assert re.findall(r"\bhip[A-Z]\w*", unit) == [], "a HIP runtime name is undeclared in a CUDA unit"
         assert "__dace_" not in unit, "the units must name nothing of the DaCe runtime"
     device = rendering.device_code
