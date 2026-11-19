@@ -139,7 +139,9 @@ def function_namespace(sdfg: SDFG) -> OrderedSet[str]:
 
 
 def rename_cpp_code(graph_nodes: Iterable[nodes.Node], repl: dict[str, str]) -> None:
-    """Rename identifiers in C++ tasklet code by token. ``replace_dict`` would shadow them with ``auto old = new;``."""
+    """Rename identifiers in C++ tasklet code by token: the body, and the code the tasklet places at file scope and
+    around the program. ``replace_dict`` would shadow them with ``auto old = new;``, which at file scope reads a
+    name that does not exist there (an external call's prototype naming a loop iterator: ``auto _loop_it_1 = i;``)."""
     if not repl:
         return
     pattern = re.compile(rf"\b({'|'.join(map(re.escape, repl))})\b")
@@ -149,6 +151,16 @@ def rename_cpp_code(graph_nodes: Iterable[nodes.Node], repl: dict[str, str]) -> 
             text = pattern.sub(lambda m: m.group(1) if m.group(1) in own else repl[m.group(1)], node.code.as_string)
             if text != node.code.as_string:
                 node.code = CodeBlock(text, dtypes.Language.CPP)
+            node.code_global = renamed_block(node.code_global, pattern, repl)
+            node.code_init = renamed_block(node.code_init, pattern, repl)
+            node.code_exit = renamed_block(node.code_exit, pattern, repl)
+
+
+def renamed_block(block: CodeBlock, pattern: re.Pattern[str], repl: dict[str, str]) -> CodeBlock:
+    """``block`` with every name of ``repl`` renamed by token; ``block`` itself when none occurs."""
+    text = block.as_string
+    renamed = pattern.sub(lambda m: repl[m.group(1)], text) if text else text
+    return block if renamed == text else CodeBlock(renamed, block.language)
 
 
 def rewrite_text(text: str | None, repl: dict[str, str]) -> str | None:

@@ -225,3 +225,33 @@ if __name__ == "__main__":
         test_a_nested_function_reuses_its_callers_names_and_states_a_repeated_bound_once(lang)
         test_a_temporary_named_like_an_argument_or_a_keyword_takes_a_numbered_name(lang)
         test_a_loop_comment_names_the_renamed_variables(lang)
+
+
+def test_a_tasklets_file_scope_code_takes_the_renamed_iterator_without_a_shadow():
+    """An external call's prototype names the loop iterator it receives (``tsvc_2_s231``): renaming the iterator to
+    ``i`` renames it in the prototype too. A ``replace_dict`` shadow there (``auto _loop_it_1 = i;``) would sit at
+    file scope, where ``i`` does not exist, and the unit would not compile."""
+    from dace.sdfg.state import LoopRegion
+    from dace.transformation.passes.readable_names import ReadableNames
+
+    sdfg = dace.SDFG("call_per_iteration")
+    sdfg.add_array("a", [10], dace.float64)
+    loop = LoopRegion("steps", "_loop_it_1 < 10", "_loop_it_1", "_loop_it_1 = 0", "_loop_it_1 = _loop_it_1 + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    call = body.add_tasklet(
+        "call",
+        set(),
+        {"out"},
+        "call_one(&out, _loop_it_1);",
+        language=dace.Language.CPP,
+        code_global='extern "C" void call_one(double* out, int64_t _loop_it_1);',
+    )
+    body.add_edge(call, "out", body.add_write("a"), None, dace.Memlet("a[_loop_it_1]"))
+
+    ReadableNames().apply_pass(sdfg, {})
+
+    (renamed,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
+    assert loop.loop_variable == "i"
+    assert renamed.code_global.as_string == 'extern "C" void call_one(double* out, int64_t i);'
+    assert "auto" not in renamed.code.as_string and "_loop_it_1" not in renamed.code.as_string
