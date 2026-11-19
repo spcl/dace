@@ -1042,18 +1042,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     continue
                 if isinstance(producer_edge.src, nodes.AccessNode) and self.is_view(producer_edge.src, sdfg):
                     return None
-                # A reduction into the container fused in place is complete when the fused body reads it, as long as
-                #  no other iteration reduces into this iteration's elements (the reduction axis is an inner Map). Not
-                #  over a small kept axis (a literal below 64 or SMALL): its few iterations cannot share out, and the
-                #  reduction, now inner, runs sequentially (an 8-column sum: 19x slower on GH200).
-                if producer_edge.data.wcr is not None and not (
-                    intermediate_node.data in in_place
-                    and not symbolic.is_small_extent(second_map_entry.map.range.num_elements(), facts)
-                    and isinstance(producer_edge.data.dst_subset, subsets.Range)
-                    and self.other_iterations_miss(
-                        first_map_exit.map, [producer_edge.data.dst_subset], [producer_edge.data.dst_subset], facts
-                    )
-                ):
+                # A reducing producer stays separate: fused, its reduction runs inside every consumer iteration (an
+                #  8-column sum: 19x slower on GH200, no gain at 64 columns). MapWCRFusion and MapPartialReduceFusion
+                #  take the reduction cases.
+                if producer_edge.data.wcr is not None:
                     return None
                 # A conditional writer fused into a consumer under another guard wraps the consumer's statements in the
                 #  writer's guard, one nested SDFG each: warpx's per-particle maps went from 37 to 1603 nested SDFGs,
@@ -1739,11 +1731,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 final_pre_exit_memlet.other_subset = (
                     copy.deepcopy(producer_subset) if is_in_place else subsets.Range.from_array(new_inter_desc)
                 )
-                # In place the body reduced into the container already: the rebuilt edge only orders, it adds nothing
-                rebuilt_memlet = copy.deepcopy(out_edge.data)
-                if is_in_place:
-                    final_pre_exit_memlet.wcr = None
-                    rebuilt_memlet.wcr = None
 
                 new_pre_exit_conn = second_map_exit.next_connector()
                 state.add_edge(
@@ -1758,7 +1745,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     "OUT_" + new_pre_exit_conn,
                     inter_node,
                     out_edge.dst_conn,
-                    rebuilt_memlet,
+                    copy.deepcopy(out_edge.data),
                 )
                 second_map_exit.add_in_connector("IN_" + new_pre_exit_conn)
                 second_map_exit.add_out_connector("OUT_" + new_pre_exit_conn)
@@ -2375,8 +2362,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         facts: symbolic.Facts,
     ) -> set[str]:
         """The intermediates of ``names`` the first Map reads and writes other than point-wise, or the second Map writes
-        as well (a buffer's write-back would undo that write), or writes conditionally or reduces into (what it skips
-        keeps its value, which a buffer would not hold): they are fused in place, see ``has_read_write_dependency()``."""
+        as well (a buffer's write-back would undo that write), or writes conditionally (what it skips keeps its value,
+        which a buffer would not hold): they are fused in place, see ``has_read_write_dependency()``."""
         first_map_exit = state.exit_node(first_map_entry)
         reads = {node.data: node for node in self.get_access_set(first_map_entry, state)}
         writes = {node.data: node for node in self.get_access_set(first_map_exit, state)}
@@ -2390,19 +2377,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 accessed[0] + accessed[1], facts, first_map_entry.map.params
             ):
                 in_place.add(name)
-        second_map_entry = state.entry_node(second_map_exit)
         for edge in state.out_edges(first_map_exit):
             if edge.src_conn is None or not isinstance(edge.dst, nodes.AccessNode) or edge.dst.data in in_place:
                 continue
-            # A reduction the second Map reads starts from the container's value, which a buffer would not hold
             producers = list(state.in_edges_by_connector(first_map_exit, "IN_" + edge.src_conn[4:]))
-            if (
-                self.relaxed_dataflow
-                and any(p.data.wcr is not None for p in producers)
-                and any(e.dst is second_map_entry for e in state.out_edges(edge.dst))
-            ):
-                in_place.add(edge.dst.data)
-                continue
             # If this Map is the only writer and nothing else keeps the element alive, reading a skipped one is undefined
             if any(p.data.dynamic for p in producers) and (
                 self.is_shared_data(edge.dst, state, sdfg)

@@ -71,15 +71,6 @@ def outer_axis_of_equal_rank(A: dace.float64[N, 8], C: dace.float64[8], B: dace.
 
 
 @dace.program
-def row_sums_then_scale(A: dace.float64[N, M], B: dace.float64[N]):
-    T = np.zeros(N, dtype=np.float64)
-    for i, k in dace.map[0:N, 0:M]:
-        T[i] += A[i, k]
-    for i in dace.map[0:N]:
-        B[i] = T[i] * 2.0
-
-
-@dace.program
 def total_sum_then_scale(A: dace.float64[N, M], B: dace.float64[N]):
     T = np.zeros(1, dtype=np.float64)
     for i, k in dace.map[0:N, 0:M]:
@@ -212,21 +203,6 @@ def test_maps_of_equal_rank_sharing_only_an_outer_axis_stay_apart_without_a_hint
     assert all(not e.specialization_hint for e in top_level_entries(sdfg))
 
 
-def test_a_reduction_over_the_unshared_axis_completes_inside_the_fused_iteration():
-    """``T[i] += A[i, k]`` split at ``i``: each outer iteration reduces its own element over the inner ``k`` map and
-    reads it after, in place in ``T`` (its zero start value lives there, not in a buffer)."""
-    sdfg = row_sums_then_scale.to_sdfg(simplify=True)
-    before = len(top_level_maps(sdfg))
-    assert FuseMapsAtSharedAxes().apply_pass(sdfg, {}) == 1
-    sdfg.validate()
-    assert len(top_level_maps(sdfg)) == before - 1
-    assert "__map_fusion_T" not in sdfg.arrays
-    a = np.random.default_rng(5).random((10, 6))
-    b = np.zeros(10)
-    sdfg(A=a, B=b, N=10, M=6)
-    assert np.allclose(b, 2.0 * a.sum(axis=1))
-
-
 def test_a_reduction_every_iteration_contributes_to_keeps_the_producer():
     """``T[0]`` collects all ``i``: no fused iteration holds the finished sum."""
     sdfg = total_sum_then_scale.to_sdfg(simplify=True)
@@ -249,5 +225,4 @@ if __name__ == "__main__":
     test_a_consumer_sharing_an_inner_axis_keeps_its_order_and_both_maps_get_a_hint()
     test_an_existing_hint_keeps_its_line_and_the_fusion_note_follows()
     test_maps_of_equal_rank_sharing_only_an_outer_axis_stay_apart_without_a_hint()
-    test_a_reduction_over_the_unshared_axis_completes_inside_the_fused_iteration()
     test_a_reduction_every_iteration_contributes_to_keeps_the_producer()
