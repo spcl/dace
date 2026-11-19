@@ -200,6 +200,7 @@ LIBRARY_NODE_DESCRIPTIONS: dict[str, str] = {
     "ReduceScatter": "MPI_Reduce_scatter: reduce across ranks, scatter the result blocks",
     "Scal": "BLAS scal: x = alpha * x",
     "Scan": "scan: running (prefix) fold along an axis",
+    "MemoryEngineWait": "memory engine wait: every thread waits on an mbarrier until the TMA copies it tracks are done",
     "Sync": "sync: barrier among the threads of a warp, block or grid, or a host wait for a stream or the device",
     "Scatter": "MPI_Scatter: distribute from the root to every rank",
     "ScatterConflictCheck": "scatter conflict check: detect indices written more than once",
