@@ -3008,7 +3008,6 @@ def evaluate_optional_arrays(expr, sdfg):
     return expr
 
 
-_SimpleASTNode = (ast.Constant, ast.Name)
 _SimpleASTNodeT = ast.Constant | ast.Name
 
 
@@ -3134,9 +3133,10 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         arguments = [node.left, node.comparators[0]]
 
         # Ensure constant values in boolean comparisons are interpreted als booleans.
-        if isinstance(node.left, ast.Compare) and isinstance(node.comparators[0], _SimpleASTNode):
+        # A literal only: a name compared with a comparison is a flag symbol and stays one (``over != b_top``).
+        if isinstance(node.left, ast.Compare) and isinstance(node.comparators[0], ast.Constant):
             arguments[1] = _convert_truthy_falsy(node.comparators[0])
-        elif isinstance(node.left, _SimpleASTNode) and isinstance(node.comparators[0], ast.Compare):
+        elif isinstance(node.left, ast.Constant) and isinstance(node.comparators[0], ast.Compare):
             arguments[0] = _convert_truthy_falsy(node.left)
 
         func_node = ast.copy_location(ast.Name(id=self._ast_to_sympy_comparators[type(op)], ctx=ast.Load()), node)
