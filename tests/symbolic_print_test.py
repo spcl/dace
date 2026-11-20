@@ -1,4 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import warnings
+
+import numpy
 import pytest
 import sympy
 
@@ -52,6 +55,14 @@ def test_huge_negative_python_int_becomes_neg_oo():
     """Negative Python int beyond float64 range must map to -sympy.oo."""
     result = sympy_numeric_fix(-(10**309))
     assert result == -sympy.oo
+
+
+@pytest.mark.parametrize("value", (numpy.inf, -numpy.inf))
+def test_a_numpy_infinity_stays_infinite_without_a_cast_warning(value):
+    """An infinite NumPy float has no integer value: it is returned as is, never cast to int64 (an invalid cast)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert sympy_numeric_fix(numpy.float64(value)) == value
 
 
 def test_max_float_literal_roundtrip():

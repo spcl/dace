@@ -1833,8 +1833,10 @@ def sympy_numeric_fix(expr):
     Converts the float constants in a given expression to integers."""
     if not isinstance(expr, sympy.Basic) or isinstance(expr, sympy.Number):
         # A finite float stays a float: ``1.0`` collapsed to ``1`` turns ``min(x, 1.0)`` into a mixed int/double Min
-        if isinstance(expr, (sympy.Float, float, numpy.floating)) and math.isfinite(float(expr)):
-            return expr if isinstance(expr, sympy.Float) else sympy.Float(expr)
+        if isinstance(expr, (sympy.Float, float, numpy.floating)):
+            if math.isfinite(float(expr)):
+                return expr if isinstance(expr, sympy.Float) else sympy.Float(expr)
+            return expr  # an infinity or NaN has no integer value to collapse to
         try:
             if numpy.int64(expr) == expr and expr != 0:
                 return int(expr)
