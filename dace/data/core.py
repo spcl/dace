@@ -18,7 +18,7 @@ from typing import Any, Union
 import numpy as np
 import sympy as sp
 
-from dace import dtypes, serialize, symbolic
+from dace import dtypes, placement, serialize, symbolic
 from dace.properties import (
     DebugInfoProperty,
     DictProperty,
@@ -725,6 +725,13 @@ class Array(Data):
     pool = Property(
         dtype=bool, default=False, category="Memory", desc="Hint to the allocator that using a memory pool is preferred"
     )
+    placement = Property(
+        dtype=placement.Placement,
+        default=None,
+        allow_none=True,
+        category="Memory",
+        desc="Distribution of the elements over memory nodes; None places the array in one flat memory",
+    )
 
     def __init__(
         self,
@@ -785,7 +792,7 @@ class Array(Data):
         return f"{type(self).__name__} (dtype={self.dtype}, shape={self.shape})"
 
     def clone(self):
-        return type(self)(
+        ret = type(self)(
             self.dtype,
             self.shape,
             self.transient,
@@ -803,6 +810,8 @@ class Array(Data):
             self.optional,
             self.pool,
         )
+        ret.placement = self.placement
+        return ret
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
