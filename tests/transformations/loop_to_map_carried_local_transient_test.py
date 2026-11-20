@@ -13,6 +13,8 @@ per-iteration scratch value, an exhaustive if/else that writes on every branch, 
 shape where one inner loop fills a scratch row and the next reads it back.
 """
 
+import copy
+
 import numpy as np
 import pytest
 
@@ -272,6 +274,74 @@ def test_a_store_of_other_elements_covers_no_read(program):
 
     sdfg = program.to_sdfg(simplify=True)
     outer = next(r for r in sdfg.nodes() if isinstance(r, dace.sdfg.state.LoopRegion))
+    assert "t" in read_before_written(outer, {"t"})
+
+
+@dace.program
+def head_read_in_a_map(X: dace.float64[N], O: dace.float64[N, N]):
+    t = dace.define_local([N], dace.float64)
+    for i in range(N):
+        t[0] = X[i]
+        for j in dace.map[0:N]:
+            O[i, j] = t[j]
+
+
+@dace.program
+def head_written_in_a_map(X: dace.float64[N], O: dace.float64[N, N]):
+    t = dace.define_local([N], dace.float64)
+    for i in range(N):
+        for j in dace.map[0:1]:
+            t[j] = X[i]
+        O[i, :] = t[:]
+
+
+def loop_state(sdfg: dace.SDFG) -> tuple[dace.sdfg.state.LoopRegion, dace.SDFGState, nodes.MapEntry]:
+    outer = next(r for r in sdfg.nodes() if isinstance(r, dace.sdfg.state.LoopRegion))
+    (state,) = [
+        s
+        for s in outer.all_control_flow_blocks()
+        if isinstance(s, dace.SDFGState) and any(isinstance(n, nodes.MapEntry) for n in s.nodes())
+    ]
+    (entry,) = [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]
+    return outer, state, entry
+
+
+def test_a_read_inside_a_map_that_only_an_ordering_edge_enters_is_checked():
+    """The map reads ``t`` through an access node in its body that only an empty edge from the entry reaches: that
+    node writes nothing, and its read of every row but the first sees the previous iteration."""
+    from dace.transformation.interstate.loop_to_map import read_before_written
+
+    sdfg = head_read_in_a_map.to_sdfg(simplify=True)
+    outer, state, entry = loop_state(sdfg)
+    (feed,) = [e for e in state.in_edges(entry) if e.data.data == "t"]
+    (inner,) = state.out_edges_by_connector(entry, "OUT_" + feed.dst_conn[len("IN_") :])
+    state.remove_edge(feed)
+    state.remove_edge(inner)
+    entry.remove_in_connector(feed.dst_conn)
+    entry.remove_out_connector(inner.src_conn)
+    body = state.add_access("t")
+    state.add_nedge(entry, body, dace.Memlet())
+    state.add_edge(body, None, inner.dst, inner.dst_conn, inner.data)
+    sdfg.validate()
+    assert "t" in read_before_written(outer, {"t"})
+
+
+def test_a_write_inside_a_map_stores_only_its_own_elements():
+    """The map writes ``t[0]`` through an access node in its body; the copy of all of ``t`` after it reads the other
+    rows from the previous iteration."""
+    from dace.transformation.interstate.loop_to_map import read_before_written
+
+    sdfg = head_written_in_a_map.to_sdfg(simplify=True)
+    outer, state, entry = loop_state(sdfg)
+    exit_node = state.exit_node(entry)
+    (store,) = [e for e in state.in_edges(exit_node) if e.data.data == "t"]
+    state.remove_edge(store)
+    body = state.add_access("t")
+    state.add_edge(store.src, store.src_conn, body, None, dace.Memlet(data="t", subset=store.data.subset))
+    state.add_edge(
+        body, None, exit_node, store.dst_conn, dace.Memlet(data="t", subset=copy.deepcopy(store.data.subset))
+    )
+    sdfg.validate()
     assert "t" in read_before_written(outer, {"t"})
 
 

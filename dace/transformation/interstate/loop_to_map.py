@@ -37,6 +37,7 @@ from dace.sdfg.state import (
     SymbolResolver,
     is_written,
 )
+from dace.sdfg.symbol_repo import bound_names
 from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation import helpers
 from dace.transformation import transformation as xf
@@ -46,6 +47,8 @@ from dace.transformation.passes.parallelization.facts import SolverFacts
 from dace.transformation.passes.scalar_fission import subsets_cover
 
 IndexExpr = str | int | symbolic.SymbolicType
+#: What a write guarantees in :func:`read_before_written`: a whole container, or elements and the scope storing them
+Store = str | tuple[str, subsets.Subset, nodes.EntryNode | None]
 
 
 def _align_itersym(expr, itersym):
@@ -844,20 +847,45 @@ def read_before_written(
     changes: dict[ControlFlowBlock, set[str]] = {}
     moving = loop_varying_symbols(loop)
 
-    def fixed_subset(state: SDFGState, dn: nodes.AccessNode, subset: subsets.Subset | None) -> bool:
-        """Whether ``subset`` names the same elements wherever an iteration reaches ``dn``."""
-        return subset is not None and state.entry_node(dn) is None and not subset.free_symbols & moving
+    def fixed_subset(subset: subsets.Subset | None) -> bool:
+        """Whether ``subset`` names the same elements wherever an iteration reaches it."""
+        return subset is not None and not subset.free_symbols & moving
 
-    def stored_by(state: SDFGState, dn: nodes.AccessNode) -> set[str | tuple[str, subsets.Subset]]:
-        """What the writes into ``dn`` guarantee: its elements as (name, subset), or the bare name when a write spans
-        the container, sits in a scope or has no subset, which then counts as the whole container."""
-        elements = [e.data.get_dst_subset(e, state) for e in state.in_edges(dn) if not e.data.is_empty()]
-        if state.entry_node(dn) is not None or any(subset is None for subset in elements):
-            return {dn.data}
+    def widened(state: SDFGState, dn: nodes.AccessNode, subset: subsets.Subset) -> subsets.Subset:
+        """``subset`` over every iteration of the scopes around ``dn``: an axis a name they bind indexes spans whole."""
+        bound: set[str] = set()
+        scope = state.entry_node(dn)
+        while scope is not None:
+            bound |= bound_names(scope)
+            scope = state.entry_node(scope)
         whole = subsets.Range.from_array(state.sdfg.arrays[dn.data])
-        if subsets_cover(elements, whole, symbolic.Facts.none()):
+        if not bound or not subset.free_symbols & bound:
+            return subset
+        if not isinstance(subset, subsets.Range) or subset.dims() != whole.dims():
+            return whole
+        return subsets.Range(
+            [
+                axis if not subsets.Range([axis]).free_symbols & bound else full
+                for axis, full in zip(subset.ranges, whole.ranges)
+            ]
+        )
+
+    def stored_by(state: SDFGState, dn: nodes.AccessNode) -> set[Store]:
+        """What the writes into ``dn`` guarantee: the bare name when they span the container outside any scope or a
+        write has no subset, else its elements as (name, subset, scope entry). A write inside a scope stores its
+        elements for the scope's own iteration only, so it holds only that same element read in that scope."""
+        elements = [
+            e.data.get_dst_subset(e, state)
+            for e in state.in_edges(dn)
+            if not e.data.is_empty() and not (isinstance(e.src, nodes.EntryNode) and e.data.data == dn.data)
+        ]
+        if any(subset is None for subset in elements):
             return {dn.data}
-        return {(dn.data, subset) for subset in elements}
+        scope = state.entry_node(dn)
+        whole = subsets.Range.from_array(state.sdfg.arrays[dn.data])
+        if scope is None and subsets_cover(elements, whole, symbolic.Facts.none()):
+            return {dn.data}
+        return {(dn.data, subset, scope) for subset in elements}
 
     def same_slot(part: subsets.Subset, read: subsets.Subset) -> bool:
         """Whether ``part`` can hold ``read`` when their elements are not both known: only a dimension where each
@@ -872,18 +900,29 @@ def read_before_written(
                 return False
         return True
 
-    def read_covered(state: SDFGState, dn: nodes.AccessNode, stored: set[str | tuple[str, subsets.Subset]]) -> bool:
-        """Whether ``stored`` holds what ``dn`` reads. Elements a nested loop or a moving symbol names are not known
-        here: such a store holds what :func:`same_slot` cannot tell apart, an unknown read needs only some store."""
+    def read_covered(state: SDFGState, dn: nodes.AccessNode, stored: set[Store]) -> bool:
+        """Whether ``stored`` holds what ``dn`` reads. A read inside a scope is first widened over the scope's
+        iterations, unless a store in that scope wrote the very element. Elements a nested loop or a moving symbol
+        names are not known here: such a store holds what :func:`same_slot` cannot tell apart, an unknown read needs
+        only some store."""
         if dn.data in stored:
             return True
-        parts = [entry[1] for entry in stored if isinstance(entry, tuple) and entry[0] == dn.data]
-        if not parts:
+        entries = [entry for entry in stored if isinstance(entry, tuple) and entry[0] == dn.data]
+        if not entries:
             return False
-        for subset in [e.data.get_src_subset(e, state) for e in state.out_edges(dn) if not e.data.is_empty()]:
-            if subset is None or state.entry_node(dn) is not None:
+        scope = state.entry_node(dn)
+        parts = [entry[1] for entry in entries if entry[2] is None]
+        for e in state.out_edges(dn):
+            # An edge into a scope exit passes a write out; it reads nothing
+            if e.data.is_empty() or isinstance(e.dst, nodes.ExitNode):
                 continue
-            if fixed_subset(state, dn, subset) and not any(part.free_symbols & moving for part in parts):
+            subset = e.data.get_src_subset(e, state)
+            if subset is None:
+                continue
+            if scope is not None and any(entry[2] is scope and entry[1] == subset for entry in entries):
+                continue
+            subset = widened(state, dn, subset)
+            if fixed_subset(subset) and not any(part.free_symbols & moving for part in parts):
                 if not subsets_cover(parts, subset, symbolic.Facts.none()):
                     return False
             elif not any(same_slot(part, subset) for part in parts):
