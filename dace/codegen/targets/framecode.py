@@ -1440,8 +1440,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 sdfg,
             )
 
-        # The running offset the workspace arrays among them are carved at (a CPF entry with a workspace)
-        offset_declaration = cpf_lowering.workspace_offset_declaration() if is_top_level else ""
+        # The running offset the workspace arrays among them are carved at (a CPF entry with a workspace). A device
+        # entry declares it above its prologue instead, whose state allocations carve from it first.
+        offset_declaration = (
+            cpf_lowering.workspace_offset_declaration() if is_top_level and not cpf_lowering.device() else ""
+        )
         if offset_declaration:
             callsite_stream.write(offset_declaration, sdfg)
         # Allocate outer-level transients
@@ -1587,7 +1590,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     # which a single entry point has nowhere to put but here. The generated body
                     # then reads ``__state->gpu_context->streams`` exactly as it always did, so
                     # nothing downstream of this line knows the state is a local.
-                    function_signature += "\n" + cpf_lowering.device_entry_prologue(
+                    function_signature += "\n" + cpf_lowering.workspace_offset_declaration()
+                    function_signature += cpf_lowering.device_entry_prologue(
                         mangle_dace_state_struct_name(sdfg), self._initcode.getvalue(), self._exitcode.getvalue()
                     )
             else:

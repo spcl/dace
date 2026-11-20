@@ -8,13 +8,17 @@ pointer behind the scalars -- is an order no name sort reaches, so the caller st
 unit must BUILD and RUN when called that way, and a signature that does not fit is refused.
 """
 
+import pathlib
 import re
+import shutil
+import subprocess
+import tempfile
 
 import numpy as np
 import pytest
 
 import dace
-from dace.codegen.cpf import EntrySignature, entry_parameter_name, render
+from dace.codegen.cpf import CUDA_BUILD_FLAGS, EntrySignature, entry_parameter_name, render
 from tests.codegen.cpf.conftest import assert_standalone, build_standalone, call_standalone, render_gpu
 
 M = dace.symbol("M")
@@ -160,6 +164,57 @@ def test_the_device_entry_takes_the_order_and_a_device_workspace():
     assert entry_names(result.code, "cpf_sig_hip") == tuple(signature.order)
     assert result.sdfg.arrays["workspace"].storage is dace.StorageType.GPU_Global
     assert "uint8_t * __restrict__ workspace" in entry_parameters(result.code, "cpf_sig_hip")
+
+
+def host_arguments_and_a_device_map() -> dace.SDFG:
+    """Host arguments, a host transient the workspace holds, and a GPU map on a device copy of it: the mixed
+    placement NestForge finalizes (a kernel on each device, the program's arguments in host memory)."""
+    sdfg = dace.SDFG("cpf_sig_host_ws_device_map")
+    sdfg.add_array("x", ["N"], dace.float64)
+    sdfg.add_array("y", ["N"], dace.float64)
+    sdfg.add_array("t", ["N"], dace.float64, transient=True, storage=dace.StorageType.CPU_Heap)
+    sdfg.add_array("g", ["N"], dace.float64, transient=True, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    staged, copied, doubled = state.add_access("t"), state.add_access("g"), state.add_access("g")
+    state.add_nedge(state.add_read("x"), staged, dace.Memlet("x[0:N]"))
+    state.add_nedge(staged, copied, dace.Memlet("t[0:N]"))
+    state.add_mapped_tasklet(
+        "double",
+        {"i": "0:N"},
+        {"a": dace.Memlet("g[i]")},
+        "b = 2 * a",
+        {"b": dace.Memlet("g[i]")},
+        schedule=dace.ScheduleType.GPU_Device,
+        input_nodes={"g": copied},
+        output_nodes={"g": doubled},
+        external_edges=True,
+    )
+    state.add_nedge(doubled, state.add_write("y"), dace.Memlet("g[0:N]"))
+    return sdfg
+
+
+def test_a_device_entry_declares_the_workspace_offset_before_its_prologue_carves():
+    """A device entry's prologue allocates its state, which carves the host transients the workspace holds, so the
+    running offset is declared above it: declared in the body, it came after its first use and the unit did not
+    build (column_scan_nproma_nlev finalized by NestForge, #98)."""
+    order = ("x", "y", "N", *WORKSPACE)
+    result = render(host_arguments_and_a_device_map(), language="cuda", signature=with_workspace("x", "y", "N"))
+    offsets = [line.strip() for line in result.code.splitlines() if "workspace_off" in line]
+
+    assert entry_names(result.code, "cpf_sig_host_ws_device_map") == order
+    assert offsets[0] == "size_t workspace_off = 0;" and len(offsets) == 2, offsets
+    nvcc = shutil.which("nvcc")
+    if nvcc is None:
+        return
+    with tempfile.TemporaryDirectory() as folder:
+        host = pathlib.Path(folder) / "host.cu"
+        host.write_text(result.code)
+        built = subprocess.run(
+            [nvcc, *CUDA_BUILD_FLAGS, "-arch=sm_80", "-c", str(host), "-o", str(host.with_suffix(".o"))],
+            capture_output=True,
+            text=True,
+        )
+    assert built.returncode == 0, built.stderr
 
 
 def test_a_signature_that_does_not_fit_is_refused():
