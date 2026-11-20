@@ -54,6 +54,14 @@ def read_after(a: dace.float64[NE, BS], out: dace.float64[BS]):
     out[:] = w[:]
 
 
+@dace.program
+def accumulated(a: dace.float64[NE, BS], out: dace.float64[NE, BS]):
+    w = np.zeros((BS,), dtype=np.float64)
+    for e in range(NE):
+        w[:] = w[:] + a[e, :]
+        out[e, :] = w[:]
+
+
 def prepared(program) -> dace.SDFG:
     """Simplified, with the zero-fill maps turned into the ``FillLibraryNode`` canonicalization makes of them."""
     sdfg = program.to_sdfg(simplify=False)
@@ -108,8 +116,26 @@ def test_a_fill_read_after_the_loop_stays():
     assert fills(sdfg) == 1
 
 
+def test_a_fill_read_first_behind_an_ordering_edge_stays():
+    """cloudsc's ``zcldtopdist`` accumulates over the levels: an empty edge into the access node that reads it orders
+    that read after an unrelated map, not after the write of ``w`` later in the same state."""
+    sdfg = prepared(accumulated)
+    (state,) = [
+        s
+        for s in sdfg.states()
+        if isinstance(s.parent_graph, LoopRegion)
+        and any(n.data == "w" and s.in_degree(n) == 0 and s.out_degree(n) > 0 for n in s.data_nodes())
+    ]
+    (read,) = [n for n in state.data_nodes() if n.data == "w" and state.in_degree(n) == 0]
+    state.add_nedge(state.add_access("a"), read, dace.Memlet())
+    assert fills(sdfg) == 1
+    assert DeadFillElimination().apply_pass(sdfg, {}) is None
+    assert fills(sdfg) == 1
+
+
 if __name__ == "__main__":
     test_a_workspace_tiled_every_iteration_loses_its_fill_and_the_loop_maps()
     test_a_fill_an_unwritten_row_shows_stays()
     test_a_fill_the_first_iteration_reads_stays()
     test_a_fill_read_after_the_loop_stays()
+    test_a_fill_read_first_behind_an_ordering_edge_stays()

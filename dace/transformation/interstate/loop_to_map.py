@@ -931,12 +931,15 @@ def read_before_written(
                 continue
             if isinstance(block, SDFGState):
                 accessed = [dn for dn in block.data_nodes() if dn.data in candidates]
-                stored = written.union(*(stored_by(block, dn) for dn in accessed if block.in_degree(dn) > 0))
+                stores = {dn: stored_by(block, dn) for dn in accessed if block.in_degree(dn) > 0}
+                stored = written.union(*stores.values())
+                reached = {writer: set(block.bfs_nodes(writer)) for writer in stores}
                 for dn in accessed:
                     if block.out_degree(dn) == 0:
                         continue
-                    # A node with an in-edge runs after a store or an ordering edge: it sees this state's stores
-                    seen = stored if block.in_degree(dn) > 0 else written
+                    # A read sees the stores that reach it along the state's edges, its own included; an in-edge from
+                    # elsewhere (an ordering edge) orders it after none of them (cloudsc's zcldtopdist)
+                    seen = written.union(*(s for writer, s in stores.items() if dn in reached[writer]))
                     if not read_covered(block, dn, seen) and not any(
                         read_covered(block, dn, guarded[key][1])
                         for key in nested_read_guards(block, dn)
