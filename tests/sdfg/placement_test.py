@@ -50,6 +50,9 @@ def test_trace_refuses_non_block_cyclic(body):
         (6, lambda i, j: 3 * ((i // 2) % 2) + (j // 4) % 3, (7, 13)),
         (4, lambda i, j: (j // 2) % 4, (3, 9)),
         (1, lambda i, j: 0, (2, 3)),
+        # Page-cyclic: 2x3 pages over a 3x2 page grid (last pages partial), dealt to 4 nodes
+        (4, lambda i, j: (2 * (i // 2) + j // 3) % 4, (5, 6)),
+        (3, lambda i, j: ((i // 2) + 3 * (j // 2)) % 3, (6, 7)),
     ],
 )
 def test_offsets_match_brute_force(nodes, body, shape):
@@ -85,9 +88,28 @@ def test_check_rejects_bad_maps():
     # Share of 4 elements does not fit 3
     with pytest.raises(ValueError, match="capacity"):
         placement.Placement(2, placement.SymbolicLambda(lambda i: i % 2)).check((8,), 3)
-    # Not separable per dimension
+    # Pages i + j collide
+    with pytest.raises(ValueError, match="bijection"):
+        placement.Placement(4, placement.SymbolicLambda(lambda i, j: (i + j) % 4)).check((4, 4), 4)
+    # Neither per dimension nor page-cyclic
     with pytest.raises(ValueError):
-        placement.Placement(4, placement.SymbolicLambda(lambda i, j: (i + j) % 4))
+        placement.Placement(4, placement.SymbolicLambda(lambda i, j: (i * j) % 4))
+    with pytest.raises(ValueError):
+        placement.Placement(4, placement.SymbolicLambda(lambda i, j: (i // 2 + j % 2) % 4))
+
+
+def test_tensix_interleaved_tiles():
+    # Tile page t = (i // 32) * T + j // 32 on bank t % NB, T tiles per row
+    T, NB, M, N = (dace.symbol(name) for name in "T NB M N".split())
+    place = placement.Placement(NB, placement.SymbolicLambda(lambda i, j: ((i // 32) * T + j // 32) % NB))
+    assert place.pages == placement.PagePlacement((32, 32), (T, 1), NB)
+    values = {T: 3, NB: 4}
+    assert place.node_of((40, 70)).subs(values) == (1 * 3 + 2) % 4
+    # Page 5 is the second page of bank 1: offset one page plus row 8, column 6 within the tile
+    assert place.offset_of((40, 70), (M, N)).subs({**values, M: 64, N: 96}) == 1024 + 8 * 32 + 6
+    place.check((M, N), 2 * 1024, symbols={"T": 3, "NB": 4, "M": 64, "N": 96})
+    with pytest.raises(ValueError, match="bijection"):
+        place.check((M, N), 2 * 1024, symbols={"T": 2, "NB": 4, "M": 64, "N": 96})
 
 
 def test_array_placement_survives_json_and_clone():
@@ -104,6 +126,11 @@ def test_array_placement_survives_json_and_clone():
     assert got.nodes == 6
     assert got.index_map.exprs == place.index_map.exprs
     assert got.dims == place.dims
+    pages = placement.Placement(4, placement.SymbolicLambda(lambda i, j: ((i // 32) * 2 + j // 32) % 4))
+    sdfg.arrays["C"].placement = None
+    sdfg.arrays["A"].placement = pages
+    assert dace.SDFG.from_json(sdfg.to_json()).arrays["A"].placement.pages == pages.pages
+    sdfg.arrays["A"].placement = place
     assert loaded.arrays["C"].placement is None
     for desc in (sdfg.arrays["A"].clone(), copy.deepcopy(sdfg.arrays["A"])):
         assert desc.placement.index_map.exprs == place.index_map.exprs
@@ -122,6 +149,9 @@ if __name__ == "__main__":
     test_offsets_match_brute_force(6, lambda i, j: 3 * ((i // 2) % 2) + (j // 4) % 3, (7, 13))
     test_offsets_match_brute_force(4, lambda i, j: (j // 2) % 4, (3, 9))
     test_offsets_match_brute_force(1, lambda i, j: 0, (2, 3))
+    test_offsets_match_brute_force(4, lambda i, j: (2 * (i // 2) + j // 3) % 4, (5, 6))
+    test_offsets_match_brute_force(3, lambda i, j: ((i // 2) + 3 * (j // 2)) % 3, (6, 7))
     test_symbolic_block_cyclic_offsets()
     test_check_rejects_bad_maps()
+    test_tensix_interleaved_tiles()
     test_array_placement_survives_json_and_clone()

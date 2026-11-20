@@ -117,6 +117,46 @@ def dim_term(term: sympy.Expr, params: Sequence[sympy.Symbol]) -> tuple[int, Dim
     return params.index(part), DimPlacement(block, count, stride)
 
 
+class PagePlacement(NamedTuple):
+    """Round-robin pages: page ``sum(stride_d * (i_d // block_d))`` goes to node ``page % count``."""
+
+    blocks: tuple[sympy.Expr, ...]
+    strides: tuple[sympy.Expr, ...]
+    count: sympy.Expr
+
+
+def page_placement(expr: sympy.Mod, params: Sequence[sympy.Symbol]) -> PagePlacement:
+    inner, count = expr.args
+    if count.has(*params):
+        raise ValueError(f"Node count '{count}' depends on an index")
+    blocks: list[sympy.Expr | None] = [None] * len(params)
+    strides: list[sympy.Expr | None] = [None] * len(params)
+    for term in sympy.Add.make_args(inner):
+        dim, placed = dim_term(term, params)
+        if placed.count is not None or blocks[dim] is not None:
+            raise ValueError(f"Term '{term}' of the page number is not stride * (index // block) of a new index")
+        blocks[dim], strides[dim] = placed.block, placed.stride
+    if any(block is None for block in blocks):
+        raise ValueError(f"Page number '{inner}' does not use every index")
+    return PagePlacement(tuple(blocks), tuple(strides), count)
+
+
+def check_mixed_radix(parts: list[tuple[sympy.Expr, sympy.Expr]]) -> sympy.Expr:
+    """
+    The product of the counts, if the (stride, count) parts form a mixed radix: ``sum(stride * digit)`` with
+    ``0 <= digit < count`` is then a bijection onto ``0 .. product-1``. Raises ``ValueError`` otherwise.
+    """
+    parts = list(parts)
+    radix = sympy.Integer(1)
+    while parts:
+        match = next((part for part in parts if symbolic.equal(part[0], radix) is True), None)
+        if match is None:
+            raise ValueError(f"Placement is not a bijection: no node stride equals {radix} among {parts}")
+        parts.remove(match)
+        radix *= match[1]
+    return radix
+
+
 @serialize.serializable
 class Placement:
     """
@@ -124,6 +164,10 @@ class Placement:
     node id. Each dimension is either not distributed or block-cyclic, ``(i // B) % P``, and the node id is a sum of
     such parts times strides. An element's offset within its node is the row-major position of its local indices
     in :meth:`local_shape`, where a distributed dimension's local index is ``(i // (B * P)) * B + i % B``.
+
+    The other accepted form is page-cyclic, ``(sum_d S_d * (i_d // B_d)) % P``: blocks of ``B_0 x B_1 ...`` elements
+    are pages, numbered by the sum, and dealt round-robin to the nodes (Tensix interleaved DRAM). A node holds its
+    pages in page order: the local indices are ``(page // P, i_0 % B_0, i_1 % B_1, ...)``.
     """
 
     def __init__(self, nodes: Any, index_map: SymbolicLambda):
@@ -131,15 +175,23 @@ class Placement:
             raise ValueError("A placement maps indices to exactly one node id")
         self.nodes = symbolic.pystr_to_symbolic(nodes)
         self.index_map = index_map
+        expr = index_map.exprs[0]
+        #: The page-cyclic form, or None for a per-dimension map.
+        self.pages: PagePlacement | None = None
         dims: list[DimPlacement | None] = [None] * len(index_map.params)
-        for term in sympy.Add.make_args(index_map.exprs[0]):
+        if isinstance(expr, sympy.Mod) and len(sympy.Add.make_args(expr.args[0])) > 1:
+            self.pages = page_placement(expr, index_map.params)
+            self.dims = tuple(dims)
+            return
+        for term in sympy.Add.make_args(expr):
             if term == 0:
                 continue
             dim, placed = dim_term(term, index_map.params)
             if dims[dim] is not None:
                 raise ValueError(f"Index {index_map.params[dim]} appears in more than one term of the node map")
             dims[dim] = placed
-        #: Per dimension, its block-cyclic distribution, or None if the dimension is not distributed.
+        #: Per dimension, its block-cyclic distribution, or None if the dimension is not distributed (all None for
+        #: the page-cyclic form).
         self.dims: tuple[DimPlacement | None, ...] = tuple(dims)
 
     def node_of(self, indices: Sequence[Any]) -> sympy.Expr:
@@ -154,7 +206,13 @@ class Placement:
         return sympy.floor(index / (placed.block * placed.count)) * placed.block + sympy.Mod(index, placed.block)
 
     def local_shape(self, shape: Sequence[Any]) -> tuple[Any, ...]:
-        """Per dimension, the local extent that holds every node's share (the largest one)."""
+        """Per dimension, the local extent that holds every node's share (the largest one); for the page-cyclic
+        form, the pages per node followed by the page's extents."""
+        if self.pages is not None:
+            pages = sympy.Mul(
+                *(sympy.ceiling(size / block) for size, block in zip(shape, self.pages.blocks, strict=True))
+            )
+            return (sympy.ceiling(pages / self.pages.count), *self.pages.blocks)
         result = []
         for size, placed in zip(shape, self.dims, strict=True):
             if placed is None:
@@ -167,9 +225,21 @@ class Placement:
 
     def offset_of(self, indices: Sequence[Any], shape: Sequence[Any]) -> Any:
         """Element offset of ``indices`` within its node."""
+        if self.pages is not None:
+            page = sum(
+                (
+                    stride * sympy.floor(index / block)
+                    for index, block, stride in zip(indices, self.pages.blocks, self.pages.strides, strict=True)
+                ),
+                sympy.Integer(0),
+            )
+            local = [sympy.floor(page / self.pages.count)]
+            local += [sympy.Mod(index, block) for index, block in zip(indices, self.pages.blocks, strict=True)]
+        else:
+            local = [self.local_index(dim, index) for dim, index in enumerate(indices)]
         offset = sympy.Integer(0)
-        for dim, (index, extent) in enumerate(zip(indices, self.local_shape(shape), strict=True)):
-            offset = offset * extent + self.local_index(dim, index)
+        for index, extent in zip(local, self.local_shape(shape), strict=True):
+            offset = offset * extent + index
         return offset
 
     def check(self, shape: Sequence[Any], capacity: Any, symbols: Mapping[str, Any] | None = None) -> None:
@@ -187,19 +257,28 @@ class Placement:
             expr = symbolic.pystr_to_symbolic(expr)
             return expr.subs({s: values[s.name] for s in expr.free_symbols if s.name in values})
 
-        # Node ids are injective onto 0 .. nodes-1 iff the strides are a mixed radix over the per-dimension counts
-        parts = []
-        for size, placed in zip(shape, self.dims, strict=True):
-            if placed is not None:
-                count = placed.count if placed.count is not None else sympy.ceiling(size / placed.block)
-                parts.append((value(placed.stride), value(count)))
-        radix = sympy.Integer(1)
-        while parts:
-            match = next((part for part in parts if symbolic.equal(part[0], radix) is True), None)
-            if match is None:
-                raise ValueError(f"Placement is not a bijection: no node stride equals {radix} among {parts}")
-            parts.remove(match)
-            radix *= match[1]
+        if self.pages is not None:
+            # Page numbers are a bijection iff the strides are a mixed radix over the pages per dimension; the node
+            # is then page % count, and the local page index page // count
+            check_mixed_radix(
+                [
+                    (value(stride), value(sympy.ceiling(size / block)))
+                    for size, block, stride in zip(shape, self.pages.blocks, self.pages.strides, strict=True)
+                ]
+            )
+            radix = value(self.pages.count)
+        else:
+            # Node ids are injective onto 0 .. nodes-1 iff the strides are a mixed radix over the per-dimension counts
+            radix = check_mixed_radix(
+                [
+                    (
+                        value(placed.stride),
+                        value(placed.count if placed.count is not None else sympy.ceiling(size / placed.block)),
+                    )
+                    for size, placed in zip(shape, self.dims, strict=True)
+                    if placed is not None
+                ]
+            )
         if symbolic.equal(radix, value(self.nodes)) is not True:
             raise ValueError(f"Placement uses {radix} node ids, not exactly {value(self.nodes)}")
         share = sympy.Mul(*(value(e) for e in self.local_shape(shape)))
