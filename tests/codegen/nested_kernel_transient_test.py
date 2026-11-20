@@ -28,7 +28,7 @@ def _test_kernel_transient(persistent: bool):
     state.add_edge(n, "A", w, None, dace.Memlet("A"))
 
     if persistent:
-        sdfg.arrays["gpu_A"].lifetime = dace.AllocationLifetime.Persistent
+        sdfg.arrays["A_gpu"].lifetime = dace.AllocationLifetime.Persistent
 
     a = np.random.rand(128, 64)
     expected = np.copy(a)

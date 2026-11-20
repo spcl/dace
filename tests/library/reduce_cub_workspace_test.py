@@ -43,7 +43,7 @@ def generated_code_for(in_shape, axes, out_shape) -> str:
     rednode.implementation = "CUDA (device)"
 
     generated = sdfg.generate_code()
-    assert any(code.language == "cu" for code in generated), "the reduction did not lower to a CUDA file"
+    assert any(code.title == "CUDA" for code in generated), "the reduction did not lower to a CUDA file"
     return "\n".join(code.clean_code for code in generated)
 
 
