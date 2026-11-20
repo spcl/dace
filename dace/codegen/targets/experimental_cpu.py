@@ -55,6 +55,10 @@ SIZE_CONSTEVAL_QUALIFIER = "static DACE_HDFI consteval"
 # about an unreferenced internal function, and a unit need not use every helper.
 STANDALONE_INDEX_FUNCTION_QUALIFIER = "[[maybe_unused]] static constexpr inline"
 STANDALONE_SIZE_CONSTEVAL_QUALIFIER = "[[maybe_unused]] static consteval inline"
+# The same in a standalone device unit, where kernels call the helpers: nvcc admits a host ``constexpr`` function in
+# device code only under ``--expt-relaxed-constexpr``, which a judge's build need not pass.
+STANDALONE_DEVICE_INDEX_FUNCTION_QUALIFIER = "[[maybe_unused]] static __host__ __device__ constexpr inline"
+STANDALONE_DEVICE_SIZE_CONSTEVAL_QUALIFIER = "[[maybe_unused]] static __host__ __device__ consteval inline"
 # C has no constexpr functions; gcc and clang emit the same code for this and a macro at -O1 and up.
 STANDALONE_C_INDEX_FUNCTION_QUALIFIER = "static inline"
 # Identifier tokens of code without an AST here; over-matching only costs a refusal.
@@ -171,6 +175,8 @@ def identifiers_in(blocks) -> set[str]:
 
 def index_function_qualifier() -> str:
     """Qualifier of the ``<array>_idx`` / ``<array>_size`` helpers: the standalone CPF spelling or the in-tree one."""
+    if cpf_lowering.device():
+        return STANDALONE_DEVICE_INDEX_FUNCTION_QUALIFIER
     if cpf_lowering.standalone():
         return STANDALONE_INDEX_FUNCTION_QUALIFIER
     return INDEX_FUNCTION_QUALIFIER
@@ -178,10 +184,11 @@ def index_function_qualifier() -> str:
 
 def size_qualifier(is_constant: bool) -> str:
     """``consteval`` for a constant ``<array>_size`` extent under C++20+, else ``constexpr``."""
-    standalone = cpf_lowering.standalone()
-    if is_constant and int(str(Config.get("compiler", "cpp_standard")).strip()) >= 20:
-        return STANDALONE_SIZE_CONSTEVAL_QUALIFIER if standalone else SIZE_CONSTEVAL_QUALIFIER
-    return STANDALONE_INDEX_FUNCTION_QUALIFIER if standalone else INDEX_FUNCTION_QUALIFIER
+    if not (is_constant and int(str(Config.get("compiler", "cpp_standard")).strip()) >= 20):
+        return index_function_qualifier()
+    if cpf_lowering.device():
+        return STANDALONE_DEVICE_SIZE_CONSTEVAL_QUALIFIER
+    return STANDALONE_SIZE_CONSTEVAL_QUALIFIER if cpf_lowering.standalone() else SIZE_CONSTEVAL_QUALIFIER
 
 
 def c_heap_alloc_stmt(alloc_name: str, ctype: str, count: str, nodedesc: dt.Data | None) -> str:

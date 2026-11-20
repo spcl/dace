@@ -1674,10 +1674,10 @@ COMPILE_CHECK_TOOLCHAINS: dict[cpf_lowering.Dialect, tuple[str, str, str, tuple[
 #: The draft name a compiler older than a standard's final name accepts for it.
 STANDARD_DRAFT_NAMES: dict[str, str] = {"c23": "c2x", "c++20": "c++2a"}
 
-#: What a ``'cuda'`` unit is built with besides the output flags. ``--expt-relaxed-constexpr`` is what
-#: DaCe's own CUDA build adds (``dace/codegen/CMakeLists.txt``): kernels call the ``constexpr`` index
-#: and runtime helpers, which nvcc otherwise treats as host-only. hipcc needs no such flag.
-CUDA_BUILD_FLAGS: tuple[str, ...] = ("-std=c++20", "--expt-relaxed-constexpr")
+#: What a ``'cuda'`` unit is built with besides the output flags. No ``--expt-relaxed-constexpr``, which
+#: DaCe's own CUDA build adds (``dace/codegen/CMakeLists.txt``): a judge builds the units without it, so
+#: the device unit declares the index and runtime helpers its kernels call ``__host__ __device__``.
+CUDA_BUILD_FLAGS: tuple[str, ...] = ("-std=c++20",)
 
 #: What the gate compiles with. ``-fsyntax-only`` because the question is whether the TEXT is a
 #: valid translation unit, not how fast its object code is: it parses, resolves every name and

@@ -3959,7 +3959,21 @@ HIP_DEVICE_INLINE_DEFINITIONS: dict[str, str] = {
     "}",
 }
 
-HIP_INLINE_DEFINITIONS: dict[str, str] = {**INLINE_DEFINITIONS, **HIP_DEVICE_INLINE_DEFINITIONS}
+#: The head of a host helper function in :data:`INLINE_DEFINITIONS`: ``static`` before ``inline`` or ``constexpr inline``.
+HOST_FUNCTION_HEAD = re.compile(r"^static (?=(?:constexpr )?inline )", re.MULTILINE)
+
+
+def host_device(definition: str) -> str:
+    """``definition`` with every helper function ``__host__ __device__``: a kernel of the device unit calls
+    ``cpf_min`` and its other helpers too, and the judge's nvcc has no ``--expt-relaxed-constexpr`` to admit a
+    ``constexpr`` host function there."""
+    return HOST_FUNCTION_HEAD.sub("static __host__ __device__ ", definition)
+
+
+HIP_INLINE_DEFINITIONS: dict[str, str] = {
+    **{name: host_device(definition) for name, definition in INLINE_DEFINITIONS.items()},
+    **HIP_DEVICE_INLINE_DEFINITIONS,
+}
 
 HIP_DEFINITION_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     **DEFINITION_DEPENDENCIES,

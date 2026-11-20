@@ -147,6 +147,40 @@ def test_the_conflict_atomic_compiles_for_one_and_two_byte_accumulators(tmp_path
     assert result.returncode == 0, result.stderr
 
 
+def test_a_kernel_calls_the_cpf_helpers_without_relaxed_constexpr(tmp_path: pathlib.Path):
+    """A judge builds the device unit without ``--expt-relaxed-constexpr``, so the helpers a kernel calls are
+    ``__host__ __device__``: column_scan_nproma_nlev's kernel calls ``cpf_min`` and its ``<array>_idx`` helpers
+    (NestForge #98). nvcc compiles the unit without a GPU."""
+    nvcc = shutil.which("nvcc")
+    if nvcc is None:
+        pytest.skip("nvcc is not on PATH")
+    from dace import cpf_lowering
+    from dace.codegen.targets.experimental_cpu import format_index_helper, index_function_qualifier
+
+    with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE_CUDA):
+        helpers = cpf_lowering.definitions_for({"cpf_min", "cpf_max", "sign"})
+        index = format_index_helper(
+            index_function_qualifier(), "int64_t", "s_idx", ["i0", "i1", "NLEV"], "NLEV * i0 + i1"
+        )
+    source = tmp_path / "helpers.cu"
+    source.write_text(
+        "#include <cstdint>\n#include <type_traits>\n" + "\n".join(helpers) + f"\n{index}\n"
+        "__global__ void scan(const double *s, double *y, int64_t NLEV, int64_t g) {\n"
+        "    for (int64_t p = 0; p < cpf_min(g, NLEV - 1, int64_t(15)) + 1; p += 1) {\n"
+        "        y[s_idx(0, p, NLEV)] = sign(cpf_max(s[s_idx(0, p, NLEV)], 1.0));\n"
+        "    }\n"
+        "}\n"
+    )
+
+    result = subprocess.run(
+        [nvcc, *CUDA_BUILD_FLAGS, "-arch=sm_80", "-c", str(source), "-o", str(tmp_path / "helpers.o")],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize("label,program", PROGRAMS, ids=PROGRAM_IDS)
 def test_an_offloaded_kernel_renders_as_cuda_units_with_the_host_entry_prototype(label: str, program: DaceProgram):
     name = f"cpf_cuda_{label}"
