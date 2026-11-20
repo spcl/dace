@@ -20,7 +20,8 @@ def check_block_cyclic(expr: sympy.Basic, params: Mapping[str, sympy.Symbol]) ->
     if isinstance(expr, sympy.Integer):
         return
     if isinstance(expr, sympy.Symbol):
-        if params.get(expr.name) is expr or (isinstance(expr, symbolic.symbol) and expr.name not in params):
+        # Equality, not identity: a parameter rebuilt after sympy's cache dropped it is a new object
+        if params.get(expr.name) == expr or (isinstance(expr, symbolic.symbol) and expr.name not in params):
             return
         raise ValueError(f"Symbol {expr} is neither a parameter nor a DaCe symbol")
     if isinstance(expr, (sympy.Add, sympy.Mul, sympy.Mod)):

@@ -3,6 +3,7 @@ import copy
 import itertools
 
 import pytest
+import sympy
 
 import dace
 from dace import placement
@@ -24,6 +25,16 @@ def test_trace_normalizes_floor_division():
     assert [p.name for p in lam.params] == ["i"]
     assert lam(13).subs({B: 4, P: 2}) == 1
     assert placement.SymbolicLambda(lambda i, j: (i, j % 3))(4, 7) == (4, 1)
+
+
+def test_trace_accepts_its_parameters_after_the_symbol_cache_dropped_them():
+    """A parameter rebuilt after sympy's cache evicted the traced one is equal, not identical, and still accepted."""
+
+    def body(i):
+        sympy.core.cache.clear_cache()
+        return (i // 4) % 2
+
+    assert placement.SymbolicLambda(body)(13) == 1
 
 
 @pytest.mark.parametrize(
@@ -138,6 +149,7 @@ def test_array_placement_survives_json_and_clone():
 
 if __name__ == "__main__":
     test_trace_normalizes_floor_division()
+    test_trace_accepts_its_parameters_after_the_symbol_cache_dropped_them()
     test_trace_refuses_non_block_cyclic(lambda i: i / 2)
     test_trace_refuses_non_block_cyclic(lambda i: i < 4)
     test_trace_refuses_non_block_cyclic(lambda i: min(i, 4))
