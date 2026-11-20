@@ -30,7 +30,7 @@ wheels = [
 [[package]]
 name = "alloy"
 version = "0.0.1"
-source = { git = "https://github.com/ThrudPrimrose/alloy.git?rev=b3750c63d648fe8e9ca5674ce8668f86cc9600fa#b3750c63d648fe8e9ca5674ce8668f86cc9600fa" }
+source = { git = "https://github.com/ThrudPrimrose/alloy.git?rev=6b50b65cecbdc30a0879de3b89ca23bdf1973081#6b50b65cecbdc30a0879de3b89ca23bdf1973081" }
 dependencies = [
     { name = "dace" },
     { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" } },
@@ -1071,7 +1071,7 @@ testing = [
 
 [package.metadata]
 requires-dist = [
-    { name = "alloy", marker = "python_full_version >= '3.12' and extra == 'alloy'", git = "https://github.com/ThrudPrimrose/alloy.git?rev=b3750c63d648fe8e9ca5674ce8668f86cc9600fa" },
+    { name = "alloy", marker = "python_full_version >= '3.12' and extra == 'alloy'", git = "https://github.com/ThrudPrimrose/alloy.git?rev=6b50b65cecbdc30a0879de3b89ca23bdf1973081" },
     { name = "anthropic", marker = "extra == 'agent'", specifier = ">=1.0" },
     { name = "anthropic", marker = "extra == 'agent-anthropic'", specifier = ">=1.0" },
     { name = "astunparse" },
