@@ -1862,6 +1862,7 @@ def render(
     isa: ISA = ISA.AUTO,
     hints: str = cpf_lowering.HintDetail.PROOFS.value,
     llm_friendly: bool = False,
+    tasklet_labels: bool = False,
 ) -> Rendering:
     """Render ``sdfg`` and return the text together with the SDFG it describes.
 
@@ -1892,6 +1893,8 @@ def render(
     :param llm_friendly: respell the host unit under short generated names (:mod:`dace.codegen.cpf_compact`)
                          before it is verified and compiled; the entry point, its parameters and every export keep
                          their names, and :attr:`Rendering.names` maps each short name back. Host dialects only.
+    :param tasklet_labels: end each tasklet statement with ``// <tasklet label>``, for a tool that maps the unit's
+                           lines (a compiler's line table) back to the SDFG's tasklets. Comments only: same code.
     :returns: the :class:`Rendering`.
     :raises NotImplementedError: if the SDFG needs anything the dialect's units cannot hold; the
                                  message names the construct.
@@ -1900,7 +1903,10 @@ def render(
                         ``signature`` does not fit the entry
                         (see :class:`EntrySignature`).
     """
-    with cpf_lowering.hint_detail_scope(cpf_lowering.HintDetail(hints)):
+    with (
+        cpf_lowering.hint_detail_scope(cpf_lowering.HintDetail(hints)),
+        cpf_lowering.tasklet_labels_scope(tasklet_labels),
+    ):
         return render_unit(sdfg, validate, language, signature, check_compiles, isa, llm_friendly)
 
 

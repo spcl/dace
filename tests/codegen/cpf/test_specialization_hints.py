@@ -832,7 +832,9 @@ def test_a_guarded_loop_names_its_guard_on_both_arms():
     sdfg = s171.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True, validate_all=False, target="cpu")
     maps = [
-        n.specialization_hint.splitlines()[0] for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)
+        n.specialization_hint.splitlines()[0]
+        for n, parent in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.MapEntry)
     ]
     loops = [loop.specialization_hint.splitlines()[0] for loop in loops_of(sdfg)]
     assert any(re.match(r"parallel -- independent when .*inc.* \(checked before the loop\)$", line) for line in maps), (
@@ -858,7 +860,9 @@ def test_a_map_resting_on_an_unknown_sign_is_versioned_on_it():
     canonicalize(sdfg, validate=True, validate_all=False, target="cpu")
     AnnotateLoopKinds().apply_pass(sdfg, {})
     maps = [
-        n.specialization_hint.splitlines()[0] for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)
+        n.specialization_hint.splitlines()[0]
+        for n, parent in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.MapEntry)
     ]
     assert PARALLEL in maps, maps
     branches = [
@@ -937,6 +941,28 @@ def test_no_rendering_carries_a_tasklet_or_scope_label():
     ]
     assert not trailing(kinds), trailing(kinds)
     assert not trailing(proofs), trailing(proofs)
+
+
+def test_a_rendering_asked_for_tasklet_labels_names_each_statements_tasklet_and_keeps_the_code():
+    """``tasklet_labels=True`` is for a tool that maps the unit's lines back to tasklets: each statement ends with
+    its tasklet's label, and the code is the same."""
+
+    @dace.program
+    def scaled(a: dace.float64[N], b: dace.float64[N]):
+        for i in dace.map[0:N]:
+            b[i] = a[i] * 2.0
+
+    sdfg = scaled.to_sdfg(simplify=True)
+    sdfg.name = "cpf_tasklet_labels"
+    canonicalize(sdfg)
+    plain, labeled = (render(sdfg, tasklet_labels=on).code for on in (False, True))
+
+    labels = {n.label for n, parent in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)}
+    assert any(line.rstrip().endswith(f"// {label}") for line in labeled.splitlines() for label in labels), labeled
+    strip = lambda code: [
+        line.split("  // ")[0].rstrip() if line.split("//")[0].strip() else line for line in code.splitlines()
+    ]
+    assert strip(labeled) == strip(plain)
 
 
 def test_the_kinds_rendering_names_the_loops_the_proofs_rendering_classes():
@@ -1032,6 +1058,7 @@ if __name__ == "__main__":
     test_a_map_resting_on_no_trap_assumes_nothing()
     test_the_kinds_rendering_says_its_class_words_and_nothing_else()
     test_no_rendering_carries_a_tasklet_or_scope_label()
+    test_a_rendering_asked_for_tasklet_labels_names_each_statements_tasklet_and_keeps_the_code()
     test_the_kinds_rendering_names_the_loops_the_proofs_rendering_classes()
     test_the_two_variants_render_the_same_code()
     test_an_unknown_hint_detail_is_refused()

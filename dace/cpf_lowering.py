@@ -214,6 +214,25 @@ OPEN_UNKNOWN = (
 HEADER_HINT_LINES = frozenset({SETTLED_PARALLEL, OPEN_UNKNOWN})
 
 _hint_detail: HintDetail = HintDetail.PROOFS
+#: Whether a standalone rendering ends each tasklet statement with ``// <label>`` (see :func:`tasklet_labels_scope`).
+labels_in_force = False
+
+
+def tasklet_labels() -> bool:
+    """Whether the rendering in force names each statement's tasklet in a trailing comment."""
+    return labels_in_force
+
+
+@contextlib.contextmanager
+def tasklet_labels_scope(on: bool):
+    """Name (or not) each statement's tasklet in a trailing comment for the duration of the block."""
+    global labels_in_force
+    previous = labels_in_force
+    labels_in_force = on
+    try:
+        yield on
+    finally:
+        labels_in_force = previous
 
 
 def hint_detail() -> HintDetail:

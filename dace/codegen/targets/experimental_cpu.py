@@ -473,8 +473,10 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
     def emit_tasklet_body_block(self, callsite_stream, cfg, state_id, node, inner_body, postamble, has_locals) -> None:
         self.emit_provenance(node, cfg, state_id, callsite_stream)
-        # The label is a DaCe name, not a verdict: a CPF rendering is read as code and carries none
-        label = "" if cpf_lowering.standalone() else "  // %s" % node.label
+        # The label is a DaCe name, not a verdict: a CPF rendering is read as code and carries none, unless a tool
+        # that maps the unit's lines back to tasklets asks for it (``render(tasklet_labels=True)``)
+        named = not cpf_lowering.standalone() or cpf_lowering.tasklet_labels()
+        label = "  // %s" % node.label if named else ""
         # A connector-free single-statement tasklet collapses onto one brace-free line; anything with
         # locals keeps its own ``{ }`` so a declaration cannot leak into the map body.
         if not has_locals and self._single_statement_body(node):
