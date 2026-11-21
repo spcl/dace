@@ -240,6 +240,48 @@ def lane_signature(
     return sorted(roots, key=str)
 
 
+def lane_spacing(distinct: list[int]) -> int | None:
+    """The spacing ``g`` of sorted lane offsets ``[0, g, ..., (m - 1) g]`` with ``m >= 2``, else ``None``."""
+    if len(distinct) < 2 or distinct[0] != 0 or distinct[1] <= 0:
+        return None
+    g = distinct[1]
+    return g if distinct == [j * g for j in range(len(distinct))] else None
+
+
+def drop_isolated_access_nodes(state: SDFGState) -> None:
+    """Remove the access nodes a dropped lane left without edges."""
+    for n in list(state.nodes()):
+        if isinstance(n, nodes.AccessNode) and state.degree(n) == 0:
+            state.remove_node(n)
+
+
+def scalar_accumulator_sink(state: SDFGState) -> nodes.AccessNode | None:
+    """The state's only sink, if it is a scalar the state also reads: a reduction with no other output."""
+    access = [n for n in state.nodes() if isinstance(n, nodes.AccessNode)]
+    sinks = [n for n in access if state.out_degree(n) == 0]
+    sources = dict.fromkeys(n.data for n in access if state.in_degree(n) == 0)
+    if len(sinks) != 1 or sinks[0].data not in sources:
+        return None
+    desc = state.sdfg.arrays.get(sinks[0].data)
+    return sinks[0] if desc is not None and desc.total_size == 1 else None
+
+
+def forward_reach(state: SDFGState, lane_edges: dict[int, list]) -> dict[nodes.Node, dict[int, None]]:
+    """The lanes whose edges reach each node along out-edges."""
+    reached_by: dict[nodes.Node, dict[int, None]] = {}
+    for d, edges in lane_edges.items():
+        frontier = [e.dst for e in edges]
+        seen: dict = {}
+        while frontier:
+            n = frontier.pop()
+            if n in seen:
+                continue
+            seen[n] = None
+            reached_by.setdefault(n, {})[d] = None
+            frontier.extend(e.dst for e in state.out_edges(n))
+    return reached_by
+
+
 def steps_alike(loop: LoopRegion, states: list[SDFGState], lane_syms: dict[str, int]) -> bool:
     """Whether no body edge decides, and each assignment but a lane symbol's holds the same value however often it runs:
     the re-rolled body runs ``m`` times as often, and only the lanes account for that."""
@@ -497,17 +539,12 @@ class RerollUnrolledLoops(ppl.Pass):
         if sym_offset is None or not steps_alike(loop, states, sym_offset):
             return False
 
-        # Lane offset of every loop-dependent boundary edge, per state.
-        edge_offsets: dict[SDFGState, dict[MultiConnectorEdge[Memlet], int]] = {st: {} for st in states}
+        edge_offsets: dict[SDFGState, dict[MultiConnectorEdge[Memlet], int]] = {}
         for st in states:
-            for edge in st.edges():
-                if edge.data is None:
-                    continue
-                off, ok = self._edge_offset(edge.data.subset, loop_var, sym_offset)
-                if not ok:
-                    return False
-                if off is not None:
-                    edge_offsets[st][edge] = off
+            offsets = self.edge_lane_offsets(st, loop_var, sym_offset, reads_only=False)
+            if offsets is None:
+                return False
+            edge_offsets[st] = offsets
 
         all_offsets = dict.fromkeys(sym_offset.values())
         for st in states:
@@ -515,13 +552,10 @@ class RerollUnrolledLoops(ppl.Pass):
         if not all_offsets:
             return False
 
-        # The distinct lane offsets must be equally spaced from 0: ``{0, g, 2g, ..., (m-1)g}``
         distinct = sorted(all_offsets)
         m = len(distinct)
-        if m < 2 or distinct[0] != 0:
-            return False
-        g = distinct[1]
-        if g <= 0 or distinct != [j * g for j in range(m)]:
+        g = lane_spacing(distinct)
+        if g is None:
             return False
 
         # Position-coverage safety: ``step > m*g`` leaves gaps the re-rolled step-``g`` loop would wrongly fill; ``step
@@ -532,53 +566,17 @@ class RerollUnrolledLoops(ppl.Pass):
         if step < m * g and self._has_read_modify_write(states, edge_offsets):
             return False
 
-        # Per state, walk each lane's component: every node reached from lane ``k``'s boundary edges must be reachable
-        # from *only* lane ``k``. A node two lanes meet at combines them, which the accumulator matcher decides.
         shared = {st: self._shared_nodes(st) for st in states}
-        lane_nodes: dict[SDFGState, dict[int, dict]] = {st: {} for st in states}
         lane_edges: dict[int, dict[SDFGState, list]] = {d: {st: [] for st in states} for d in distinct}
         for st in states:
-            per_lane_edges: dict[int, list] = {d: lane_edges[d][st] for d in distinct}
             for edge, off in edge_offsets[st].items():
-                per_lane_edges[off].append(edge)
-            # Walk each lane independently, recording which lanes reach each node.
-            visited_by: dict = {}
-            for d in distinct:
-                for n in self._lane_nodes(st, per_lane_edges[d], shared[st]):
-                    visited_by.setdefault(n, {})[d] = None
-            per_lane_unique: dict[int, dict] = {d: {} for d in distinct}
-            for n, lanes_visiting in visited_by.items():
-                if len(lanes_visiting) != 1:
-                    return False
-                per_lane_unique[next(iter(lanes_visiting))][n] = None
-            # Nothing but the lanes may run: the re-rolled body runs ``m`` times as often.
-            if any(n not in visited_by for n in st.nodes() if not isinstance(n, nodes.AccessNode)):
-                return False
-            lane_nodes[st] = per_lane_unique
-
-        # Per-lane carried accumulators -- the ``s0 OP= f(i); s1 OP= f(i+g); ...; s = s0 OP s1 ...`` reduction shape.
-        carried: dict[int, dict[str, SDFGState]] = {d: {} for d in distinct}
-        for st in states:
-            for d in distinct:
-                for n in lane_nodes[st][d]:
-                    for e in st.out_edges(n):
-                        if isinstance(e.dst, nodes.AccessNode) and e.dst in shared[st] and e not in edge_offsets[st]:
-                            carried[d][e.dst.data] = st
-        acc: dict[int, tuple[str, SDFGState]] = {}
-        for d in distinct:
-            if len(carried[d]) > 1:
-                return False
-            for name, st in carried[d].items():
-                acc[d] = (name, st)
-        if acc:
-            names = dict.fromkeys(name for name, _ in acc.values())
-            if len(acc) != m or len(names) != m:
-                return False
-            ops = dict.fromkeys(self._carried_accumulator_op(st, name) for name, st in acc.values())
-            if len(ops) != 1 or next(iter(ops)) is None:
-                return False
-            if not self._accumulators_folded_once(loop, names, next(iter(ops))):
-                return False
+                lane_edges[off][st].append(edge)
+        lane_nodes = self.lane_partition(states, lane_edges, shared)
+        if lane_nodes is None:
+            return False
+        acc = self.carried_accumulators(loop, states, lane_nodes, shared, edge_offsets)
+        if acc is None:
+            return False
 
         private = {d: {st: lane_nodes[st][d] for st in states} for d in distinct}
         if not self._lanes_match(
@@ -589,26 +587,78 @@ class RerollUnrolledLoops(ppl.Pass):
             return False
 
         # Re-roll: drop every lane but offset 0
-        drop_offsets = dict.fromkeys(distinct[1:])  # already sorted -- dict.fromkeys keeps that order
-        drop_syms = dict.fromkeys(s for s, o in sym_offset.items() if o in drop_offsets)
+        drop_offsets = dict.fromkeys(distinct[1:])
         for st in states:
             for d in drop_offsets:
-                for edge in list(edge_offsets[st]):
-                    if edge_offsets[st][edge] == d and edge in st.edges():
+                for edge in lane_edges[d][st]:
+                    if edge in st.edges():
                         st.remove_edge(edge)
                 for n in lane_nodes[st][d]:
                     if n in st.nodes():
                         st.remove_node(n)
-            # Per-lane AccessNode copies the frontend split out are now isolated.
-            for n in list(st.nodes()):
-                if isinstance(n, nodes.AccessNode) and st.degree(n) == 0:
-                    st.remove_node(n)
+            drop_isolated_access_nodes(st)
+        drop_syms = [s for s, o in sym_offset.items() if o in drop_offsets]
         for edge in loop.edges():
             for s in drop_syms:
                 edge.data.assignments.pop(s, None)
 
         self._rewrite_step(loop, loop_var, g, m)
         return True
+
+    def lane_partition(
+        self, states: list[SDFGState], lane_edges: dict[int, dict[SDFGState, list]], shared: dict
+    ) -> dict[SDFGState, dict[int, dict]] | None:
+        """Per state, the nodes each lane's boundary edges reach, or ``None`` if two lanes meet at a node or a
+        non-access node belongs to no lane (the re-rolled body runs ``m`` times as often)."""
+        lane_nodes: dict[SDFGState, dict[int, dict]] = {}
+        for st in states:
+            visited_by: dict = {}
+            for d, per_state in lane_edges.items():
+                for n in self._lane_nodes(st, per_state[st], shared[st]):
+                    visited_by.setdefault(n, {})[d] = None
+            per_lane: dict[int, dict] = {d: {} for d in lane_edges}
+            for n, lanes_visiting in visited_by.items():
+                if len(lanes_visiting) != 1:
+                    return None
+                per_lane[next(iter(lanes_visiting))][n] = None
+            if any(n not in visited_by for n in st.nodes() if not isinstance(n, nodes.AccessNode)):
+                return None
+            lane_nodes[st] = per_lane
+        return lane_nodes
+
+    def carried_accumulators(
+        self,
+        loop: LoopRegion,
+        states: list[SDFGState],
+        lane_nodes: dict[SDFGState, dict[int, dict]],
+        shared: dict,
+        edge_offsets: dict[SDFGState, dict[MultiConnectorEdge[Memlet], int]],
+    ) -> dict[int, tuple[str, SDFGState]] | None:
+        """Per lane, its carried accumulator of the ``s0 OP= f(i); s1 OP= f(i+g); s = s0 OP s1`` shape; ``{}`` if
+        no lane carries one, ``None`` if only some do or the accumulators are not folded by one ``OP`` tree."""
+        carried: dict[int, dict[str, SDFGState]] = {d: {} for d in lane_nodes[states[0]]}
+        for st in states:
+            for d, lane in lane_nodes[st].items():
+                for n in lane:
+                    for e in st.out_edges(n):
+                        if isinstance(e.dst, nodes.AccessNode) and e.dst in shared[st] and e not in edge_offsets[st]:
+                            carried[d][e.dst.data] = st
+        acc: dict[int, tuple[str, SDFGState]] = {}
+        for d, names_in_lane in carried.items():
+            if len(names_in_lane) > 1:
+                return None
+            for name, st in names_in_lane.items():
+                acc[d] = (name, st)
+        if not acc:
+            return acc
+        m = len(carried)
+        names = dict.fromkeys(name for name, unused_state in acc.values())
+        if len(acc) != m or len(names) != m:
+            return None
+        ops = dict.fromkeys(self._carried_accumulator_op(st, name) for name, st in acc.values())
+        if len(ops) != 1 or next(iter(ops)) is None:
+            return None
+        return acc if self._accumulators_folded_once(loop, names, next(iter(ops))) else None
 
     def _cut_nodes(self, state: SDFGState) -> dict[nodes.Node, None]:
         """AccessNodes of the loop's VISIBLE containers -- where the value walk stops."""
@@ -690,52 +740,15 @@ class RerollUnrolledLoops(ppl.Pass):
 
         cut = [self._cut_nodes(st) for st in states]
         comps = self._value_components(states, cut)
-        if not comps:
+        bounds = self.component_boundaries(states, cut, comps) if comps else None
+        found = self.chain_lanes(states, bounds, loop_var) if bounds is not None else None
+        if found is None:
             return False
-        owner: dict[tuple[int, int], int] = {}
-        for ci, comp in enumerate(comps):
-            for si, node in comp:
-                owner[(si, states[si].node_id(node))] = ci
-
-        bounds: list[list] = [[] for _ in comps]
-        for si, st in enumerate(states):
-            for e in st.edges():
-                if e.data is None or e.data.is_empty():
-                    continue
-                is_read, stores = e.src in cut[si], e.dst in cut[si]
-                if is_read and stores:
-                    return False  # a bare container-to-container copy belongs to no lane
-                if not is_read and not stores:
-                    continue
-                inner = e.dst if is_read else e.src
-                bounds[owner[(si, st.node_id(inner))]].append((si, e, e.src if is_read else e.dst, is_read))
-
-        topo = [self._topological_index(st) for st in states]
-        lanes: dict[int, int] = {}
-        order: dict[int, tuple[int, int]] = {}
-        for ci, comp in enumerate(comps):
-            offsets = []
-            for si, e, node, is_read in bounds[ci]:
-                off, ok = self._edge_offset(self._cut_side_subset(e, node), loop_var, {})
-                # A loop-invariant READ (a scalar coefficient) is shared by every lane and stays
-                if not ok or (off is None and not is_read):
-                    return False
-                offsets.append((is_read, node.data, off, si, e))
-            stored_at = dict.fromkeys(off for is_read, _, off, _, _ in offsets if not is_read)
-            if len(stored_at) != 1:
-                return False
-            d = next(iter(stored_at))
-            if d in lanes:
-                return False
-            lanes[d] = ci
-            order[d] = min((si, topo[si][states[si].node_id(e.dst)]) for is_read, _, _, si, e in offsets if not is_read)
-
+        lanes, order = found
         distinct = sorted(lanes)
         m = len(distinct)
-        if m < 2 or distinct[0] != 0:
-            return False
-        g = distinct[1]
-        if g <= 0 or distinct != [j * g for j in range(m)]:
+        g = lane_spacing(distinct)
+        if g is None:
             return False
         # Exact coverage only: a gap would leave positions the step-``g`` loop wrongly fills, an
         # overlap would store a position twice, and both break the read-ahead argument above.
@@ -758,11 +771,60 @@ class RerollUnrolledLoops(ppl.Pass):
                 if node in st.nodes():
                     st.remove_node(node)
         for st in states:
-            for n in list(st.nodes()):
-                if isinstance(n, nodes.AccessNode) and st.degree(n) == 0:
-                    st.remove_node(n)
+            drop_isolated_access_nodes(st)
         self._rewrite_step(loop, loop_var, g, m)
         return True
+
+    def component_boundaries(
+        self, states: list[SDFGState], cut: list[dict[nodes.Node, None]], comps: list[list[tuple[int, nodes.Node]]]
+    ) -> list[list] | None:
+        """Per value component, its ``(state index, edge, container node, is_read)`` edges to the visible
+        containers, or ``None`` for a bare container-to-container copy, which belongs to no lane."""
+        owner: dict[tuple[int, int], int] = {}
+        for ci, comp in enumerate(comps):
+            for si, node in comp:
+                owner[(si, states[si].node_id(node))] = ci
+        bounds: list[list] = [[] for _ in comps]
+        for si, st in enumerate(states):
+            for e in st.edges():
+                if e.data is None or e.data.is_empty():
+                    continue
+                is_read, stores = e.src in cut[si], e.dst in cut[si]
+                if is_read and stores:
+                    return None
+                if not is_read and not stores:
+                    continue
+                inner = e.dst if is_read else e.src
+                bounds[owner[(si, st.node_id(inner))]].append((si, e, e.src if is_read else e.dst, is_read))
+        return bounds
+
+    def chain_lanes(
+        self, states: list[SDFGState], bounds: list[list], loop_var: str
+    ) -> tuple[dict[int, int], dict[int, tuple[int, int]]] | None:
+        """The component of each lane by its store offset, and the position of each lane's first store; ``None``
+        if a component stores at no single offset or two components store at one."""
+        topo = [self._topological_index(st) for st in states]
+        lanes: dict[int, int] = {}
+        order: dict[int, tuple[int, int]] = {}
+        for ci, boundary in enumerate(bounds):
+            offsets = []
+            for si, e, node, is_read in boundary:
+                off, ok = self._edge_offset(self._cut_side_subset(e, node), loop_var, {})
+                # A loop-invariant READ (a scalar coefficient) is shared by every lane and stays
+                if not ok or (off is None and not is_read):
+                    return None
+                offsets.append((is_read, off, si, e))
+            stored_at = dict.fromkeys(off for is_read, off, unused_si, unused_edge in offsets if not is_read)
+            if len(stored_at) != 1:
+                return None
+            d = next(iter(stored_at))
+            if d in lanes:
+                return None
+            lanes[d] = ci
+            order[d] = min(
+                (si, topo[si][states[si].node_id(e.dst)]) for is_read, unused_off, si, e in offsets if not is_read
+            )
+        return lanes, order
 
     def _try_reroll_accumulator_reduction(self, loop: LoopRegion, step: int) -> bool:
         """Re-roll a hand-unrolled reduction (TSVC s352, s31111) into one step-``g`` lane."""
@@ -775,69 +837,27 @@ class RerollUnrolledLoops(ppl.Pass):
         if self._interstate_lane_symbols(loop, loop_var) or not steps_alike(loop, states, {}):
             return False
 
-        # Lane offsets of the loop-dependent READ edges (src is an AccessNode).
+        read_offsets = self.edge_lane_offsets(st, loop_var, {}, reads_only=True)
+        if read_offsets is None:
+            return False
         per_lane_edges: dict[int, list] = {}
-        for edge in st.edges():
-            if edge.data is None or not isinstance(edge.src, nodes.AccessNode):
-                continue
-            off, ok = self._edge_offset(edge.data.subset, loop_var, {})
-            if not ok:
-                return False
-            if off is not None:
-                per_lane_edges.setdefault(off, []).append(edge)
+        for edge, off in read_offsets.items():
+            per_lane_edges.setdefault(off, []).append(edge)
         distinct = sorted(per_lane_edges)
         m = len(distinct)
-        if m < 2 or distinct[0] != 0:
-            return False
-        g = distinct[1]
-        if g <= 0 or distinct != [j * g for j in range(m)]:
+        g = lane_spacing(distinct)
+        if g is None:
             return False
         # Contiguous, no-overlap coverage: each position read exactly once.
         if step != m * g:
             return False
 
-        # Exactly one carried scalar accumulator: a data name with both a source (in-degree 0) and a sink (out-degree 0)
-        # AccessNode in the state, scalar, and the loop's only sink -> the reduction has no other output.
-        sinks = [n for n in st.nodes() if isinstance(n, nodes.AccessNode) and st.out_degree(n) == 0]
-        sources = dict.fromkeys(n.data for n in st.nodes() if isinstance(n, nodes.AccessNode) and st.in_degree(n) == 0)
-        if len(sinks) != 1 or sinks[0].data not in sources:
+        sink = scalar_accumulator_sink(st)
+        if sink is None:
             return False
-        acc_desc = st.sdfg.arrays.get(sinks[0].data)
-        if acc_desc is None or acc_desc.total_size != 1:
-            return False
-
-        # Forward reach: which offsets reach each node (out-edges only).
-        reached_by: dict = {}
-        for d in distinct:
-            frontier = [e.dst for e in per_lane_edges[d]]
-            seen: dict = {}
-            while frontier:
-                n = frontier.pop()
-                if n in seen:
-                    continue
-                seen[n] = None
-                reached_by.setdefault(n, {})[d] = None
-                frontier.extend(e.dst for e in st.out_edges(n))
-
-        # Classify fold nodes (>=2 offsets): each must be an associative merge of
-        # ONE commutative op, or a transparent spine carrier.
-        fold_op: str | None = None
-        for n, offs in reached_by.items():
-            if len(offs) < 2:
-                continue
-            op = self._associative_op_kind(n)
-            if op is None:
-                if self._is_transparent_spine(st, n):
-                    continue
-                return False
-            if fold_op is None:
-                fold_op = op
-            elif fold_op != op:
-                return False
-        if fold_op is None:
-            return False
-
-        spine = self._fold_spine(st, sinks[0], fold_op)
+        reached_by = forward_reach(st, {d: per_lane_edges[d] for d in distinct})
+        fold_op = self.single_fold_op(st, reached_by)
+        spine = self._fold_spine(st, sink, fold_op) if fold_op is not None else None
         if spine is None:
             return False
 
@@ -848,7 +868,7 @@ class RerollUnrolledLoops(ppl.Pass):
                 private[next(iter(offs))][st][n] = None
         if not self._lanes_match(loop, states, private, {d: {st: per_lane_edges[d]} for d in distinct}, {}, {}):
             return False
-        if loop_analysis.read_outside(loop.sdfg, loop, set(), self._scratch({0: {st: reached_by}}) - {sinks[0].data}):
+        if loop_analysis.read_outside(loop.sdfg, loop, set(), self._scratch({0: {st: reached_by}}) - {sink.data}):
             return False
 
         # Rewrite.
@@ -862,12 +882,42 @@ class RerollUnrolledLoops(ppl.Pass):
             if offs and all(o in drop_offsets for o in offs):
                 st.remove_node(n)
         self._collapse_merge_tree(st, dict.fromkeys(n for n in st.nodes() if self._associative_op_kind(n) == fold_op))
-        for n in list(st.nodes()):
-            if isinstance(n, nodes.AccessNode) and st.degree(n) == 0:
-                st.remove_node(n)
+        drop_isolated_access_nodes(st)
 
         self._rewrite_step(loop, loop_var, g, m)
         return True
+
+    def edge_lane_offsets(
+        self, state: SDFGState, loop_var: str, sym_offset: dict[str, int], reads_only: bool
+    ) -> dict[MultiConnectorEdge[Memlet], int] | None:
+        """The lane offset of every loop-dependent edge (of every read from an access node, ``reads_only``), or
+        ``None`` if an edge's subset has no single offset."""
+        offsets: dict[MultiConnectorEdge[Memlet], int] = {}
+        for edge in state.edges():
+            if edge.data is None or (reads_only and not isinstance(edge.src, nodes.AccessNode)):
+                continue
+            off, ok = self._edge_offset(edge.data.subset, loop_var, sym_offset)
+            if not ok:
+                return None
+            if off is not None:
+                offsets[edge] = off
+        return offsets
+
+    def single_fold_op(self, state: SDFGState, reached_by: dict) -> str | None:
+        """The one associative op every node two lanes reach merges with (transparent spine carriers aside)."""
+        fold_op: str | None = None
+        for n, offs in reached_by.items():
+            if len(offs) < 2:
+                continue
+            op = self._associative_op_kind(n)
+            if op is None:
+                if self._is_transparent_spine(state, n):
+                    continue
+                return None
+            if fold_op is not None and fold_op != op:
+                return None
+            fold_op = op
+        return fold_op
 
     def _fold_spine(self, state: SDFGState, sink: nodes.AccessNode, op: str) -> dict[nodes.Node, None] | None:
         """The nodes from the accumulator's read to ``sink``, or ``None`` if it passes anything but ``op`` folds."""

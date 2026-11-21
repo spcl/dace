@@ -98,6 +98,25 @@ class _Step:
         self.write_copies = write_copies  # copy tasklets to delete
 
 
+def same_reduction(step: "_Step", other: "_Step", op_type: type) -> bool:
+    """Whether ``step`` updates ``other``'s accumulator slot with ``op_type``."""
+    return (
+        step.acc_name == other.acc_name and step.write_subset == other.write_subset and _binop_op(step.binop) is op_type
+    )
+
+
+def chain_head(step: "_Step", steps_by_write: dict, bound: int) -> "_Step":
+    """The first step of ``step``'s chain: walk back while another step of the same reduction wrote its read."""
+    op_type = _binop_op(step.binop)
+    head = step
+    for unused_step in range(bound):
+        prev = steps_by_write.get(head.acc_read_node)
+        if prev is None or not same_reduction(prev, head, op_type):
+            break
+        head = prev
+    return head
+
+
 @properties.make_properties
 @explicit_cf_compatible
 class FuseChainedScalarReductions(ppl.Pass):
@@ -131,106 +150,91 @@ class FuseChainedScalarReductions(ppl.Pass):
         return count
 
     def _collect_chains(self, sdfg: SDFG, st: SDFGState) -> list[tuple[type, list[_Step]]]:
-        # Build the per-binop accumulation record: which acc node it reads and writes.
         steps_by_read = {}  # acc_read_node -> _Step
         steps_by_write = {}  # write_final_node -> _Step
         all_steps: list[_Step] = []
         for tasklet in [n for n in st.nodes() if isinstance(n, nodes.Tasklet)]:
-            op_type = _binop_op(tasklet)
-            if op_type is None:
+            step = self.accumulation_step(sdfg, st, tasklet)
+            if step is None:
                 continue
-            in_edges = value_edges(st.in_edges(tasklet))
-            out_edges = value_edges(st.out_edges(tasklet))
-            if len(in_edges) != 2 or len(out_edges) != 1:
-                continue
-            chased = _chase_write_to_accum(st, sdfg, out_edges[0])
-            if chased is None:
-                continue
-            write_final, intermediates, copies = chased
-            acc_name = write_final.data
-            write_subset = None
-            # The edge into write_final carries the written slot.
-            wfin = st.in_edges(write_final)
-            if len(wfin) != 1:
-                continue
-            write_subset = wfin[0].data.subset
-            # Identify the accumulator operand: the input edge reading acc_name at write_subset.
-            acc_edges = [
-                e
-                for e in in_edges
-                if isinstance(e.src, nodes.AccessNode)
-                and e.src.data == acc_name
-                and str(e.data.subset) == str(write_subset)
-            ]
-            if len(acc_edges) != 1:
-                continue
-            acc_edge = acc_edges[0]
-            inc_edges = [e for e in in_edges if e is not acc_edge]
-            if len(inc_edges) != 1:
-                continue
-            inc_edge = inc_edges[0]
-            # The increment must not read the accumulator (else it is a recurrence).
-            if isinstance(inc_edge.src, nodes.AccessNode) and inc_edge.src.data == acc_name:
-                continue
-            # The step is ``acc OP inc`` on the two connectors themselves: the fold rewires the raw increment input,
-            # so ``acc + 3.0 * v`` would lose its ``3.0 *``.
-            update = AugAssignToWCR.name_increment(tasklet, out_edges[0].src_conn, acc_edge.dst_conn)
-            if update is None or update[0] != FOLDABLE_OPS[op_type] or update[1].id != inc_edge.dst_conn:
-                continue
-            # Single-element, scalar slot.
-            desc = sdfg.arrays.get(acc_name)
-            if desc is None:
-                continue
-            step = _Step(tasklet, acc_edge.src, acc_edge, inc_edge, write_final, intermediates, copies)
-            step.acc_name = acc_name
-            step.write_subset = str(write_subset)
             all_steps.append(step)
-            steps_by_read.setdefault(acc_edge.src, step)
-            steps_by_write.setdefault(write_final, step)
+            steps_by_read.setdefault(step.acc_read_node, step)
+            steps_by_write.setdefault(step.write_final, step)
 
         # Group steps that share the same accumulator/slot/op and form a linear chain.
         chains: list[tuple[type, list[_Step]]] = []
         used: dict = {}
+        bound = len(all_steps) + 1
         for step in all_steps:
             if step in used:
                 continue
             op_type = _binop_op(step.binop)
-            # Walk to the head: a step whose acc-read node is not written by another step in the group.
-            head = step
-            guard = 0
-            while head.acc_read_node in steps_by_write and guard < len(all_steps) + 1:
-                prev = steps_by_write[head.acc_read_node]
-                if (
-                    prev.acc_name != head.acc_name
-                    or prev.write_subset != head.write_subset
-                    or _binop_op(prev.binop) is not op_type
-                ):
-                    break
-                head = prev
-                guard += 1
-            # Walk forward from head building the chain.
-            chain: list[_Step] = []
-            cur = head
-            guard = 0
-            while cur is not None and guard < len(all_steps) + 1:
-                if (
-                    cur.acc_name != head.acc_name
-                    or cur.write_subset != head.write_subset
-                    or _binop_op(cur.binop) is not op_type
-                    or cur in used
-                ):
-                    break
-                chain.append(cur)
-                used[cur] = None
-                nxt = steps_by_read.get(cur.write_final)
-                cur = nxt
-                guard += 1
-            if len(chain) >= 2:
-                # Require a clean linear chain: each intermediate acc node has exactly the
-                # step-to-step wiring and nothing else touches acc[slot] out of chain order.
-                if self._chain_is_clean(st, chain):
-                    chains.append((op_type, chain))
+            chain = self.chain_through(chain_head(step, steps_by_write, bound), steps_by_read, used, bound)
+            # A clean linear chain: nothing else touches acc[slot] out of chain order.
+            if len(chain) >= 2 and self._chain_is_clean(st, chain):
+                chains.append((op_type, chain))
         return chains
+
+    def accumulation_step(self, sdfg: SDFG, st: SDFGState, tasklet: nodes.Tasklet) -> _Step | None:
+        """The ``acc[slot] = acc[slot] OP inc`` record of ``tasklet``, or ``None`` if it is not that shape."""
+        op_type = _binop_op(tasklet)
+        if op_type is None:
+            return None
+        in_edges = value_edges(st.in_edges(tasklet))
+        out_edges = value_edges(st.out_edges(tasklet))
+        if len(in_edges) != 2 or len(out_edges) != 1:
+            return None
+        chased = _chase_write_to_accum(st, sdfg, out_edges[0])
+        if chased is None:
+            return None
+        write_final, intermediates, copies = chased
+        acc_name = write_final.data
+        # The edge into write_final carries the written slot.
+        wfin = st.in_edges(write_final)
+        if len(wfin) != 1:
+            return None
+        write_subset = wfin[0].data.subset
+        acc_edges = [
+            e
+            for e in in_edges
+            if isinstance(e.src, nodes.AccessNode)
+            and e.src.data == acc_name
+            and str(e.data.subset) == str(write_subset)
+        ]
+        if len(acc_edges) != 1:
+            return None
+        acc_edge = acc_edges[0]
+        inc_edges = [e for e in in_edges if e is not acc_edge]
+        if len(inc_edges) != 1:
+            return None
+        inc_edge = inc_edges[0]
+        # An increment reading the accumulator is a recurrence.
+        if isinstance(inc_edge.src, nodes.AccessNode) and inc_edge.src.data == acc_name:
+            return None
+        # ``acc OP inc`` on the connectors themselves: the fold rewires the raw input, so ``acc + 3.0 * v`` would lose
+        # its ``3.0 *``.
+        update = AugAssignToWCR.name_increment(tasklet, out_edges[0].src_conn, acc_edge.dst_conn)
+        if update is None or update[0] != FOLDABLE_OPS[op_type] or update[1].id != inc_edge.dst_conn:
+            return None
+        if sdfg.arrays.get(acc_name) is None:
+            return None
+        step = _Step(tasklet, acc_edge.src, acc_edge, inc_edge, write_final, intermediates, copies)
+        step.acc_name = acc_name
+        step.write_subset = str(write_subset)
+        return step
+
+    def chain_through(self, head: _Step, steps_by_read: dict, used: dict, bound: int) -> list[_Step]:
+        """The steps from ``head`` on, each reading what the previous wrote, on one accumulator slot and op."""
+        op_type = _binop_op(head.binop)
+        chain: list[_Step] = []
+        cur = head
+        while cur is not None and len(chain) < bound:
+            if not same_reduction(cur, head, op_type) or cur in used:
+                break
+            chain.append(cur)
+            used[cur] = None
+            cur = steps_by_read.get(cur.write_final)
+        return chain
 
     def _chain_is_clean(self, st: SDFGState, chain: list[_Step]) -> bool:
         # remove_node would take a deleted chain node's ordering memlets with it.

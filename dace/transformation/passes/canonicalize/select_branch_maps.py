@@ -19,46 +19,54 @@ from dace.transformation import transformation
 MAX_TASKLETS = 64
 
 
-def branch_map(region: ControlFlowRegion) -> tuple[SDFGState, nodes.MapEntry] | None:
-    """The one non-empty state of ``region`` and its single top-level map, when the contract admits them."""
+def sole_work_state(region: ControlFlowRegion) -> SDFGState | None:
+    """The one non-empty state of a straight-line ``region`` of states that binds nothing."""
     if any(e.data.assignments or not e.data.is_unconditional() for e in region.edges()):
         return None
     states = [b for b in region.nodes() if isinstance(b, SDFGState)]
     if len(states) != len(region.nodes()):
         return None
     full = [s for s in states if s.number_of_nodes() > 0]
-    if len(full) != 1:
-        return None
-    state = full[0]
-    entries = [n for n in state.nodes() if isinstance(n, nodes.MapEntry) and state.entry_node(n) is None]
-    if len(entries) != 1:
-        return None
-    entry = entries[0]
+    return full[0] if len(full) == 1 else None
+
+
+def elementwise_body(state: SDFGState, entry: nodes.MapEntry) -> bool:
+    """Whether the map holds only tasklets over scalars, each handed one element, and writes only from tasklets."""
     scope = state.scope_subgraph(entry)
-    top = set(state.nodes()) - set(scope.nodes())
-    if any(not isinstance(n, nodes.AccessNode) for n in top):
-        return None
-    # A copy between two of those access nodes runs only in its branch; the merged map would drop it.
-    if any(e.src in top and e.dst in top for e in state.edges()):
-        return None
     body = [n for n in scope.nodes() if n is not entry and n is not state.exit_node(entry)]
     if any(not isinstance(n, (nodes.Tasklet, nodes.AccessNode)) for n in body):
-        return None
+        return False
     if any(isinstance(n, nodes.AccessNode) and state.sdfg.arrays[n.data].total_size != 1 for n in body):
-        return None
+        return False
     if any(e.data.wcr is not None for e in scope.edges()):
-        return None
+        return False
     # A tasklet handed several elements picks one in its code: no memlet shows that index in range without the guard.
     if any(
         isinstance(e.dst, nodes.Tasklet) and not e.data.is_empty() and e.data.subset.num_elements() != 1
         for e in scope.edges()
     ):
+        return False
+    return all(
+        isinstance(e.src, nodes.Tasklet) for e in state.in_edges(state.exit_node(entry)) if not e.data.is_empty()
+    )
+
+
+def branch_map(region: ControlFlowRegion) -> tuple[SDFGState, nodes.MapEntry] | None:
+    """The one non-empty state of ``region`` and its single top-level map, when the contract admits them."""
+    state = sole_work_state(region)
+    if state is None:
         return None
-    if any(
-        not isinstance(e.src, nodes.Tasklet) for e in state.in_edges(state.exit_node(entry)) if not e.data.is_empty()
-    ):
+    entries = [n for n in state.nodes() if isinstance(n, nodes.MapEntry) and state.entry_node(n) is None]
+    if len(entries) != 1:
         return None
-    return state, entry
+    entry = entries[0]
+    top = set(state.nodes()) - set(state.scope_subgraph(entry).nodes())
+    if any(not isinstance(n, nodes.AccessNode) for n in top):
+        return None
+    # A copy between two of those access nodes runs only in its branch; the merged map would drop it.
+    if any(e.src in top and e.dst in top for e in state.edges()):
+        return None
+    return (state, entry) if elementwise_body(state, entry) else None
 
 
 def fusion_partner(block: ConditionalBlock, rng, reads: set[str], writes: set[str]) -> bool:

@@ -97,18 +97,25 @@ def foldable(sdfg: SDFG, state: SDFGState, copy: Any, counts: dict[str, int], sc
     subset = copy.data.subset if copy.data.data == root.data else copy.data.other_subset
     if subset is None or symbolic.equal(subset.num_elements(), 1) is not True:
         return None
+    if not source_stable_for_consumers(state, copy, root, source, consumers):
+        return None
+    return Memlet(data=root.data, subset=subset)
+
+
+def source_stable_for_consumers(
+    state: SDFGState, copy: Any, root: nodes.AccessNode, source: data.Data, consumers: list
+) -> bool:
+    """Whether every write of the copy's source lands before the copy or after all its consumers."""
     # The source node's own writes land before the copy reads it.
     before = reachable(state, copy.src, forward=False) | {copy.src}
     # A write inside a consuming scope is neither: its other iterations would read the overwritten element
     after = set.intersection(*(reachable(state, consumer_end(state, edge.dst)) for edge in consumers))
     viewed = sdutil.get_last_view_node(state, root).data if isinstance(source, data.View) else root.data
     if any(writer not in before and writer not in after for writer in writers(state, viewed)):
-        return None
+        return False
     # A scope writing the source overwrites the element its other iterations read
     ends = [consumer_end(state, edge.dst) for edge in consumers if isinstance(edge.dst, nodes.EntryNode)]
-    if any(e.data.data in (root.data, viewed) for end in ends for e in state.out_edges(end)):
-        return None
-    return Memlet(data=root.data, subset=subset)
+    return not any(e.data.data in (root.data, viewed) for end in ends for e in state.out_edges(end))
 
 
 def fold(state: SDFGState, copy: Any, read: Memlet) -> None:

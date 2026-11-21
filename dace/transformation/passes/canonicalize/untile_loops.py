@@ -79,6 +79,44 @@ def _intermediate_chain_clean(outer: LoopRegion, inner: LoopRegion, outer_var: s
         current = current.parent_graph
 
 
+def point_accesses(inner: LoopRegion, tiles: set[str]) -> tuple[dict[str, list[list]], dict[str, list[list]]] | None:
+    """The element indices ``inner`` reads and writes per container, with the tile iterators set to 0; ``None`` if
+    the body holds more than tasklets or accesses more than one element per memlet."""
+    reads: dict[str, list[list]] = {}
+    writes: dict[str, list[list]] = {}
+    for st in inner.states():
+        if not all(isinstance(n, (nodes.AccessNode, nodes.Tasklet)) for n in st.nodes()):
+            return None
+        for e in st.edges():
+            if e.data.is_empty():
+                continue
+            sides = ((e.src, e.data.get_src_subset(e, st), reads), (e.dst, e.data.get_dst_subset(e, st), writes))
+            for node, subset, accesses in sides:
+                if not isinstance(node, nodes.AccessNode):
+                    continue
+                if subset is None or subset.num_elements() != 1:
+                    return None
+                exprs = [symbolic.pystr_to_symbolic(str(rng[0])) for rng in as_range(subset).ranges]
+                exprs = [x.subs({s: 0 for s in x.free_symbols if str(s) in tiles}) for x in exprs]
+                accesses.setdefault(node.data, []).append(exprs)
+    return reads, writes
+
+
+def write_keeps_point_order(element: list, others: list[list], points: set[str]) -> bool:
+    """Whether a write at ``element`` walks the point iterators with unit steps, one per axis, and every other access
+    of its container lies on one side of it."""
+    axes = [[s for s in x.free_symbols if str(s) in points] for x in element]
+    if any(len(axis) > 1 for axis in axes) or len(points) - sum(map(len, axes)) > 1:
+        return False
+    if any(x.coeff(s) != 1 for x, axis in zip(element, axes) for s in axis):
+        return False
+    for other in others:
+        distance = [symbolic.simplify(a - b) for a, b in zip(element, other)]
+        if not all(d.is_number for d in distance) or (max(distance) > 0 and min(distance) < 0):
+            return False
+    return True
+
+
 def tiles_visit_points_in_order(outer: LoopRegion, inner: LoopRegion) -> bool:
     """Whether the nest from ``outer`` down to ``inner`` computes the same tile by tile as row by row."""
     tiles, points, region = {outer.loop_variable}, set(), inner.parent_graph
@@ -88,22 +126,10 @@ def tiles_visit_points_in_order(outer: LoopRegion, inner: LoopRegion) -> bool:
     points |= {r.loop_variable for r in [inner, *inner.all_control_flow_regions()] if isinstance(r, LoopRegion)}
     if any(e.data.assignments for e in inner.all_interstate_edges()):
         return False
-    reads: dict[str, list[list]] = {}
-    writes: dict[str, list[list]] = {}
-    for st in inner.states():
-        if not all(isinstance(n, (nodes.AccessNode, nodes.Tasklet)) for n in st.nodes()):
-            return False
-        for e in st.edges():
-            if e.data.is_empty():
-                continue
-            sides = ((e.src, e.data.get_src_subset(e, st), reads), (e.dst, e.data.get_dst_subset(e, st), writes))
-            for node, subset, accesses in sides:
-                if isinstance(node, nodes.AccessNode):
-                    if subset is None or subset.num_elements() != 1:
-                        return False
-                    exprs = [symbolic.pystr_to_symbolic(str(rng[0])) for rng in as_range(subset).ranges]
-                    exprs = [x.subs({s: 0 for s in x.free_symbols if str(s) in tiles}) for x in exprs]
-                    accesses.setdefault(node.data, []).append(exprs)
+    accesses = point_accesses(inner, tiles)
+    if accesses is None:
+        return False
+    reads, writes = accesses
     if loop_analysis.control_reads(outer) & writes.keys():
         return False
     sdfg = outer.sdfg
@@ -111,16 +137,9 @@ def tiles_visit_points_in_order(outer: LoopRegion, inner: LoopRegion) -> bool:
         # A body's scratch is private to the point, in either order.
         if sdfg.arrays[data].transient and not loop_analysis.read_outside(sdfg, outer, set(), {data}):
             continue
-        for element in written:
-            axes = [[s for s in x.free_symbols if str(s) in points] for x in element]
-            if any(len(axis) > 1 for axis in axes) or len(points) - sum(map(len, axes)) > 1:
-                return False
-            if any(x.coeff(s) != 1 for x, axis in zip(element, axes) for s in axis):
-                return False
-            for other in written + reads.get(data, []):
-                distance = [symbolic.simplify(a - b) for a, b in zip(element, other)]
-                if not all(d.is_number for d in distance) or (max(distance) > 0 and min(distance) < 0):
-                    return False
+        others = written + reads.get(data, [])
+        if not all(write_keeps_point_order(element, others, points) for element in written):
+            return False
     return True
 
 

@@ -315,69 +315,74 @@ class _BodyValue(NamedTuple):
     write_node: nodes.AccessNode | None
 
 
-def _body_value(nest: _Nest, sdfg: SDFG) -> _BodyValue | None:
-    """Read the nest's body as one accumulate-or-assign of a product, or ``None``."""
-    state, entry = nest.state, nest.entry
-    body = [n for n in state.scope_children()[entry] if not isinstance(n, (nodes.MapEntry, nodes.MapExit))]
-
-    # Locate the single write leaving the scope.
-    write_node = None
+def body_write(
+    state: SDFGState, sdfg: SDFG, entry: nodes.MapEntry | None, body: list[nodes.Node]
+) -> tuple[MultiConnectorEdge[Memlet], nodes.AccessNode | None] | None:
+    """The single value edge the body writes out with, and its access node (out of the scope for a map nest)."""
     if entry is not None:
         out_edges = value_edges(state.in_edges(state.exit_node(entry)))
         if len(out_edges) != 1:
             return None
-        out_edge = out_edges[0]
-        tail = state.memlet_path(out_edge)[-1].dst
-        write_node = tail if isinstance(tail, nodes.AccessNode) else None
-    else:
-        written = [
-            n
-            for n in body
-            if isinstance(n, nodes.AccessNode)
-            and state.in_degree(n) > 0
-            and not (sdfg.arrays[n.data].transient and _is_single_element(sdfg.arrays[n.data]))
-        ]
-        if len(written) != 1 or state.out_degree(written[0]) != 0 or state.in_degree(written[0]) != 1:
-            return None
-        write_node = written[0]
-        out_edge = state.in_edges(write_node)[0]
-    got = _point_index(out_edge.data, None if write_node is None else write_node.data)
-    if got is None or not isinstance(out_edge.src, nodes.Tasklet):
+        tail = state.memlet_path(out_edges[0])[-1].dst
+        return out_edges[0], tail if isinstance(tail, nodes.AccessNode) else None
+    written = [
+        n
+        for n in body
+        if isinstance(n, nodes.AccessNode)
+        and state.in_degree(n) > 0
+        and not (sdfg.arrays[n.data].transient and _is_single_element(sdfg.arrays[n.data]))
+    ]
+    if len(written) != 1 or state.out_degree(written[0]) != 0 or state.in_degree(written[0]) != 1:
         return None
-    out_array, out_idx = got
+    return state.in_edges(written[0])[0], written[0]
 
-    visited: dict = {}
-    negated = False
+
+def body_term(
+    state: SDFGState, sdfg: SDFG, out_edge: MultiConnectorEdge[Memlet], out_slot: list, visited: dict
+) -> tuple[object, bool, bool] | None:
+    """``(term, accumulates, negated)`` of the tasklet writing ``out_edge``: a WCR sum, an aug-assign that re-reads
+    ``out_slot`` (``[array, idx]``), or a plain assignment."""
     if out_edge.data.wcr is not None:
         # WCR encoding: the producing tasklet IS the product, the sum lives on the edge.
         if detect_reduction_type(out_edge.data.wcr) != dtypes.ReductionType.Sum:
             return None
         term = _resolve_tasklet(state, sdfg, out_edge.src, visited)
-        if term is None:
-            return None
-        accumulates = True
-    else:
-        adder = out_edge.src
-        in_edges = value_edges(state.in_edges(adder))
-        minuend = _minuend(adder)
-        if (minuend is not None or _is_sum_tasklet(adder)) and len(in_edges) == 2:
-            # Aug-assign encoding: one input re-reads the output slot, the other is the product.
-            visited[adder] = None
-            resolved = [_resolve(state, sdfg, e, visited) for e in in_edges]
-            if any(r is None for r in resolved):
-                return None
-            prior = [i for i, r in enumerate(resolved) if isinstance(r, _Leaf) and list(r) == [out_array, out_idx]]
-            if len(prior) != 1 or minuend not in (None, in_edges[prior[0]].dst_conn):
-                return None
-            term, accumulates = resolved[1 - prior[0]], True
-            negated = minuend is not None
-        else:
-            # Plain assignment (the pure-copy / transpose shape).
-            term = _resolve_tasklet(state, sdfg, adder, visited)
-            if term is None:
-                return None
-            accumulates = False
+        return None if term is None else (term, True, False)
+    adder = out_edge.src
+    in_edges = value_edges(state.in_edges(adder))
+    minuend = _minuend(adder)
+    if (minuend is None and not _is_sum_tasklet(adder)) or len(in_edges) != 2:
+        # Plain assignment (the pure-copy / transpose shape).
+        term = _resolve_tasklet(state, sdfg, adder, visited)
+        return None if term is None else (term, False, False)
+    # Aug-assign encoding: one input re-reads the output slot, the other is the product.
+    visited[adder] = None
+    resolved = [_resolve(state, sdfg, e, visited) for e in in_edges]
+    if any(r is None for r in resolved):
+        return None
+    prior = [i for i, r in enumerate(resolved) if isinstance(r, _Leaf) and list(r) == out_slot]
+    if len(prior) != 1 or minuend not in (None, in_edges[prior[0]].dst_conn):
+        return None
+    return resolved[1 - prior[0]], True, minuend is not None
 
+
+def body_value(nest: _Nest, sdfg: SDFG) -> _BodyValue | None:
+    """Read the nest's body as one accumulate-or-assign of a product, or ``None``."""
+    state, entry = nest.state, nest.entry
+    body = [n for n in state.scope_children()[entry] if not isinstance(n, (nodes.MapEntry, nodes.MapExit))]
+    found = body_write(state, sdfg, entry, body)
+    if found is None:
+        return None
+    out_edge, write_node = found
+    got = _point_index(out_edge.data, None if write_node is None else write_node.data)
+    if got is None or not isinstance(out_edge.src, nodes.Tasklet):
+        return None
+    out_array, out_idx = got
+    visited: dict = {}
+    decoded = body_term(state, sdfg, out_edge, [out_array, out_idx], visited)
+    if decoded is None:
+        return None
+    term, accumulates, negated = decoded
     if any(n not in visited and not (entry is None and n is write_node) for n in body):
         return None  # the body computes something the lifted node would drop
     coeff, leaves = _flatten(term)
@@ -391,19 +396,13 @@ def _axis_subset(idx: list[str], axes: dict[str, _Axis]) -> subsets.Range:
     return subsets.Range([(0, 0, 1) if i == "0" else (0, axes[i].end, 1) for i in idx])
 
 
-def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue, repeats: bool) -> EinsumSpec | None:
-    """The ``Einsum`` spec for an accumulated contraction, or ``None``."""
-    if not value.accumulates or (repeats and value.write_node is not None and value.write_node.setzero):
-        return None
-    axes = {a.param: a for a in nest.axes}
-    if len(axes) != len(nest.axes):
-        return None  # a repeated parameter -- indices would be ambiguous
+def contraction_operands(nest: _Nest, value: _BodyValue, axes: dict) -> tuple[list[_Leaf], list[_Leaf]] | None:
+    """The tensor operands and the at most one scalar coefficient of a contraction over every axis, or ``None``."""
     # Rectangular iteration space: a parameter-dependent bound (a triangular syrk-style
     # nest) contracts over less than the full product the einsum expansion assumes.
     for axis in nest.axes:
         if any(s in axes for s in map(str, pystr_to_symbolic(axis.end).free_symbols)):
             return None
-
     tensors, coeffs = [], []
     for leaf in value.leaves:
         if any(i != "0" and i not in axes for i in leaf.idx):
@@ -426,24 +425,36 @@ def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue, repeats: bool) ->
         return None  # no contracted axis: elementwise or an outer product
     if in_chars != dict.fromkeys(axes):
         return None  # an axis indexes nothing -- lifting would silently drop its repetition
+    return tensors, coeffs
 
-    # Canonical operand order.
-    tensors.sort(key=lambda t: (t.array, tuple(t.idx)))
 
+def einsum_subscripts(operands: list[list[str]], out_idx: list[str]) -> str:
+    """``"ab,bc->ac"`` for the operand and output index lists, letters in order of first use."""
     mapping: dict[str, str] = {}
 
     def term(idx: list[str]) -> str:
-        out = ""
         for i in idx:
-            if i == "0":
-                continue
-            if i not in mapping:
+            if i != "0" and i not in mapping:
                 mapping[i] = EINSUM_CHARS[len(mapping)]
-            out += mapping[i]
-        return out
+        return "".join(mapping[i] for i in idx if i != "0")
 
-    terms = [term(t.idx) for t in tensors]
-    einsum_str = f"{','.join(terms)}->{term(value.idx)}"
+    terms = [term(idx) for idx in operands]
+    return f"{','.join(terms)}->{term(out_idx)}"
+
+
+def direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue, repeats: bool) -> EinsumSpec | None:
+    """The ``Einsum`` spec for an accumulated contraction, or ``None``."""
+    if not value.accumulates or (repeats and value.write_node is not None and value.write_node.setzero):
+        return None
+    axes = {a.param: a for a in nest.axes}
+    if len(axes) != len(nest.axes):
+        return None  # a repeated parameter -- indices would be ambiguous
+    operands = contraction_operands(nest, value, axes)
+    if operands is None:
+        return None
+    tensors, coeffs = operands
+    tensors.sort(key=lambda t: (t.array, tuple(t.idx)))  # canonical operand order
+    einsum_str = einsum_subscripts([t.idx for t in tensors], value.idx)
     # Connector names are chosen so SORTED order is operand order: the ``Einsum``
     # expansion feeds ``*sorted(inputs)`` to the contraction, so the two must agree.
     inputs = [(f"_ein{i:02d}", t.array, _axis_subset(t.idx, axes), None) for i, t in enumerate(tensors)]
@@ -519,10 +530,10 @@ def _match_nest(nest: _Nest | None, sdfg: SDFG, repeats: bool) -> EinsumSpec | T
     """An ``EinsumSpec`` / ``TransposeSpec`` read directly off ``nest``, or ``None``."""
     if nest is None or len(nest.axes) < 2:
         return None
-    value = _body_value(nest, sdfg)
+    value = body_value(nest, sdfg)
     if value is None:
         return None
-    return _direct_einsum(nest, sdfg, value, repeats) or _direct_transpose(nest, sdfg, value)
+    return direct_einsum(nest, sdfg, value, repeats) or _direct_transpose(nest, sdfg, value)
 
 
 @explicit_cf_compatible

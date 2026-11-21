@@ -212,50 +212,12 @@ class SegmentLoop:
             return None
         counters = self.counters()
         worklist_writes = self.worklist_writes(counters, self.ranges(set(), counters))
-        bases = set()
-        for write in worklist_writes:
-            for symbol in map(str, write.index.free_symbols):
-                binding = self.pointer_binding(symbol)
-                if binding and binding[1] == 0:
-                    bases.add(binding[0])
-        if len(bases) != 1:
+        pointer = self.worklist_pointer(worklist_writes)
+        if pointer is None:
             return None
-        pointer = bases.pop()
         worklists = {write.array for write in worklist_writes}
         base_symbols = {s for s in self.assignments if self.pointer_binding(s) == (pointer, 0)}
-
-        # Members: a fixed point over the symbols' loads.
-        members: set[str] = set()
-        index_facts: set[tuple[str, str]] = set()
-        csr_facts: set[tuple[str, str]] = set()
-        changed = True
-        while changed:
-            changed = False
-            ranges = self.ranges(members, counters)
-            for name, values in self.assignments.items():
-                if name in members or len(values) != 1 or (loaded := load(values[0])) is None:
-                    continue
-                array, index = loaded
-                kind = ranges.get(index)
-                fact = None
-                if kind and kind.kind == "segment":
-                    fact = ("index", (array, kind.source))
-                elif kind and kind.kind == "row":
-                    fact = ("csr", (array, kind.source))
-                elif array in worklists:
-                    sym = symbolic.pystr_to_symbolic(index)
-                    for base in base_symbols:
-                        rest = without(sym, base)
-                        if rest in ranges and ranges[rest].kind == "worklist":
-                            fact = ("worklist", None)
-                if fact is None:
-                    continue
-                if fact[0] == "index":
-                    index_facts.add(fact[1])
-                elif fact[0] == "csr":
-                    csr_facts.add(fact[1])
-                members.add(name)
-                changed = True
+        members, index_facts, csr_facts = self.member_symbols(counters, worklists, base_symbols)
         ranges = self.ranges(members, counters)
 
         if not self.accesses_confined(members, counters, worklists, base_symbols, ranges):
@@ -267,6 +229,56 @@ class SegmentLoop:
             return None
         secondary = {fact[1] for fact in index_facts}
         return Proof(pointer, secondary, index_facts, csr_facts)
+
+    def worklist_pointer(self, worklist_writes) -> str | None:
+        """The one pointer array every worklist write is indexed from, at offset 0."""
+        bases = set()
+        for write in worklist_writes:
+            for symbol in map(str, write.index.free_symbols):
+                binding = self.pointer_binding(symbol)
+                if binding and binding[1] == 0:
+                    bases.add(binding[0])
+        return bases.pop() if len(bases) == 1 else None
+
+    def load_fact(self, array: str, index: str, ranges, worklists, base_symbols) -> tuple[str, Any] | None:
+        """How a symbol loaded from ``array[index]`` belongs to the segment: ``("index" | "csr", (array, source))``
+        for a load at a segment or row position, ``("worklist", None)`` for a worklist entry, else ``None``."""
+        kind = ranges.get(index)
+        if kind and kind.kind == "segment":
+            return "index", (array, kind.source)
+        if kind and kind.kind == "row":
+            return "csr", (array, kind.source)
+        fact = None
+        if array in worklists:
+            sym = symbolic.pystr_to_symbolic(index)
+            for base in base_symbols:
+                rest = without(sym, base)
+                if rest in ranges and ranges[rest].kind == "worklist":
+                    fact = ("worklist", None)
+        return fact
+
+    def member_symbols(self, counters, worklists, base_symbols) -> tuple[set[str], set, set]:
+        """The symbols loaded from the segment, as a fixed point over their loads, with the index and CSR facts."""
+        members: set[str] = set()
+        index_facts: set[tuple[str, str]] = set()
+        csr_facts: set[tuple[str, str]] = set()
+        changed = True
+        while changed:
+            changed = False
+            ranges = self.ranges(members, counters)
+            for name, values in self.assignments.items():
+                if name in members or len(values) != 1 or (loaded := load(values[0])) is None:
+                    continue
+                fact = self.load_fact(*loaded, ranges, worklists, base_symbols)
+                if fact is None:
+                    continue
+                if fact[0] == "index":
+                    index_facts.add(fact[1])
+                elif fact[0] == "csr":
+                    csr_facts.add(fact[1])
+                members.add(name)
+                changed = True
+        return members, index_facts, csr_facts
 
     def accesses_confined(self, members, counters, worklists, base_symbols, ranges) -> bool:
         """Whether every access to a container the loop writes is confined to the iteration's segment."""

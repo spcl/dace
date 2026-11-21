@@ -56,7 +56,9 @@ def written_in(region: ControlFlowRegion) -> set[str]:
     return {n.data for st in region.states() for n in st.data_nodes() if st.in_degree(n) > 0}
 
 
-def match(nest: LoopRegion) -> Product | None:
+def guarded_work_state(nest: LoopRegion) -> tuple[ControlFlowRegion, SDFGState] | None:
+    """The one-branch guard of a compaction-shaped ``nest`` and the first state of that branch doing work, when
+    everything else around it only binds symbols."""
     found = LoopToStreamCompaction().match_nest(nest)
     if found is None:
         return None
@@ -72,7 +74,14 @@ def match(nest: LoopRegion) -> Product | None:
     at = next((i for i, b in enumerate(chain) if isinstance(b, SDFGState) and b.number_of_nodes()), None)
     if at is None or not bindings_only(chain[:at]):
         return None
-    state = chain[at]
+    return branch, chain[at]
+
+
+def match(nest: LoopRegion) -> Product | None:
+    found = guarded_work_state(nest)
+    if found is None:
+        return None
+    branch, state = found
     libs = [n for n in state.nodes() if not isinstance(n, nodes.AccessNode)]
     if len(libs) != 1 or not isinstance(libs[0], (MatMul, Gemm)):
         return None
