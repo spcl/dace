@@ -140,9 +140,9 @@ def test_plain_collaborative_write_is_synchronized():
 
 def test_memory_engine_load_is_not_synchronized():
     """A TMA load (with a ``_tma_bar`` input) completes on its mbarrier: no ``__syncthreads()`` after it."""
-    sdfg, _ = _kernel_writing_shared(
+    sdfg = _kernel_writing_shared(
         "smem_tma_write", {"_tma_bar"}, {CopyLibraryNode.OUTPUT_CONNECTOR_NAME}, CopyLibraryNode.OUTPUT_CONNECTOR_NAME
-    )
+    )[0]
     DefaultSharedMemorySync().apply_pass(sdfg, None)
     assert _sync_tasklets(sdfg) == 0
 
