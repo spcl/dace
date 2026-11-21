@@ -28,6 +28,7 @@ from dace.libraries.standard.nodes.merge_node import MergeLibraryNode
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.libraries.standard.nodes.scan import Scan, ScanOp
 from dace.ordered import OrderedSet
+from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.auto.auto_optimize import set_fast_implementations
@@ -1622,6 +1623,30 @@ def test_an_input_only_copy_routed_out_of_a_wrapped_region_reads_only_its_source
     sdfg.validate()
 
 
+def test_isolating_a_host_pinned_map_after_a_loop_requeues_only_states():
+    """A host-pinned map beside device work is split into a state of its own; the block before that state is a loop
+    region, which holds no nodes to split and is not queued again (NestForge's placement fuzz, seed 11)."""
+    sdfg = dace.SDFG("pinned_after_loop")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    loop = LoopRegion("before", "i < 4", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    loop.add_state("body", is_start_block=True)
+    state = sdfg.add_state_after(loop, "work")
+    host_entry = state.add_mapped_tasklet(
+        "host", {"j": "0:8"}, {}, "a = 1.0", {"a": dace.Memlet("A[j]")}, external_edges=True
+    )[1]
+    device_entry = state.add_mapped_tasklet(
+        "device", {"k": "0:8"}, {}, "b = 2.0", {"b": dace.Memlet("B[k]")}, external_edges=True
+    )[1]
+    device_entry.map.schedule = dtypes.ScheduleType.GPU_Device
+    offload = OffloadToAccelerator()
+    offload._host_pinned = OrderedSet([host_entry])
+    assert offload.isolate_host_library_nodes(sdfg)
+    (home,) = [s for s in sdfg.states() if host_entry in s.nodes()]
+    assert all(not isinstance(n, nodes.MapEntry) or n is host_entry for n in home.nodes())
+
+
 if __name__ == "__main__":
     test_the_guarded_kernel_still_canonicalizes_to_a_parallel_and_a_sequential_arm()
     test_the_fallback_arm_owns_its_copies()
@@ -1672,3 +1697,4 @@ if __name__ == "__main__":
     test_a_tail_contributes_none_of_its_remaining_siblings()
     test_a_cpu_heap_array_survives_the_round_trip()
     test_an_input_only_copy_routed_out_of_a_wrapped_region_reads_only_its_source()
+    test_isolating_a_host_pinned_map_after_a_loop_requeues_only_states()

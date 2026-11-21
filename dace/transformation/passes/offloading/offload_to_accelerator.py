@@ -1205,7 +1205,9 @@ class OffloadToAccelerator(ppl.Pass):
                     continue
                 if pinned:
                     isolated = isolate_map(state, node)
-                    pending += [state, *isolated.parent_graph.predecessors(isolated)]
+                    # the split-off upstream state comes before; a loop or branch there was not split
+                    before = isolated.parent_graph.predecessors(isolated)
+                    pending += [state, *(block for block in before if isinstance(block, SDFGState))]
                     changed = True
                     break
                 if not isolate_nested_sdfg(state, node, test_if_applicable=True):
