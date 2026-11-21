@@ -29,7 +29,7 @@ from typing import Any
 
 from dace import SDFG, data, properties, subsets, symbolic
 from dace.sdfg import nodes
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, SDFGState, is_written
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState, is_written
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.dataflow.redundant_array import same_extent
@@ -96,24 +96,10 @@ class ForwardOffsetCopies(ppl.Pass):
     def forwardable(sdfg: SDFG, state: SDFGState, edge, accesses, named: set[str]) -> list | None:
         """The per-dimension offset ``source - copy`` when ``edge`` is a copy the contract admits, else ``None``."""
         src, dst = edge.src, edge.dst
-        if not isinstance(src, nodes.AccessNode) or not isinstance(dst, nodes.AccessNode) or src.data == dst.data:
+        copied = offset_copy_subsets(sdfg, state, edge, named)
+        if copied is None:
             return None
-        if edge.data.is_empty() or edge.data.wcr is not None:
-            return None
-        a, b = sdfg.arrays[src.data], sdfg.arrays[dst.data]
-        if not isinstance(b, data.Array) or isinstance(b, data.View) or isinstance(a, data.View) or not b.transient:
-            return None
-        if a.storage != b.storage:
-            return None
-        if len(a.shape) != len(b.shape) or dst.data in named:
-            return None
-        src_subset, dst_subset = edge.data.get_src_subset(edge, state), edge.data.get_dst_subset(edge, state)
-        if not isinstance(src_subset, subsets.Range) or not isinstance(dst_subset, subsets.Range):
-            return None
-        if any(s != 1 for _, _, s in src_subset.ranges) or not same_extent(dst_subset, subsets.Range.from_array(b)):
-            return None
-        if not same_extent(src_subset.size(), dst_subset.size()):
-            return None
+        src_subset, dst_subset = copied
         uses = accesses[dst.data]
         if any(n is not dst and is_written(st, n) for st, n in uses) or state.in_degree(dst) != 1:
             return None
@@ -126,35 +112,14 @@ class ForwardOffsetCopies(ppl.Pass):
             if block is None:
                 return None
             blocks[block] = None
-        # Every leaf of a reader's memlet trees is code or another access node, never a nested SDFG; one that
-        # addresses the buffer through its strides (a view, a library node, a tasklet taking more than one element)
-        # reads the source only when it is laid out like the copy.
-        laid_out = all(symbolic.equal(x, y) is True for x, y in zip(a.strides, b.strides))
-        for st, n in uses:
-            for out in st.out_edges(n):
-                for leaf in st.memlet_tree(out).leaves():
-                    if isinstance(leaf.dst, nodes.NestedSDFG):
-                        return None
-                    end = leaf.dst
-                    addressed = (
-                        isinstance(end, nodes.LibraryNode)
-                        or (isinstance(end, nodes.AccessNode) and isinstance(sdfg.arrays[end.data], data.View))
-                        or (isinstance(end, nodes.Tasklet) and symbolic.equal(leaf.data.num_elements(), 1) is not True)
-                    )
-                    if addressed and not laid_out:
-                        return None
-        later = [block for block in blocks if block is not state]
-        if _writes_besides(state, src.data, edge) or any(_writes(block, src.data) for block in later):
+        a, b = sdfg.arrays[src.data], sdfg.arrays[dst.data]
+        if not readers_take_the_source(
+            sdfg, uses, all(symbolic.equal(x, y) is True for x, y in zip(a.strides, b.strides))
+        ):
             return None
-        after = _reach(region, state, region.successors)
-        if state in after:  # a cycle through the copy
+        after = source_unwritten_until(region, state, src.data, [block for block in blocks if block is not state])
+        if after is None:
             return None
-        for reader in later:
-            if reader not in after:
-                return None
-            between = after & _reach(region, reader, region.predecessors)
-            if any(_writes(block, src.data) for block in between):
-                return None
         offset = [b0 - d0 for (b0, _, _), (d0, _, _) in zip(src_subset.ranges, dst_subset.ranges)]
         if _offset_rebound(region, state, after, readers, {str(s) for o in offset for s in o.free_symbols}):
             return None
@@ -194,6 +159,72 @@ class ForwardOffsetCopies(ppl.Pass):
             state.remove_node(edge.src)
         if not any(n.data == copy for st in sdfg.states() for n in st.data_nodes()):
             sdfg.remove_data(copy, validate=False)
+
+
+def offset_copy_subsets(
+    sdfg: SDFG, state: SDFGState, edge, named: set[str]
+) -> tuple[subsets.Range, subsets.Range] | None:
+    """The source and destination ranges of ``edge`` when it copies an equally shaped range of an array into the
+    whole of a transient array of the same storage that no control flow names."""
+    src, dst = edge.src, edge.dst
+    if not isinstance(src, nodes.AccessNode) or not isinstance(dst, nodes.AccessNode) or src.data == dst.data:
+        return None
+    if edge.data.is_empty() or edge.data.wcr is not None:
+        return None
+    a, b = sdfg.arrays[src.data], sdfg.arrays[dst.data]
+    if not isinstance(b, data.Array) or isinstance(b, data.View) or isinstance(a, data.View) or not b.transient:
+        return None
+    if a.storage != b.storage:
+        return None
+    if len(a.shape) != len(b.shape) or dst.data in named:
+        return None
+    src_subset, dst_subset = edge.data.get_src_subset(edge, state), edge.data.get_dst_subset(edge, state)
+    if not isinstance(src_subset, subsets.Range) or not isinstance(dst_subset, subsets.Range):
+        return None
+    if any(s != 1 for _, _, s in src_subset.ranges) or not same_extent(dst_subset, subsets.Range.from_array(b)):
+        return None
+    if not same_extent(src_subset.size(), dst_subset.size()):
+        return None
+    return src_subset, dst_subset
+
+
+def readers_take_the_source(sdfg: SDFG, uses, laid_out: bool) -> bool:
+    """Whether every leaf of the copy's memlet trees can read the source instead: no nested SDFG, and code that
+    addresses the buffer through its strides (a view, a library node, a tasklet taking more than one element) only
+    when the source is ``laid_out`` like the copy."""
+    for st, n in uses:
+        for out in st.out_edges(n):
+            for leaf in st.memlet_tree(out).leaves():
+                end = leaf.dst
+                if isinstance(end, nodes.NestedSDFG):
+                    return False
+                addressed = (
+                    isinstance(end, nodes.LibraryNode)
+                    or (isinstance(end, nodes.AccessNode) and isinstance(sdfg.arrays[end.data], data.View))
+                    or (isinstance(end, nodes.Tasklet) and symbolic.equal(leaf.data.num_elements(), 1) is not True)
+                )
+                if addressed and not laid_out:
+                    return False
+    return True
+
+
+def source_unwritten_until(
+    region: ControlFlowRegion, state: SDFGState, source: str, later: list[ControlFlowBlock]
+) -> set[ControlFlowBlock] | None:
+    """The blocks after the copy's ``state``, when none of them on a path to a reader in ``later`` writes
+    ``source``, nor the copy's state, nor a reader, and every reader follows the copy acyclically; else ``None``."""
+    if _writes_besides(state, source) or any(_writes(block, source) for block in later):
+        return None
+    after = _reach(region, state, region.successors)
+    if state in after:  # a cycle through the copy
+        return None
+    for reader in later:
+        if reader not in after:
+            return None
+        between = after & _reach(region, reader, region.predecessors)
+        if any(_writes(block, source) for block in between):
+            return None
+    return after
 
 
 def block_in(region: ControlFlowRegion, state: SDFGState) -> ControlFlowBlock | None:
@@ -236,11 +267,11 @@ def _offset_rebound(
             continue
         if any(names & e.data.assignments.keys() for e in block.all_interstate_edges()):
             return True
-        if any(getattr(r, "loop_variable", None) in names for r in block.all_control_flow_regions()):
+        if any(isinstance(r, LoopRegion) and r.loop_variable in names for r in block.all_control_flow_regions()):
             return True
     return any(names & set(n.map.params) for st in readers for n in st.nodes() if isinstance(n, nodes.MapEntry))
 
 
-def _writes_besides(state: SDFGState, name: str, edge) -> bool:
+def _writes_besides(state: SDFGState, name: str) -> bool:
     """Whether ``state`` writes ``name`` anywhere (the copy only reads it)."""
     return any(is_written(state, n) for n in state.data_nodes() if n.data == name)
