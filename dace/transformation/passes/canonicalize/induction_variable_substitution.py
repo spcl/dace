@@ -1035,6 +1035,93 @@ def _preloop_symbol_value(parent: ControlFlowRegion, loop: LoopRegion, sym_name:
     return val
 
 
+def derived_definition(
+    loop: LoopRegion, e: Any, sdfg: SDFG, sdfg_free_symbols: set[str]
+) -> tuple[str, symbolic.SymbolicType] | None:
+    """``(sym, f)`` when the unconditional edge ``e`` alone defines the SDFG symbol ``sym := f(i)`` from the loop
+    variable and loop invariants."""
+    loop_var = loop.loop_variable
+    if e.data.condition.as_string not in ("1", "True", "(1)") or len(e.data.assignments) != 1:
+        return None
+    ((sym, rhs),) = e.data.assignments.items()
+    if sym == loop_var or (sym not in sdfg.symbols and sym not in sdfg_free_symbols):
+        return None
+    try:
+        rhs_expr = symbolic.pystr_to_symbolic(rhs)
+    except Exception:
+        return None
+    # An array-dependent value is a data gather: inlined, it would put an array read in memlet subsets
+    # (cloudsc's ``iorder_at = IORDER(JL,JM)``).
+    if symbolic.arrays(rhs):
+        return None
+    free = dict.fromkeys(str(s) for s in rhs_expr.free_symbols)
+    if sym in free:
+        return None  # self-reference -> a recurrence, not a derived symbol
+    if not all(s == loop_var or _is_loop_invariant_symbol(s, loop, sdfg, sdfg_free_symbols) for s in free):
+        return None  # depends on another loop-carried symbol -> substitute that first (fixed point)
+    if any(oe is not e and sym in (oe.data.assignments or {}) for oe in loop.all_interstate_edges()):
+        return None  # sym written elsewhere (incl. a NESTED loop, s141) -> not a clean single definition
+    return sym, rhs_expr
+
+
+def derived_body_value(
+    parent: ControlFlowRegion, loop: LoopRegion, e: Any, sym: str, rhs_expr: symbolic.SymbolicType
+) -> symbolic.SymbolicType | None:
+    """The value of ``sym`` the body's uses read: ``f(i)`` after the definition, ``f(i - stride)`` before it when the
+    definition runs every iteration and the entry value is ``f(start - stride)``."""
+    side = _consistent_use_side(loop, e, sym)
+    if side in ("after", "unused"):
+        return rhs_expr
+    if side != "before":
+        return None  # uses straddle the definition -> per-block offsets needed (unsupported)
+    start = loop_analysis.get_init_assignment(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    if start is None or stride is None:
+        return None
+    if any(oe.data.condition.as_string not in ("1", "True", "(1)") for oe in loop.edges()):
+        return None
+    entry = _preloop_symbol_value(parent, loop, sym)
+    if entry is None:
+        return None
+    loop_var_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
+    if symbolic.simplify(entry - rhs_expr.subs(loop_var_sym, start - stride)) != 0:
+        return None
+    return symbolic.simplify(rhs_expr.subs(loop_var_sym, loop_var_sym - stride))
+
+
+def materialize_derived_value(
+    parent: ControlFlowRegion, loop: LoopRegion, sym: str, rhs_expr: symbolic.SymbolicType
+) -> None:
+    """Assign the last iteration's ``sym`` after the loop, kept from before it when the loop may not run and a reader
+    follows."""
+    end = loop_analysis.get_loop_end(loop)
+    if end is None:
+        return
+    start, stride = loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_stride(loop)
+    last = end if start is None or stride is None else start + symbolic.int_floor(end - start, stride) * stride
+    post_val = symbolic.symstr(rhs_expr.subs(symbolic.pystr_to_symbolic(loop.loop_variable), last))
+    dsym_post = parent.add_state(loop.label + "_dsym_post")
+    for oe in list(parent.out_edges(loop)):
+        parent.add_edge(dsym_post, oe.dst, oe.data)
+        parent.remove_edge(oe)
+    spare = None if start is None or stride is None else trip_count(loop, start, end, stride, loop.sdfg) - 1
+    if (
+        spare is None
+        or symbolic.provably_nonnegative(symbolic.simplify(spare), loop.sdfg.facts())
+        or not loop_analysis.read_outside(loop.sdfg, loop, {sym}, set())
+    ):
+        parent.add_edge(loop, dsym_post, InterstateEdge(assignments={sym: post_val}))
+        return
+    ran = ConditionalBlock(loop.label + "_dsym_ran")
+    branch = ControlFlowRegion(loop.label + "_dsym_set")
+    first = branch.add_state(is_start_block=True)
+    branch.add_edge(first, branch.add_state(), InterstateEdge(assignments={sym: post_val}))
+    ran.add_branch(properties.CodeBlock(f"({symbolic.symstr(spare)}) >= 0"), branch)
+    parent.add_node(ran)
+    parent.add_edge(loop, ran, InterstateEdge())
+    parent.add_edge(ran, dsym_post, InterstateEdge())
+
+
 def _try_substitute_derived_symbol(
     parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: set[str]
 ) -> bool:
@@ -1047,89 +1134,17 @@ def _try_substitute_derived_symbol(
     """
     if not loop.loop_variable:
         return False
-    loop_var = loop.loop_variable
     for e in loop.edges():
-        if e.data.condition.as_string not in ("1", "True", "(1)") or len(e.data.assignments) != 1:
+        found = derived_definition(loop, e, sdfg, sdfg_free_symbols)
+        if found is None:
             continue
-        ((sym, rhs),) = e.data.assignments.items()
-        if sym == loop_var or (sym not in sdfg.symbols and sym not in sdfg_free_symbols):
+        sym, rhs_expr = found
+        body_expr = derived_body_value(parent, loop, e, sym, rhs_expr)
+        if body_expr is None:
             continue
-        try:
-            rhs_expr = symbolic.pystr_to_symbolic(rhs)
-        except Exception:
-            continue
-        # An array-dependent value is a data gather, NOT an induction variable: its
-        # per-iteration value is read from memory, not a closed form of the loop var.
-        # Inlining it would bake the array read into every memlet subset that uses
-        # ``sym`` -- a nested ``Subscript`` codegen can't lower (it emits
-        # ``arr[std::make_tuple(...)]``). The frontend already keeps such indirection
-        # as its own symbol (cloudsc ``LLINDEX1(JL,IORDER(JL,JM))`` -> the interstate
-        # ``iorder_at = IORDER(JL,JM)`` load); leave it a symbol, don't dissolve it.
-        if symbolic.arrays(rhs):
-            continue
-        free = dict.fromkeys(str(s) for s in rhs_expr.free_symbols)
-        if sym in free:
-            continue  # self-reference -> a recurrence, not a derived symbol
-        if not all(s == loop_var or _is_loop_invariant_symbol(s, loop, sdfg, sdfg_free_symbols) for s in free):
-            continue  # depends on another loop-carried symbol -> substitute that first (fixed point)
-        if any(oe is not e and sym in (oe.data.assignments or {}) for oe in loop.all_interstate_edges()):
-            continue  # sym written elsewhere (incl. a NESTED loop, s141) -> not a clean single definition
-        side = _consistent_use_side(loop, e, sym)
-        if side in ("after", "unused"):
-            body_expr = rhs_expr  # uses (if any) follow the definition -> this iteration's value
-        elif side == "before":
-            # Every use precedes the definition, so it reads what the PREVIOUS iteration
-            # wrote: ``f(loop_var - stride)``. That holds for iterations 2..N; iteration 1
-            # instead reads the value ``sym`` carried INTO the loop, so the lagged form is
-            # correct iff that entry value is exactly ``f(start - stride)``.
-            start = loop_analysis.get_init_assignment(loop)
-            stride = loop_analysis.get_loop_stride(loop)
-            if start is None or stride is None:
-                continue
-            # The lagged form also assumes the definition runs on EVERY iteration; a
-            # condition on any body top-level edge could skip it and stale the value.
-            if any(oe.data.condition.as_string not in ("1", "True", "(1)") for oe in loop.edges()):
-                continue
-            entry = _preloop_symbol_value(parent, loop, sym)
-            if entry is None:
-                continue  # entry value not provable -> cannot show the first iteration agrees
-            loop_var_sym = symbolic.pystr_to_symbolic(loop_var)
-            if symbolic.simplify(entry - rhs_expr.subs(loop_var_sym, start - stride)) != 0:
-                continue  # first iteration would read a value the lagged closed form mispredicts
-            body_expr = symbolic.simplify(rhs_expr.subs(loop_var_sym, loop_var_sym - stride))
-        else:
-            continue  # uses straddle the definition -> per-block offsets needed (unsupported)
-
         e.data.assignments = {}
         loop.replace_dict({sym: symbolic.symstr(body_expr)})
-        # Materialise the post-loop value (the last iteration's) for any reader
-        # after the loop; harmless (dead) when ``sym`` is loop-local.
-        end = loop_analysis.get_loop_end(loop)
-        if end is not None:
-            start, stride = loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_stride(loop)
-            last = end if start is None or stride is None else start + symbolic.int_floor(end - start, stride) * stride
-            post_val = symbolic.symstr(rhs_expr.subs(symbolic.pystr_to_symbolic(loop_var), last))
-            dsym_post = parent.add_state(loop.label + "_dsym_post")
-            for oe in list(parent.out_edges(loop)):
-                parent.add_edge(dsym_post, oe.dst, oe.data)
-                parent.remove_edge(oe)
-            spare = None if start is None or stride is None else trip_count(loop, start, end, stride, loop.sdfg) - 1
-            if (
-                spare is None
-                or symbolic.provably_nonnegative(symbolic.simplify(spare), loop.sdfg.facts())
-                or not loop_analysis.read_outside(loop.sdfg, loop, {sym}, set())
-            ):
-                parent.add_edge(loop, dsym_post, InterstateEdge(assignments={sym: post_val}))
-                return True
-            # A loop that does not run leaves the value from before it
-            ran = ConditionalBlock(loop.label + "_dsym_ran")
-            branch = ControlFlowRegion(loop.label + "_dsym_set")
-            first = branch.add_state(is_start_block=True)
-            branch.add_edge(first, branch.add_state(), InterstateEdge(assignments={sym: post_val}))
-            ran.add_branch(properties.CodeBlock(f"({symbolic.symstr(spare)}) >= 0"), branch)
-            parent.add_node(ran)
-            parent.add_edge(loop, ran, InterstateEdge())
-            parent.add_edge(ran, dsym_post, InterstateEdge())
+        materialize_derived_value(parent, loop, sym, rhs_expr)
         return True
     return False
 
