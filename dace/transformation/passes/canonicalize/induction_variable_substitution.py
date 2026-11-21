@@ -416,14 +416,11 @@ def trip_count(
     return trip if loop_analysis.provably_runs(loop, 0, sdfg.facts()) else sympy.Max(0, trip)
 
 
-def extract_tasklet_iv(
-    tasklet: nodes.Tasklet, state: SDFGState, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: set[str]
-) -> TaskletIV | None:
-    """Match ONE tasklet against the ``__out = __in OP const`` IV shape, ignoring its siblings.
-
-    Split out of :func:`_extract_iv` so a MULTI-tasklet body (where the IV is one statement
-    among several) can be matched statement by statement -- see :func:`try_substitute_use_site_iv`.
-    """
+def tasklet_increment(
+    tasklet: nodes.Tasklet, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: set[str]
+) -> tuple[type, str, Any] | None:
+    """The operator, the carrier connector and the loop-invariant increment (a number or source text) of a Python
+    tasklet ``__out = __in OP step``."""
     if tasklet.code.language != dtypes.Language.Python:
         return None
 
@@ -439,11 +436,7 @@ def extract_tasklet_iv(
     if not isinstance(rhs, ast.BinOp) or type(rhs.op) not in CLOSED_FORM:
         return None
 
-    # Identify the carrier side (a bare ``ast.Name`` whose id is one of the
-    # tasklet's INPUT CONNECTORS) and the increment side (anything else, as long
-    # as it is loop-invariant). The classic shape is ``__in1 + 2.5`` (Constant on
-    # the other side); the symbolic-frontend shape is ``__in1 + step`` with
-    # ``step`` a SDFG symbol, which lifts the same way.
+    # The carrier is a bare input connector, the increment anything loop-invariant (``2.5``, a symbol ``step``).
     in_connector_names = dict.fromkeys(tasklet.in_connectors.keys())
 
     def _is_carrier(node: ast.AST) -> bool:
@@ -460,9 +453,6 @@ def extract_tasklet_iv(
     else:
         return None
 
-    # The increment expression must not reference the loop variable; every
-    # ``ast.Name`` in it must be a loop-invariant SDFG symbol / constant or a
-    # built-in DaCe binding (``dace.float64`` etc.). Constants are inherently OK.
     if isinstance(other, ast.Constant):
         if not isinstance(other.value, (int, float)):
             return None
@@ -475,10 +465,23 @@ def extract_tasklet_iv(
             # and fails, which is what refuses the reduction shape ``sum = sum + a[i]``.
             if not step_is_loop_invariant([sub.id], loop, sdfg, sdfg_free_symbols):
                 return None
-        # Render the expression back to a source string for the closed form. The
-        # later tasklet body splices it directly, so ``dace.float64(step)`` stays
-        # ``dace.float64(step)`` and codegen resolves ``step`` via the symbol-binding path.
+        # Spliced into the closed form as source, ``dace.float64(step)`` included.
         const_val = ast.unparse(other)
+    return type(rhs.op), var_conn, const_val
+
+
+def extract_tasklet_iv(
+    tasklet: nodes.Tasklet, state: SDFGState, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: set[str]
+) -> TaskletIV | None:
+    """Match ONE tasklet against the ``__out = __in OP const`` IV shape, ignoring its siblings.
+
+    Split out of :func:`_extract_iv` so a MULTI-tasklet body (where the IV is one statement
+    among several) can be matched statement by statement -- see :func:`try_substitute_use_site_iv`.
+    """
+    increment = tasklet_increment(tasklet, loop, sdfg, sdfg_free_symbols)
+    if increment is None:
+        return None
+    op_type, var_conn, const_val = increment
 
     in_edges = value_edges(state.in_edges(tasklet))
     out_edges = value_edges(state.out_edges(tasklet))
@@ -533,7 +536,7 @@ def extract_tasklet_iv(
         src_name, src_subset = pred.src.data, pred.data.subset
     reads_accum = src_name == final_accum and str(src_subset) == str(final_subset)
 
-    return TaskletIV(final_accum, str(final_subset), type(rhs.op), const_val, in_edge, write_edge, reads_accum)
+    return TaskletIV(final_accum, str(final_subset), op_type, const_val, in_edge, write_edge, reads_accum)
 
 
 def closed_form_state(
