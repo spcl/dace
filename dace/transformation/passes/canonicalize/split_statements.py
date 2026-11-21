@@ -940,6 +940,57 @@ def independent_groups(body: Body, out_names: list[str], in_names: dict[str, Non
     return list(groups.values())
 
 
+def plain_map_outputs(state: SDFGState, xit: nodes.MapExit) -> list[str] | None:
+    """The distinct containers written through ``xit``, or ``None`` when one is written by a reduction."""
+    out_names: list[str] = []
+    for e in state.in_edges(xit):
+        if e.data is None or e.data.data is None:
+            continue
+        if e.data.wcr is not None:
+            return None
+        if e.data.data not in out_names:
+            out_names.append(e.data.data)
+    return out_names
+
+
+def rewrites_a_global_it_reads(
+    cfg: SDFG, state: SDFGState, entry: nodes.MapEntry, xit: nodes.MapExit, inner: list[nodes.Node]
+) -> bool:
+    """Whether the map reads a non-transient array it also writes (``t = A[i]; A[i] = t + B[i]; C[i] = t*2``): a
+    clone per output would recompute ``t`` after another clone overwrote ``A[i]``."""
+    read_arrays = dict.fromkeys(
+        e.data.data
+        for e in state.in_edges(entry)
+        if e.data is not None and e.data.data is not None and not cfg.arrays[e.data.data].transient
+    )
+    write_arrays = dict.fromkeys(
+        e.data.data
+        for e in state.in_edges(xit)
+        if e.data is not None and e.data.data is not None and not cfg.arrays[e.data.data].transient
+    )
+    write_arrays.update(
+        dict.fromkeys(
+            n.data
+            for n in inner
+            if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0 and not cfg.arrays[n.data].transient
+        )
+    )
+    return any(a in write_arrays for a in read_arrays)
+
+
+def clonable_leaf_body(cfg: SDFG, scope: Any, inner: list[nodes.Node]) -> bool:
+    """Whether a map body can be recomputed per output: no view, no nested map or NestedSDFG, no opaque code."""
+    if any(
+        isinstance(cfg.arrays[n.data], dt.View)
+        for n in scope.nodes()
+        if isinstance(n, nodes.AccessNode) and n.data in cfg.arrays
+    ):
+        return False
+    if not inner or any(isinstance(n, (nodes.NestedSDFG, nodes.MapEntry, nodes.MapExit)) for n in inner):
+        return False
+    return not any(is_opaque_code(n, cfg) for n in inner)
+
+
 @transformation.explicit_cf_compatible
 @properties.make_properties
 class SplitStatements(ppl.Pass):
@@ -1180,32 +1231,16 @@ class SplitStatements(ppl.Pass):
         inline_cls: type[transformation.TransformationBase],
         subgraph_cls: type[SubgraphView[Any, Any]],
     ) -> bool:
-        """Split one straight-line multi-output map into one FLAT map per output; return whether it fired.
-
-        Nest the WHOLE scope (entry..exit) into a NestedSDFG, clone it per output (``_split`` duplicates a
-        shared local + prunes the dead output), then inline each clone back so the result is flat maps --
-        not maps buried in NestedSDFGs. The inline is confined to the clones this call made (captured by
-        diff), so unrelated NestedSDFGs are untouched.
-        """
+        """Split one straight-line multi-output map into one flat map per output: nest the scope, clone it per
+        output with :meth:`_split`, and inline back only the clones this call made. Returns whether it fired."""
         xit = state.exit_node(entry)
-        # Global outputs = distinct arrays written through the exit; bail on a WCR (reduction) edge.
-        out_names: list[str] = []
-        for e in state.in_edges(xit):
-            if e.data is None or e.data.data is None:
-                continue
-            if e.data.wcr is not None:
-                return False
-            if e.data.data not in out_names:
-                out_names.append(e.data.data)
-        if len(out_names) < 2:
+        out_names = plain_map_outputs(state, xit)
+        if out_names is None or len(out_names) < 2:
             return False
         scope = state.scope_subgraph(entry, include_entry=True, include_exit=True)
         inner = [n for n in scope.nodes() if n not in (entry, xit)]
-        # A PLAIN dataflow NestedSDFG body (a dependent read-after-write the frontend wrapped, e.g.
-        # ``A[i]=..; B[i]=A[i]*2``) is inlined FIRST: its connectors bind ``A`` both ways, while the flat
-        # tasklets show the write precedes the read, and a shared local is duplicated like any other. A
-        # CONDITIONAL / indirection-symbol body is NOT inlined -- it cannot live directly in a map scope and
-        # is _replicate_components' job.
+        # A plain dataflow NestedSDFG body (``A[i]=..; B[i]=A[i]*2``) is inlined first, so its flat tasklets show the
+        # write precedes the read. A conditional or indirection-symbol body is _replicate_components' job.
         if (
             len(inner) == 1
             and isinstance(inner[0], nodes.NestedSDFG)
@@ -1215,43 +1250,7 @@ class SplitStatements(ppl.Pass):
             inline_cls.apply_to(cfg, nested_sdfg=inner[0], save=False, verify=False)
             scope = state.scope_subgraph(entry, include_entry=True, include_exit=True)
             inner = [n for n in scope.nodes() if n not in (entry, xit)]
-        # In-place read-modify-write: a GLOBAL array read into the scope is also written out of it
-        # (``t = A[i]; A[i] = t + B[i]; C[i] = t*2``). Cloning the scope per output would let one clone
-        # recompute ``t = A[i]`` AFTER another clone overwrote ``A[i]`` (the read/modify/write order is
-        # lost) and duplicate the write -- both silently wrong, and it still validates. Mirror the RMW
-        # guard SplitTasklets uses (split_tasklets.py) and leave such a map unsplit. Global
-        # (non-transient) arrays only: a shared local temp is meant to be recomputed per output.
-        read_arrays = dict.fromkeys(
-            e.data.data
-            for e in state.in_edges(entry)
-            if e.data is not None and e.data.data is not None and not cfg.arrays[e.data.data].transient
-        )
-        write_arrays = dict.fromkeys(
-            e.data.data
-            for e in state.in_edges(xit)
-            if e.data is not None and e.data.data is not None and not cfg.arrays[e.data.data].transient
-        )
-        write_arrays.update(
-            dict.fromkeys(
-                n.data
-                for n in inner
-                if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0 and not cfg.arrays[n.data].transient
-            )
-        )
-        if any(a in write_arrays for a in read_arrays):
-            return False
-        if any(
-            isinstance(cfg.arrays[n.data], dt.View)
-            for n in scope.nodes()
-            if isinstance(n, nodes.AccessNode) and n.data in cfg.arrays
-        ):
-            return False
-        # PLAIN leaf map only: no nested map / NestedSDFG in the body (those go to _replicate_components).
-        if not inner or any(isinstance(n, (nodes.NestedSDFG, nodes.MapEntry, nodes.MapExit)) for n in inner):
-            return False
-        # Same black-box refusal as the NestedSDFG path: the clones below recompute the whole
-        # body per output, which is only sound while every node's effect is its out-memlets.
-        if any(is_opaque_code(n, cfg) for n in inner):
+        if rewrites_a_global_it_reads(cfg, state, entry, xit, inner) or not clonable_leaf_body(cfg, scope, inner):
             return False
         before = dict.fromkeys(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
         nsdfg_node = helpers.nest_state_subgraph(cfg, state, subgraph_cls(state, list(scope.nodes())))
