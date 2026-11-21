@@ -1097,7 +1097,12 @@ class Settled:
         if changed and dirties:
             self.clock += 1
         if self.tracked(unit):
-            self.ran_at[type(unit)] = self.clock
+            # A non-dirtying composite (``StructuralCleanup``) runs a single sweep rather than a
+            # fixpoint, so it is settled only once a sweep reports no change.
+            if not changed or dirties:
+                self.ran_at[type(unit)] = self.clock
+            else:
+                self.ran_at.pop(type(unit), None)
 
 
 @properties.make_properties

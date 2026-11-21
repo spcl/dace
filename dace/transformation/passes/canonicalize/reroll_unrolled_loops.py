@@ -476,25 +476,39 @@ class RerollUnrolledLoops(ppl.Pass):
         if len(leaves) != len(accs) or len(host) != 1:
             return False
         state = next(iter(host))
-        # Forward closure over the fold: ``op`` tasklets chained through single-consumer scalars.
-        ops: dict = {}
-        inside = dict.fromkeys(leaves)
-        frontier = list(leaves)
-        while frontier:
-            t = state.out_edges(frontier.pop())[0].dst
-            if self._associative_op_kind(t) != op or state.in_degree(t) != 2 or state.out_degree(t) != 1:
-                continue
-            if t in ops:  # its other operand reached it first
-                continue
-            ops[t] = None
-            nxt = state.out_edges(t)[0].dst
-            if not isinstance(nxt, nodes.AccessNode) or state.out_degree(nxt) > 1:
+        # Walk forward from each accumulator leaf through single-consumer binary ``op`` tasklets
+        # and state-local transient scalars until leaving the ``op``-tree. Because ``op`` is
+        # associative and commutative (+, *, min, max), all ``m`` accumulators fold together
+        # soundly -- even inside a larger same-op fold such as ``(s0 + ... + s10) + tail`` --
+        # iff every leaf enters at least one ``op`` tasklet and every leaf reaches the SAME final
+        # ``op`` tasklet before exiting (to a non-``op`` consumer, a multi-consumer node, a
+        # non-transient container, or a transient read in another state).
+        used_outside = {
+            n.data for st in sdfg.states() if st is not state for n in st.nodes() if isinstance(n, nodes.AccessNode)
+        }
+        root_ops: dict = {}
+        for leaf in leaves:
+            cur: nodes.Node = leaf
+            last_op: nodes.Node | None = None
+            while True:
+                outs = state.out_edges(cur)
+                if len(outs) != 1:
+                    break
+                t = outs[0].dst
+                if self._associative_op_kind(t) != op or state.in_degree(t) != 2 or state.out_degree(t) != 1:
+                    break
+                nxt = state.out_edges(t)[0].dst
+                if not isinstance(nxt, nodes.AccessNode):
+                    return False
+                last_op = t
+                cur = nxt
+                desc = sdfg.arrays.get(cur.data)
+                if (desc is not None and not desc.transient) or cur.data in used_outside:
+                    break
+            if last_op is None:
                 return False
-            inside[nxt] = None
-            if state.out_degree(nxt) == 1:
-                frontier.append(nxt)
-        # ``m - 1`` binary ops over ``m`` single-consumer leaves, every operand internal: one tree.
-        return len(ops) == len(accs) - 1 and all(e.src in inside for t in ops for e in state.in_edges(t))
+            root_ops[last_op] = None
+        return len(root_ops) == 1
 
     def _shared_nodes(self, state: SDFGState) -> dict[nodes.Node, None]:
         """Boundary access nodes of a state (external arrays + read-only sources)."""
@@ -1026,12 +1040,56 @@ class RerollUnrolledLoops(ppl.Pass):
                     writes[edge.dst.data] = None
         return any(a in writes for a in reads)
 
+    @staticmethod
+    def simplify_int_floor(num: symbolic.SymbolicType, step: symbolic.SymbolicType) -> symbolic.SymbolicType:
+        """Pull exact integer multiples of positive integer ``step`` out of ``int_floor(num, step)``.
+
+        For every integer ``a``, integer ``q``, and integer ``k >= 1``:
+        ``int_floor(k * q + a, k) == q + int_floor(a, k)``.
+        Thus ``int_floor(7 * NBLK - 1, 7)`` simplifies to ``NBLK - 1`` and
+        ``int_floor(N - 17, 17)`` simplifies to ``int_floor(N, 17) - 1``, while an unaligned
+        tail such as ``int_floor(N - 1, 5)`` stays intact.
+        """
+        import sympy
+
+        if not (step.is_Integer and int(step) > 0):
+            return symbolic.int_floor(num, step)
+        k = int(step)
+        expanded = sympy.expand(as_expr(num))
+        terms = sympy.Add.make_args(expanded)
+        quot_terms: list[sympy.Expr] = []
+        rem_nonconst: list[sympy.Expr] = []
+        const_total = 0
+        for term in terms:
+            if term.is_Integer:
+                const_total += int(term)
+                continue
+            coeff, rest = term.as_coeff_Mul()
+            if coeff.is_Integer:
+                q, r = divmod(int(coeff), k)
+                if q != 0:
+                    quot_terms.append(q * rest)
+                if r != 0:
+                    rem_nonconst.append(r * rest)
+            else:
+                rem_nonconst.append(term)
+        if not rem_nonconst:
+            return sympy.Add(*quot_terms) + (const_total // k)
+        # Keep small non-multiple offsets like ``N - 1`` readable; pull out full multiples of ``k``.
+        if const_total != 0 and (const_total % k == 0 or abs(const_total) >= k):
+            q_c, r_c = divmod(const_total, k)
+            quot_terms.append(sympy.Integer(q_c))
+            const_total = r_c
+        rem = sympy.Add(*rem_nonconst, sympy.Integer(const_total))
+        return sympy.Add(*quot_terms) + symbolic.int_floor(rem, step)
+
     def _rewrite_step(self, loop: LoopRegion, loop_var: str, g: int, m: int) -> None:
         """Rewrite a step-``S`` loop to step ``g`` over the flattened range."""
         loop_end = symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(loop))
         init = symbolic.pystr_to_symbolic(loop_analysis.get_init_assignment(loop))
         step = symbolic.pystr_to_symbolic(loop_analysis.get_loop_stride(loop))
-        last_i = init + step * symbolic.int_floor(as_expr(loop_end) - as_expr(init), step)
-        new_excl = last_i + m * g
+        quot = self.simplify_int_floor(as_expr(loop_end) - as_expr(init), step)
+        last_i = init + step * quot
+        new_excl = symbolic.simplify(as_expr(last_i) + m * g)
         loop.update_statement = dace.properties.CodeBlock(f"{loop_var} = {loop_var} + {g}")
         loop.loop_condition = dace.properties.CodeBlock(f"{loop_var} < ({symbolic.symstr(new_excl)})")

@@ -37,15 +37,74 @@ ITER_PLACEHOLDER = "__lv__"
 SCRATCH_PLACEHOLDER = "__scratch__"
 
 
-def _int_floor_to_sympy(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
-    """Rewrite DaCe ``int_floor(a, b)`` sub-terms as SymPy ``floor(a / b)``."""
+def ceil_to_int_floor(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
+    """Rewrite DaCe ``int_ceil(a, k)`` with positive integer constant ``k`` to ``int_floor(a + k - 1, k)``.
+
+    Exact for all integers ``a`` and ``k >= 1``; lets :func:`dace.symbolic.provably_le` reason
+    over ``WhileToFor``'s exit values (e.g. ``17 * Max(0, int_ceil(N - 16, 17))``) using its
+    existing ``int_floor`` rules.
+    """
     return expr.replace(
-        lambda x: x.func.__name__ == "int_floor" and len(x.args) == 2, lambda x: sympy.floor(x.args[0] / x.args[1])
+        lambda x: x.func.__name__ == "int_ceil" and len(x.args) == 2 and x.args[1].is_Integer and int(x.args[1]) > 0,
+        lambda x: symbolic.int_floor(x.args[0] + x.args[1] - 1, x.args[1]),
     )
 
 
-def _symbolically_equal(a: symbolic.SymbolicType, b: symbolic.SymbolicType) -> bool:
-    """Whether two symbolic expressions are provably equal, floor-aware."""
+def int_floor_to_sympy(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
+    """Rewrite DaCe ``int_floor`` / ``int_ceil`` sub-terms as SymPy ``floor`` / ``ceiling``.
+
+    ``int_floor`` and ``int_ceil`` are opaque to :func:`sympy.simplify`, so genuine identities
+    such as ``int_floor(N - 11, 11) + 1 == int_floor(N, 11)`` or
+    ``int_ceil(N - 16, 17) == int_floor(N, 17)`` are left unproven. SymPy's ``floor`` knows
+    ``floor(x + k) == floor(x) + k`` for integer ``k``, which is what an adjacency check between
+    a tile bound and a remainder start needs.
+    """
+    expr = ceil_to_int_floor(expr)
+    expr = expr.replace(
+        lambda x: x.func.__name__ == "int_floor" and len(x.args) == 2, lambda x: sympy.floor(x.args[0] / x.args[1])
+    )
+    return expr.replace(
+        lambda x: x.func.__name__ == "int_ceil" and len(x.args) == 2, lambda x: sympy.ceiling(x.args[0] / x.args[1])
+    )
+
+
+def simplify_extrema(expr: symbolic.SymbolicType, facts: symbolic.Facts | None) -> symbolic.SymbolicType:
+    """Drop ``Max`` / ``Min`` operands that ``facts`` proves redundant (e.g. ``Max(0, int_floor(N, 17))``)."""
+    expr = ceil_to_int_floor(as_expr(expr))
+    if facts is None or not expr.atoms(sympy.Max, sympy.Min):
+        return expr
+
+    def collapse_max(node: sympy.Max) -> sympy.Expr:
+        if len(node.args) == 2:
+            a, b = node.args
+            if provably_ordered(a, b, facts):
+                return b
+            if provably_ordered(b, a, facts):
+                return a
+        return node
+
+    def collapse_min(node: sympy.Min) -> sympy.Expr:
+        if len(node.args) == 2:
+            a, b = node.args
+            if provably_ordered(a, b, facts):
+                return a
+            if provably_ordered(b, a, facts):
+                return b
+        return node
+
+    expr = expr.replace(lambda x: isinstance(x, sympy.Max), collapse_max)
+    expr = expr.replace(lambda x: isinstance(x, sympy.Min), collapse_min)
+    return expr
+
+
+def symbolically_equal(a: symbolic.SymbolicType, b: symbolic.SymbolicType, facts: symbolic.Facts | None = None) -> bool:
+    """Whether two symbolic expressions are provably equal, floor/ceil/facts-aware.
+
+    :param a: First expression.
+    :param b: Second expression.
+    :param facts: Optional scope symbol facts (e.g. ``N >= 0`` for ``Max(0, int_ceil(...))``).
+    :returns: ``True`` iff ``a - b`` simplifies to zero, else ``False``.
+    """
     try:
         # The two expressions come from different sources (two memlets, a subset against a reparsed bound), so a shared
         # name can carry two symbol instances with different dtypes.
@@ -53,7 +112,15 @@ def _symbolically_equal(a: symbolic.SymbolicType, b: symbolic.SymbolicType) -> b
         diff = symbolic.simplify(as_expr(pa) - as_expr(pb))
         if diff == 0:
             return True
-        return symbolic.simplify(_int_floor_to_sympy(diff)) == 0
+        if symbolic.simplify(int_floor_to_sympy(diff)) == 0:
+            return True
+        if facts is not None:
+            sa = simplify_extrema(pa, facts)
+            sb = simplify_extrema(pb, facts)
+            sdiff = symbolic.simplify(as_expr(sa) - as_expr(sb))
+            if sdiff == 0 or symbolic.simplify(int_floor_to_sympy(sdiff)) == 0:
+                return True
+        return False
     except Exception:
         return False
 
@@ -91,11 +158,19 @@ def value_keys(
 
 
 def provably_ordered(low: symbolic.SymbolicType, high: symbolic.SymbolicType, facts: symbolic.Facts) -> bool:
-    """Whether ``low <= high`` is provable, floor-aware."""
+    """Whether ``low <= high`` is provable, floor/ceil-aware."""
     low, high = symbolic.equalize_symbols_across(as_expr(low), as_expr(high))
-    return symbolic.provably_le(low, high, facts) or bool(
-        symbolic.simplify(_int_floor_to_sympy(high - low)).is_nonnegative
-    )
+    if symbolic.provably_le(low, high, facts):
+        return True
+    nlow, nhigh = ceil_to_int_floor(low), ceil_to_int_floor(high)
+    if (nlow is not low or nhigh is not high) and symbolic.provably_le(nlow, nhigh, facts):
+        return True
+    if nlow.atoms(sympy.Max, sympy.Min) or nhigh.atoms(sympy.Max, sympy.Min):
+        slow = simplify_extrema(nlow, facts)
+        shigh = simplify_extrema(nhigh, facts)
+        if (slow != nlow or shigh != nhigh) and symbolic.provably_le(slow, shigh, facts):
+            return True
+    return bool(symbolic.simplify(int_floor_to_sympy(nhigh - nlow)).is_nonnegative)
 
 
 def _normalize(text: str, loop_var: str) -> str:
@@ -169,18 +244,21 @@ class FuseConsecutiveLoops(ppl.Pass):
                 continue
             link = out_edges[0]
             second = link.dst
-            if not isinstance(second, LoopRegion) or second is first:
-                continue
-            if len(cfg.in_edges(second)) != 1:
-                continue
-            # The connecting edge must be pure sequencing: no assignments and a
-            # trivial condition, so nothing runs (or is decided) between them.
-            if link.data.assignments:
-                continue
-            if link.data.condition is not None and link.data.condition.as_string not in ("1", "True"):
-                continue
-            if self._adjacent_identical(first, second, scratch_index):
-                self._merge(cfg, first, second, link)
+            if isinstance(second, LoopRegion) and second is not first:
+                if len(cfg.in_edges(second)) != 1:
+                    continue
+                # The connecting edge must be pure sequencing: no assignments and a
+                # trivial condition, so nothing runs (or is decided) between them.
+                if link.data.assignments:
+                    continue
+                if link.data.condition is not None and link.data.condition.as_string not in ("1", "True"):
+                    continue
+                if self._adjacent_identical(first, second, scratch_index):
+                    self._merge(cfg, first, second, link)
+                    return True
+            elif isinstance(second, SDFGState) and self.try_fuse_split_accumulator(
+                cfg, first, second, link, scratch_index
+            ):
                 return True
         return False
 
@@ -198,15 +276,288 @@ class FuseConsecutiveLoops(ppl.Pass):
             if start is None or end is None:
                 return False
         # Adjacency: first's exclusive end (last value + 1) == second's start.
+        facts = SymbolResolver().facts_at(first.parent_graph)
         first_end_excl = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(first))) + 1)
         second_start = loop_analysis.get_init_assignment(second)
-        if not _symbolically_equal(first_end_excl, second_start):
+        if not symbolically_equal(first_end_excl, second_start, facts):
             return False
         if not self._bodies_match(first, second, scratch_index):
             return False
         # A shared name exits with the value it had after ``second``, which the fused loop keeps.
         names = (first, second) if first.loop_variable != second.loop_variable else ()
         return not any(loop_analysis.counter_used_outside_loop(l.loop_variable, l, l.sdfg) for l in names)
+
+    #: Associative+commutative reduction ops eligible for split-accumulator tail folding, mapped to their identity.
+    SPLIT_ACC_IDENTITY: dict[str, tuple[str, float]] = {"Add": ("+", 0.0), "Mul": ("*", 1.0)}
+
+    @staticmethod
+    def assoc_op(node: nodes.Node) -> str | None:
+        """Op string (``'+'`` or ``'*'``) if ``node`` is a binary associative+commutative tasklet; else ``None``."""
+        if not isinstance(node, nodes.Tasklet):
+            return None
+        code = node.code.as_string.strip()
+        if "=" not in code:
+            return None
+        lhs, rhs = code.split("=", 1)
+        if lhs.strip() != "__out":
+            return None
+        try:
+            expr = symbolic.pystr_to_symbolic(rhs.strip())
+        except Exception:
+            return None
+        conns = dict.fromkeys(node.in_connectors)
+        if len(conns) != 2 or dict.fromkeys(str(s) for s in expr.free_symbols) != conns:
+            return None
+        if len(expr.args) != 2 or not all(arg.is_Symbol for arg in expr.args):
+            return None
+        info = FuseConsecutiveLoops.SPLIT_ACC_IDENTITY.get(type(expr).__name__)
+        return info[0] if info is not None else None
+
+    @staticmethod
+    def scalar_identity_init(state: SDFGState) -> tuple[str, str] | None:
+        """If ``state`` only initializes one transient scalar to ``0.0`` (``'+'``) or ``1.0`` (``'*'``),
+        return ``(name, op)``; else ``None``."""
+        all_nodes = list(state.nodes())
+        if len(all_nodes) != 2 or len(state.edges()) != 1:
+            return None
+        edge = state.edges()[0]
+        if not (isinstance(edge.src, nodes.Tasklet) and isinstance(edge.dst, nodes.AccessNode)):
+            return None
+        desc = state.sdfg.arrays.get(edge.dst.data)
+        if desc is None or not desc.transient or desc.shape != (1,):
+            return None
+        code = edge.src.code.as_string.strip()
+        if "=" not in code:
+            return None
+        lhs, rhs = code.split("=", 1)
+        if lhs.strip() != edge.src_conn:
+            return None
+        try:
+            val = float(rhs.strip())
+        except ValueError:
+            return None
+        if val == 0.0:
+            return edge.dst.data, "+"
+        if val == 1.0:
+            return edge.dst.data, "*"
+        return None
+
+    @staticmethod
+    def single_carried_scalar_op(state: SDFGState, name: str) -> str | None:
+        """Op string if ``state`` carries scalar ``name`` via ``name = name OP x``; else ``None``."""
+        acc_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == name]
+        src = [n for n in acc_nodes if state.in_degree(n) == 0]
+        snk = [n for n in acc_nodes if state.out_degree(n) == 0]
+        if len(acc_nodes) != 2 or len(src) != 1 or len(snk) != 1 or state.out_degree(src[0]) != 1:
+            return None
+        node = state.out_edges(src[0])[0].dst
+        op = FuseConsecutiveLoops.assoc_op(node)
+        if op is None:
+            return None
+        while node is not snk[0]:
+            outs = state.out_edges(node)
+            if len(outs) != 1:
+                return None
+            node = outs[0].dst
+            if node is not snk[0]:
+                if isinstance(node, nodes.AccessNode):
+                    desc = state.sdfg.arrays.get(node.data)
+                    if desc is None or not desc.transient or state.in_degree(node) != 1:
+                        return None
+                elif isinstance(node, nodes.Tasklet):
+                    if state.in_degree(node) != 1:
+                        return None
+                    code = node.code.as_string.strip()
+                    if "=" not in code or code.split("=", 1)[0].strip() != "__out":
+                        return None
+                else:
+                    return None
+        return op
+
+    def try_fuse_split_accumulator(
+        self,
+        cfg: ControlFlowRegion,
+        first: LoopRegion,
+        init_state: SDFGState,
+        link1: Edge[InterstateEdge],
+        scratch_index: ScratchIndex,
+    ) -> bool:
+        """Fuse ``first (acc OP= f(i)) -> init_state (tail = id) -> second (tail OP= f(i)) -> post (... acc OP tail)``.
+
+        Hand-unrolled reductions often accumulate the remainder into a fresh ``tail = 0.0`` and
+        add ``tail`` into the final sum after the remainder loop. Redirecting ``second`` into
+        ``acc`` and dropping the redundant ``+ tail`` exposes the standard adjacent-loop merge.
+        """
+        if link1.data.condition is not None and link1.data.condition.as_string not in ("1", "True"):
+            return False
+        if len(cfg.in_edges(init_state)) != 1 or len(cfg.out_edges(init_state)) != 1:
+            return False
+        link2 = cfg.out_edges(init_state)[0]
+        if link2.data.assignments or (
+            link2.data.condition is not None and link2.data.condition.as_string not in ("1", "True")
+        ):
+            return False
+        second = link2.dst
+        if not isinstance(second, LoopRegion) or second is first or len(cfg.in_edges(second)) != 1:
+            return False
+        # ``WhileToFor`` leaves the first loop's exit-value assignment to ``i`` on ``link1`` when
+        # ``init_state`` sits between the two loops; it is dead when ``second`` immediately
+        # re-initializes ``i`` and ``init_state`` never reads ``i``.
+        if link1.data.assignments:
+            if set(link1.data.assignments) != {second.loop_variable}:
+                return False
+            if second.loop_variable in init_state.used_symbols(all_symbols=True):
+                return False
+        out2 = cfg.out_edges(second)
+        if len(out2) != 1 or out2[0].data.assignments or not out2[0].data.is_unconditional():
+            return False
+        post = out2[0].dst
+        if not isinstance(post, SDFGState) or len(cfg.in_edges(post)) != 1:
+            return False
+
+        init_info = self.scalar_identity_init(init_state)
+        if init_info is None:
+            return False
+        tail, op = init_info
+
+        for loop in (first, second):
+            if not loop.loop_variable:
+                return False
+            stride = loop_analysis.get_loop_stride(loop)
+            if stride is None or symbolic.simplify(stride) != 1:
+                return False
+            if loop_analysis.get_init_assignment(loop) is None or loop_analysis.get_loop_end(loop) is None:
+                return False
+        facts = SymbolResolver().facts_at(first.parent_graph)
+        first_end_excl = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(first))) + 1)
+        second_start = loop_analysis.get_init_assignment(second)
+        if not symbolically_equal(first_end_excl, second_start, facts):
+            return False
+
+        s1 = self._single_body_state(first)
+        s2 = self._single_body_state(second)
+        if s1 is None or s2 is None:
+            return False
+        if self.single_carried_scalar_op(s2, tail) != op:
+            return False
+        # ``tail`` must appear ONLY in init_state, s2, and post (never on interstate edges).
+        if scratch_index.get(tail) != OrderedSet([init_state, s2, post]):
+            return False
+        sdfg = first.sdfg
+        if any(tail in e.data.free_symbols for e in sdfg.all_interstate_edges(recursive=True)):
+            return False
+
+        # Find the matching carried scalar ``acc`` in ``s1`` (same op, same dtype, not ``tail``).
+        tail_desc = sdfg.arrays.get(tail)
+        acc_candidates = [
+            name
+            for name in dict.fromkeys(n.data for n in s1.nodes() if isinstance(n, nodes.AccessNode) and n.data != tail)
+            if sdfg.arrays.get(name) is not None
+            and sdfg.arrays[name].transient
+            and sdfg.arrays[name].shape == (1,)
+            and sdfg.arrays[name].dtype == tail_desc.dtype
+            and self.single_carried_scalar_op(s1, name) == op
+        ]
+        if len(acc_candidates) != 1:
+            return False
+        acc = acc_candidates[0]
+        if acc in {n.data for n in s2.nodes() if isinstance(n, nodes.AccessNode)}:
+            return False
+        if any(acc in e.data.free_symbols for e in sdfg.all_interstate_edges(recursive=True)):
+            return False
+        # Redirecting ``second`` into ``acc`` changes ``acc``'s post-loop value, so ``acc`` must
+        # not be read in any state other than ``s1`` and ``post`` (pre-loop init states only write it).
+        for st in scratch_index.get(acc, ()):
+            if st in (s1, post):
+                continue
+            if any(isinstance(n, nodes.AccessNode) and n.data == acc and st.out_degree(n) > 0 for n in st.nodes()):
+                return False
+
+        # Verify ``s1`` and ``s2`` compute identical bodies once ``tail`` is mapped to ``acc``.
+        ids: ValueIds = {}
+        sig1 = self._state_signature(s1, first.loop_variable, self._local_scratch(first, s1, scratch_index), ids)
+        sig2 = self._state_signature(
+            s2, second.loop_variable, self._local_scratch(second, s2, scratch_index), ids, rename={tail: acc}
+        )
+        if sig1 is None or sig1 != sig2:
+            return False
+
+        names = (first, second) if first.loop_variable != second.loop_variable else ()
+        if any(loop_analysis.counter_used_outside_loop(l.loop_variable, l, l.sdfg) for l in names):
+            return False
+
+        # In ``post``, both ``acc`` and ``tail`` must enter the SAME single connected ``op``-tree
+        # as single-consumer read-only leaves, and ``acc`` must not be read anywhere after ``post``
+        # without going through that fold.
+        tail_nodes = [n for n in post.nodes() if isinstance(n, nodes.AccessNode) and n.data == tail]
+        acc_nodes = [n for n in post.nodes() if isinstance(n, nodes.AccessNode) and n.data == acc]
+        if len(tail_nodes) != 1 or len(acc_nodes) != 1:
+            return False
+        tail_leaf, acc_leaf = tail_nodes[0], acc_nodes[0]
+        if (
+            post.in_degree(tail_leaf) != 0
+            or post.out_degree(tail_leaf) != 1
+            or post.in_degree(acc_leaf) != 0
+            or post.out_degree(acc_leaf) != 1
+        ):
+            return False
+        tail_tasklet = post.out_edges(tail_leaf)[0].dst
+        if self.assoc_op(tail_tasklet) != op or post.in_degree(tail_tasklet) != 2 or post.out_degree(tail_tasklet) != 1:
+            return False
+        used_outside_post = {
+            n.data for st in sdfg.states() if st is not post for n in st.nodes() if isinstance(n, nodes.AccessNode)
+        }
+        root_ops: dict = {}
+        for leaf in (acc_leaf, tail_leaf):
+            cur: nodes.Node = leaf
+            last_op: nodes.Node | None = None
+            while True:
+                outs = post.out_edges(cur)
+                if len(outs) != 1:
+                    break
+                t = outs[0].dst
+                if self.assoc_op(t) != op or post.in_degree(t) != 2 or post.out_degree(t) != 1:
+                    break
+                nxt = post.out_edges(t)[0].dst
+                if not isinstance(nxt, nodes.AccessNode):
+                    return False
+                last_op = t
+                cur = nxt
+                desc = sdfg.arrays.get(cur.data)
+                if (desc is not None and not desc.transient) or cur.data in used_outside_post:
+                    break
+            if last_op is None:
+                return False
+            root_ops[last_op] = None
+        if len(root_ops) != 1:
+            return False
+
+        # Commit:
+        # 1. Rename ``tail`` -> ``acc`` inside ``s2``.
+        for n in s2.nodes():
+            if isinstance(n, nodes.AccessNode) and n.data == tail:
+                n.data = acc
+        for e in s2.edges():
+            if e.data is not None and e.data.data == tail:
+                e.data.data = acc
+
+        # 2. Splice ``tail`` out of ``tail_tasklet`` in ``post`` (``other OP tail -> dst`` becomes ``other -> dst``).
+        other_edge = next(e for e in post.in_edges(tail_tasklet) if e.src is not tail_leaf)
+        out_edge = post.out_edges(tail_tasklet)[0]
+        new_mem = dace.Memlet(
+            data=out_edge.data.data,
+            subset=out_edge.data.subset,
+            other_subset=other_edge.data.subset,
+        )
+        post.add_edge(other_edge.src, other_edge.src_conn, out_edge.dst, out_edge.dst_conn, new_mem)
+        post.remove_node(tail_tasklet)
+        post.remove_node(tail_leaf)
+
+        # 3. Drop ``init_state`` and fuse ``first`` + ``second``.
+        cfg.remove_node(init_state)
+        new_link = cfg.add_edge(first, second, InterstateEdge())
+        self._merge(cfg, first, second, new_link)
+        return True
 
     def _single_body_state(self, loop: LoopRegion) -> SDFGState | None:
         """The loop's one non-empty body state, or ``None`` if the body is not a
@@ -249,10 +600,19 @@ class FuseConsecutiveLoops(ppl.Pass):
         return local
 
     def _state_signature(
-        self, state: SDFGState, loop_var: str, local_scratch: dict[str, None], ids: ValueIds
+        self,
+        state: SDFGState,
+        loop_var: str,
+        local_scratch: dict[str, None],
+        ids: ValueIds,
+        rename: dict[str, str] | None = None,
     ) -> list[int] | None:
         """The sorted value keys of ``state``'s sinks, ``None`` if a node's meaning is not in its key:
         scope, nested SDFG and library nodes carry it in properties and contents."""
+        rmap = rename or {}
+
+        def data_name(name: str) -> str:
+            return _canon_data(rmap.get(name, name), local_scratch)
 
         def node_key(node: nodes.Node) -> NodeKey | None:
             if not isinstance(node, (nodes.AccessNode, nodes.Tasklet)):
@@ -260,11 +620,13 @@ class FuseConsecutiveLoops(ppl.Pass):
             if isinstance(node, nodes.AccessNode) and node.data in local_scratch:
                 desc = state.sdfg.arrays[node.data]
                 return ("scratch", f"{desc.dtype} {desc.shape}")
+            if isinstance(node, nodes.AccessNode):
+                return ("access", data_name(node.data))
             return _node_key(node, loop_var, local_scratch)
 
         def edge_key(memlet: dace.Memlet) -> tuple:
             subsets = ("" if s is None else _normalize(str(s), loop_var) for s in (memlet.subset, memlet.other_subset))
-            return (_canon_data(memlet.data, local_scratch) if memlet.data else "", *subsets, str(memlet.wcr))
+            return (data_name(memlet.data) if memlet.data else "", *subsets, str(memlet.wcr))
 
         keys = value_keys(state, node_key, edge_key, ids, {})
         return None if keys is None else sorted(keys[n] for n in state.sink_nodes())
@@ -380,7 +742,7 @@ def plan_guarded_fusion(region: ControlFlowRegion) -> GuardedFusionPlan | None:
     if bounds is None:
         return None
     for (_, prev_end), (nxt_start, _) in zip(bounds, bounds[1:]):
-        if not _symbolically_equal(symbolic.simplify(prev_end + 1), nxt_start):
+        if not symbolically_equal(symbolic.simplify(prev_end + 1), nxt_start):
             return None
     # The guards partition the union only when no sibling's range is inverted.
     facts = SymbolResolver().facts_at(region)

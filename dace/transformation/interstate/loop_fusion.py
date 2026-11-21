@@ -54,7 +54,7 @@ from dace.sdfg.state import (
 from dace.transformation import helpers, transformation
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
-from dace.transformation.passes.canonicalize.fuse_consecutive_loops import _symbolically_equal
+from dace.transformation.passes.canonicalize.fuse_consecutive_loops import symbolically_equal
 from dace.transformation.passes.iteration_domain import loop_trip_count, same_trip_count
 from dace.transformation.passes.loop_fission import _linear_blocks, _single_compute_state
 
@@ -214,7 +214,7 @@ class LoopFusion(transformation.MultiStateTransformation):
             return False
         s1 = loop_analysis.get_loop_stride(first)
         s2 = loop_analysis.get_loop_stride(second)
-        if s1 is None or s2 is None or not _symbolically_equal(s1, s2):
+        if s1 is None or s2 is None or not symbolically_equal(s1, s2):
             return False
         if (s1 > 0) != True:  # noqa: E712 -- the offset signs of ``dep_class`` assume a forward sweep
             return False
@@ -226,7 +226,7 @@ class LoopFusion(transformation.MultiStateTransformation):
             return False
         # Same start and stride: equal trip counts mean the iterators take the same values, however the
         #  last value is spelled (``i < 2*N`` and ``i <= 2*N - 1`` under stride 2).
-        return _symbolically_equal(i1, i2) and same_trip_count(t1, t2)
+        return symbolically_equal(i1, i2) and same_trip_count(t1, t2)
 
     @staticmethod
     def _shares_symbols(first: LoopRegion, second: LoopRegion) -> bool:
@@ -566,10 +566,10 @@ class LoopFusion(transformation.MultiStateTransformation):
             return False
         it = symbolic.pystr_to_symbolic(ivar)
         return any(
-            _symbolically_equal(sa, it)
-            and _symbolically_equal(ea, it)
-            and _symbolically_equal(sb, it)
-            and _symbolically_equal(eb, it)
+            symbolically_equal(sa, it)
+            and symbolically_equal(ea, it)
+            and symbolically_equal(sb, it)
+            and symbolically_equal(eb, it)
             for (sa, ea, step_a), (sb, eb, step_b) in zip(ra, rb)
         )
 
@@ -580,7 +580,7 @@ class LoopFusion(transformation.MultiStateTransformation):
         if len(ra) != len(rb):
             return False
         for (sa, ea, ta), (sb, eb, tb) in zip(ra, rb):
-            if not (_symbolically_equal(sa, sb) and _symbolically_equal(ea, eb) and _symbolically_equal(ta, tb)):
+            if not (symbolically_equal(sa, sb) and symbolically_equal(ea, eb) and symbolically_equal(ta, tb)):
                 return False
         return True
 
@@ -702,13 +702,15 @@ class LoopFusion(transformation.MultiStateTransformation):
             return None
         nd = list(sub.ndrange())
         for lo, hi, _ in nd:
-            if not _symbolically_equal(lo, hi):  # not a single cell
+            if not symbolically_equal(lo, hi):  # not a single cell
                 return None
         if not any(str(sym) == ivar for lo, _, _ in nd for sym in symbolic.pystr_to_symbolic(str(lo)).free_symbols):
             return None
         if ref is not None:
             rnd = list(ref.ndrange())
-            if len(rnd) != len(nd) or not all(_symbolically_equal(a, b) for (a, _, _), (b, _, _) in zip(nd, rnd)):
+            if len(rnd) != len(nd) or not all(
+                symbolically_equal(a, b) for (a, *unused_a), (b, *unused_b) in zip(nd, rnd)
+            ):
                 return None
         return sub
 
