@@ -188,6 +188,47 @@ def libnode_on_host(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> bo
     )
 
 
+def cpu_library_choice(
+    node: nodes.LibraryNode, state: SDFGState, sequential: bool, impls: dict, has_libxsmm: bool
+) -> str | None:
+    """The CPU implementation ``node`` takes over its fast default, or ``None`` to keep that."""
+    # In a parallel region the in-thread transpose beats an HPTT plan per call (cp2k_grid_integrate: 4 s vs 19 s).
+    if sequential and isinstance(node, TensorTranspose):
+        return "sequential"
+    # In a parallel region a real GEMM is one small product per iteration: LIBXSMM, as OpenBLAS's per-call buffer
+    # allocation contends across threads.
+    if (
+        sequential
+        and isinstance(node, Gemm)
+        and gemm_dtype(node, state) in (dtypes.float32, dtypes.float64)
+        and has_libxsmm
+    ):
+        return "LIBXSMM"
+    # A batch of real products not known to be large: a LIBXSMM kernel per product (cp2k_trs4: 7.3 s vs 11.9 s).
+    if isinstance(node, BatchedMatMul) and libxsmm_batched_product(node, state) and has_libxsmm:
+        return "LIBXSMM"
+    # A top-level real GEMM takes OpenBLAS with a run-time shape plan (split-K, syrk for ``X.T @ X``).
+    if (
+        not sequential
+        and isinstance(node, Gemm)
+        and "Planned" in impls
+        and gemm_dtype(node, state) in (dtypes.float32, dtypes.float64)
+        and not ({"_alpha", "_beta"} & set(node.in_connectors))
+        and openblas.OpenBLAS.is_installed()
+    ):
+        return "Planned"
+    return None
+
+
+def gpu_scope_implementation(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, impls: dict) -> str | None:
+    """A GPU ``Scan`` or ``Symmetrize``: ``pure`` inside a kernel (``ExpandCUDA`` emits a host-side call; the
+    triangular walk is cheaper there), the ``CUDA`` expansion at host level, where ``pure`` would index ``GPU_Global``
+    operands from the host."""
+    if libnode_is_device_code(node, state, sdfg):
+        return "pure"
+    return "CUDA" if "CUDA" in impls else node.implementation
+
+
 def canonicalize_set_fast_implementations(
     sdfg: SDFG,
     device: dtypes.DeviceType,
@@ -243,62 +284,16 @@ def canonicalize_set_fast_implementations(
                 node.schedule = dtypes.ScheduleType.GPU_Device
             continue
 
-        # Shared with auto_optimize so the two paths cannot drift; it has the last word on the types it governs.
-        if device == dtypes.DeviceType.CPU and apply_cpu_library_parallelism(node, state, sdfg):
-            continue
-        # A GPU scan in a kernel stays ``pure``: ``ExpandCUDA`` emits a host-side ``DeviceScan`` call. Elsewhere the
-        # ``pure`` loop would index ``GPU_Global`` operands from the host.
-        if isinstance(node, Scan) and device == dtypes.DeviceType.GPU:
-            node.implementation = (
-                "pure"
-                if libnode_is_device_code(node, state, sdfg)
-                else ("CUDA" if "CUDA" in impls else node.implementation)
-            )
-            continue
-        # In a parallel region the in-thread transpose beats an HPTT plan per call (cp2k_grid_integrate: 4 s vs 19 s).
-        if device == dtypes.DeviceType.CPU and sequential and isinstance(node, TensorTranspose):
-            node.implementation = "sequential"
-            continue
-        # In a parallel region a real GEMM is one small product per iteration: LIBXSMM, as OpenBLAS's per-call buffer
-        # allocation contends across threads.
-        if (
-            device == dtypes.DeviceType.CPU
-            and sequential
-            and isinstance(node, Gemm)
-            and gemm_dtype(node, state) in (dtypes.float32, dtypes.float64)
-            and has_libxsmm
-        ):
-            node.implementation = "LIBXSMM"
-            continue
-        # A batch of real products not known to be large: a LIBXSMM kernel per product (cp2k_trs4: 7.3 s vs 11.9 s).
-        if (
-            device == dtypes.DeviceType.CPU
-            and isinstance(node, BatchedMatMul)
-            and libxsmm_batched_product(node, state)
-            and has_libxsmm
-        ):
-            node.implementation = "LIBXSMM"
-            continue
-        # A top-level real GEMM takes OpenBLAS with a run-time shape plan (split-K, syrk for ``X.T @ X``).
-        if (
-            device == dtypes.DeviceType.CPU
-            and not sequential
-            and isinstance(node, Gemm)
-            and "Planned" in impls
-            and gemm_dtype(node, state) in (dtypes.float32, dtypes.float64)
-            and not ({"_alpha", "_beta"} & set(node.in_connectors))
-            and openblas.OpenBLAS.is_installed()
-        ):
-            node.implementation = "Planned"
-            continue
-        # A host-level GPU ``Symmetrize`` is a kernel of its own and takes the bounding-box expansion (both axes
-        # parallel); inside a kernel the triangular ``pure`` walk is cheaper.
-        if isinstance(node, Symmetrize) and device == dtypes.DeviceType.GPU:
-            node.implementation = (
-                "pure"
-                if libnode_is_device_code(node, state, sdfg)
-                else ("CUDA" if "CUDA" in impls else node.implementation)
-            )
+        if device == dtypes.DeviceType.CPU:
+            # Shared with auto_optimize so the two paths cannot drift; it has the last word on the types it governs.
+            if apply_cpu_library_parallelism(node, state, sdfg):
+                continue
+            choice = cpu_library_choice(node, state, sequential, impls, has_libxsmm)
+            if choice is not None:
+                node.implementation = choice
+                continue
+        elif isinstance(node, (Scan, Symmetrize)):
+            node.implementation = gpu_scope_implementation(node, state, sdfg, impls)
             continue
         # ``set_fast_implementations`` reads every Sequential GPU node as kernel code, but a host loop is Sequential
         # too and belongs to a device library call.
