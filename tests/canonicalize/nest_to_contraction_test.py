@@ -136,8 +136,8 @@ def test_a_loop_lift_reads_an_operand_used_twice_through_one_access_node():
     sdfg.add_array("out", [1], dace.float64)
     state = sdfg.add_state()
     operand = Operand("A", [None, None], None)
-    contraction = Contraction("ak,ak->", 1.0, 0.0, [operand, operand], Operand("out", [None], None))
-    add_einsum(sdfg, state, "lifted", contraction, {}, reuse=False)
+    contraction = Contraction("ak,ak->", 1.0, 0.0, [operand, operand], Operand("out", [None], None), {})
+    add_einsum(sdfg, state, "lifted", contraction, reuse=False)
     assert [n.data for n in state.data_nodes()].count("A") == 1
     assert all(state.degree(n) > 0 for n in state.nodes())
 

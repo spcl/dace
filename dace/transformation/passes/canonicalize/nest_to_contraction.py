@@ -69,6 +69,7 @@ class Contraction:
     beta: Any
     operands: list[Operand]
     output: Operand
+    axes: dict[str, Axis]
     #: The zeros stored before the nest that the overwriting einsum makes dead.
     dead_zeros: ZeroStore | None = None
 
@@ -275,40 +276,16 @@ class BodyMatcher:
             return self.element_accumulation(temp, outs[0].dst)
         if not isinstance(outs[0].dst, nodes.MapEntry):
             return None
-        entry = outs[0].dst
+        return self.map_accumulation(temp, outs[0].dst)
+
+    def map_accumulation(self, temp: nodes.AccessNode, entry: nodes.MapEntry) -> Operand | None:
+        """``X[idx] = X[idx] + T[...]`` or ``X[idx] (+)= T[...]`` by a map over the whole of the local ``T``."""
         exit_node = self.state.exit_node(entry)
-        scope = self.state.scope_children()[entry]
-        tasklets = [n for n in scope if n is not exit_node]
-        if len(tasklets) != 1 or not isinstance(tasklets[0], nodes.Tasklet):
-            return None
-        tasklet = tasklets[0]
-        ranges = dict(zip(entry.map.params, entry.map.range))
         temp_shape = self.sdfg.arrays[temp.data].shape
-        if len(ranges) != len(temp_shape) or any(
-            not symbolic.equal_valued(0, b) or not symbolic.equal_valued(1, s) or not same(e, n - 1)
-            for (b, e, s), n in zip(ranges.values(), temp_shape)
-        ):
+        summed = self.summing_tasklet(temp, entry, exit_node, temp_shape)
+        if summed is None:
             return None
-        out_edges = self.state.out_edges(tasklet)
-        if len(out_edges) != 1:
-            return None
-        write = out_edges[0].data
-        temp_reads = [e for e in self.state.in_edges(tasklet) if e.data.data == temp.data]
-        other_reads = [e for e in self.state.in_edges(tasklet) if e.data.data != temp.data]
-        if len(temp_reads) != 1 or [str(b) for b, _, _ in temp_reads[0].data.subset] != entry.map.params:
-            return None
-        if write.wcr is not None:
-            if (
-                other_reads
-                or not _is_copy_tasklet(tasklet)
-                or detect_reduction_type(write.wcr) != dtypes.ReductionType.Sum
-            ):
-                return None
-            self.wcr_sum = True
-        elif len(other_reads) != 1 or not _is_sum_tasklet(tasklet) or other_reads[0].data.subset != write.subset:
-            return None
-        if write.data == temp.data:
-            return None
+        tasklet, write, other_reads = summed
         params = entry.map.params
         if [str(b) for b, _, _ in write.subset if str(b) in params] != params or any(
             str(b) != str(e) or (str(b) not in params and {str(f) for f in b.free_symbols} & set(params))
@@ -339,6 +316,44 @@ class BodyMatcher:
         for n in (temp, entry, exit_node, tasklet, root):
             self.claimed[n] = None
         return Operand(root.data, dims, root)
+
+    def summing_tasklet(
+        self, temp: nodes.AccessNode, entry: nodes.MapEntry, exit_node: nodes.MapExit, temp_shape: list
+    ) -> tuple[nodes.Tasklet, Memlet, list[MultiConnectorEdge[Memlet]]] | None:
+        """The map's one tasklet, adding ``T`` at the map's point to one other read or by a WCR sum, with its write
+        and its reads of anything but ``T``."""
+        scope = self.state.scope_children()[entry]
+        tasklets = [n for n in scope if n is not exit_node]
+        if len(tasklets) != 1 or not isinstance(tasklets[0], nodes.Tasklet):
+            return None
+        tasklet = tasklets[0]
+        ranges = dict(zip(entry.map.params, entry.map.range))
+        if len(ranges) != len(temp_shape) or any(
+            not symbolic.equal_valued(0, b) or not symbolic.equal_valued(1, s) or not same(e, n - 1)
+            for (b, e, s), n in zip(ranges.values(), temp_shape)
+        ):
+            return None
+        out_edges = self.state.out_edges(tasklet)
+        if len(out_edges) != 1:
+            return None
+        write = out_edges[0].data
+        temp_reads = [e for e in self.state.in_edges(tasklet) if e.data.data == temp.data]
+        other_reads = [e for e in self.state.in_edges(tasklet) if e.data.data != temp.data]
+        if len(temp_reads) != 1 or [str(b) for b, _, _ in temp_reads[0].data.subset] != entry.map.params:
+            return None
+        if write.wcr is not None:
+            if (
+                other_reads
+                or not _is_copy_tasklet(tasklet)
+                or detect_reduction_type(write.wcr) != dtypes.ReductionType.Sum
+            ):
+                return None
+            self.wcr_sum = True
+        elif len(other_reads) != 1 or not _is_sum_tasklet(tasklet) or other_reads[0].data.subset != write.subset:
+            return None
+        if write.data == temp.data:
+            return None
+        return tasklet, write, other_reads
 
     def element_accumulation(self, temp: nodes.AccessNode, tasklet: nodes.Tasklet) -> Operand | None:
         """``X[idx] = X[idx] + T`` or ``X[idx] (+)= T`` for a one-element local ``T``, written to ``X`` directly or
@@ -418,10 +433,8 @@ def widened(sdfg: SDFG, operand: Operand, axes: dict[str, Axis]) -> subsets.Rang
     )
 
 
-def match_nest(
-    sdfg: SDFG, state: SDFGState, loops: list[LoopRegion], chain: list[nodes.MapEntry], state_counts: dict[str, int]
-) -> Contraction | None:
-    """The contraction a nest computes, or ``None`` when it breaks the module contract."""
+def checked_axes(loops: list[LoopRegion], chain: list[nodes.MapEntry]) -> dict[str, Axis] | None:
+    """The nest's axes by parameter: rectangular, unit step, each parameter once."""
     axes_list = [loop_axis(loop) for loop in loops]
     for entry in chain:
         more = map_axes(entry)
@@ -437,15 +450,15 @@ def match_nest(
         bounds = symbolic.pystr_to_symbolic(axis.begin).free_symbols | symbolic.pystr_to_symbolic(axis.end).free_symbols
         if {str(s) for s in bounds} & axes.keys():
             return None
+    return axes
 
-    innermost = chain[-1] if chain else None
-    children = state.scope_children()
-    level = [n for n in children[innermost] if not (innermost is not None and n is state.exit_node(innermost))]
-    libs = [n for n in level if isinstance(n, nodes.LibraryNode)]
-    if len(libs) != 1 or not isinstance(libs[0], contraction_types()):
-        return None
-    node = libs[0]
-    matcher = BodyMatcher(sdfg, state, axes, state_counts, {node: None})
+
+def read_operands(
+    matcher: BodyMatcher, node: nodes.LibraryNode
+) -> tuple[dict[str, Operand], Operand, bool, MultiConnectorEdge[Memlet]] | None:
+    """The library node's input operands by connector, its output operand, whether the body accumulates into the
+    output, and the node's output edge."""
+    state = matcher.state
     inputs: dict[str, Operand] = {}
     for edge in state.in_edges(node):
         operand = matcher.resolve(edge, incoming=True)
@@ -461,12 +474,49 @@ def match_nest(
         output = matcher.accumulation(out_edges[0])
         if output is None:
             return None
+    return inputs, output, accumulates, out_edges[0]
+
+
+def body_is_claimed(
+    state: SDFGState, loops: list[LoopRegion], chain: list[nodes.MapEntry], level: list[nodes.Node], claimed: dict
+) -> bool:
+    """Every node of the body is part of the contraction, and no ordering edge touches the nest."""
+    if any(n not in claimed for n in level if not isinstance(n, nodes.MapExit)):
+        return False
+    if (
+        loops
+        and chain
+        and any(
+            n not in claimed and n is not chain[0] and n is not state.exit_node(chain[0])
+            for n in state.scope_children()[None]
+        )
+    ):
+        return False
+    scope_edges = state.scope_subgraph(chain[0]).edges() if chain else state.edges()
+    if any(e.data.is_empty() for e in scope_edges):
+        return False
+    return not (
+        chain
+        and any(e.data.is_empty() for e in [*state.in_edges(chain[0]), *state.out_edges(state.exit_node(chain[0]))])
+    )
+
+
+def local_einsum(
+    node: nodes.LibraryNode,
+    inputs: dict[str, Operand],
+    output: Operand,
+    accumulates: bool,
+    out_edge: MultiConnectorEdge[Memlet],
+    axes: dict[str, Axis],
+) -> tuple[str, list[str], str, list[Operand], Any, Any] | None:
+    """The body node's einsum, its input terms and output term, its operands in term order, alpha and beta (1 when
+    the body accumulates), or ``None`` when the operands do not fit the node."""
     ranks = {conn: sum(1 for d in op.dims if d is None) for conn, op in inputs.items()}
     body = body_contraction(node, ranks)
     if body is None:
         return None
     einsum_str, conns, out_conn, alpha, beta = body
-    if out_conn != out_edges[0].src_conn:
+    if out_conn != out_edge.src_conn:
         return None
     for conn, operand in inputs.items():
         if conn in conns:
@@ -490,27 +540,61 @@ def match_nest(
     operands = [inputs[c] for c in conns]
     if any(op.array == output.array for op in operands):
         return None
+    return einsum_str, terms, out_term, operands, alpha, beta
 
-    # Every node of the body must be part of the contraction.
-    if any(n not in matcher.claimed for n in level if not isinstance(n, nodes.MapExit)):
-        return None
-    if (
-        loops
-        and chain
-        and any(
-            n not in matcher.claimed and n is not chain[0] and n is not state.exit_node(chain[0])
-            for n in children[None]
-        )
-    ):
-        return None
-    scope_edges = state.scope_subgraph(chain[0]).edges() if chain else state.edges()
-    if any(e.data.is_empty() for e in scope_edges):
-        return None
-    if chain and any(
-        e.data.is_empty() for e in [*state.in_edges(chain[0]), *state.out_edges(state.exit_node(chain[0]))]
-    ):
-        return None
 
+def match_nest(
+    sdfg: SDFG, state: SDFGState, loops: list[LoopRegion], chain: list[nodes.MapEntry], state_counts: dict[str, int]
+) -> Contraction | None:
+    """The contraction a nest computes, or ``None`` when it breaks the module contract."""
+    axes = checked_axes(loops, chain)
+    if axes is None:
+        return None
+    innermost = chain[-1] if chain else None
+    level = [
+        n for n in state.scope_children()[innermost] if not (innermost is not None and n is state.exit_node(innermost))
+    ]
+    libs = [n for n in level if isinstance(n, nodes.LibraryNode)]
+    if len(libs) != 1 or not isinstance(libs[0], contraction_types()):
+        return None
+    node = libs[0]
+    matcher = BodyMatcher(sdfg, state, axes, state_counts, {node: None})
+    found = read_operands(matcher, node)
+    if found is None:
+        return None
+    inputs, output, accumulates, out_edge = found
+    local = local_einsum(node, inputs, output, accumulates, out_edge, axes)
+    if local is None:
+        return None
+    einsum_str, terms, out_term, operands, alpha, beta = local
+    if not body_is_claimed(state, loops, chain, level, matcher.claimed):
+        return None
+    lifted = nest_einsum(einsum_str, terms, out_term, operands, output, axes, matcher.wcr_sum)
+    if lifted is None:
+        return None
+    einsum, contracted = lifted
+    if contracted and not symbolic.equal_valued(1, beta):
+        return None
+    # Summing onto zeros stored just before the nest (``C[:] = 0``) is overwriting; covered, they are dead.
+    zeros = zero_before_block(loops[0], output.array) if loops and symbolic.equal_valued(1, beta) else None
+    region = None if zeros is None else widened(sdfg, output, axes)
+    if zeros is None or not zeros.subset.covers_precise(region, sdfg.facts()):
+        return Contraction(einsum, alpha, beta, operands, output, axes)
+    dead = None if zeros.observed or not region.covers_precise(zeros.subset, sdfg.facts()) else zeros
+    return Contraction(einsum, alpha, 0, operands, output, axes, dead)
+
+
+def nest_einsum(
+    einsum_str: str,
+    terms: list[str],
+    out_term: str,
+    operands: list[Operand],
+    output: Operand,
+    axes: dict[str, Axis],
+    wcr_sum: bool,
+) -> tuple[str, bool] | None:
+    """The body's einsum with a letter per nest axis, and whether an axis is contracted. ``None`` when an axis
+    indexes no operand, or a parallel axis is contracted without a WCR sum."""
     unused = iter(c for c in string.ascii_letters if c not in einsum_str)
     letters = {param: next(unused, None) for param in axes}
     if None in letters.values():
@@ -528,23 +612,16 @@ def match_nest(
         if not any(letter in t for t in full_terms):
             return None
         if letter not in full_out:
-            if axis.parallel and not matcher.wcr_sum:
+            if axis.parallel and not wcr_sum:
                 return None
             contracted = True
-    if contracted and not symbolic.equal_valued(1, beta):
-        return None
-    # Summing onto zeros stored just before the nest (``C[:] = 0``) is overwriting; covered, they are dead.
-    zeros = zero_before_block(loops[0], output.array) if loops and symbolic.equal_valued(1, beta) else None
-    region = None if zeros is None else widened(sdfg, output, axes)
-    if zeros is None or not zeros.subset.covers_precise(region, sdfg.facts()):
-        return Contraction(f"{','.join(full_terms)}->{full_out}", alpha, beta, operands, output)
-    dead = None if zeros.observed or not region.covers_precise(zeros.subset, sdfg.facts()) else zeros
-    return Contraction(f"{','.join(full_terms)}->{full_out}", alpha, 0, operands, output, dead)
+    return f"{','.join(full_terms)}->{full_out}", contracted
 
 
-def add_einsum(sdfg: SDFG, state: SDFGState, label: str, contraction: Contraction, axes: dict[str, Axis], reuse: bool):
+def add_einsum(sdfg: SDFG, state: SDFGState, label: str, contraction: Contraction, reuse: bool):
     from dace.libraries.blas.nodes.einsum import Einsum  # Avoid import loop
 
+    axes = contraction.axes
     node = Einsum(label)
     node.einsum_str = contraction.einsum_str
     node.alpha = contraction.alpha
@@ -562,11 +639,6 @@ def add_einsum(sdfg: SDFG, state: SDFGState, label: str, contraction: Contractio
     node.add_out_connector("_out")
     dst = output.root if reuse else state.add_write(output.array)
     state.add_edge(node, "_out", dst, None, Memlet(data=output.array, subset=widened(sdfg, output, axes)))
-
-
-def nest_axes(loops: list[LoopRegion], chain: list[nodes.MapEntry]) -> dict[str, Axis]:
-    axes = [loop_axis(loop) for loop in loops] + [a for entry in chain for a in map_axes(entry)]
-    return {a.param: a for a in axes}
 
 
 def state_counts_of(sdfg: SDFG) -> dict[str, int]:
@@ -616,11 +688,10 @@ class NestToContraction(ppl.Pass):
             contraction = match_nest(sdfg, state, loops, chain, counts)
             if contraction is None:
                 continue
-            axes = nest_axes(loops, chain)
             for region in loop.all_control_flow_regions():
                 gone[region] = None
             new_state = replace_loop_with_state(loop.parent_graph, loop, loop.label + "_contraction")
-            add_einsum(sdfg, new_state, loop.label + "_contraction", contraction, axes, reuse=False)
+            add_einsum(sdfg, new_state, loop.label + "_contraction", contraction, reuse=False)
             if contraction.dead_zeros is not None:
                 contraction.dead_zeros.remove()
             counts = state_counts_of(sdfg)
@@ -641,13 +712,12 @@ class NestToContraction(ppl.Pass):
                 contraction = match_nest(sdfg, state, [], chain, counts)
                 if contraction is None:
                     continue
-                axes = nest_axes([], chain)
                 roots = [op.root for op in contraction.operands] + [contraction.output.root]
                 outside = [e.src for e in state.in_edges(entry)] + [
                     e.dst for e in state.out_edges(state.exit_node(entry))
                 ]
                 state.remove_nodes_from(state.scope_subgraph(entry, include_entry=True, include_exit=True).nodes())
-                add_einsum(sdfg, state, entry.map.label + "_contraction", contraction, axes, reuse=True)
+                add_einsum(sdfg, state, entry.map.label + "_contraction", contraction, reuse=True)
                 state.remove_nodes_from(
                     [
                         n
