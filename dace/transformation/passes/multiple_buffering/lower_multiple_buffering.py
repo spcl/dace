@@ -161,13 +161,14 @@ def lower_loop(loop: LoopRegion, depth: int, names: set[str] | None = None) -> s
         update_expr=copy.deepcopy(loop.update_statement),
     )
     epilogue_body = _clone(consume, sdfg)
-    epilogue_body.replace_dict({slot.name: _str(sympy.Mod(index, depth))})
+    # The iteration index is never negative, so C's ``%`` gives the slot without the floored ``py_mod``
+    epilogue_body.replace_dict({slot.name: _str(symbolic.CMod(index, depth))})
     epilogue.add_node(epilogue_body, is_start_block=True)
 
     # Main loop: compute on tile n, then load tile n + D-1
     produce.replace_dict({var: _str(itersym + ahead * stride)})
-    produce.replace_dict({slot.name: _str(sympy.Mod(index + ahead, depth))})
-    consume.replace_dict({slot.name: _str(sympy.Mod(index, depth))})
+    produce.replace_dict({slot.name: _str(symbolic.CMod(index + ahead, depth))})
+    consume.replace_dict({slot.name: _str(symbolic.CMod(index, depth))})
     loop.loop_condition = CodeBlock(f"{var} <= {_str(end - ahead * stride)}")
 
     _splice(loop, prologue, epilogue)

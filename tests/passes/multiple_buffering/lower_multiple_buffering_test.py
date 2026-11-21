@@ -226,9 +226,9 @@ def test_structure():
     # The main loop loads tile n + 2 into slot (n + 2) % 3, and the body reads tile n from slot n % 3
     (copy_edge,) = [e for state in produce.states() for e in state.edges()]
     assert str(copy_edge.data.subset) == "t + 8:t + 12"
-    assert str(copy_edge.data.other_subset.ranges[0][0]) == "Mod(int_floor(t, 4) + 2, 3)"
+    assert str(copy_edge.data.other_subset.ranges[0][0]) == "CMod(int_floor(t, 4) + 2, 3)"
     reads = [e.data for state in consume.states() for e in state.edges() if e.data.data == "buf"]
-    assert reads and all(str(memlet.subset.ranges[0][0]) == "Mod(int_floor(t, 4), 3)" for memlet in reads)
+    assert reads and all(str(memlet.subset.ranges[0][0]) == "CMod(int_floor(t, 4), 3)" for memlet in reads)
 
     # No placeholder slot symbol is left behind
     assert not any("__mb_slot" in str(sym) for sym in sdfg.used_symbols(all_symbols=True))
