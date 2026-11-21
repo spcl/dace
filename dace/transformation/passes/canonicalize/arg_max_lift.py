@@ -903,21 +903,11 @@ class ArgMaxLift(ppl.Pass):
         """
         if not outer_loop.loop_variable:
             return None
-        # Nest shape first -- each check is a scan of one region's direct children, while the
-        # break walk and the bound parses below cost far more.
-        loops = [outer_loop]
-        while True:
-            inner = self._single_child_region(loops[-1], LoopRegion)
-            if inner is None:
-                break
-            if not inner.loop_variable:
-                return None
-            loops.append(inner)
-        if len(loops) < 2:
+        # Nest shape first: a scan of each region's direct children, cheaper than the break walk and bound parses.
+        nest = self._perfect_nest_to_guard(outer_loop)
+        if nest is None:
             return None
-        cond_block = self._single_child_region(loops[-1], ConditionalBlock)
-        if cond_block is None:
-            return None
+        loops, cond_block = nest
         # A break anywhere in the nest makes it an early-exit search, not a
         # reduction over the whole (contiguous) array -- refuse (see :meth:`_match`).
         if self._contains_break(outer_loop):
@@ -958,27 +948,10 @@ class ArgMaxLift(ppl.Pass):
         idx_names = self._match_2d_true_branch(true_branch, carrier_name, gather_sym, array, loop_vars, sdfg)
         if idx_names is None:
             return None
-        # The rewrite drops the seeds, so the scan must start from the first element at index zero
-        preloop = self._collect_preloop_assignments(outer_loop, sdfg)
-        if carrier_name not in preloop or any(symbolic.pystr_to_symbolic(preloop.get(n, "1")) != 0 for n in idx_names):
+        if not self._seeded_at_origin(outer_loop, sdfg, carrier_name, idx_names, array):
             return None
-        position = self._seed_gather_position(preloop[carrier_name], array, None, preloop)
-        if position is None or any(symbolic.pystr_to_symbolic(p) != 0 for p in position.strip("()").split(",")):
-            return None
-
-        # Contiguity: the nested iteration must visit EXACTLY the whole array, in
-        # C-contiguous memory order, so a flat 1-D arg-reduce is equivalent.
         desc = sdfg.arrays[array]
-        if len(desc.shape) != len(loops) or not desc.is_packed_c_strides():
-            return None
-        # The bounds are reparsed from loop CodeBlocks while the shape carries the declared
-        # assumptions, so the same name arrives as two sympy instances that never cancel.
-        equalized = symbolic.equalize_symbols_across(*(r[1] for r in ranges), *desc.shape)  # type: ignore[index]
-        ends, dims = equalized[: len(loops)], equalized[len(loops) :]
-        if any(symbolic.simplify(end - (dim - 1)) != 0 for end, dim in zip(ends, dims, strict=True)):
-            return None
-        full = subsets.Range([(0, dim - 1, 1) for dim in desc.shape])
-        if not full.is_contiguous_subset(desc):
+        if not self._scans_whole_array(desc, ranges):
             return None
         return _Match2D(
             op=op,
@@ -990,6 +963,43 @@ class ArgMaxLift(ppl.Pass):
             shape=list(desc.shape),
             last_wins=last_wins,
         )
+
+    def _perfect_nest_to_guard(self, outer_loop: LoopRegion) -> tuple[list[LoopRegion], ConditionalBlock] | None:
+        """The loops of a perfect nest of at least two from ``outer_loop``, and the one conditional block it holds."""
+        loops = [outer_loop]
+        while True:
+            inner = self._single_child_region(loops[-1], LoopRegion)
+            if inner is None:
+                break
+            if not inner.loop_variable:
+                return None
+            loops.append(inner)
+        if len(loops) < 2:
+            return None
+        cond_block = self._single_child_region(loops[-1], ConditionalBlock)
+        return None if cond_block is None else (loops, cond_block)
+
+    def _seeded_at_origin(
+        self, outer_loop: LoopRegion, sdfg: SDFG, carrier_name: str, idx_names: list[str], array: str
+    ) -> bool:
+        """Whether the carriers are seeded with the first element and index zero: the rewrite drops the seeds."""
+        preloop = self._collect_preloop_assignments(outer_loop, sdfg)
+        if carrier_name not in preloop or any(symbolic.pystr_to_symbolic(preloop.get(n, "1")) != 0 for n in idx_names):
+            return False
+        position = self._seed_gather_position(preloop[carrier_name], array, None, preloop)
+        return position is not None and all(symbolic.pystr_to_symbolic(p) == 0 for p in position.strip("()").split(","))
+
+    @staticmethod
+    def _scans_whole_array(desc: data.Data, ranges: list) -> bool:
+        """Whether loops over ``ranges`` visit exactly the whole C-contiguous array, so a flat arg-reduce matches."""
+        if len(desc.shape) != len(ranges) or not desc.is_packed_c_strides():
+            return False
+        # Loop bounds are reparsed while the shape carries its assumptions: one name, two sympy instances.
+        equalized = symbolic.equalize_symbols_across(*(r[1] for r in ranges), *desc.shape)
+        ends, dims = equalized[: len(ranges)], equalized[len(ranges) :]
+        if any(symbolic.simplify(end - (dim - 1)) != 0 for end, dim in zip(ends, dims, strict=True)):
+            return False
+        return subsets.Range([(0, dim - 1, 1) for dim in desc.shape]).is_contiguous_subset(desc)
 
     def _parse_2d_gather(self, rhs_str: str, loop_vars: list[str]) -> str | None:
         """Return the array name iff ``rhs_str`` is exactly ``arr[v0, ..., v(n-1)]`` for ``loop_vars`` (a point
