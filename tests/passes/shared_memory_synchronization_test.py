@@ -2,6 +2,7 @@
 """Shared-memory write detection of :class:`DefaultSharedMemorySync`."""
 
 import dace
+from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync, is_shared_memory_write
@@ -139,7 +140,9 @@ def test_plain_collaborative_write_is_synchronized():
 
 def test_memory_engine_load_is_not_synchronized():
     """A TMA load (with a ``_tma_bar`` input) completes on its mbarrier: no ``__syncthreads()`` after it."""
-    sdfg, _ = _kernel_writing_shared("smem_tma_write", {"_tma_bar"}, {"_cpy_out"}, "_cpy_out")
+    sdfg, _ = _kernel_writing_shared(
+        "smem_tma_write", {"_tma_bar"}, {CopyLibraryNode.OUTPUT_CONNECTOR_NAME}, CopyLibraryNode.OUTPUT_CONNECTOR_NAME
+    )
     DefaultSharedMemorySync().apply_pass(sdfg, None)
     assert _sync_tasklets(sdfg) == 0
 

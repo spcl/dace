@@ -48,7 +48,7 @@ def test_token_mode():
     # Both wait on the same barrier
     assert _edge(state, wait, BARRIER_INPUT_NAME).data.data == _edge(state, copy_node, "_tma_bar").data.data
     # The tile is read in the thread-block map, which the wait precedes
-    buf = _edge(state, copy_node, "_cpy_out", incoming=False).dst
+    buf = _edge(state, copy_node, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, incoming=False).dst
     for reader in state.successors(buf):
         assert state.edges_between(wait, reader)
     # The leading barrier still keeps the copy from overwriting the tile while it is read
