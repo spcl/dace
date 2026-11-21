@@ -632,23 +632,10 @@ class UseSitePlan(NamedTuple):
     ]  #: edges whose consumer reads the POST-update value (``t + 1`` applied)
 
 
-def plan_use_site_substitution(
-    state: SDFGState, sdfg: SDFG, tasklet: nodes.Tasklet, iv: TaskletIV
-) -> UseSitePlan | None:
-    """Validate that ``iv``'s recurrence can be expanded at its use sites, and enumerate them.
-
-    Refuses -- WITHOUT touching the state -- unless the accumulator slot is written EXACTLY ONCE
-    in this state, by ``iv``'s update. Every other version of the slot is then the value on entry
-    to the iteration, and "which value does this read see" is answerable by dataflow alone --
-    which is what makes the ``t`` vs ``t + 1`` offset provable rather than guessed.
-    """
-    pre_node = iv.in_edge.src
-    if not isinstance(pre_node, nodes.AccessNode) or pre_node.data != iv.accum:
-        return None  # the carried read is staged through a transient -> entry value not directly readable
-    if iv.in_edge.data.data != iv.accum or str(iv.in_edge.data.subset) != iv.subset:
-        return None
-
-    # Walk the update's write forward through staging transients to the accumulator version it lands on.
+def landing_version(
+    state: SDFGState, sdfg: SDFG, iv: TaskletIV, pre_node: nodes.AccessNode
+) -> tuple[list[nodes.AccessNode], nodes.AccessNode] | None:
+    """The staging transients the update's write passes on its way to the accumulator, and the version it lands on."""
     chain: list[nodes.AccessNode] = []
     cur = iv.write_edge.dst
     while isinstance(cur, nodes.AccessNode) and cur.data != iv.accum:
@@ -659,25 +646,14 @@ def plan_use_site_substitution(
         cur = state.out_edges(cur)[0].dst
     if not isinstance(cur, nodes.AccessNode) or cur.data != iv.accum or cur is pre_node:
         return None
-    post_node = cur
+    return chain, cur
 
-    # Ordering (empty) edges are not writes; the frontend hangs them around the update to sequence the WAR.
-    versions = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == iv.accum]
-    if [n for n in versions if data_in_edges(state, n)] != [post_node]:
-        return None  # a second write to the slot -> the value a read sees is no longer this recurrence
-    (write_in,) = data_in_edges(state, post_node)
-    if write_in.data.wcr is not None:  # an accumulation into the slot, not this recurrence's store
-        return None
-    written = write_in.data.subset if write_in.data.data == iv.accum else write_in.data.dst_subset
-    if written is None or str(written) != iv.subset:
-        return None
-    # Every unwritten version holds the ENTRY value -- unless the update can reach it, in which case
-    # its reads observe the post-update value and calling them "pre" would be off by one step.
-    entry_versions = [n for n in versions if n is not post_node]
-    reachable_from_update = dict.fromkeys(sdutil.dfs_conditional(state, sources=[post_node]))
-    if any(n in reachable_from_update for n in entry_versions):
-        return None
 
+def slot_reads(
+    state: SDFGState, iv: TaskletIV, entry_versions: list[nodes.AccessNode], post_node: nodes.AccessNode
+) -> tuple[list[MultiConnectorEdge[mm.Memlet]], list[MultiConnectorEdge[mm.Memlet]]] | None:
+    """The reads of the entry versions and of the updated version, each a whole-slot read by a parseable Python
+    tasklet the closed form can be spliced into."""
     pre_reads: list[MultiConnectorEdge[mm.Memlet]] = []
     post_reads: list[MultiConnectorEdge[mm.Memlet]] = []
     for node in entry_versions + [post_node]:
@@ -697,6 +673,51 @@ def plan_use_site_substitution(
             except SyntaxError:
                 return None  # unparseable consumer -> cannot splice the closed form into it
             bucket.append(e)
+    return pre_reads, post_reads
+
+
+def plan_use_site_substitution(
+    state: SDFGState, sdfg: SDFG, tasklet: nodes.Tasklet, iv: TaskletIV
+) -> UseSitePlan | None:
+    """Validate that ``iv``'s recurrence can be expanded at its use sites, and enumerate them.
+
+    Refuses -- WITHOUT touching the state -- unless the accumulator slot is written EXACTLY ONCE
+    in this state, by ``iv``'s update. Every other version of the slot is then the value on entry
+    to the iteration, and "which value does this read see" is answerable by dataflow alone --
+    which is what makes the ``t`` vs ``t + 1`` offset provable rather than guessed.
+    """
+    pre_node = iv.in_edge.src
+    if not isinstance(pre_node, nodes.AccessNode) or pre_node.data != iv.accum:
+        return None  # the carried read is staged through a transient -> entry value not directly readable
+    if iv.in_edge.data.data != iv.accum or str(iv.in_edge.data.subset) != iv.subset:
+        return None
+
+    landed = landing_version(state, sdfg, iv, pre_node)
+    if landed is None:
+        return None
+    chain, post_node = landed
+
+    # Ordering (empty) edges are not writes; the frontend hangs them around the update to sequence the WAR.
+    versions = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == iv.accum]
+    if [n for n in versions if data_in_edges(state, n)] != [post_node]:
+        return None  # a second write to the slot -> the value a read sees is no longer this recurrence
+    (write_in,) = data_in_edges(state, post_node)
+    if write_in.data.wcr is not None:  # an accumulation into the slot, not this recurrence's store
+        return None
+    written = write_in.data.subset if write_in.data.data == iv.accum else write_in.data.dst_subset
+    if written is None or str(written) != iv.subset:
+        return None
+    # Every unwritten version holds the ENTRY value -- unless the update can reach it, in which case
+    # its reads observe the post-update value and calling them "pre" would be off by one step.
+    entry_versions = [n for n in versions if n is not post_node]
+    reachable_from_update = dict.fromkeys(sdutil.dfs_conditional(state, sources=[post_node]))
+    if any(n in reachable_from_update for n in entry_versions):
+        return None
+
+    reads = slot_reads(state, iv, entry_versions, post_node)
+    if reads is None:
+        return None
+    pre_reads, post_reads = reads
     # Ordering edges INTO the update are vacuous once the write is gone -- but only while nothing
     # reads the post-update version, else deleting the node also drops "predecessor before reader".
     if post_reads and len(state.in_edges(post_node)) != 1:
