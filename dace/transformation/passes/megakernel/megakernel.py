@@ -193,6 +193,11 @@ def wrap(host: SDFGState, node: nodes.NestedSDFG, entry: nodes.MapEntry, exit_: 
         host.add_nedge(node, exit_, Memlet())
 
 
+def outputs_read_in_state(state: SDFGState, entry: nodes.MapEntry) -> bool:
+    """Whether a node of ``state`` reads what the map writes."""
+    return any(state.out_degree(e.dst) > 0 for e in state.out_edges(state.exit_node(entry)))
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class MegaKernelOptimization(ppl.Pass):
@@ -280,5 +285,6 @@ class MegaKernelOptimization(ppl.Pass):
                 elif gpu:
                     grid_stride(body, state, entry, THREAD_INDEX, THREAD_COUNT, self.small_symbols)
                 else:  # Work-shared by the team, which the stage's barrier (if any) waits for
-                    entry.map.omp_nowait = True
+                    # A consumer in the same stage (a copy after the loop) needs the loop's own barrier
+                    entry.map.omp_nowait = not outputs_read_in_state(state, entry)
                     entry.map.omp_schedule = dtypes.OMPScheduleType.Static

@@ -536,8 +536,9 @@ def test_independent_host_scalar_states_hoist_past_a_kernel_and_stop():
 
 @pytest.mark.parametrize("program, dtype, rank, size", STENCILS, ids=STENCIL_IDS)
 def test_a_cpu_stencil_time_loop_is_one_omp_team_with_two_barriers(program, dtype, rank, size):
-    """On the CPU, the time loop runs in one ``omp parallel`` team: each stencil is an ``omp for nowait`` and the
-    same two grid barriers become ``omp barrier``s. Static scheduling gives a thread the same iterations in every stage."""
+    """On the CPU, the time loop runs in one ``omp parallel`` team and the two grid barriers become ``omp barrier``s.
+    The first stencil is an ``omp for nowait``; the second keeps its loop's barrier, because the copy back into the
+    stencil's input reads what every thread wrote. Static scheduling gives a thread the same iterations in every stage."""
     sdfg = program.to_sdfg(simplify=True)
     auto_optimize(sdfg, dace.dtypes.DeviceType.CPU)
     fused = copy.deepcopy(sdfg)
@@ -549,7 +550,7 @@ def test_a_cpu_stencil_time_loop_is_one_omp_team_with_two_barriers(program, dtyp
 
     code = fused.generate_code()[0].clean_code
     assert code.count("#pragma omp parallel") == 1
-    assert code.count("#pragma omp for nowait schedule(static)") == 2 and code.count("#pragma omp barrier") == 2
+    assert code.count("#pragma omp for nowait schedule(static)") == 1 and code.count("#pragma omp barrier") == 2
 
     rng = np.random.default_rng(0)
     inputs = {name: rng.random((size,) * rank).astype(dtype) for name in "AB"}
