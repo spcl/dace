@@ -860,6 +860,81 @@ def _symbol_updated_in_other_loop(sdfg: SDFG, loop: LoopRegion, sym_name: str) -
     return any(sym_name in (e.data.assignments or {}) for region in inner for e in region.edges())
 
 
+def branch_increments(br: ControlFlowRegion) -> dict[str, list[tuple[Edge[InterstateEdge], symbolic.SymbolicType]]]:
+    """Per symbol, the interstate edges of ``br`` that add a number to it, with that number."""
+    incs: dict[str, list[tuple[Edge[InterstateEdge], symbolic.SymbolicType]]] = {}
+    for e in br.edges():
+        for lhs, rhs in (e.data.assignments or {}).items():
+            try:
+                delta = symbolic.simplify(
+                    as_expr(symbolic.pystr_to_symbolic(rhs)) - as_expr(symbolic.pystr_to_symbolic(lhs))
+                )
+            except Exception:
+                continue
+            if as_basic(delta).is_number:
+                incs.setdefault(lhs, []).append((e, delta))
+    return incs
+
+
+def uniform_increment(
+    loop: LoopRegion,
+    cb: ConditionalBlock,
+    branches: list[ControlFlowRegion],
+    per: list[dict],
+    sym: str,
+    sdfg: SDFG,
+    sdfg_free_symbols: set[str],
+) -> tuple[Any, str] | None:
+    """The step every branch adds to ``sym`` once, and the side of the conditional the hoisted increment goes on:
+    ``'after'`` (increment then read, s124) hoists before it, ``'before'`` after it."""
+    if sym == loop.loop_variable or (sym not in sdfg.symbols and sym not in sdfg_free_symbols):
+        return None
+    if any(len(p[sym]) != 1 for p in per):
+        return None  # a branch increments sym more than once
+    steps = dict.fromkeys(p[sym][0][1] for p in per)
+    if len(steps) != 1:
+        return None  # branches disagree on the step
+    branch_edges = dict.fromkeys(id(p[sym][0][0]) for p in per)
+    if any(sym in (e2.data.assignments or {}) and id(e2) not in branch_edges for e2 in loop.all_interstate_edges()):
+        return None  # sym also written outside the per-branch increments (incl. nested) -> not clean
+    if sym in {str(s) for code in cb.get_meta_codeblocks() for s in code.get_free_symbols()}:
+        return None  # a guard reading the counter: hoisted before it, the increment would change the branch taken
+    # Branches not reading ``sym`` do not vote (none reading -> 'after'); disagreement or a branch straddling its
+    # own increment (``None``) refuses.
+    sides = dict.fromkeys(_consistent_use_side(br, p[sym][0][0], sym) for br, p in zip(branches, per))
+    sides.pop("unused", None)
+    if not sides:
+        return next(iter(steps)), "after"
+    if len(sides) == 1 and next(iter(sides)) in ("after", "before"):
+        return next(iter(steps)), next(iter(sides))
+    return None
+
+
+def hoist_increment(loop: LoopRegion, cb: ConditionalBlock, per: list[dict], sym: str, step: Any, side: str) -> None:
+    """Strip ``sym``'s increment from every branch and plant one interstate edge on ``side`` of ``cb``."""
+    for p in per:
+        e, _ = p[sym][0]
+        assigns = dict(e.data.assignments)
+        assigns.pop(sym, None)
+        e.data.assignments = assigns
+    # Asked before adding the hoist state, an isolated second source until it is wired in.
+    was_start = loop.start_block is cb
+    hoist = loop.add_state(cb.label + "_iv_hoist")
+    new_rhs = symbolic.symstr(symbolic.pystr_to_symbolic(sym) + step)
+    if side == "after":
+        for ie in list(loop.in_edges(cb)):
+            loop.add_edge(ie.src, hoist, ie.data)
+            loop.remove_edge(ie)
+        loop.add_edge(hoist, cb, InterstateEdge(assignments={sym: new_rhs}))
+        if was_start:
+            loop.start_block = loop.node_id(hoist)
+    else:
+        for oe in list(loop.out_edges(cb)):
+            loop.add_edge(hoist, oe.dst, oe.data)
+            loop.remove_edge(oe)
+        loop.add_edge(cb, hoist, InterstateEdge(assignments={sym: new_rhs}))
+
+
 def _hoist_branch_uniform_iv(
     parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: set[str]
 ) -> bool:
@@ -874,83 +949,15 @@ def _hoist_branch_uniform_iv(
         branches = [br for _, br in cb.branches]
         if len(branches) < 2 or all(c is not None for c in conds):
             continue  # no else branch -> a path skips the increment -> unsound to hoist
-
-        def branch_increments(
-            br: ControlFlowRegion,
-        ) -> dict[str, list[tuple[Edge[InterstateEdge], symbolic.SymbolicType]]]:
-            incs: dict[str, list[tuple[Edge[InterstateEdge], symbolic.SymbolicType]]] = {}
-            for e in br.edges():
-                for lhs, rhs in (e.data.assignments or {}).items():
-                    try:
-                        delta = symbolic.simplify(
-                            as_expr(symbolic.pystr_to_symbolic(rhs)) - as_expr(symbolic.pystr_to_symbolic(lhs))
-                        )
-                    except Exception:
-                        continue
-                    if as_basic(delta).is_number:
-                        incs.setdefault(lhs, []).append((e, delta))
-            return incs
-
         per = [branch_increments(br) for br in branches]
         common = set.intersection(*[set(p) for p in per]) if per else set()
-        # sorted(): this loop RETURNS on the first symbol it hoists, and the pass is a first-match/restart
-        # fixpoint -- so with two co-incrementing IVs (s124/s126/s128) the pick decides whether the OTHER one
-        # still passes its guards afterwards, i.e. whether the loop reaches closed form and becomes a Map.
-        # Iterating the raw set made that a PYTHONHASHSEED coin-flip (str hashing is per-process randomized).
-        # ``set.intersection`` has no meaningful insertion order to preserve, so a stable sort -- not an
-        # ordered set -- is the canonical, branch-independent choice.
+        # sorted: the first symbol hoisted decides whether a second co-incrementing IV (s124/s126/s128) still
+        # passes its guards, so the order must not depend on string hashing.
         for sym in sorted(common):
-            if sym == loop.loop_variable or (sym not in sdfg.symbols and sym not in sdfg_free_symbols):
+            found = uniform_increment(loop, cb, branches, per, sym, sdfg, sdfg_free_symbols)
+            if found is None:
                 continue
-            if any(len(p[sym]) != 1 for p in per):
-                continue  # a branch increments sym more than once
-            steps = dict.fromkeys(p[sym][0][1] for p in per)
-            if len(steps) != 1:
-                continue  # branches disagree on the step
-            step = next(iter(steps))
-            branch_edges = dict.fromkeys(id(p[sym][0][0]) for p in per)
-            if any(
-                sym in (e2.data.assignments or {}) and id(e2) not in branch_edges for e2 in loop.all_interstate_edges()
-            ):
-                continue  # sym also written outside the per-branch increments (incl. nested) -> not clean
-            if sym in {str(s) for code in cb.get_meta_codeblocks() for s in code.get_free_symbols()}:
-                continue  # a guard reading the counter: hoisted before it, the increment would change the branch taken
-            # The hoisted increment's side follows the in-branch uses: 'after' (increment then
-            # read, s124) hoists BEFORE the conditional, 'before' (read then increment) hoists
-            # AFTER it. Branches not reading ``sym`` do not vote (none reading -> 'after');
-            # disagreement or a branch straddling its own increment (``None``) refuses.
-            sides = dict.fromkeys(_consistent_use_side(br, p[sym][0][0], sym) for br, p in zip(branches, per))
-            sides.pop("unused", None)
-            if not sides:
-                side = "after"
-            elif len(sides) == 1 and next(iter(sides)) in ("after", "before"):
-                (side,) = sides
-            else:
-                continue
-            # Strip the increment from each branch, then plant one iedge on the side the
-            # branches' uses demand.
-            for p in per:
-                e, _ = p[sym][0]
-                assigns = dict(e.data.assignments)
-                assigns.pop(sym, None)
-                e.data.assignments = assigns
-            # Ask BEFORE adding the hoist state: the fresh state is a second, isolated source
-            # node, which makes ``start_block`` ambiguous until it is wired in below.
-            was_start = loop.start_block is cb
-            hoist = loop.add_state(cb.label + "_iv_hoist")
-            new_rhs = symbolic.symstr(symbolic.pystr_to_symbolic(sym) + step)
-            if side == "after":
-                for ie in list(loop.in_edges(cb)):
-                    loop.add_edge(ie.src, hoist, ie.data)
-                    loop.remove_edge(ie)
-                loop.add_edge(hoist, cb, InterstateEdge(assignments={sym: new_rhs}))
-                if was_start:
-                    loop.start_block = loop.node_id(hoist)
-            else:
-                for oe in list(loop.out_edges(cb)):
-                    loop.add_edge(hoist, oe.dst, oe.data)
-                    loop.remove_edge(oe)
-                loop.add_edge(cb, hoist, InterstateEdge(assignments={sym: new_rhs}))
+            hoist_increment(loop, cb, per, sym, *found)
             return True
     return False
 
