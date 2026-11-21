@@ -1020,6 +1020,62 @@ def pruned_group_clone(
     return clone_sdfg, kept_in
 
 
+def splittable_loop_states(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> list[SDFGState] | None:
+    """The body's compute states, when every clone can recompute the body and sweep the same iterations: plain
+    dataflow, no NestedSDFG, view or opaque code, bounds from symbols alone, and a counter nothing outside reads."""
+    states = body_compute_states(loop)
+    if states is None:
+        return None
+    body_nodes = [n for state in states for n in state.nodes()]
+    # A NestedSDFG body is _replicate_components' shape: it splits in place, no outlining needed.
+    if any(isinstance(n, nodes.NestedSDFG) for n in body_nodes):
+        return None
+    if any(is_opaque_code(n, sdfg) for n in body_nodes):
+        return None
+    if states_touch_view(states, sdfg.arrays):
+        return None
+    if not loop.loop_variable or not loop.init_statement:
+        return None
+    if any(s in sdfg.arrays for s in loop.loop_condition.get_free_symbols()):
+        return None
+    init = loop_analysis.get_init_assignment(loop)
+    if init is None or loop.loop_variable in symbolic.free_symbols_and_functions(init):
+        return None
+    # The outlining exports a counter read outside as an output every clone would have to write.
+    use_sites, descriptor_symbols = index.use_sites()
+    if loop_analysis.counter_used_outside_loop(
+        loop.loop_variable, loop, sdfg, use_sites, descriptor_symbols, index.rebinding_loops()
+    ):
+        return None
+    return states
+
+
+def body_reads_and_writes(states: list[SDFGState], local: Any) -> tuple[dict[str, None], dict[str, None]] | None:
+    """The containers the body reads and writes by value, or ``None`` on a WCR store or a loop-local temporary read
+    before the body writes it (a carried value no single clone holds)."""
+    # Empty memlets are ORDERING edges, so they neither read nor write: counting one as a write
+    # turns a plain input into a read-modify-write output and refuses the whole split.
+    reads: dict[str, None] = {}
+    writes: dict[str, None] = {}
+    for state in states:
+        for n in state.data_nodes():
+            if value_edges(state.out_edges(n)):
+                reads[n.data] = None
+            stores = producer_edges(state, n)
+            if not stores:
+                continue
+            writes[n.data] = None
+            # A WCR store is a reduction; it is not replicable per group.
+            if any(e.data.wcr is not None for e in stores):
+                return None
+    # A private temporary read before anything writes it holds the previous iteration's value.
+    for state in states:
+        for n in state.data_nodes():
+            if n.data in local and value_edges(state.out_edges(n)) and not sees_written_value(states, n.data, state, n):
+                return None
+    return reads, writes
+
+
 @transformation.explicit_cf_compatible
 @properties.make_properties
 class SplitStatements(ppl.Pass):
@@ -1344,65 +1400,14 @@ class SplitStatements(ppl.Pass):
                       (:func:`loop_local_transients`) become private to each clone, so they are
                       neither inputs nor outputs of the split.
         """
-        states = body_compute_states(loop)
+        states = splittable_loop_states(loop, sdfg, index)
         if states is None:
             return None
-        body_nodes = [n for state in states for n in state.nodes()]
-        # A NestedSDFG body is _replicate_components' shape: it splits in place, no outlining needed.
-        if any(isinstance(n, nodes.NestedSDFG) for n in body_nodes):
-            return None
-        # Same black-box refusal as the other two paths: the clones recompute the whole body per
-        # output, which is only sound while every node's effect is exactly its out-memlets.
-        if any(is_opaque_code(n, sdfg) for n in body_nodes):
-            return None
-        if states_touch_view(states, sdfg.arrays):
-            return None
-        # Both clones must sweep the SAME iteration space, so the trip count may not depend on
-        # anything the body writes: a counting loop whose bounds are pure symbols.
-        if not loop.loop_variable or not loop.init_statement:
-            return None
-        if any(s in sdfg.arrays for s in loop.loop_condition.get_free_symbols()):
-            return None
-        init = loop_analysis.get_init_assignment(loop)
-        if init is None or loop.loop_variable in symbolic.free_symbols_and_functions(init):
-            return None
-        # A counter something outside the loop reads is EXPORTED by the outlining as an extra
-        # scalar output, which the per-output clones would each have to write. Leave those alone.
-        use_sites, descriptor_symbols = index.use_sites()
-        if loop_analysis.counter_used_outside_loop(
-            loop.loop_variable, loop, sdfg, use_sites, descriptor_symbols, index.rebinding_loops()
-        ):
-            return None
-
-        # Empty memlets are ORDERING edges, so they neither read nor write: counting one as a write
-        # turns a plain input into a read-modify-write output and refuses the whole split.
-        reads: dict[str, None] = {}
-        writes: dict[str, None] = {}
-        for state in states:
-            for n in state.data_nodes():
-                if value_edges(state.out_edges(n)):
-                    reads[n.data] = None
-                stores = producer_edges(state, n)
-                if not stores:
-                    continue
-                writes[n.data] = None
-                # A WCR store is a reduction; it is not replicable per group.
-                if any(e.data.wcr is not None for e in stores):
-                    return None
         local = index.local_transients(loop)
-        # A private temp read BEFORE anything writes it holds the PREVIOUS iteration's value (a
-        # scalar rotation). Each clone gets its own private copy, so a clone that only reads such a
-        # temp would read one that was never written. "Before" spans the whole body: a temp written
-        # in one state and read in the NEXT is an ordinary staged value, not a carry.
-        for state in states:
-            for n in state.data_nodes():
-                if (
-                    n.data in local
-                    and value_edges(state.out_edges(n))
-                    and not sees_written_value(states, n.data, state, n)
-                ):
-                    return None
-
+        accesses = body_reads_and_writes(states, local)
+        if accesses is None:
+            return None
+        reads, writes = accesses
         out_names = [w for w in writes if w not in local]
         in_names = dict.fromkeys(r for r in reads if r not in local)
         if len(out_names) < 2:
