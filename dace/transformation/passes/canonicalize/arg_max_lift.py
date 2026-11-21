@@ -670,54 +670,10 @@ class ArgMaxLift(ppl.Pass):
         start, end, cond_block, cond_codeblock, true_branch = skeleton
         stride = symbolic.simplify(required(loop_analysis.get_loop_stride(loop)))
 
-        cond_expr_str = cond_codeblock.as_string.strip()
-        # The comparison ``gather OP carrier`` reaches the ConditionalBlock in
-        # one of two shapes, depending on how Simplify folded the body:
-        #  (a) indirected -- the condition is a single symbol ``tmp`` bound by an
-        #      upstream iedge ``tmp := (g OP c)``; or
-        #  (b) inlined -- the comparison sits directly in the condition
-        #      ``(g OP c)`` (current canonicalize output for TSVC s314/s316).
-        inline_gather = None
-        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", cond_expr_str):
-            op_ast, gather_sym_name, carrier_name, transform = self._resolve_tmp_iedge(loop, cond_block, cond_expr_str)
-        else:
-            op_ast, gather_sym_name, carrier_name, transform = self._parse_comparison(cond_expr_str)
-            if op_ast is None:
-                # The gather may be an INLINE array subscript in the condition
-                # (``array[b + c*i] OP carrier``) rather than a bound name -- the
-                # shape canonicalize leaves for the value+index argmax (TSVC s315).
-                parsed = self._parse_inline_subscript_comparison(cond_expr_str, loop.loop_variable, loop)
-                if parsed is not None:
-                    op_ast, inline_gather, carrier_name, transform = parsed
-                    gather_sym_name = None
-        if op_ast is None or carrier_name is None:
+        guard = self._guard_comparison(loop, sdfg, cond_block, cond_codeblock, true_branch)
+        if guard is None:
             return None
-        # ``x < a[i]`` is ``a[i] > x``: the carrier is the name the branch writes, the gather the one bound to an element
-        if (
-            inline_gather is None
-            and transform is None
-            and (
-                gather_sym_name in sdfg.arrays
-                or any(gather_sym_name in e.data.assignments for e in true_branch.all_interstate_edges())
-            )
-            and self._resolve_gather_iedge(loop, cond_block, carrier_name, loop.loop_variable, sdfg) is not None
-        ):
-            gather_sym_name, carrier_name, op_ast = carrier_name, gather_sym_name, MIRRORED_CMP[op_ast]
-        op = CMP_AST_TO_RTYPE[op_ast]
-
-        # Resolve the gather ``arr[b + c*i]``: either the inline subscript parsed
-        # above, or (the tmp-symbol / bound-name case) an iedge one level back.
-        if inline_gather is not None:
-            input_array, gather_base, gather_coeff = inline_gather
-            if input_array not in sdfg.arrays:
-                return None
-        else:
-            if gather_sym_name is None:
-                return None
-            gather = self._resolve_gather_iedge(loop, cond_block, gather_sym_name, loop.loop_variable, sdfg)
-            if gather is None:
-                return None
-            input_array, gather_base, gather_coeff = gather
+        op_ast, op, gather_sym_name, carrier_name, transform, input_array, gather_base, gather_coeff = guard
         # The two halves of the affine gather constrain the rewrites separately:
         #  * a non-unit COEFF (``arr[inc*i]``, TSVC s318) gathers a strided set,
         #    which only the transform+index path handles (its ArgReduce takes the
@@ -837,6 +793,58 @@ class ArgMaxLift(ppl.Pass):
             keeps_seed=keeps_seed,
             stride=stride,
         )
+
+    def _guard_comparison(
+        self,
+        loop: LoopRegion,
+        sdfg: SDFG,
+        cond_block: ConditionalBlock,
+        cond_codeblock: properties.CodeBlock,
+        true_branch: ControlFlowRegion,
+    ) -> tuple | None:
+        """The guard ``arr[b + c*i] OP carrier``: its comparison operator (AST and reduction type), the gather symbol,
+        the carrier, the gather's transform, array, base and coefficient."""
+        cond_expr_str = cond_codeblock.as_string.strip()
+        # The comparison is a symbol bound upstream (``tmp := (g OP c)``) or inline in the condition (s314/s316).
+        inline_gather = None
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", cond_expr_str):
+            op_ast, gather_sym_name, carrier_name, transform = self._resolve_tmp_iedge(loop, cond_block, cond_expr_str)
+        else:
+            op_ast, gather_sym_name, carrier_name, transform = self._parse_comparison(cond_expr_str)
+            if op_ast is None:
+                # An inline array subscript ``array[b + c*i] OP carrier`` (s315).
+                parsed = self._parse_inline_subscript_comparison(cond_expr_str, loop.loop_variable, loop)
+                if parsed is not None:
+                    op_ast, inline_gather, carrier_name, transform = parsed
+                    gather_sym_name = None
+        if op_ast is None or carrier_name is None:
+            return None
+        # ``x < a[i]`` is ``a[i] > x``: the carrier is the name the branch writes, the gather the one bound to an element
+        if (
+            inline_gather is None
+            and transform is None
+            and (
+                gather_sym_name in sdfg.arrays
+                or any(gather_sym_name in e.data.assignments for e in true_branch.all_interstate_edges())
+            )
+            and self._resolve_gather_iedge(loop, cond_block, carrier_name, loop.loop_variable, sdfg) is not None
+        ):
+            gather_sym_name, carrier_name, op_ast = carrier_name, gather_sym_name, MIRRORED_CMP[op_ast]
+        op = CMP_AST_TO_RTYPE[op_ast]
+
+        # The gather ``arr[b + c*i]``: the inline subscript, or an interstate binding one level back.
+        if inline_gather is not None:
+            input_array, gather_base, gather_coeff = inline_gather
+            if input_array not in sdfg.arrays:
+                return None
+        else:
+            if gather_sym_name is None:
+                return None
+            gather = self._resolve_gather_iedge(loop, cond_block, gather_sym_name, loop.loop_variable, sdfg)
+            if gather is None:
+                return None
+            input_array, gather_base, gather_coeff = gather
+        return op_ast, op, gather_sym_name, carrier_name, transform, input_array, gather_base, gather_coeff
 
     # match helpers
 
