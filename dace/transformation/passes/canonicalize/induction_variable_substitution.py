@@ -66,7 +66,7 @@ from typing import Any, NamedTuple
 import numpy as np
 import sympy
 
-from dace import SDFG, dtypes, nodes, properties, subsets, symbolic
+from dace import SDFG, data, dtypes, nodes, properties, subsets, symbolic
 from dace import memlet as mm
 from dace.frontend.python import astutils
 from dace.optionals import required
@@ -1633,6 +1633,86 @@ def rematerializable_producer(
     return source._replace(stage=stage if dies else None)
 
 
+def shifted_source(
+    sdfg: SDFG,
+    chain: list[SDFGState],
+    desc: data.Data,
+    loop_var: Any,
+    stride: symbolic.SymbolicType,
+    wsi: int,
+    write_edge: Any,
+    chase: list[tuple[SDFGState, nodes.AccessNode]],
+    touched: dict[str, None],
+) -> tuple[str, Any] | None:
+    """Chase the stored value back to an array element indexed by the iteration variable, looking only through a
+    staging transient whose own single write already ran: an accumulation and a value written later in the body
+    dead-end here. Returns the source and its subset one stride back; extends ``chase`` and ``touched``."""
+    cur_si, cur_node, cur_sub = wsi, write_edge.src, _subset_at(write_edge, write_edge.src)
+    src_data = src_subset = None
+    for _ in range(ROTATION_CHASE_LIMIT):
+        if not isinstance(cur_node, nodes.AccessNode) or cur_sub is None:
+            return None
+        cdesc = sdfg.arrays.get(cur_node.data)
+        if cdesc is None:
+            return None
+        if _uses(cur_sub, loop_var):
+            src_data, src_subset = cur_node.data, cur_sub
+            break
+        if not cdesc.transient or _one_elem(cur_sub, sdfg.facts()) != 1:
+            return None
+        staged = _body_writes(chain, cur_node.data)
+        if len(staged) != 1:
+            return None
+        ssi, _, snode, sedge = staged[0]
+        if ssi > cur_si or (ssi == cur_si and snode is not cur_node):
+            return None  # written LATER in the body -> a carried value, not this iteration's
+        if _one_elem(_subset_at(sedge, snode), sdfg.facts()) != 1:
+            return None
+        # The whole staging container dies with the update; (6) proves nothing else reads it.
+        chase.extend((st, n) for _, st, n in _body_nodes(chain, cur_node.data))
+        touched[cur_node.data] = None
+        cur_si, cur_node, cur_sub = ssi, sedge.src, _subset_at(sedge, sedge.src)
+    if src_data is None:
+        return None
+    if sdfg.arrays[src_data].dtype != desc.dtype:
+        return None  # the copy into the scalar converts; reading the source direct would skip that
+    touched[src_data] = None
+    # (3) An in-loop write to the source would make ``i - stride`` read the post-write version.
+    if _body_writes(chain, src_data):
+        return None
+    shifted = copy.deepcopy(src_subset)
+    required(shifted).replace({loop_var: loop_var - stride})
+    if str(shifted) == str(src_subset):
+        return None  # not shifted: a same-iteration copy, no delay to remove
+    return src_data, shifted
+
+
+def entry_value_reads(
+    chain: list[SDFGState], accum: str, wsi: int, write_state: SDFGState, post_node: nodes.AccessNode, write_edge: Any
+) -> list[tuple[SDFGState, nodes.AccessNode]] | None:
+    """(4) The reads of ``accum`` in the body when each sees the entry value, the slot the update writes, by dataflow
+    and block order: none reads the updated version or is ordered after it."""
+    reads: list[tuple[SDFGState, nodes.AccessNode]] = []
+    reachable_from_write = dict.fromkeys(sdutil.dfs_conditional(write_state, sources=[post_node]))
+    written_slot = str(_subset_at(write_edge, post_node))
+    for si, st, n in _body_nodes(chain, accum):
+        if n is post_node:
+            continue
+        outs = st.out_edges(n)
+        if not outs:
+            continue
+        if any(e.data is None or e.data.is_empty() for e in outs):
+            return None  # an ordering edge OUT of a version the rewrite deletes loses its order
+        if si > wsi or (si == wsi and n in reachable_from_write):
+            return None  # this read observes the POST-update value: b[i], not b[i - stride]
+        if any(str(_subset_at(e, n)) != written_slot for e in outs):
+            return None  # reads a different slot than the update writes
+        reads.append((st, n))
+    if write_state.out_edges(post_node):
+        return None  # read AFTER the write (value is b[i]), or an ordering edge we would drop
+    return reads
+
+
 def plan_rotation(
     parent: ControlFlowRegion,
     loop: LoopRegion,
@@ -1672,71 +1752,14 @@ def plan_rotation(
         if remat.stage is not None:
             chase.append((write_state, remat.stage))
     else:
-        # (2) chase the stored value back to an array element indexed by the iteration variable. Only
-        #     a staging transient whose own single write ALREADY RAN may be looked through, so a
-        #     self-referencing update (an accumulation) and a value written later in the body both
-        #     dead-end here rather than being mistaken for a delay.
-        cur_si, cur_node, cur_sub = wsi, write_edge.src, _subset_at(write_edge, write_edge.src)
-        src_subset = None
-        for _ in range(ROTATION_CHASE_LIMIT):
-            if not isinstance(cur_node, nodes.AccessNode) or cur_sub is None:
-                return None
-            cdesc = sdfg.arrays.get(cur_node.data)
-            if cdesc is None:
-                return None
-            if _uses(cur_sub, loop_var):
-                src_data, src_subset = cur_node.data, cur_sub
-                break
-            if not cdesc.transient or _one_elem(cur_sub, sdfg.facts()) != 1:
-                return None
-            staged = _body_writes(chain, cur_node.data)
-            if len(staged) != 1:
-                return None
-            ssi, _, snode, sedge = staged[0]
-            if ssi > cur_si or (ssi == cur_si and snode is not cur_node):
-                return None  # written LATER in the body -> a carried value, not this iteration's
-            if _one_elem(_subset_at(sedge, snode), sdfg.facts()) != 1:
-                return None
-            # The whole staging container dies with the update; (6) below proves nothing else reads it.
-            chase.extend((st, n) for _, st, n in _body_nodes(chain, cur_node.data))
-            touched[cur_node.data] = None
-            cur_si, cur_node, cur_sub = ssi, sedge.src, _subset_at(sedge, sedge.src)
-        if src_data is None:
+        traced = shifted_source(sdfg, chain, desc, loop_var, stride, wsi, write_edge, chase, touched)
+        if traced is None:
             return None
-        if sdfg.arrays[src_data].dtype != desc.dtype:
-            return None  # the copy into the scalar CONVERTS; reading the source direct would skip that
-        touched[src_data] = None
+        src_data, shifted = traced
 
-        # (3) the source must still hold, at ``i - stride``, what iteration ``i - stride`` read. A
-        #     write to it inside the loop breaks that -- an in-place delay line reads the PRE-write
-        #     version.
-        if _body_writes(chain, src_data):
-            return None
-        shifted = copy.deepcopy(src_subset)
-        required(shifted).replace({loop_var: loop_var - stride})
-        if str(shifted) == str(src_subset):
-            return None  # not actually shifted -> a same-iteration copy, no delay to remove
-
-    # (4) every read must see the ENTRY value: nothing may read the version the update wrote, and
-    #     no read may be ordered after it. Decided by dataflow + block order, never source order.
-    reads: list[tuple[SDFGState, nodes.AccessNode]] = []
-    reachable_from_write = dict.fromkeys(sdutil.dfs_conditional(write_state, sources=[post_node]))
-    written_slot = str(_subset_at(write_edge, post_node))
-    for si, st, n in _body_nodes(chain, accum):
-        if n is post_node:
-            continue
-        outs = st.out_edges(n)
-        if not outs:
-            continue
-        if any(e.data is None or e.data.is_empty() for e in outs):
-            return None  # an ordering edge OUT of a version the rewrite deletes loses its order
-        if si > wsi or (si == wsi and n in reachable_from_write):
-            return None  # this read observes the POST-update value: b[i], not b[i - stride]
-        if any(str(_subset_at(e, n)) != written_slot for e in outs):
-            return None  # reads a different slot than the update writes
-        reads.append((st, n))
-    if write_state.out_edges(post_node):
-        return None  # read AFTER the write (value is b[i]), or an ordering edge we would drop
+    reads = entry_value_reads(chain, accum, wsi, write_state, post_node, write_edge)
+    if reads is None:
+        return None
     if remat is not None and any(st.in_edges(n) for st, n in reads):
         return None  # an ordering edge INTO the read has no home on the cloned producer
 
