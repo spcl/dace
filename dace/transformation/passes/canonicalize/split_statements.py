@@ -991,6 +991,35 @@ def clonable_leaf_body(cfg: SDFG, scope: Any, inner: list[nodes.Node]) -> bool:
     return not any(is_opaque_code(n, cfg) for n in inner)
 
 
+def pruned_group_clone(
+    node: nodes.NestedSDFG, grp: dict[str, None], simplify_cls: type[ppl.Pass]
+) -> tuple[SDFG, list[str]] | None:
+    """A copy of ``node``'s SDFG pruned to the outputs of ``grp``, and the input connectors it still reads."""
+    # Pruned before it is wired: the surviving descriptors decide the connector set.
+    clone_sdfg = copy.deepcopy(node.sdfg)
+    for other in [c for c in node.out_connectors if c not in grp]:
+        suppress_writes(clone_sdfg, other)
+    drop_dataless_access_nodes(clone_sdfg)
+    for arr in [c for c in clone_sdfg.arrays if c not in grp and c not in node.in_connectors]:
+        desc = clone_sdfg.arrays[arr]
+        if not desc.transient:
+            desc.transient = True
+    # Detached, the clone has no cfg list for SimplifyPass to root at.
+    clone_sdfg.reset_cfg_list()
+    simplify_cls().apply_pass(clone_sdfg, {})
+    # Kept: the inputs the clone still moves a value through. An unread input connector would leave the inliner's
+    # access node held by an ordering edge alone (``LoopToMap`` on TSVC ``s211``).
+    used = {
+        n.data for st in clone_sdfg.states() for n in st.data_nodes() if value_edges(st.in_edges(n) + st.out_edges(n))
+    }
+    kept_in = [c for c in node.in_connectors if c in clone_sdfg.arrays and c in used]
+    if any(o not in clone_sdfg.arrays for o in grp):
+        return None
+    for leftover in [c for c in clone_sdfg.arrays if c not in kept_in and c not in grp]:
+        clone_sdfg.arrays[leftover].transient = True
+    return clone_sdfg, kept_in
+
+
 @transformation.explicit_cf_compatible
 @properties.make_properties
 class SplitStatements(ppl.Pass):
@@ -1505,39 +1534,10 @@ class SplitStatements(ppl.Pass):
         for idx, grp in enumerate(groups):
             if idx:
                 target = parent.add_state_after(target, label=f"{state.label}_split_{idx}")
-            # Prune the clone BEFORE it is wired: dropping the other groups' stores leaves inputs
-            # only they read, and SimplifyPass deletes those descriptors. A connector whose inner
-            # array is gone is not a valid NestedSDFG, so the surviving descriptors decide the
-            # connector set rather than the other way round.
-            clone_sdfg = copy.deepcopy(node.sdfg)
-            for other in [c for c in node.out_connectors if c not in grp]:
-                suppress_writes(clone_sdfg, other)
-            drop_dataless_access_nodes(clone_sdfg)
-            for arr in [c for c in clone_sdfg.arrays if c not in grp and c not in node.in_connectors]:
-                desc = clone_sdfg.arrays[arr]
-                if not desc.transient:
-                    desc.transient = True
-            # The clone is still detached, so its cfg list is empty and SimplifyPass cannot find a
-            # root; the unordered split gets one for free by adding the node before simplifying.
-            clone_sdfg.reset_cfg_list()
-            simplify_cls().apply_pass(clone_sdfg, {})
-            # A CONNECTOR array stays non-transient through SimplifyPass even once the pruning has
-            # left nothing reading it, so descriptor presence is the wrong test. An input connector
-            # nothing reads is not merely untidy: the inliner materialises an access node for it in
-            # the parent, held by an ordering edge alone, and the next pass to derive read sets from
-            # memlets builds a body without that descriptor and dies on the node (``LoopToMap`` on
-            # TSVC ``s211``). Keep exactly what the clone still moves a value through.
-            used = {
-                n.data
-                for st in clone_sdfg.states()
-                for n in st.data_nodes()
-                if value_edges(st.in_edges(n) + st.out_edges(n))
-            }
-            kept_in = [c for c in node.in_connectors if c in clone_sdfg.arrays and c in used]
-            if any(o not in clone_sdfg.arrays for o in grp):
+            pruned = pruned_group_clone(node, grp, simplify_cls)
+            if pruned is None:
                 return None
-            for leftover in [c for c in clone_sdfg.arrays if c not in kept_in and c not in grp]:
-                clone_sdfg.arrays[leftover].transient = True
+            clone_sdfg, kept_in = pruned
             # dicts/sorted, not sets: these become the clone's connector dicts, which are
             # observable in validation and codegen order.
             clone = target.add_nested_sdfg(
