@@ -1,35 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Privatize a WCR-on-array-element reduction to a scalar accumulator.
-
-After ``AugAssignToWCR + LoopToMap`` (the canonicalize reduction-to-WCR-map
-stage), a scalar-reduction loop becomes a parallel map with a WCR write
-pointing at an array element, e.g. ``dot[0]``. CPU codegen lowers that WCR
-to ``reduce_atomic`` on the array slot -- correct but contended, and
-OpenMP's ``reduction(...)`` clause is most portable with a true scalar
-variable.
-
-:func:`privatize_reduction_accumulator` rewrites the shape::
-
-    ... -> Map (parallel) -> body { acc WCR-+= val } -> MapExit
-                                                        |
-                                                        v (WCR memlet, arr[c])
-                                                      arr[c]
-
-into::
-
-    init state:     arr[c] -> scalar
-    map state:      ... -> Map -> body { scalar WCR-+= val } -> MapExit -> scalar
-    writeback state: scalar -> arr[c]
-
-After this rewrite the per-thread reduction target is a transient scalar.
-The downstream WCR codegen can then emit ``#pragma omp parallel for
-reduction(op:scalar)`` and the runtime handles per-thread privatization +
-the final tree-reduce. Equivalent for sum/product/min/max/and/or/xor; the
-scalar seed is whatever ``arr[c]`` held before the map (preserves the
-original WCR semantics).
-
-The init's seed-read AND the writeback are unconditional, so this stays
-value-preserving even if zero iterations of the map run.
+"""Privatize a WCR into an array element (``dot[0]``, after the reduction-to-WCR-map stage) to a transient scalar
+seeded from the element before the map and written back after it, so CPU codegen emits an OpenMP
+``reduction(op:scalar)`` clause instead of an atomic per iteration. The seed read and the writeback are
+unconditional, so the rewrite holds when the map runs no iteration.
 """
 
 from dace import data, subsets
@@ -38,7 +11,6 @@ from dace.optionals import required
 from dace.sdfg import SDFGState, nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_map_entry
-from dace.sdfg.state import ControlFlowRegion
 
 
 def order_after_writeback(state: SDFGState, arr_node: nodes.AccessNode, after_map) -> None:
@@ -58,96 +30,82 @@ def order_after_writeback(state: SDFGState, arr_node: nodes.AccessNode, after_ma
                 behind |= set(state.bfs_nodes(target))
 
 
-def privatize_reduction_accumulator(
+def reduction_slot(
     state: SDFGState, map_exit: nodes.MapExit, wcr_edge: MultiConnectorEdge[mm.Memlet]
-) -> bool:
-    """Rewrite a single Map's WCR-on-array-element write into WCR-on-scalar
-    plus init + writeback.
-
-    Targeted helper: caller supplies the exact MapExit and the specific
-    WCR-bearing in-edge to privatize. The helper validates eligibility and
-    either applies the rewrite (returning ``True``) or leaves the SDFG
-    unchanged (returning ``False``).
-
-    :param state: The state containing ``map_exit``.
-    :param map_exit: The MapExit whose WCR out-write should be privatized.
-    :param wcr_edge: An IN-edge of ``map_exit`` whose memlet carries a WCR
-        annotation and writes a single-element subset of an array.
-    :returns: ``True`` if the rewrite landed, ``False`` if the edge does
-        not match the eligibility criteria.
-    """
+) -> tuple[MultiConnectorEdge[mm.Memlet], list[MultiConnectorEdge[mm.Memlet]]] | None:
+    """The map exit's out-edge to the array and the in-scope edges of the path, when ``wcr_edge`` reduces into one
+    array element, the same for every iteration, of a map in the state's top scope."""
     if wcr_edge.data is None or wcr_edge.data.wcr is None:
-        return False
+        return None
     in_conn = wcr_edge.dst_conn
     if not in_conn or not in_conn.startswith("IN_"):
-        return False
-    out_conn = "OUT_" + in_conn[3:]
-    out_edges = [e for e in state.out_edges(map_exit) if e.src_conn == out_conn]
+        return None
+    out_edges = [e for e in state.out_edges(map_exit) if e.src_conn == "OUT_" + in_conn[3:]]
     if len(out_edges) != 1:
-        return False
+        return None
     oedge = out_edges[0]
     arr_node = oedge.dst
     if not isinstance(arr_node, nodes.AccessNode):
-        return False
-    sdfg = state.sdfg
-    desc = sdfg.arrays.get(arr_node.data)
+        return None
+    desc = state.sdfg.arrays.get(arr_node.data)
     if desc is None or isinstance(desc, data.Scalar):
-        # Already a scalar -- nothing to do.
-        return False
-    # The IN-edge memlet (tasklet -> MapExit) carries the per-iteration write
-    # subset -- the slot the reduction actually touches each iter. The OUT-edge
-    # carries the union-over-iterations subset (often the whole array range),
-    # which is not what we want for the writeback shape.
+        return None
+    # The in-edge carries the slot each iteration writes; the out-edge the union over iterations.
     write_subset = wcr_edge.data.subset
     if write_subset is None or write_subset.num_elements() != 1:
-        return False
-    # The slot must not depend on the map's parameters: it has to be the same
-    # slot for every iteration. (We're aggregating into a single accumulator;
-    # if the slot were a function of the map parameter this wouldn't be a
-    # reduction.)
+        return None
     map_entry = state.entry_node(map_exit)
     map_param_set = dict.fromkeys(as_map_entry(map_entry).map.params)
     if any(s in map_param_set for s in (str(x) for x in write_subset.free_symbols)):
-        return False
-
+        return None
     # Every edge of the scope's path writes that slot: a map nest renames them all to the scalar.
     inner = [e for e in state.memlet_path(wcr_edge) if e is not oedge]
     if any(e.data.data != arr_node.data or e.data.subset != write_subset for e in inner):
-        return False
-
-    # The seed and the writeback go outside the map: into states before and after this one, or onto nodes of this
-    # state's top scope. A map nested in another scope reduces into a slot that scope's parameters may pick (``acc[i]``
-    # under ``map i``), and the seed would bypass that scope's entry, so a nested map stays as it is.
+        return None
+    # A map nested in another scope may reduce into a slot that scope's parameters pick, and the seed would bypass
+    # that scope's entry.
     if state.entry_node(map_entry) is not None:
-        return False
+        return None
+    return oedge, inner
 
-    parent_graph: ControlFlowRegion = state.parent_graph
 
-    # Is the seed value WRITTEN INSIDE THIS STATE (kernel's own ``acc[c] = init``
-    # tasklet, fused with the map)? If so the seed source is that write's
-    # AccessNode -- NOT a fresh read of the caller-passed buffer (which could
-    # hold arbitrary input data). When the in-state init exists, do an
-    # *in-state* privatization (no priv_init/priv_wb states); otherwise fall
-    # back to the cross-state init + writeback.
-    in_state_init_an = None
-    after_map = dict.fromkeys(state.bfs_nodes(map_exit))
+def in_state_seed(state: SDFGState, arr_node: nodes.AccessNode, after_map: dict) -> nodes.AccessNode | None:
+    """The access node of a plain write of ``arr_node``'s container ahead of the map in ``state`` (the kernel's own
+    ``acc[c] = init``), which seeds the scalar instead of the buffer's prior contents."""
     for n in state.nodes():
-        if not isinstance(n, nodes.AccessNode):
-            continue
-        if n is arr_node or n.data != arr_node.data:
+        if not isinstance(n, nodes.AccessNode) or n is arr_node or n.data != arr_node.data:
             continue
         # A write after the map (``acc[c] = acc[c] * 2``) seeds nothing: reading the seed from it closes a cycle.
         if n in after_map:
             continue
-        # Only a non-empty in-edge is a write: an ordering memlet initialises nothing.
         if not any(e.data is not None and not e.data.is_empty() for e in state.in_edges(n)):
             continue
-        # Reject the AN if any inbound edge is itself a WCR write (then it's a
-        # different reduction target, not an init).
+        # A WCR write is another reduction target, not an init.
         if any(e.data is not None and e.data.wcr is not None for e in state.in_edges(n)):
             continue
-        in_state_init_an = n
-        break
+        return n
+    return None
+
+
+def privatize_reduction_accumulator(
+    state: SDFGState, map_exit: nodes.MapExit, wcr_edge: MultiConnectorEdge[mm.Memlet]
+) -> bool:
+    """Rewrite one map's WCR write into an array element as a WCR into a transient scalar, seeded before the map and
+    written back after it.
+
+    :param state: The state containing ``map_exit``.
+    :param map_exit: The MapExit whose WCR out-write should be privatized.
+    :param wcr_edge: An in-edge of ``map_exit`` carrying a WCR into a single array element.
+    :returns: ``True`` if the rewrite landed, ``False`` (the SDFG unchanged) if the edge is not eligible.
+    """
+    slot = reduction_slot(state, map_exit, wcr_edge)
+    if slot is None:
+        return False
+    oedge, inner = slot
+    arr_node, write_subset, map_entry = oedge.dst, wcr_edge.data.subset, state.entry_node(map_exit)
+    sdfg = state.sdfg
+    after_map = dict.fromkeys(state.bfs_nodes(map_exit))
+    in_state_init_an = in_state_seed(state, arr_node, after_map)
 
     # Another writer of ``arr`` in this state (a sibling map reducing into the same slot) would get its own seed and
     # writeback, and only the last writeback would survive. A writer after the map runs after the writeback.
@@ -168,83 +126,37 @@ def privatize_reduction_accumulator(
         for n in after_map
     )
 
-    # Allocate a transient scalar to hold the accumulator.
-    scalar_name, _ = sdfg.add_scalar(f"_priv_{arr_node.data}", dtype=desc.dtype, transient=True, find_new_name=True)
-
-    # Redirect the WCR target: rewrite both the in-edge (tasklet -> MapExit)
-    # and the out-edge (MapExit -> AccessNode) to refer to the scalar.
+    scalar_name, _ = sdfg.add_scalar(
+        f"_priv_{arr_node.data}", dtype=sdfg.arrays[arr_node.data].dtype, transient=True, find_new_name=True
+    )
     for edge in inner:
         edge.data.data = scalar_name
         edge.data.subset = subsets.Range([(0, 0, 1)])
 
+    def slot_memlet() -> mm.Memlet:
+        return mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset)))
+
     if in_state_init_an is not None:
-        # In-state pattern: seed _priv_dot from the in-state init AN; emit the
-        # writeback in the same state, going BACK into the original ``arr_node``.
-        # No priv_init/priv_wb states needed.
         seed_an = state.add_access(scalar_name)
-        state.add_edge(
-            in_state_init_an,
-            None,
-            seed_an,
-            None,
-            mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))),
-        )
+        state.add_edge(in_state_init_an, None, seed_an, None, slot_memlet())
         # The map's WCR accumulates onto the seed, so the seed must be written before the map starts.
         state.add_nedge(seed_an, required(map_entry), mm.Memlet())
-        # The map's WCR output now goes to a fresh _priv_dot AN ...
-        new_scalar_an = state.add_write(scalar_name)
-        state.add_edge(
-            map_exit,
-            oedge.src_conn,
-            new_scalar_an,
-            None,
-            mm.Memlet(data=scalar_name, subset=subsets.Range([(0, 0, 1)])),
+    else:
+        init_state = state.parent_graph.add_state_before(state, label=f"priv_init_{scalar_name}")
+        init_state.add_edge(
+            init_state.add_read(arr_node.data), None, init_state.add_write(scalar_name), None, slot_memlet()
         )
-        state.remove_edge(oedge)
-        # ... then copy back to the post-map ``arr_node`` (writeback).
-        state.add_edge(
-            new_scalar_an,
-            None,
-            arr_node,
-            None,
-            mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))),
-        )
-        order_after_writeback(state, arr_node, after_map)
-        return True
-
-    # Cross-state pattern (no in-state init): init state BEFORE the
-    # current state seeds ``_priv_dot`` from the surviving ``arr_node``;
-    # writeback state AFTER copies back.
-    init_state = parent_graph.add_state_before(state, label=f"priv_init_{scalar_name}")
-    init_r = init_state.add_read(arr_node.data)
-    init_w = init_state.add_write(scalar_name)
-    init_state.add_edge(
-        init_r, None, init_w, None, mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset)))
-    )
-
     new_scalar_an = state.add_write(scalar_name)
     state.add_edge(
         map_exit, oedge.src_conn, new_scalar_an, None, mm.Memlet(data=scalar_name, subset=subsets.Range([(0, 0, 1)]))
     )
     state.remove_edge(oedge)
-    if writeback_here:
-        state.add_edge(
-            new_scalar_an,
-            None,
-            arr_node,
-            None,
-            mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))),
-        )
+    if in_state_init_an is not None or writeback_here:
+        state.add_edge(new_scalar_an, None, arr_node, None, slot_memlet())
         order_after_writeback(state, arr_node, after_map)
         return True
     if state.degree(arr_node) == 0:
         state.remove_node(arr_node)
-
-    wb_state = parent_graph.add_state_after(state, label=f"priv_wb_{scalar_name}")
-    wb_r = wb_state.add_read(scalar_name)
-    wb_w = wb_state.add_write(arr_node.data)
-    wb_state.add_edge(
-        wb_r, None, wb_w, None, mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset)))
-    )
-
+    wb_state = state.parent_graph.add_state_after(state, label=f"priv_wb_{scalar_name}")
+    wb_state.add_edge(wb_state.add_read(scalar_name), None, wb_state.add_write(arr_node.data), None, slot_memlet())
     return True
