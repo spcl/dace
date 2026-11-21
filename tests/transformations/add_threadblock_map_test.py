@@ -5,7 +5,7 @@ import numpy
 import pytest
 
 import dace
-from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
+from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap, spill_block_threads
 
 N = dace.symbol("N")
 
@@ -277,6 +277,16 @@ def test_a_thread_block_map_in_a_nested_sdfg_under_an_inner_map_is_found():
     assert not AddThreadBlockMap.can_be_applied_to(sdfg, map_entry=kernel)
 
 
+def test_threads_a_small_constant_axis_cannot_use_move_to_the_next_axis():
+    assert spill_block_threads([256, 1, 1], [8, N, 1]) == [8, 32, 1]
+    assert spill_block_threads([128, 1, 1], [64, N, 1]) == [64, 2, 1]
+    assert spill_block_threads([128, 1, 1], [4, 2, N]) == [4, 2, 16]
+    # A symbolic or block-filling axis keeps its threads, and so does an axis with no next one
+    assert spill_block_threads([128, 1, 1], [N, N, 1]) == [128, 1, 1]
+    assert spill_block_threads([128, 1, 1], [100, N, 1]) == [128, 1, 1]
+    assert spill_block_threads([128, 1, 1], [64, 1, 1]) == [128, 1, 1]
+
+
 if __name__ == "__main__":
     test_the_kernel_map_keeps_its_instrumentation()
     test_elementwise_constexpr_size()
@@ -286,3 +296,4 @@ if __name__ == "__main__":
     test_elementwise_with_floor_div()
     test_memlet_tree()
     test_a_thread_block_map_in_a_nested_sdfg_under_an_inner_map_is_found()
+    test_threads_a_small_constant_axis_cannot_use_move_to_the_next_axis()

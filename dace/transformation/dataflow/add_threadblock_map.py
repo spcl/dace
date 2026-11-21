@@ -10,7 +10,7 @@ import warnings
 
 import sympy
 
-from dace import Config, dtypes
+from dace import Config, dtypes, symbolic
 from dace.properties import Property, make_properties
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
@@ -42,6 +42,20 @@ def to_3d_dims(dim_sizes: list) -> list:
     dim_sizes += [1] * (3 - len(dim_sizes))
 
     return dim_sizes
+
+
+def spill_block_threads(block_size: list, domain: list) -> list:
+    """Move threads a block dimension cannot use (its extent is a constant at most half the block) to the next
+    dimension of the domain, halving and doubling; ``[256, 1, 1]`` over ``[8, N]`` becomes ``[8, 32, 1]``."""
+    block = list(block_size)
+    for d in range(2):
+        extent = domain[d]
+        if symbolic.issymbolic(extent) or domain[d + 1] == 1:
+            continue
+        while block[d] % 2 == 0 and 2 * int(extent) <= block[d]:
+            block[d] //= 2
+            block[d + 1] *= 2
+    return block
 
 
 def product(iterable):
@@ -293,6 +307,7 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
                 )
             else:
                 block_size = default_block_size
+            block_size = spill_block_threads(block_size, kernel_domain_size)
 
         # Validate that the block size does not exeed any limits
         validate_block_size_limits(kernel_map_entry, block_size)
