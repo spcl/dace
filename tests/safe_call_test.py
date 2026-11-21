@@ -4,6 +4,10 @@ import pytest
 
 import dace
 
+# ctypes-pinned here: SDFG.safe_call() is refused when the resolved interface is nanobind: it hides the
+# compiled object, whose collision rename would make post-call queries on the original SDFG unsound.
+# (The shared `ctypes_interface` fixture lives in tests/conftest.py.)
+
 
 @dace.program
 def write_to_null(A: dace.float64[5], B: dace.float64[5], ub: dace.int64):
@@ -22,6 +26,7 @@ def write_to_null(A: dace.float64[5], B: dace.float64[5], ub: dace.int64):
 
 
 @pytest.mark.sequential
+@pytest.mark.usefixtures("ctypes_interface")
 def test_wtn():
     sdfg = write_to_null.to_sdfg()
 
@@ -65,6 +70,7 @@ def test_wtn_precompiled():
 
 
 @pytest.mark.sequential
+@pytest.mark.usefixtures("ctypes_interface")
 def test_instrumentation():
     sdfg = write_to_null.to_sdfg()
     sdfg.instrument = dace.InstrumentationType.Timer
@@ -88,10 +94,15 @@ def test_instrumentation_precompiled():
     obj.safe_call(A, B, 5)
     assert np.allclose(A, B + 1), "Output is not forwarded correctly!"
 
-    assert sdfg.get_latest_report() is not None, "Report not generated!"
+    # Query the report via the compiled object's sdfg: that is the artifact
+    # that actually ran. On the nanobind interface a collision rename may
+    # relocate the compile into its own build folder, which the original
+    # `sdfg` object does not know about; `obj.sdfg` always does.
+    assert obj.sdfg.get_latest_report() is not None, "Report not generated!"
 
 
 @pytest.mark.sequential
+@pytest.mark.usefixtures("ctypes_interface")
 def test_kwargs():
     sdfg = write_to_null.to_sdfg()
 
@@ -113,6 +124,7 @@ def test_kwargs_precompiled():
 
 
 @pytest.mark.sequential
+@pytest.mark.usefixtures("ctypes_interface")
 def test_symbols():
     N = dace.symbol("N")
 

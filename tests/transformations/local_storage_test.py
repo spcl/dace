@@ -316,6 +316,8 @@ class LocalStorageTests(unittest.TestCase):
         applied = sdfg.apply_transformations([MapTiling, OutLocalStorage], options=[{"tile_sizes": [5]}, {}])
         self.assertEqual(applied, 2)
         dace.propagate_memlets_sdfg(sdfg)
+        # The caller-provided output buffer is the point of this test: the
+        # tail must stay untouched (both interfaces accept the buffer).
         sdfg(N=16, __return=output)
         self.assertTrue(np.array_equal(output[:16], np.arange(16, dtype=np.int32)))
         self.assertTrue(np.array_equal(output[16:], np.ones(4, np.int32)))

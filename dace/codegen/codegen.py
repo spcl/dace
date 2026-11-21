@@ -309,6 +309,9 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
             sdfg=sdfg,
         )
     ]
+    # The state-struct field declarations, used by the nanobind bindings
+    # generator to bake the field names into the module (no source parsing).
+    target_objects[0].statestruct = list(frame.statestruct)
 
     # Create code objects for each target
     for tgt in used_targets:
