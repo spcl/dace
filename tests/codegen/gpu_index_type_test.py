@@ -153,7 +153,7 @@ def test_each_dimension_takes_its_own_type():
 
     code = _cuda_code(_gpu(mixed.to_sdfg(simplify=True)))
     assert _declaration(code, "b_i").startswith("int64_t b_i = static_cast<int64_t>(blockIdx.z)")
-    assert _declaration(code, "b_j") == "int b_j = blockIdx.y;"
+    assert _declaration(code, "b_j") == "int b_j = (8 * blockIdx.y);"
     assert _declaration(code, "b_k").startswith("int b_k = ")
 
 
