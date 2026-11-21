@@ -94,6 +94,20 @@ def pairing(sdfg: SDFG, term: sympy.Expr, r: sympy.Expr, j: sympy.Expr) -> Pairi
     return None
 
 
+def rank_k_operands(terms: list[Pairing]) -> list[str] | None:
+    """The operand of ``A A^T`` or the two of ``A B^T + B A^T``, when every term shares one scale, transpose and
+    inner extent; ``None`` otherwise."""
+    first = terms[0]
+    if any(t.alpha != first.alpha or t.trans != first.trans or not same(t.extent, first.extent) for t in terms):
+        return None
+    pairs = sorted((t.row, t.col) for t in terms)
+    if len(pairs) == 1 and pairs[0][0] == pairs[0][1]:
+        return [pairs[0][0]]
+    if len(pairs) == 2 and pairs[0] == pairs[1][::-1] and pairs[0][0] != pairs[0][1]:
+        return list(pairs[0])
+    return None
+
+
 def match_rank_k(sdfg: SDFG, loop: LoopRegion) -> RankKMatch | None:
     try:
         summary = summarize(sdfg, loop)
@@ -117,14 +131,8 @@ def match_rank_k(sdfg: SDFG, loop: LoopRegion) -> RankKMatch | None:
     if not terms or any(t is None for t in terms):
         return None
     first = terms[0]
-    if any(t.alpha != first.alpha or t.trans != first.trans or not same(t.extent, first.extent) for t in terms):
-        return None
-    pairs = sorted((t.row, t.col) for t in terms)
-    if len(pairs) == 1 and pairs[0][0] == pairs[0][1]:
-        operands = [pairs[0][0]]
-    elif len(pairs) == 2 and pairs[0] == pairs[1][::-1] and pairs[0][0] != pairs[0][1]:
-        operands = list(pairs[0])
-    else:
+    operands = rank_k_operands(terms)
+    if operands is None:
         return None
     extent = (n, first.extent) if first.trans == "N" else (first.extent, n)
     if c in operands or not all(shape_is(sdfg, name, *extent) for name in operands):

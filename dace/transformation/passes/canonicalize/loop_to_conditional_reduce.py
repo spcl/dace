@@ -85,6 +85,26 @@ class _Match(NamedTuple):
     identity_value: object
 
 
+def single_element(desc: data.Data | None) -> bool:
+    """Whether ``desc`` is a scalar or a one-element array."""
+    return isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and tuple(desc.shape) == (1,))
+
+
+def names_seen_outside(state: SDFGState, sdfg: SDFG) -> dict[str, None]:
+    """The data and symbols ``sdfg`` names outside ``state``'s writes: other states' access nodes, interstate edges,
+    region conditions, and ``state``'s own sources."""
+    seen = [dn.data for st in sdfg.states() if st is not state for dn in st.data_nodes()]
+    seen += [s for e in sdfg.all_interstate_edges(recursive=True) for s in e.data.free_symbols]
+    seen += [
+        s
+        for r in sdfg.all_control_flow_regions(recursive=True)
+        for c in r.get_meta_codeblocks()
+        for s in c.get_free_symbols()
+    ]
+    seen += [dn.data for dn in state.data_nodes() if state.in_degree(dn) == 0]
+    return dict.fromkeys(seen)
+
+
 @properties.make_properties
 @xf.explicit_cf_compatible
 class LoopToConditionalReduce(ppl.Pass):
@@ -233,30 +253,14 @@ class LoopToConditionalReduce(ppl.Pass):
         sinks = {
             n.data: n for n in true_state.data_nodes() if true_state.in_degree(n) > 0 and true_state.out_degree(n) == 0
         }
-        acc_candidates = []
-        for name in sources:
-            if name not in sinks:
-                continue
-            desc = sdfg.arrays.get(name)
-            if desc is None:
-                continue
-            if isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and tuple(desc.shape) == (1,)):
-                acc_candidates.append(name)
+        acc_candidates = [name for name in sources if name in sinks and single_element(sdfg.arrays.get(name))]
         if len(acc_candidates) != 1:
             return None
         acc_name = acc_candidates[0]
         sink_ans = [n for n in true_state.data_nodes() if true_state.in_degree(n) > 0 and true_state.out_degree(n) == 0]
         if len(sink_ans) != 1 or sink_ans[0].data != acc_name:
             return None
-        seen_elsewhere = [dn.data for st in sdfg.states() if st is not true_state for dn in st.data_nodes()]
-        seen_elsewhere += [s for e in sdfg.all_interstate_edges(recursive=True) for s in e.data.free_symbols]
-        seen_elsewhere += [
-            s
-            for r in sdfg.all_control_flow_regions(recursive=True)
-            for c in r.get_meta_codeblocks()
-            for s in c.get_free_symbols()
-        ]
-        seen_elsewhere += [dn.data for dn in true_state.data_nodes() if true_state.in_degree(dn) == 0]
+        seen_elsewhere = names_seen_outside(true_state, sdfg)
         for n in true_state.data_nodes():
             if (
                 n is not sink_ans[0]

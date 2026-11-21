@@ -255,66 +255,79 @@ def canonicalize_set_fast_implementations(
     for node, state in sdfg.all_nodes_recursive():
         if not isinstance(node, nodes.LibraryNode) or selects is not None and not selects(node, state):
             continue
-        impls = type(node).implementations
-        # A node inside a parallel or repeated scope must not open its own parallel region (a fork/join per outer
-        # iteration).
-        sequential = libnode_is_sequential(node, state, sdfg)
-        if sequential and node.schedule != dtypes.ScheduleType.Sequential:
-            node.schedule = dtypes.ScheduleType.Sequential
+        select_implementation(node, state, sdfg, device, small_dim, gpu_priority, has_libxsmm)
 
-        # A specialization pass already chose this node's lowering (``SpecializeSmallGemms``).
-        if not node.auto_select_implementation:
-            continue
 
-        # Inside a kernel, a node that can run as a block collective does: one block per outer iteration.
-        if device == dtypes.DeviceType.GPU:
-            block = in_kernel_block_implementation(node, state, share_private_outputs=True)
-            if block is not None:
-                node.implementation = block
-                release_kernel_block_size(node, state)
-                continue
+def select_implementation(
+    node: nodes.LibraryNode,
+    state: SDFGState,
+    sdfg: SDFG,
+    device: dtypes.DeviceType,
+    small_dim: int,
+    gpu_priority: list[str],
+    has_libxsmm: bool,
+) -> None:
+    """Override the lowering ``set_fast_implementations`` chose for ``node`` where the canonical form needs another."""
+    impls = type(node).implementations
+    # A node inside a parallel or repeated scope must not open its own parallel region (a fork/join per outer
+    # iteration).
+    sequential = libnode_is_sequential(node, state, sdfg)
+    if sequential and node.schedule != dtypes.ScheduleType.Sequential:
+        node.schedule = dtypes.ScheduleType.Sequential
 
-        # A GEMM no BLAS call can address takes the expansion that indexes its operands directly.
-        if isinstance(node, Gemm) and not blas_addresses(node, state):
-            node.implementation = "rowwise" if device == dtypes.DeviceType.CPU and "rowwise" in impls else "pure"
-            if device == dtypes.DeviceType.GPU and not libnode_is_device_code(node, state, sdfg):
-                node.schedule = dtypes.ScheduleType.GPU_Device
-            continue
+    # A specialization pass already chose this node's lowering (``SpecializeSmallGemms``).
+    if not node.auto_select_implementation:
+        return
 
-        if device == dtypes.DeviceType.CPU:
-            # Shared with auto_optimize so the two paths cannot drift; it has the last word on the types it governs.
-            if apply_cpu_library_parallelism(node, state, sdfg):
-                continue
-            choice = cpu_library_choice(node, state, sequential, impls, has_libxsmm)
-            if choice is not None:
-                node.implementation = choice
-                continue
-        elif isinstance(node, (Scan, Symmetrize)):
-            node.implementation = gpu_scope_implementation(node, state, sdfg, impls)
-            continue
-        # ``set_fast_implementations`` reads every Sequential GPU node as kernel code, but a host loop is Sequential
-        # too and belongs to a device library call.
-        if (
-            device == dtypes.DeviceType.GPU
-            and node.schedule == dtypes.ScheduleType.Sequential
-            and not libnode_is_device_code(node, state, sdfg)
-        ):
-            fast = next((impl for impl in gpu_priority if impl in impls), None)
-            if fast is not None:
-                node.implementation = fast
-                continue
-            # No device expansion: the pure map over ``GPU_Global`` operands must become a kernel, as validation
-            # refuses host access to device storage.
+    # Inside a kernel, a node that can run as a block collective does: one block per outer iteration.
+    if device == dtypes.DeviceType.GPU:
+        block = in_kernel_block_implementation(node, state, share_private_outputs=True)
+        if block is not None:
+            node.implementation = block
+            release_kernel_block_size(node, state)
+            return
+
+    # A GEMM no BLAS call can address takes the expansion that indexes its operands directly.
+    if isinstance(node, Gemm) and not blas_addresses(node, state):
+        node.implementation = "rowwise" if device == dtypes.DeviceType.CPU and "rowwise" in impls else "pure"
+        if device == dtypes.DeviceType.GPU and not libnode_is_device_code(node, state, sdfg):
             node.schedule = dtypes.ScheduleType.GPU_Device
-        # A node pinned to a ``pure`` it does not have (``CopyLibraryNode``) takes its own default.
-        if node.implementation == "pure" and "pure" not in impls:
-            node.implementation = type(node).default_implementation
+        return
 
-        if "pure" not in impls:
-            continue
-        # The row-wise (ikj) expansion only: the plain ``pure`` nest reduces through one atomic per multiply-add.
-        if "rowwise" in impls and matmul_extents_small(state, node, small_dim):
-            node.implementation = "rowwise"
+    if device == dtypes.DeviceType.CPU:
+        # Shared with auto_optimize so the two paths cannot drift; it has the last word on the types it governs.
+        if apply_cpu_library_parallelism(node, state, sdfg):
+            return
+        choice = cpu_library_choice(node, state, sequential, impls, has_libxsmm)
+        if choice is not None:
+            node.implementation = choice
+            return
+    elif isinstance(node, (Scan, Symmetrize)):
+        node.implementation = gpu_scope_implementation(node, state, sdfg, impls)
+        return
+    # ``set_fast_implementations`` reads every Sequential GPU node as kernel code, but a host loop is Sequential
+    # too and belongs to a device library call.
+    if (
+        device == dtypes.DeviceType.GPU
+        and node.schedule == dtypes.ScheduleType.Sequential
+        and not libnode_is_device_code(node, state, sdfg)
+    ):
+        fast = next((impl for impl in gpu_priority if impl in impls), None)
+        if fast is not None:
+            node.implementation = fast
+            return
+        # No device expansion: the pure map over ``GPU_Global`` operands must become a kernel, as validation
+        # refuses host access to device storage.
+        node.schedule = dtypes.ScheduleType.GPU_Device
+    # A node pinned to a ``pure`` it does not have (``CopyLibraryNode``) takes its own default.
+    if node.implementation == "pure" and "pure" not in impls:
+        node.implementation = type(node).default_implementation
+
+    if "pure" not in impls:
+        return
+    # The row-wise (ikj) expansion only: the plain ``pure`` nest reduces through one atomic per multiply-add.
+    if "rowwise" in impls and matmul_extents_small(state, node, small_dim):
+        node.implementation = "rowwise"
 
 
 def allocated_unconditionally(sdfg: SDFG, name: str) -> bool:

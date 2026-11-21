@@ -137,53 +137,49 @@ def reads_are_clear(
     dead_edge: MultiConnectorEdge[Memlet],
 ) -> bool:
     """No read of ``name`` observes the dead store -- in a later iteration, or in this one."""
-    for state in body:
-        for node in state.nodes():
-            if not isinstance(node, nodes.AccessNode) or node.data != name:
-                continue
-            for edge in state.out_edges(node):
-                read = edge.data.get_src_subset(edge, state)
-                if read is None:
-                    return False
-                spot = constant_offset_on_axis(read, loop_var)
-                if spot is None or spot[0] != axis:
-                    return False
-                if kill_off < spot[1] < dead_off:
-                    return False
-                if spot[1] == kill_off:
-                    # The kill READS the location it writes (``a[i] += ...``, which the frontend lowers to an explicit
-                    # read/write rather than a WCR).
-                    return False
+    reads = read_offsets(body, name, loop_var)
+    # A read at ``kill_off``: the kill READS the location it writes (``a[i] += ...``, lowered to an explicit
+    # read/write rather than a WCR).
+    if reads is None or any(
+        spot[0] != axis or kill_off < spot[1] < dead_off or spot[1] == kill_off for *unused, spot in reads
+    ):
+        return False
     # A read at the dead store's OWN offset is only safe when it is that store's read-modify-write input
-    producer = dead_edge.src
-    for state in body:
-        for node in state.nodes():
-            if not isinstance(node, nodes.AccessNode) or node.data != name:
-                continue
-            for edge in state.out_edges(node):
-                read = edge.data.get_src_subset(edge, state)
-                if read is None:
-                    return False
-                spot = constant_offset_on_axis(read, loop_var)
-                if spot is None or spot[0] != axis or spot[1] != dead_off:
-                    continue
-                order = body.index(state) - body.index(dead_state)
-                if order < 0:
-                    # Strictly BEFORE the store: it reads what was there on entry.
-                    continue
-                if order > 0 or not reaches(state, edge.dst, producer):
-                    return False
+    for state, edge, spot in reads:
+        if spot[1] != dead_off:
+            continue
+        order = body.index(state) - body.index(dead_state)
+        # Strictly BEFORE the store, it reads what was there on entry.
+        if order > 0 or order == 0 and not reaches(state, edge.dst, dead_edge.src):
+            return False
     # Any later state reading the array at all is a read-after-write within the iteration.
     for state in body[body.index(dead_state) + 1 :]:
         if any(isinstance(n, nodes.AccessNode) and n.data == name and state.out_degree(n) > 0 for n in state.nodes()):
             return False
-    downstream, frontier = set(), [dead_edge.dst]
-    while frontier:
-        for out in dead_state.out_edges(frontier.pop()):
-            if out.dst not in downstream:
-                downstream.add(out.dst)
-                frontier.append(out.dst)
-    return not any(isinstance(n, nodes.AccessNode) and n.data == name for n in downstream)
+    return not any(
+        isinstance(n, nodes.AccessNode) and n.data == name
+        for n in dead_state.bfs_nodes(dead_edge.dst)
+        if n is not dead_edge.dst
+    )
+
+
+def read_offsets(
+    body: list[SDFGState], name: str, loop_var: str
+) -> list[tuple[SDFGState, MultiConnectorEdge[Memlet], tuple[int, int]]] | None:
+    """Every read of ``name`` in ``body`` with its ``(axis, offset)`` along ``loop_var``, or ``None`` if one has no
+    constant offset."""
+    reads = []
+    for state in body:
+        for node in state.nodes():
+            if not isinstance(node, nodes.AccessNode) or node.data != name:
+                continue
+            for edge in state.out_edges(node):
+                read = edge.data.get_src_subset(edge, state)
+                spot = None if read is None else constant_offset_on_axis(read, loop_var)
+                if spot is None:
+                    return None
+                reads.append((state, edge, spot))
+    return reads
 
 
 def reaches(state: SDFGState, start: nodes.Node, target: nodes.Node) -> bool:

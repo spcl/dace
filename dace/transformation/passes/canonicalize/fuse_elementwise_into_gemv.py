@@ -8,6 +8,7 @@ from dace import SDFG, data, properties, subsets, symbolic
 from dace.libraries.blas.nodes.matmul import MatMul
 from dace.memlet import Memlet
 from dace.sdfg import nodes
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.utils import find_new_name
@@ -23,6 +24,38 @@ def _offset(subset: subsets.Range, params: list[str]) -> str:
     for (b, e, _), size in zip(subset.ranges, subset.size()):
         idx.append(f"{b} + {next(it)}" if size != 1 else str(b))
     return ", ".join(idx)
+
+
+def map_private_transient(sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge, access_count: dict[str, int]) -> bool:
+    """Whether ``edge`` reads the only access node of a transient array, written by one map and read once."""
+    src = edge.src
+    if not isinstance(src, nodes.AccessNode):
+        return False
+    desc = sdfg.arrays.get(edge.data.data)
+    return (
+        isinstance(desc, data.Array)
+        and not isinstance(desc, data.View)
+        and desc.transient
+        and access_count.get(src.data, 0) == 1
+        and state.out_degree(src) == 1
+        and state.in_degree(src) == 1
+        and isinstance(state.in_edges(src)[0].src, nodes.MapExit)
+    )
+
+
+def touched_elsewhere(sdfg: SDFG, state: SDFGState, out_node: nodes.AccessNode, out_subset: subsets.Subset) -> bool:
+    """Whether another access node of ``out_node``'s container in ``state`` may touch ``out_subset``."""
+    name = out_node.data
+    return any(
+        n.data == name
+        and n is not out_node
+        and any(
+            e.data.data == name
+            and subsets.intersects(e.data.subset, out_subset, sdfg.facts()) is not symbolic.Truth.FALSE
+            for e in state.all_edges(n)
+        )
+        for n in state.data_nodes()
+    )
 
 
 @properties.make_properties
@@ -76,17 +109,7 @@ class FuseElementwiseIntoGemv(ppl.Pass):
         else:
             return 0
         src = mat.src
-        desc = sdfg.arrays.get(mat.data.data)
-        if (
-            not isinstance(src, nodes.AccessNode)
-            or not isinstance(desc, data.Array)
-            or isinstance(desc, data.View)
-            or not desc.transient
-            or access_count.get(src.data, 0) != 1
-            or state.out_degree(src) != 1
-            or state.in_degree(src) != 1
-            or not isinstance(state.in_edges(src)[0].src, nodes.MapExit)
-        ):
+        if not map_private_transient(sdfg, state, mat, access_count):
             return 0
         sizes = [s for s in mat.data.subset.size() if s != 1]
         ranges = {p: f"0:{s}" for p, s in zip(mat_params, sizes)}
@@ -100,16 +123,7 @@ class FuseElementwiseIntoGemv(ppl.Pass):
         if not isinstance(vec_node, nodes.AccessNode):
             return 0
         # ``y = (a * y) @ v``: the init below would zero ``y`` unordered with the read that builds the matrix.
-        if any(
-            n.data == out_name
-            and n is not out_node
-            and any(
-                e.data.data == out_name
-                and subsets.intersects(e.data.subset, out_subset, sdfg.facts()) is not symbolic.Truth.FALSE
-                for e in state.all_edges(n)
-            )
-            for n in state.data_nodes()
-        ):
+        if touched_elsewhere(sdfg, state, out_node, out_subset):
             return 0
         state.remove_node(node)
         # A connector may not take the name of a container, symbol or constant of the SDFG

@@ -6,7 +6,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from dace import SDFG, nodes, properties, subsets
+from dace import SDFG, nodes, properties, subsets, symbolic
 from dace.optionals import required
 from dace.sdfg import InterstateEdge, SDFGState
 from dace.sdfg import utils as sdutil
@@ -171,6 +171,95 @@ def _append_cfg(base: SDFG, tail: SDFG) -> None:
     base.add_edge(sink, tail_start, InterstateEdge())
 
 
+def reserved_identifiers(base: SDFG) -> dict[str, None]:
+    """Every data, symbol, constant and connector name ``base`` uses."""
+    reserved = dict.fromkeys([*base.arrays.keys(), *base.symbols.keys(), *base.constants_prop.keys()])
+    for bstate in base.states():
+        for bnode in bstate.nodes():
+            reserved.update(dict.fromkeys([*bnode.in_connectors.keys(), *bnode.out_connectors.keys()]))
+    return reserved
+
+
+def alias_onto_keep(tail: SDFG, drepl: dict[str, str], aliases: dict[str, str]) -> None:
+    """Rename each ``drop`` connector's container in ``tail`` to the ``keep`` connector it aliases, recording it in
+    ``drepl``."""
+    for drop_conn, keep_conn in aliases.items():
+        renamed = drepl.get(drop_conn, drop_conn)
+        if renamed != keep_conn:
+            replace_datadesc_names(tail, {renamed: keep_conn})
+            drepl[drop_conn] = keep_conn
+
+
+def adopt_definitions(base: SDFG, tail: SDFG) -> None:
+    """Add ``tail``'s data descriptors, symbols and constants that ``base`` lacks to ``base``."""
+    for name, desc in list(tail.arrays.items()):
+        if name not in base.arrays:
+            base.add_datadesc(name, desc)
+    for sym, stype in tail.symbols.items():
+        if sym not in base.symbols:
+            base.add_symbol(sym, stype)
+    for cname, cval in tail.constants_prop.items():
+        if cname not in base.constants_prop:
+            base.add_constant(cname, cval[1], cval[0])
+
+
+def rewire_onto_keep(
+    state: SDFGState,
+    keep: nodes.NestedSDFG,
+    drop: nodes.NestedSDFG,
+    carried: dict[str, tuple[str, nodes.AccessNode, bool]],
+    drepl: dict[str, str],
+    co_written: dict[str, str],
+    facts: symbolic.Facts | None,
+) -> None:
+    """Re-point ``drop``'s boundary edges onto ``keep`` under the connectors ``drepl`` renamed them to."""
+    for e in list(state.in_edges(drop)):
+        if e.dst_conn in carried:
+            state.remove_edge(e)  # satisfied inside; re-adding it would close a cycle
+            continue
+        if e.dst_conn is None:
+            # Ordering memlet: no connector to rename, and keep->keep would be a cycle.
+            if e.src is not keep:
+                state.add_edge(e.src, e.src_conn, keep, None, copy.deepcopy(e.data))
+            state.remove_edge(e)
+            continue
+
+        conn = drepl.get(e.dst_conn, e.dst_conn)
+        keep.add_in_connector(conn, force=True)
+        state.add_edge(e.src, e.src_conn, keep, conn, copy.deepcopy(e.data))
+        state.remove_edge(e)
+    for e in list(state.out_edges(drop)):
+        if e.src_conn is None:
+            if e.dst is not keep:
+                state.add_edge(keep, None, e.dst, e.dst_conn, copy.deepcopy(e.data))
+            state.remove_edge(e)
+            continue
+        if e.src_conn in co_written:
+            (write,) = [w for w in state.out_edges_by_connector(keep, co_written[e.src_conn]) if w.dst is e.dst]
+            write.data.subset = subsets.union(write.data.subset, e.data.subset, facts)
+            state.remove_edge(e)
+            continue
+        conn = drepl.get(e.src_conn, e.src_conn)
+        keep.add_out_connector(conn, force=True)
+        state.add_edge(keep, conn, e.dst, e.dst_conn, copy.deepcopy(e.data))
+        state.remove_edge(e)
+
+
+def retire_inner_carriers(
+    state: SDFGState, keep: nodes.NestedSDFG, carried: dict[str, tuple[str, nodes.AccessNode, bool]]
+) -> None:
+    """Remove the outer plumbing of every carrier only ``drop`` read, now produced and consumed inside ``keep``."""
+    for keep_conn, carrier, alone in carried.values():
+        if not alone:
+            continue
+        for oe in list(state.out_edges(keep)):
+            if oe.dst is carrier:
+                state.remove_edge(oe)
+        keep.remove_out_connector(keep_conn)
+        state.remove_node(carrier)
+        keep.sdfg.arrays[keep_conn].transient = True
+
+
 def _dedup_boundary_aliases(state: SDFGState, keep: nodes.NestedSDFG) -> None:
     """Fold duplicate boundary reads left by sibling consolidation."""
     base = keep.sdfg
@@ -277,82 +366,19 @@ class NormalizeMapBody(ppl.Pass):
             tail.replace_dict(bound_apart_in_tail(base, tail))
             # Rename tail's data that collides with any base identifier, tracking how drop's connectors were renamed so
             # we can rewire the outer edges.
-            reserved = dict.fromkeys([*base.arrays.keys(), *base.symbols.keys(), *base.constants_prop.keys()])
-            for bstate in base.states():
-                for bnode in bstate.nodes():
-                    reserved.update(dict.fromkeys([*bnode.in_connectors.keys(), *bnode.out_connectors.keys()]))
-            drepl = _uniquify_data_against(tail, reserved)
+            drepl = _uniquify_data_against(tail, reserved_identifiers(base))
             # A container keep WRITES and drop READS is one value, not two: point tail's copy at
             # keep's array so it crosses the sequencing edge ``_append_cfg`` adds.
-            for drop_conn, (keep_conn, _carrier, _private) in carried.items():
-                renamed = drepl.get(drop_conn, drop_conn)
-                if renamed != keep_conn:
-                    replace_datadesc_names(tail, {renamed: keep_conn})
-                    drepl[drop_conn] = keep_conn
+            alias_onto_keep(tail, drepl, {drop_conn: keep_conn for drop_conn, (keep_conn, *unused) in carried.items()})
             # A container both write through one access node is one array of the merged node as well.
             co_written = co_written_connectors(state, keep, drop)
             # Asked before the rewiring below: half rewired, the scope is not walkable
             facts = SymbolResolver().facts_at(state, keep) if co_written else None
-            for drop_conn, keep_conn in co_written.items():
-                renamed = drepl.get(drop_conn, drop_conn)
-                if renamed != keep_conn:
-                    replace_datadesc_names(tail, {renamed: keep_conn})
-                    drepl[drop_conn] = keep_conn
-            # Carry tail's (now non-colliding) data descriptors + symbols into base.
-            for name, desc in list(tail.arrays.items()):
-                if name not in base.arrays:
-                    base.add_datadesc(name, desc)
-            for sym, stype in tail.symbols.items():
-                if sym not in base.symbols:
-                    base.add_symbol(sym, stype)
-            for cname, cval in tail.constants_prop.items():
-                if cname not in base.constants_prop:
-                    base.add_constant(cname, cval[1], cval[0])
+            alias_onto_keep(tail, drepl, co_written)
+            adopt_definitions(base, tail)
             _append_cfg(base, tail)
-
-            # Re-point drop's boundary edges onto keep with (possibly renamed) connectors.
-            for e in list(state.in_edges(drop)):
-                if e.dst_conn in carried:
-                    state.remove_edge(e)  # satisfied inside; re-adding it would close a cycle
-                    continue
-                if e.dst_conn is None:
-                    # Ordering memlet: no connector to rename, and keep->keep would be a cycle.
-                    if e.src is not keep:
-                        state.add_edge(e.src, e.src_conn, keep, None, copy.deepcopy(e.data))
-                    state.remove_edge(e)
-                    continue
-
-                conn = drepl.get(e.dst_conn, e.dst_conn)
-                keep.add_in_connector(conn, force=True)
-                state.add_edge(e.src, e.src_conn, keep, conn, copy.deepcopy(e.data))
-                state.remove_edge(e)
-            for e in list(state.out_edges(drop)):
-                if e.src_conn is None:
-                    if e.dst is not keep:
-                        state.add_edge(keep, None, e.dst, e.dst_conn, copy.deepcopy(e.data))
-                    state.remove_edge(e)
-                    continue
-                if e.src_conn in co_written:
-                    (write,) = [w for w in state.out_edges_by_connector(keep, co_written[e.src_conn]) if w.dst is e.dst]
-                    write.data.subset = subsets.union(write.data.subset, e.data.subset, facts)
-                    state.remove_edge(e)
-                    continue
-                conn = drepl.get(e.src_conn, e.src_conn)
-                keep.add_out_connector(conn, force=True)
-                state.add_edge(keep, conn, e.dst, e.dst_conn, copy.deepcopy(e.data))
-                state.remove_edge(e)
-
-            # A carrier only ``drop`` read is now produced AND consumed inside ``keep``, so its outer plumbing is dead.
-            for keep_conn, carrier, alone in carried.values():
-                if not alone:
-                    continue
-                for oe in list(state.out_edges(keep)):
-                    if oe.dst is carrier:
-                        state.remove_edge(oe)
-                keep.remove_out_connector(keep_conn)
-                state.remove_node(carrier)
-                base.arrays[keep_conn].transient = True
-
+            rewire_onto_keep(state, keep, drop, carried, drepl, co_written, facts)
+            retire_inner_carriers(state, keep, carried)
             # Merge symbol mapping (rename keys that were renamed inside tail).
             for k, v in drop.symbol_mapping.items():
                 keep.symbol_mapping.setdefault(symbol_repl.get(k, k), v)

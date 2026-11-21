@@ -131,25 +131,37 @@ def own_access(state: SDFGState, node: nodes.NestedSDFG, access: nodes.AccessNod
     return mine if others > len(mine) else []
 
 
-def route_through_data(state: SDFGState, node: nodes.NestedSDFG, facts: StateFacts) -> bool:
-    """Drop ``node``'s blocking ordering edges that guard nothing, and replace the others by edges through its data
-    access nodes if that keeps the state acyclic."""
+def drop_unguarding_edges(state: SDFGState, node: nodes.NestedSDFG, facts: StateFacts) -> bool:
+    """Remove ``node``'s blocking ordering edges that guard nothing; whether one was removed."""
     ins, outs = blocking_ordering_edges(state, node)
     # One at a time against the current graph: parallel copies of one edge each guard nothing while the others stay
-    dropped = []
+    dropped = False
     for edge in [*ins, *outs]:
         if guards_nothing(state, edge, facts):
             state.remove_edge(edge)
-            dropped.append(edge)
-    ins, outs = blocking_ordering_edges(state, node)
-    if not ins and not outs:
-        return bool(dropped)
+            dropped = True
+    return dropped
+
+
+def data_neighbors(state: SDFGState, node: nodes.Node) -> tuple[list[nodes.Node], list[nodes.Node]]:
+    """The distinct sources of ``node``'s data in-edges and destinations of its data out-edges."""
     reads = list(dict.fromkeys(e.src for e in state.in_edges(node) if not e.data.is_empty()))
     writes = list(dict.fromkeys(e.dst for e in state.out_edges(node) if not e.data.is_empty()))
+    return reads, writes
+
+
+def route_through_data(state: SDFGState, node: nodes.NestedSDFG, facts: StateFacts) -> bool:
+    """Drop ``node``'s blocking ordering edges that guard nothing, and replace the others by edges through its data
+    access nodes if that keeps the state acyclic."""
+    dropped = drop_unguarding_edges(state, node, facts)
+    ins, outs = blocking_ordering_edges(state, node)
+    if not ins and not outs:
+        return dropped
+    reads, writes = data_neighbors(state, node)
     if not all(isinstance(n, nodes.AccessNode) for n in reads + writes):
-        return bool(dropped)
+        return dropped
     if (outs and not writes) or (ins and not reads):
-        return bool(dropped)
+        return dropped
     graph = state.nx
     # An access node the nest owns alone cannot close a cycle; one it shares can, and is split if it may be.
     to_split: list[tuple[nodes.AccessNode, list, bool]] = [
@@ -163,13 +175,12 @@ def route_through_data(state: SDFGState, node: nodes.NestedSDFG, facts: StateFac
         if any(nx.has_path(graph, read, e.src) for e in ins)
     )
     if any(not edges for _, edges, _ in to_split):
-        return bool(dropped)
+        return dropped
     for access, edges, outgoing in to_split:
         own = state.add_access(access.data)
         for edge in edges:
             helpers.redirect_edge(state, edge, **({"new_dst": own} if outgoing else {"new_src": own}))
-    reads = list(dict.fromkeys(e.src for e in state.in_edges(node) if not e.data.is_empty()))
-    writes = list(dict.fromkeys(e.dst for e in state.out_edges(node) if not e.data.is_empty()))
+    reads, writes = data_neighbors(state, node)
     for edge in outs:
         state.remove_edge(edge)
         for written in writes:

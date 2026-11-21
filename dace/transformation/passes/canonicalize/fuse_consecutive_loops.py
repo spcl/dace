@@ -319,6 +319,44 @@ class GuardedFusionPlan:
         self.guards = guards
 
 
+def sequenced_chain(region: ControlFlowRegion, loops: list[LoopRegion]) -> list[LoopRegion] | None:
+    """``loops`` in the order their sequencing edges run them, from the one no loop points at; ``None`` if an edge
+    between two of them assigns or decides anything."""
+    heads = [l for l in loops if not any(isinstance(e.src, LoopRegion) for e in region.in_edges(l))]
+    if len(heads) != 1:
+        return None
+    chain: list[LoopRegion] = [heads[0]]
+    while True:
+        out = region.out_edges(chain[-1])
+        if len(out) != 1:
+            return chain
+        link, nxt = out[0], out[0].dst
+        if not isinstance(nxt, LoopRegion) or nxt in chain or len(region.in_edges(nxt)) != 1:
+            return chain
+        if link.data.assignments:
+            return None
+        if link.data.condition is not None and link.data.condition.as_string not in ("1", "True"):
+            return None
+        chain.append(nxt)
+
+
+def unit_stride_bounds(
+    loops: list[LoopRegion],
+) -> list[tuple[symbolic.SymbolicType, symbolic.SymbolicType]] | None:
+    """The inclusive ``(start, end)`` of every loop, or ``None`` if one is not a stride-1 loop with known bounds."""
+    bounds: list[tuple[symbolic.SymbolicType, symbolic.SymbolicType]] = []
+    for loop in loops:
+        stride = loop_analysis.get_loop_stride(loop)
+        if stride is None or symbolic.simplify(stride) != 1:
+            return None
+        start = loop_analysis.get_init_assignment(loop)
+        end = loop_analysis.get_loop_end(loop)
+        if start is None or end is None:
+            return None
+        bounds.append((symbolic.pystr_to_symbolic(start), symbolic.pystr_to_symbolic(end)))
+    return bounds
+
+
 def plan_guarded_fusion(region: ControlFlowRegion) -> GuardedFusionPlan | None:
     """The maximal chain of adjacent-range sibling loops in ``region``, or ``None``."""
     loops = [b for b in region.nodes() if isinstance(b, LoopRegion)]
@@ -328,27 +366,8 @@ def plan_guarded_fusion(region: ControlFlowRegion) -> GuardedFusionPlan | None:
         if b not in loops and isinstance(b, SDFGState) and len(list(b.nodes())) > 0:
             return None
 
-    # Order the chain by its sequencing edges, starting from the loop nothing else points at.
-    heads = [l for l in loops if not any(isinstance(e.src, LoopRegion) for e in region.in_edges(l))]
-    if len(heads) != 1:
-        return None
-    chain: list[LoopRegion] = [heads[0]]
-    while True:
-        out = region.out_edges(chain[-1])
-        if len(out) != 1:
-            break
-        link, nxt = out[0], out[0].dst
-        if not isinstance(nxt, LoopRegion) or nxt in chain:
-            break
-        if len(region.in_edges(nxt)) != 1:
-            break
-        # Pure sequencing only: nothing may run, or be decided, between two fused siblings.
-        if link.data.assignments:
-            return None
-        if link.data.condition is not None and link.data.condition.as_string not in ("1", "True"):
-            return None
-        chain.append(nxt)
-    if len(chain) != len(loops):
+    chain = sequenced_chain(region, loops)
+    if chain is None or len(chain) != len(loops):
         return None
 
     var = chain[0].loop_variable
@@ -357,16 +376,9 @@ def plan_guarded_fusion(region: ControlFlowRegion) -> GuardedFusionPlan | None:
     # something inside that sibling.
     if any(var in l.free_symbols for l in chain[1:]):
         return None
-    bounds: list[tuple[symbolic.SymbolicType, symbolic.SymbolicType]] = []
-    for loop in chain:
-        stride = loop_analysis.get_loop_stride(loop)
-        if stride is None or symbolic.simplify(stride) != 1:
-            return None
-        start = loop_analysis.get_init_assignment(loop)
-        end = loop_analysis.get_loop_end(loop)
-        if start is None or end is None:
-            return None
-        bounds.append((symbolic.pystr_to_symbolic(start), symbolic.pystr_to_symbolic(end)))
+    bounds = unit_stride_bounds(chain)
+    if bounds is None:
+        return None
     for (_, prev_end), (nxt_start, _) in zip(bounds, bounds[1:]):
         if not _symbolically_equal(symbolic.simplify(prev_end + 1), nxt_start):
             return None

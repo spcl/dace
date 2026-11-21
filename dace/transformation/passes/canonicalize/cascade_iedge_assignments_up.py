@@ -175,16 +175,10 @@ def _block_writes(block: ControlFlowBlock) -> tuple[dict[str, None], dict[str, N
     return asyms, wdata
 
 
-def _legal_to_hoist_into(
-    parent: ControlFlowRegion,
-    child: ControlFlowRegion,
-    key: str,
-    rhs: str,
-    rhs_syms: dict[str, None],
-    sdfg: SDFG,
-    cache: HoistAnalysisCache,
+def stays_invariant_inside(
+    child: ControlFlowRegion, key: str, rhs: str, rhs_syms: dict[str, None], sdfg: SDFG, cache: HoistAnalysisCache
 ) -> bool:
-    """Decide whether an assignment inside ``child`` may move up one level."""
+    """Whether ``key = rhs`` means the same before ``child`` as inside it."""
     # L1: any new symbol introduced by ``child`` (its loop variable, or any iedge assignment inside ``child`` other than
     # the one being moved) that the rhs would now reference is a violation.
     if isinstance(child, LoopRegion) and child.loop_variable and str(child.loop_variable) in rhs_syms:
@@ -210,9 +204,13 @@ def _legal_to_hoist_into(
         return False
     if any(s in inner_wdata for s in rhs_syms):
         return False  # a tasklet inside child writes to a container our rhs reads
+    return True
 
-    # L2/L3/L4: examine strict predecessors of ``child`` in ``parent``.
-    preds = cache.predecessors(parent, child)
+
+def predecessors_clear(
+    preds: dict[ControlFlowBlock, None], key: str, rhs_syms: dict[str, None], cache: HoistAnalysisCache
+) -> bool:
+    """Whether no block in ``preds`` reads ``key`` or writes ``key`` or a symbol of the rhs."""
     for b in preds:
         reads = cache.block_reads(b)
         if reads is None or key in reads:
@@ -222,9 +220,19 @@ def _legal_to_hoist_into(
             return False  # L4: predecessor writes key
         if any(s in b_asyms for s in rhs_syms) or any(s in b_wdata for s in rhs_syms):
             return False  # L2: predecessor writes a rhs symbol
+    return True
 
-    # Also any iedge in parent (other than the in-edges of ``child``) that writes ``key`` or a ``rhs_sym`` is a
-    # violation.
+
+def parent_edges_clear(
+    parent: ControlFlowRegion,
+    child: ControlFlowRegion,
+    preds: dict[ControlFlowBlock, None],
+    key: str,
+    rhs: str,
+    rhs_syms: dict[str, None],
+) -> bool:
+    """Whether no edge of ``parent`` ahead of ``child`` reads ``key``, and none but ``child``'s in-edges assigns
+    ``key`` another value or a symbol of the rhs."""
     for e in parent.edges():
         if e.src in preds and key in e.data.read_symbols():
             return False  # L3: an edge ahead of ``child`` would observe the moved assignment
@@ -237,7 +245,26 @@ def _legal_to_hoist_into(
                 return False
             if lhs in rhs_syms:
                 return False
+    return True
 
+
+def legal_to_hoist_into(
+    parent: ControlFlowRegion,
+    child: ControlFlowRegion,
+    key: str,
+    rhs: str,
+    rhs_syms: dict[str, None],
+    sdfg: SDFG,
+    cache: HoistAnalysisCache,
+) -> bool:
+    """Decide whether an assignment inside ``child`` may move up one level."""
+    if not stays_invariant_inside(child, key, rhs, rhs_syms, sdfg, cache):
+        return False
+    preds = cache.predecessors(parent, child)
+    if not predecessors_clear(preds, key, rhs_syms, cache):
+        return False
+    if not parent_edges_clear(parent, child, preds, key, rhs, rhs_syms):
+        return False
     # L7: ``child`` need not run the assignment (no iteration, a break), and whatever follows it
     # then reads the value from before ``child``, not the moved one.
     return not _read_after(parent, child, key, cache)
@@ -265,7 +292,7 @@ def _find_destination(
             break
         if not isinstance(parent, ControlFlowRegion):
             break  # crossed out of SDFG (would need L6 NSDFG passthrough)
-        if not _legal_to_hoist_into(parent, walker, key, rhs, rhs_syms, sdfg, cache):
+        if not legal_to_hoist_into(parent, walker, key, rhs, rhs_syms, sdfg, cache):
             break
         dest = parent
         walker = parent
