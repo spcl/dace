@@ -1169,38 +1169,16 @@ def staged_iedge_rhs(rhs: str, src_state: SDFGState, sdfg: SDFG) -> symbolic.Sym
         return None
 
 
-def _try_substitute_iedge_iv(
-    parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: set[str]
-) -> bool:
-    """Substitute an interstate-edge IV ``sym := sym +/- step`` in the loop body by its closed form.
-
-    Keeps the loop (unlike :func:`_try_substitute`) and removes only the carried dependence on
-    ``sym`` (TSVC s122 / s125 / s126); the post-loop value is materialized for later readers.
-    Requires: any nonzero stride (symbolic ok); exactly one body iedge writing ``sym``, with a
-    literal or loop-invariant ``step``, no other assignment and no condition; the increment at the
-    TOP, the BOTTOM, or between blocks with every use on one side (s128); ``sym`` a symbol.
-    Derived symbols and branch-uniform increments are handled by
-    :func:`_try_substitute_derived_symbol` and :func:`_hoist_branch_uniform_iv`.
-
-    :param parent: CFG containing ``loop``.
-    :param loop: Candidate ``LoopRegion``.
-    :param sdfg: Owning SDFG.
-    :returns: ``True`` if applied; ``False`` (no mutation) otherwise.
-    """
-    if not loop.loop_variable:
-        return False
-    # 1. Find the IV iedge: exactly one iedge in the body whose ONLY assignment
-    #    is ``sym := sym + literal`` (or symmetric). Reject any iedge with a
-    #    non-trivial condition.
-    iv_candidate = None  # (edge, sym_name, step_sympy)
+def iedge_iv(loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: set[str]) -> tuple[Any, str, Any] | None:
+    """The body's one unconditional interstate edge ``sym := sym + step``, ``sym`` and ``step``: ``sym`` an SDFG
+    symbol no other edge writes, ``step`` a literal or loop-invariant."""
+    iv_candidate = None
     for e in loop.edges():
         if e.data.condition.as_string not in ("1", "True", "(1)"):
-            return False
+            return None
         if not e.data.assignments:
             continue
         if len(e.data.assignments) != 1:
-            # An IV iedge here carries only the IV; other assignments would
-            # need separate handling.
             continue
         ((lhs, rhs),) = e.data.assignments.items()
         try:
@@ -1209,10 +1187,7 @@ def _try_substitute_iedge_iv(
             lhs_sym = symbolic.pystr_to_symbolic(lhs)
             diff = symbolic.simplify(rhs_expr - as_expr(lhs_sym))
         except Exception:
-            # ``rhs`` may be a comparison (``StrictGreaterThan`` etc.) or
-            # other non-arithmetic expression on which ``-`` raises
-            # ``TypeError`` -- the assignment is not an arithmetic IV.
-            continue
+            continue  # a comparison or another non-arithmetic right-hand side
         # A numeric literal is always admissible; anything else must pass the IV-vs-reduction
         # discriminator (see ``step_is_loop_invariant``). A varying step has no closed form.
         if not as_basic(diff).is_number:
@@ -1220,45 +1195,22 @@ def _try_substitute_iedge_iv(
                 as_basic(diff).free_symbols, loop, sdfg, sdfg_free_symbols
             ):
                 continue
-        # ``lhs`` must be an SDFG symbol -- not a data container, not a loop var.
         if lhs == loop.loop_variable:
             continue
         if lhs not in sdfg.symbols and lhs not in sdfg_free_symbols:
             continue
-        # No other body iedge may also write ``lhs``.
         other_writers = [oe for oe in loop.all_interstate_edges() if oe is not e and lhs in oe.data.assignments]
         if other_writers:
             continue
         if iv_candidate is not None:
-            return False  # >1 IV pattern; defer to a future multi-IV extension
+            return None  # >1 IV pattern; defer to a future multi-IV extension
         iv_candidate = (e, lhs, diff)
-    if iv_candidate is None:
-        return False
-    iv_edge, sym_name, step = iv_candidate
-    if sym_name in loop_analysis.loop_header_names(loop):
-        return False  # the trip count reads the counter the body changes
+    return iv_candidate
 
-    # Bounds parsed only once an IV iedge exists -- three sympy round trips no shape without
-    # one ever needs.
-    start = loop_analysis.get_init_assignment(loop)
-    end = loop_analysis.get_loop_end(loop)
-    stride = loop_analysis.get_loop_stride(loop)
-    if start is None or end is None or stride is None or stride == 0:
-        return False
 
-    # The IV symbol must be a counter PRIVATE to this loop. If it is also updated
-    # in another (nested or enclosing) loop it is a shared counter, and a per-loop
-    # closed form double-counts (TSVC s126 increments ``k`` in BOTH the inner and
-    # outer loop). Refuse so such shared counters stay sequential.
-    if _symbol_updated_in_other_loop(sdfg, loop, sym_name):
-        return False
-
-    # 2. Offset in TRIPS (``norm_iter``): an increment on the edge out of the empty start block (TOP)
-    #    is seen by the whole body (``norm_iter + 1``); one into the unique empty sink (BOTTOM, the
-    #    frontend's shape, s318) is not (``norm_iter``).
-    sym_sym = symbolic.pystr_to_symbolic(sym_name)
-    norm_iter = trip_index(loop, start, stride)
-
+def iedge_body_offset(loop: LoopRegion, iv_edge: Any, sym_name: str, norm_iter: Any) -> Any | None:
+    """The trips of the increment the body sees: one more when the increment leaves the empty start block or every
+    use follows it (s128), the trip index when it enters the unique empty sink (s318) or every use precedes it."""
     src_is_empty_start = (
         iv_edge.src is loop.start_block and isinstance(iv_edge.src, SDFGState) and not iv_edge.src.nodes()
     )
@@ -1286,7 +1238,61 @@ def _try_substitute_iedge_iv(
             # No body reads: any offset works; only the post-loop value matters.
             body_offset = norm_iter
         else:
-            return False
+            return None
+    return body_offset
+
+
+def _try_substitute_iedge_iv(
+    parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: set[str]
+) -> bool:
+    """Substitute an interstate-edge IV ``sym := sym +/- step`` in the loop body by its closed form.
+
+    Keeps the loop (unlike :func:`_try_substitute`) and removes only the carried dependence on
+    ``sym`` (TSVC s122 / s125 / s126); the post-loop value is materialized for later readers.
+    Requires: any nonzero stride (symbolic ok); exactly one body iedge writing ``sym``, with a
+    literal or loop-invariant ``step``, no other assignment and no condition; the increment at the
+    TOP, the BOTTOM, or between blocks with every use on one side (s128); ``sym`` a symbol.
+    Derived symbols and branch-uniform increments are handled by
+    :func:`_try_substitute_derived_symbol` and :func:`_hoist_branch_uniform_iv`.
+
+    :param parent: CFG containing ``loop``.
+    :param loop: Candidate ``LoopRegion``.
+    :param sdfg: Owning SDFG.
+    :returns: ``True`` if applied; ``False`` (no mutation) otherwise.
+    """
+    if not loop.loop_variable:
+        return False
+    iv_candidate = iedge_iv(loop, sdfg, sdfg_free_symbols)
+    if iv_candidate is None:
+        return False
+    iv_edge, sym_name, step = iv_candidate
+    if sym_name in loop_analysis.loop_header_names(loop):
+        return False  # the trip count reads the counter the body changes
+
+    # Bounds parsed only once an IV iedge exists -- three sympy round trips no shape without
+    # one ever needs.
+    start = loop_analysis.get_init_assignment(loop)
+    end = loop_analysis.get_loop_end(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    if start is None or end is None or stride is None or stride == 0:
+        return False
+
+    # The IV symbol must be a counter PRIVATE to this loop. If it is also updated
+    # in another (nested or enclosing) loop it is a shared counter, and a per-loop
+    # closed form double-counts (TSVC s126 increments ``k`` in BOTH the inner and
+    # outer loop). Refuse so such shared counters stay sequential.
+    if _symbol_updated_in_other_loop(sdfg, loop, sym_name):
+        return False
+
+    # 2. Offset in TRIPS (``norm_iter``): an increment on the edge out of the empty start block (TOP)
+    #    is seen by the whole body (``norm_iter + 1``); one into the unique empty sink (BOTTOM, the
+    #    frontend's shape, s318) is not (``norm_iter``).
+    sym_sym = symbolic.pystr_to_symbolic(sym_name)
+    norm_iter = trip_index(loop, start, stride)
+
+    body_offset = iedge_body_offset(loop, iv_edge, sym_name, norm_iter)
+    if body_offset is None:
+        return False
 
     # 3. Closed form: with the increment stripped, ``sym`` is ``sym_init``.
     post_iedge_expr = symbolic.simplify(as_expr(sym_sym) + body_offset * step)
