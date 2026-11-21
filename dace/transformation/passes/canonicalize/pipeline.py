@@ -227,7 +227,7 @@ class PropagateAndPrune(ppl.Pass):
             # A Pipeline per round, not bare passes: DeadDataflowElimination declares a
             # ControlFlowBlockReachability dependency that only a Pipeline resolves.
             pipeline = ppl.Pipeline([PropagateSymbols(), DeadDataflowElimination()])
-            # A round that modified nothing hands every later round the identical graph (CloudSC: 2.0s of 5.3s).
+            # A round that modified nothing hands every later round the identical graph.
             if not changed_the_graph(pipeline, pipeline.apply_pass(sdfg, {})):
                 break
             changed += 1
@@ -294,7 +294,7 @@ def run_structural_cleanup(sdfg: SDFG) -> None:
 
 def _inline_single_state(label: str) -> list[tuple[str, ppl.Pass]]:
     """Flatten single-state NestedSDFG bodies; un-inlined, they report whole-array memlets and every dependence test
-    refuses on the box (seidel_2d)."""
+    refuses on the box."""
     return [(label, RouteOrderingThroughData()), (label, PruneAndInlineNestedSDFGs())]
 
 

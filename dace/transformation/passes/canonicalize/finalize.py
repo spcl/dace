@@ -191,7 +191,7 @@ def cpu_library_choice(
     node: nodes.LibraryNode, state: SDFGState, sequential: bool, impls: dict, has_libxsmm: bool
 ) -> str | None:
     """The CPU implementation ``node`` takes over its fast default, or ``None`` to keep that."""
-    # In a parallel region the in-thread transpose beats an HPTT plan per call (cp2k_grid_integrate: 4 s vs 19 s).
+    # In a parallel region the in-thread transpose beats an HPTT plan per call.
     if sequential and isinstance(node, TensorTranspose):
         return "sequential"
     # In a parallel region a real GEMM is one small product per iteration: LIBXSMM, as OpenBLAS's per-call buffer
@@ -203,7 +203,7 @@ def cpu_library_choice(
         and has_libxsmm
     ):
         return "LIBXSMM"
-    # A batch of real products not known to be large: a LIBXSMM kernel per product (cp2k_trs4: 7.3 s vs 11.9 s).
+    # A batch of real products not known to be large: a LIBXSMM kernel per product.
     if isinstance(node, BatchedMatMul) and libxsmm_batched_product(node, state) and has_libxsmm:
         return "LIBXSMM"
     # A top-level real GEMM takes OpenBLAS with a run-time shape plan (split-K, syrk for ``X.T @ X``).

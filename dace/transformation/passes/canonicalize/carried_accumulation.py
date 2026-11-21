@@ -126,7 +126,7 @@ class CarriedAccumulationToWCR(ppl.Pass):
         for owner in sdfg.all_sdfgs_recursive():
             per_state: dict[SDFGState, set[str]] = {}
             for loop in [r for r in owner.all_control_flow_regions() if isinstance(r, LoopRegion)]:
-                # A loop with no in-place update has nothing to rewrite: no LoopToMap probe (cloudsc has hundreds).
+                # A loop with no in-place update has nothing to rewrite: no LoopToMap probe.
                 updated = updated_containers(loop, per_state)
                 if not updated:
                     continue
