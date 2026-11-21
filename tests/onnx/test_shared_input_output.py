@@ -16,12 +16,14 @@ from torch.nn import functional as F
 import dace
 import dace.libraries.onnx as donnx
 from dace.ml import DaceModule
+from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, run_sdfg, torch_device
 from tests.utils import torch_tensors_close
 
 
 @pytest.mark.onnx
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("training_mode", [True, False])
-def test_bn_standalone(training_mode: bool):
+def test_bn_standalone(training_mode: bool, device):
 
     if training_mode:
 
@@ -80,16 +82,21 @@ def test_bn_standalone(training_mode: bool):
     if training_mode:
         running_mean = np.zeros(3, dtype=np.float32)
         running_var = np.ones(3, dtype=np.float32)
-        dace_result = test_bn_standalone(X, scale, B, mean, var, running_mean, running_var)
+        sdfg = test_bn_standalone.to_sdfg()
+        dace_result = run_sdfg(
+            sdfg, device, X=X, scale=scale, B=B, mean=mean, var=var, running_mean=running_mean, running_var=running_var
+        )
     else:
-        dace_result = test_bn_standalone(X, scale, B, mean, var)
+        sdfg = test_bn_standalone.to_sdfg()
+        dace_result = run_sdfg(sdfg, device, X=X, scale=scale, B=B, mean=mean, var=var)
 
     pt_result = F.batch_norm(X_torch, mean_torch, var_torch, scale_torch, B_torch, training=training_mode)
     torch_tensors_close("output", pt_result, torch.from_numpy(dace_result))
 
 
 @pytest.mark.onnx
-def test_bn_in_import():
+@pytest.mark.parametrize("device", DEVICES)
+def test_bn_in_import(device):
 
     class Module(torch.nn.Module):
         def __init__(self):
@@ -99,23 +106,28 @@ def test_bn_in_import():
         def forward(self, x):
             return self.bn(x)
 
-    pt_module = Module()
+    device_str = torch_device(device)
+    pt_module = Module().to(device_str)
     pt_module.eval()
     dace_module = Module()
     dace_module.eval()
 
     dace_module.load_state_dict(pt_module.state_dict())
 
-    dace_module = DaceModule(dace_module, sdfg_name="test_bn_in_import")
+    dace_module = DaceModule(dace_module, sdfg_name=f"test_bn_in_import_{device}", cuda=is_gpu(device))
 
-    X = torch.randn(8, 3, 32, 32)
+    X = torch.randn(8, 3, 32, 32).to(device_str)
     pt_result = pt_module(X)
-    dace_result = dace_module(X)
+    if is_gpu(device):
+        with experimental_cuda():
+            dace_result = dace_module(X)
+    else:
+        dace_result = dace_module(X)
 
     torch_tensors_close("output", pt_result, dace_result)
 
 
 if __name__ == "__main__":
     for training_mode in [True, False]:
-        test_bn_standalone(training_mode=training_mode)
-    test_bn_in_import()
+        test_bn_standalone(training_mode=training_mode, device="cpu")
+    test_bn_in_import(device="cpu")

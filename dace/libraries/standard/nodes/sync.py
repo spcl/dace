@@ -1,12 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``Sync``: a barrier among the threads of a warp, a thread block or a whole grid of a GPU kernel, or a host wait for
-a GPU stream or the whole device."""
+"""``Sync``: a barrier among the threads of a warp, a thread block or a whole grid of a GPU kernel, or of an OpenMP
+team, or a host wait for a GPU stream or the whole device."""
 
 import enum
 
 import dace
 from dace import dtypes, library, nodes, properties
 from dace.codegen.common import get_gpu_backend
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -66,7 +67,8 @@ class Sync(nodes.LibraryNode):
     """A barrier among the threads of a warp, a thread block or the grid of a GPU kernel, or a host wait for a GPU
     stream or the whole device.
 
-    The node orders what runs before and after it in the control flow, so it is the only node of its state. Only a
+    The node orders what runs before and after it: through the (empty) edges of its state, or, as the only node of
+    its state, through the control flow. Only a
     stream barrier takes a connector: :data:`STREAM_CONNECTOR`, typed :data:`GPU_STREAM`, which the pass wiring the
     streams adds; without it, the barrier waits for the default stream.
     """
@@ -97,7 +99,7 @@ class Sync(nodes.LibraryNode):
             )
 
 
-def _expand(node: Sync, state: dace.SDFGState, backend: str) -> nodes.Tasklet:
+def expand_sync(node: Sync, state: dace.SDFGState, backend: str) -> nodes.Tasklet:
     wired = any(e.dst_conn == STREAM_CONNECTOR for e in state.in_edges(node))
     stream = STREAM_CONNECTOR if wired else "nullptr"
     tasklet = nodes.Tasklet(
@@ -117,7 +119,7 @@ class ExpandCUDA(ExpandTransformation):
 
     @staticmethod
     def expansion(node: Sync, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _expand(node, parent_state, "cuda")
+        return expand_sync(node, parent_state, "cuda")
 
 
 @library.register_expansion(Sync, "HIP")
@@ -126,15 +128,60 @@ class ExpandHIP(ExpandTransformation):
 
     @staticmethod
     def expansion(node: Sync, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _expand(node, parent_state, "hip")
+        return expand_sync(node, parent_state, "hip")
 
 
 @library.register_expansion(Sync, "Auto")
 class ExpandAuto(ExpandTransformation):
-    """The expansion of the configured GPU backend."""
+    """The OpenMP expansion for a barrier in a CPU team (``CPU_Persistent``), else that of the configured GPU
+    backend."""
 
     environments = []
 
     @staticmethod
     def expansion(node: Sync, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _expand(node, parent_state, get_gpu_backend())
+        in_team = enclosing_cpu_parallel_schedule(parent_sdfg, parent_state, node) == dtypes.ScheduleType.CPU_Persistent
+        if in_team and not is_devicelevel_gpu(parent_sdfg, parent_state, node):
+            return ExpandOpenMP.expansion(node, parent_state, parent_sdfg)
+        return expand_sync(node, parent_state, get_gpu_backend())
+
+
+def enclosing_cpu_parallel_schedule(
+    sdfg: dace.SDFG, state: dace.SDFGState, node: nodes.Node
+) -> dtypes.ScheduleType | None:
+    """The schedule of the innermost ``CPU_Multicore`` or ``CPU_Persistent`` map around ``node``, across nested
+    SDFGs; ``None`` when one thread runs it."""
+    parallel = (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent)
+    while True:
+        scopes = state.scope_dict()
+        scope = scopes[node]
+        while scope is not None:
+            if scope.schedule in parallel:
+                return scope.schedule
+            scope = scopes[scope]
+        if sdfg.parent_nsdfg_node is None:
+            return None
+        sdfg, state, node = sdfg.parent_sdfg, sdfg.parent, sdfg.parent_nsdfg_node
+
+
+@library.register_expansion(Sync, "OpenMP")
+class ExpandOpenMP(ExpandTransformation):
+    """``#pragma omp barrier`` for the team of the enclosing ``CPU_Persistent`` region (an ``omp parallel``), whether
+    the barrier names the block or the grid. A warp is one thread on a CPU and one thread waits for nobody, so both
+    need no statement; a worksharing ``omp for`` (``CPU_Multicore``) cannot hold a barrier."""
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: Sync, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        if node.scope in (SyncScope.STREAM, SyncScope.DEVICE):
+            raise ValueError(f"{node.label}: a {node.scope.value} wait has no OpenMP lowering")
+        if is_devicelevel_gpu(parent_sdfg, parent_state, node):
+            raise ValueError(f"{node.label}: the OpenMP barrier cannot run in a GPU kernel")
+        schedule = enclosing_cpu_parallel_schedule(parent_sdfg, parent_state, node)
+        if schedule == dtypes.ScheduleType.CPU_Multicore:
+            raise ValueError(f"{node.label}: an OpenMP barrier cannot be inside a worksharing (CPU_Multicore) map")
+        code = ""
+        if schedule == dtypes.ScheduleType.CPU_Persistent and node.scope != SyncScope.WARP:
+            code = "#pragma omp barrier"
+        return nodes.Tasklet(node.label, {}, {}, code, language=dace.Language.CPP, side_effects=True)

@@ -4,9 +4,35 @@ Contains replacements for filtering functions. This module includes functions fr
 NumPy's Indexing Routines and Sorting, Searching, and Counting Functions.
 """
 
-from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, subsets
+from collections.abc import Mapping
+from numbers import Number
+
+from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, subsets, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor, broadcast_together
+
+
+def branch_argument(
+    operand, arr: data.Data | None, symbols: Mapping[str, dtypes.typeclass]
+) -> data.Data | Number | dtypes.typeclass:
+    """One ``numpy.where`` branch as ``result_type`` weighs it: the array; a Python number as itself, a weak operand
+    (NEP 50: ``where(c, x, 1.0)`` keeps ``x``'s float type); else the scalar's dtype.
+
+    A symbolic scalar (``2 * N``) reaches here as a sympy expression, whose Python ``type()`` --
+    ``sympy.Mul`` and friends -- is in no dtype map.
+    """
+    if arr is not None:
+        return arr
+    if isinstance(operand, Number):
+        return operand
+    if symbolic.issymbolic(operand):
+        return symbolic.symtype(operand, symbols)
+    return dtypes.dtype_to_typeclass(type(operand))
+
+
+def branch_code(operand) -> str:
+    """The branch spelled for the tasklet: sympy prints ``**`` and ``/``, C++ needs neither."""
+    return symbolic.symstr(operand) if symbolic.issymbolic(operand) else operand
 
 
 def merge_node_expresses_where(arrays: dict, cond: str, left: str, right: str, out: str) -> bool:
@@ -73,13 +99,18 @@ def _array_array_where(
     except KeyError:
         right_arr = None
 
-    left_type = left_arr.dtype if left_arr else dtypes.dtype_to_typeclass(type(left_operand))
-    right_type = right_arr.dtype if right_arr else dtypes.dtype_to_typeclass(type(right_operand))
-
     # Implicit Python coversion implemented as casting
-    arguments = [cond_arr, left_arr or left_type, right_arr or right_type]
-    tasklet_args = ["__incond", "__in1" if left_arr else left_operand, "__in2" if right_arr else right_operand]
-    result_type, casting = result_type(arguments[1:])
+    arguments = [
+        cond_arr,
+        branch_argument(left_operand, left_arr, visitor.symbol_types()),
+        branch_argument(right_operand, right_arr, visitor.symbol_types()),
+    ]
+    tasklet_args = [
+        "__incond",
+        "__in1" if left_arr else branch_code(left_operand),
+        "__in2" if right_arr else branch_code(right_operand),
+    ]
+    result_type, casting = result_type(arguments[1:], symbols=visitor.symbol_types())
     left_cast = casting[0]
     right_cast = casting[1]
 
@@ -93,10 +124,13 @@ def _array_array_where(
     cond_shape = cond_arr.shape if cond_arr else [1]
 
     # The result has the broadcast shape of all three arguments: a condition wider than both operands widens it
-    full_shape = broadcast_together(broadcast_together(left_shape, right_shape)[0], cond_shape)[0]
-    (out_shape, all_idx_dict, out_idx, left_idx, _) = broadcast_together(left_shape, full_shape)
-    right_idx = broadcast_together(right_shape, full_shape)[3]
-    cond_idx = broadcast_together(cond_shape, full_shape)[3]
+    facts = sdfg.facts()
+    full_shape = broadcast_together(
+        broadcast_together(left_shape, right_shape, facts=facts)[0], cond_shape, facts=facts
+    )[0]
+    (out_shape, all_idx_dict, out_idx, left_idx, _) = broadcast_together(left_shape, full_shape, facts=facts)
+    right_idx = broadcast_together(right_shape, full_shape, facts=facts)[3]
+    cond_idx = broadcast_together(cond_shape, full_shape, facts=facts)[3]
 
     # Fix for Scalars
     if isinstance(left_arr, data.Scalar):
@@ -107,18 +141,31 @@ def _array_array_where(
         cond_idx = subsets.Range([(0, 0, 1)])
 
     if left_arr is None and right_arr is None:
-        raise ValueError("Both x and y cannot be scalars in numpy.where")
-    storage = left_arr.storage if left_arr else right_arr.storage
+        # Both x and y are constants: the result -- and the iteration space -- is shaped like `cond`.
+        if cond_arr is None or isinstance(cond_arr, data.Scalar):
+            raise ValueError(
+                "numpy.where with scalar x, y and a scalar condition returns a 0-dimensional array, "
+                "which DaCe cannot represent"
+            )
+        storage = cond_arr.storage
+    else:
+        storage = left_arr.storage if left_arr else right_arr.storage
 
     out_operand, out_arr = sdfg.add_transient(
         visitor.get_target_name(), out_shape, result_type, storage, find_new_name=True
     )
 
     if list(out_shape) == [1]:
+        # Constant operands are inlined in the tasklet code, so they get no connector
+        in_connectors = {"__incond": None}
+        if left_arr:
+            in_connectors["__in1"] = None
+        if right_arr:
+            in_connectors["__in2"] = None
         tasklet = state.add_tasklet(
             "_where_",
-            {"__incond", "__in1", "__in2"},
-            {"__out"},
+            in_connectors,
+            {"__out": None},
             f"__out = {tasklet_args[1]} if __incond else {tasklet_args[2]}",
         )
         n0 = state.add_read(cond_operand)
@@ -228,3 +275,38 @@ def _array_array_select(
                 right_operand_node = nd
 
     return out_operand
+
+
+def sort_along(
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis: int | None, order: object, argsort: bool
+) -> str:
+    """``numpy.sort`` / ``numpy.argsort`` of ``a`` along ``axis`` as one Sort library node, stable (``kind`` only
+    picks NumPy's algorithm; the sorted keys are the same, and ties keep their order). ``axis=None`` sorts a 1-D
+    array; NumPy flattens a wider one first, which is refused."""
+    from dace.libraries.sort.nodes import Sort  # Avoid import loop
+
+    if order is not None:
+        raise ValueError("numpy.sort and numpy.argsort with order= (structured fields) are not supported")
+    desc = sdfg.arrays[a]
+    ndim = len(desc.shape)
+    if axis is None:
+        if ndim != 1:
+            raise ValueError("numpy.sort/argsort with axis=None flattens the array first, which is not supported")
+        axis = 0
+    if not -ndim <= axis < ndim:
+        raise ValueError(f"axis {axis} is out of bounds for an array of dimension {ndim}")
+    out, out_desc = pv.add_temp_transient(desc.shape, dtypes.int64 if argsort else desc.dtype, desc.storage)
+    node = Sort("argsort" if argsort else "sort", axis=axis % ndim, argsort=argsort)
+    state.add_edge(state.add_read(a), None, node, "_keys_in", Memlet.from_array(a, desc))
+    state.add_edge(node, "_out", state.add_write(out), None, Memlet.from_array(out, out_desc))
+    return out
+
+
+@oprepo.replaces("numpy.sort")
+def _numpy_sort(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=-1, kind=None, order=None) -> str:
+    return sort_along(pv, sdfg, state, a, axis, order, argsort=False)
+
+
+@oprepo.replaces("numpy.argsort")
+def _numpy_argsort(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=-1, kind=None, order=None) -> str:
+    return sort_along(pv, sdfg, state, a, axis, order, argsort=True)

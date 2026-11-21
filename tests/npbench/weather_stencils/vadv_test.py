@@ -7,7 +7,6 @@ import pytest
 
 import dace as dc
 import dace.dtypes
-from dace.autodiff import add_backward_pass
 from dace.transformation.auto.auto_optimize import auto_optimize
 
 # Sample constants
@@ -309,6 +308,8 @@ def run_vadv_autodiff():
     import jax
     import jax.numpy as jnp
     from jax import lax
+
+    from dace.autodiff import add_backward_pass  # Imported here: it loads torch, whose OpenMP collection must not map
 
     # Initialize data (npbench small size)
     I, J, K = 4, 4, 3

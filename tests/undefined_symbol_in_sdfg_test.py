@@ -256,8 +256,8 @@ def test_undefined_symbols_not_in_arglist():
     concrete_dim = symbolic.symbol("N")
 
     # Add a symbol that isn't used in the SDFG
-    sdfg.add_symbol("unused_symbol", undefined_dim.dtype)
-    sdfg.add_symbol("N", concrete_dim.dtype)
+    sdfg.add_symbol("unused_symbol", undefined_dim.declaration.dtype)
+    sdfg.add_symbol("N", concrete_dim.declaration.dtype)
 
     # Add arrays not using the undefined symbol
     sdfg.add_array("A", [concrete_dim], dace.float64)
@@ -341,7 +341,7 @@ def test_undefined_symbol_in_arglist(found):
     undefined_dim = symbolic.UndefinedSymbol()
     N = symbolic.symbol("N")
 
-    sdfg.add_symbol("N", N.dtype)
+    sdfg.add_symbol("N", N.declaration.dtype)
 
     # Add arrays - use undefined symbol in one dimension of an array
     sdfg.add_array("A", [undefined_dim], dace.float64)

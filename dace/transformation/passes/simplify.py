@@ -22,6 +22,7 @@ from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
+from dace.transformation.passes.simplify_induction_variables import SimplifyInductionVariables
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 
 SIMPLIFY_PASSES = [
@@ -43,6 +44,7 @@ SIMPLIFY_PASSES = [
     ConsolidateEdges,
     ContinueToCondition,
     EmptyLoopElimination,
+    SimplifyInductionVariables,
 ]
 
 _recursive_passes = [
@@ -121,6 +123,8 @@ class SimplifyPass(ppl.FixedPointPipeline):
         pass_opts = {
             "InlineControlFlowRegions.no_inline_function_call_regions": self.no_inline_function_call_regions,
             "InlineControlFlowRegions.no_inline_named_regions": self.no_inline_named_regions,
+            # The fixed point would peel a loop body's dead chain one link per round of every pass.
+            "DeadDataflowElimination.converge_self_reaching_states": True,
         }
         if pass_options:
             pass_opts.update(pass_options)

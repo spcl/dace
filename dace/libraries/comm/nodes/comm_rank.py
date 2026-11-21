@@ -20,6 +20,8 @@ class ExpandCommRankMPI(ExpandTransformation):
 class CommRank(CommNode):
     """The rank of the calling process in the communicator (``_rank``), as ``MPI_Comm_rank``."""
 
+    # a query of the communicator: nothing another rank sees
+    side_effects = False
     implementations = {"MPI": ExpandCommRankMPI}
     default_implementation = "MPI"
 

@@ -1,0 +1,223 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Drop, or move onto the access nodes it reads and writes, the ordering edges of a nested SDFG."""
+
+from typing import Any
+
+from dace import SDFG, Memlet, data
+from dace import graphlib as nx
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.state import SDFGState
+from dace.transformation import helpers, transformation
+from dace.transformation import pass_pipeline as ppl
+
+
+def blocking_ordering_edges(
+    state: SDFGState, node: nodes.NestedSDFG
+) -> tuple[list[MultiConnectorEdge[Memlet]], list[MultiConnectorEdge[Memlet]]]:
+    """The empty in- and out-edges of ``node`` that ``InlineSDFG`` refuses: not from or to a scope node."""
+    ins = [e for e in state.in_edges(node) if e.data.is_empty() and not isinstance(e.src, nodes.EntryNode)]
+    outs = [e for e in state.out_edges(node) if e.data.is_empty() and not isinstance(e.dst, nodes.ExitNode)]
+    return ins, outs
+
+
+def reach_bits(state: SDFGState, order: list[nodes.Node], index: dict[nodes.Node, int], skipped) -> dict:
+    """Per node of ``state``, the bitset (bit ``index[n]``) of the nodes it reaches, not using edge ``skipped``."""
+    bits: dict[nodes.Node, int] = {}
+    for current in reversed(order):
+        reach = 0
+        for edge in state.out_edges(current):
+            if edge is not skipped:
+                reach |= (1 << index[edge.dst]) | bits[edge.dst]
+        bits[current] = reach
+    return bits
+
+
+class StateFacts:
+    """What the decisions in one state read and no drop, reroute or split changes: the data each view aliases and each
+    node's accesses."""
+
+    def __init__(self, state: SDFGState) -> None:
+        self.state = state
+        self.roots = viewed_data(state)
+        self._accesses: dict[nodes.Node, tuple[set[str], set[str]] | None] = {}
+
+    def accesses(self, node: nodes.Node) -> tuple[set[str], set[str]] | None:
+        if node not in self._accesses:
+            self._accesses[node] = accesses(self.state, node, self.roots)
+        return self._accesses[node]
+
+
+def viewed_data(state: SDFGState) -> dict[str, str | None]:
+    """The data each view of ``state`` aliases, by name; ``None`` where the chain does not resolve."""
+    roots: dict[str, str | None] = {}
+    for node in state.data_nodes():
+        if isinstance(node.desc(state.sdfg), data.View):
+            root = sdutil.get_last_view_node(state, node)
+            roots[node.data] = root.data if root is not None else None
+    return roots
+
+
+def accesses(state: SDFGState, node: nodes.Node, roots: dict[str, str | None]) -> tuple[set[str], set[str]] | None:
+    """``(touched, written)`` data of ``node``, views resolved to what they alias; ``None`` where a view does not
+    resolve or the node has an ordered side effect, which no data shows."""
+    if isinstance(node, nodes.CodeNode) and node.has_ordered_side_effects(state.sdfg):
+        return None
+    if isinstance(node, nodes.AccessNode):
+        binding = sdutil.get_view_edge(state, node) if node.data in roots else None
+        carrying = [e for e in state.all_edges(node) if not e.data.is_empty()]
+        names = [node.data] if carrying else []
+        # A copy into the node runs there: the node reads the copy's source too
+        names += [
+            e.src.data for e in carrying if e.dst is node and e is not binding and isinstance(e.src, nodes.AccessNode)
+        ]
+        written = [node.data] if any(e.dst is node and e is not binding for e in carrying) else []
+    else:
+        names = [e.data.data for e in state.all_edges(node) if not e.data.is_empty()]
+        writes = [] if isinstance(node, nodes.EntryNode) else state.out_edges(node)
+        written = [e.data.data for e in writes if not e.data.is_empty()]
+    resolved = {name: roots.get(name, name) for name in names}
+    if None in resolved.values():
+        return None
+    return set(resolved.values()), {resolved[name] for name in written}
+
+
+def conflict(left: tuple[set[str], set[str]] | None, right: tuple[set[str], set[str]] | None) -> bool:
+    """Whether two ``(touched, written)`` access sets must stay ordered: one writes what the other touches."""
+    if left is None or right is None:
+        return True
+    return bool(left[1] & right[0] or right[1] & left[0])
+
+
+def guards_nothing(state: SDFGState, edge: MultiConnectorEdge[Memlet], facts: StateFacts) -> bool:
+    """Whether removing the ordering ``edge`` unorders no two nodes whose accesses conflict."""
+    if state.degree(edge.src) < 2 or state.degree(edge.dst) < 2:
+        return False  # the edge is all that keeps an endpoint in the state
+    scope = state.scope_dict()
+    if (state.in_degree(edge.dst) == 1 and scope[edge.dst] is not None) or (
+        state.out_degree(edge.src) == 1 and scope[edge.src] is not None
+    ):
+        return False  # the edge is all that keeps an endpoint in its scope
+    order = list(nx.topological_sort(state.nx))
+    index = {n: i for i, n in enumerate(order)}
+    full, without = reach_bits(state, order, index, None), reach_bits(state, order, index, edge)
+    after = full[edge.dst] | (1 << index[edge.dst])
+    source_bit = 1 << index[edge.src]
+    for before in order:
+        if before is not edge.src and not full[before] & source_bit:
+            continue
+        lost = after & ~(without[before] | (1 << index[before]))
+        while lost:
+            low = lost & -lost
+            node = order[low.bit_length() - 1]
+            if conflict(facts.accesses(before), facts.accesses(node)):
+                return False
+            lost ^= low
+    return True
+
+
+def own_access(state: SDFGState, node: nodes.NestedSDFG, access: nodes.AccessNode, outgoing: bool) -> list:
+    """``node``'s data edges into (``outgoing``) or out of ``access``, when ``access`` can hand them to an access node
+    of its own: a non-view sink (source) with other writers (readers), whose in-edges (out-edges) are unordered among
+    themselves."""
+    if isinstance(access.desc(state.sdfg), data.View):
+        return []
+    if (state.out_degree(access) if outgoing else state.in_degree(access)) > 0:
+        return []
+    edges = state.out_edges(node) if outgoing else state.in_edges(node)
+    mine = [e for e in edges if not e.data.is_empty() and (e.dst if outgoing else e.src) is access]
+    others = state.in_degree(access) if outgoing else state.out_degree(access)
+    return mine if others > len(mine) else []
+
+
+def drop_unguarding_edges(state: SDFGState, node: nodes.NestedSDFG, facts: StateFacts) -> bool:
+    """Remove ``node``'s blocking ordering edges that guard nothing; whether one was removed."""
+    ins, outs = blocking_ordering_edges(state, node)
+    # One at a time against the current graph: parallel copies of one edge each guard nothing while the others stay
+    dropped = False
+    for edge in [*ins, *outs]:
+        if guards_nothing(state, edge, facts):
+            state.remove_edge(edge)
+            dropped = True
+    return dropped
+
+
+def data_neighbors(state: SDFGState, node: nodes.Node) -> tuple[list[nodes.Node], list[nodes.Node]]:
+    """The distinct sources of ``node``'s data in-edges and destinations of its data out-edges."""
+    reads = list(dict.fromkeys(e.src for e in state.in_edges(node) if not e.data.is_empty()))
+    writes = list(dict.fromkeys(e.dst for e in state.out_edges(node) if not e.data.is_empty()))
+    return reads, writes
+
+
+def route_through_data(state: SDFGState, node: nodes.NestedSDFG, facts: StateFacts) -> bool:
+    """Drop ``node``'s blocking ordering edges that guard nothing, and replace the others by edges through its data
+    access nodes if that keeps the state acyclic."""
+    dropped = drop_unguarding_edges(state, node, facts)
+    ins, outs = blocking_ordering_edges(state, node)
+    if not ins and not outs:
+        return dropped
+    reads, writes = data_neighbors(state, node)
+    if not all(isinstance(n, nodes.AccessNode) for n in reads + writes):
+        return dropped
+    if (outs and not writes) or (ins and not reads):
+        return dropped
+    graph = state.nx
+    # An access node the nest owns alone cannot close a cycle; one it shares can, and is split if it may be.
+    to_split: list[tuple[nodes.AccessNode, list, bool]] = [
+        (written, own_access(state, node, written, outgoing=True), True)
+        for written in writes
+        if any(nx.has_path(graph, e.dst, written) for e in outs)
+    ]
+    to_split.extend(
+        (read, own_access(state, node, read, outgoing=False), False)
+        for read in reads
+        if any(nx.has_path(graph, read, e.src) for e in ins)
+    )
+    if any(not edges for _, edges, _ in to_split):
+        return dropped
+    for access, edges, outgoing in to_split:
+        own = state.add_access(access.data)
+        for edge in edges:
+            helpers.redirect_edge(state, edge, **({"new_dst": own} if outgoing else {"new_src": own}))
+    reads, writes = data_neighbors(state, node)
+    for edge in outs:
+        state.remove_edge(edge)
+        for written in writes:
+            state.add_nedge(written, edge.dst, Memlet())
+    for edge in ins:
+        state.remove_edge(edge)
+        for read in reads:
+            state.add_nedge(edge.src, read, Memlet())
+    return True
+
+
+@transformation.explicit_cf_compatible
+class RouteOrderingThroughData(ppl.Pass):
+    """Drop or reroute the ordering edges that keep nested SDFGs from being inlined; see the module docstring."""
+
+    CATEGORY: str = "Canonicalization"
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Edges | ppl.Modifies.AccessNodes
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return bool(modified & (ppl.Modifies.Nodes | ppl.Modifies.Edges))
+
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
+        return []
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
+        """Drop or reroute every nested SDFG's blocking ordering edges in ``sdfg`` and its nests."""
+        rerouted = 0
+        for owner in sdfg.all_sdfgs_recursive():
+            for state in owner.states():
+                blocked = [
+                    n
+                    for n in state.nodes()
+                    if isinstance(n, nodes.NestedSDFG) and any(blocking_ordering_edges(state, n))
+                ]
+                facts = StateFacts(state) if blocked else None
+                for node in blocked:
+                    rerouted += route_through_data(state, node, facts)
+        return rerouted or None

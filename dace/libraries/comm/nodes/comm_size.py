@@ -20,6 +20,8 @@ class ExpandCommSizeMPI(ExpandTransformation):
 class CommSize(CommNode):
     """The number of processes of the communicator (``_size``), as ``MPI_Comm_size``."""
 
+    # a query of the communicator: nothing another rank sees
+    side_effects = False
     implementations = {"MPI": ExpandCommSizeMPI}
     default_implementation = "MPI"
 

@@ -5,11 +5,14 @@ Every non-zero mask value is true: a ``LOGICAL`` mask may hold any non-zero valu
 """
 
 import dace
-from dace import dtypes, library, nodes, properties
-from dace.libraries.standard.helper import connector_array, fortran_axis, map_ranges
+from dace import data, dtypes, library, nodes, properties
+from dace.codegen.common import global_code_id
+from dace.frontend.operations import detect_reduction_type
+from dace.libraries.standard.helper import connector_array, fortran_axis, in_kernel_block_or, map_ranges
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.sdfg import utils as sdutil
 from dace.transformation.transformation import ExpandTransformation
+from dace.utils import prod
 
 
 def reduction_sdfg(node: "MaskReduction", state: dace.SDFGState, sdfg: dace.SDFG) -> dace.SDFG:
@@ -86,6 +89,44 @@ class ExpandMaskShortCircuit(ExpandTransformation):
         return short_circuit.to_sdfg(_mask=nsdfg.arrays["_mask"], _out=nsdfg.arrays["_out"], simplify=True)
 
 
+class ExpandMaskCUDABlock(ExpandTransformation):
+    """In-kernel lowering of a whole-mask reduction: one thread block folds the truth values."""
+
+    runs_inside_kernel = True
+    environments: list[type] = []
+
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg):
+        from dace.codegen.targets.cpp import sym2cpp
+        from dace.libraries.sort.environments.cub import BlockCollectives
+        from dace.libraries.standard.block_reduce import (
+            BLOCK_COLLECTIVE_THREADS,
+            block_redop,
+            block_reduce_code,
+            block_tasklet_sdfg,
+            linear_element,
+        )
+
+        cls.environments = [BlockCollectives]
+        idstr = global_code_id(parent_sdfg, parent_state, node)
+        mask, out = node.INPUT_CONNECTOR_NAME, node.OUTPUT_CONNECTOR_NAME
+
+        def code(arrays: dict[str, data.Data]) -> str:
+            ctype = arrays[out].dtype.ctype
+            return block_reduce_code(
+                idstr=idstr,
+                ctype=ctype,
+                lanes=BLOCK_COLLECTIVE_THREADS,
+                count_expr=sym2cpp(prod(arrays[mask].shape)),
+                element_expr=f"static_cast<{ctype}>({linear_element(f'__b{mask}', arrays[mask], '__bri')} != 0)",
+                redop=block_redop(detect_reduction_type(node.WCR), ctype),
+                identity=f"static_cast<{ctype}>({node.IDENTITY})",
+                out_expr=f"__b{out}[0]",
+            )
+
+        return block_tasklet_sdfg(node, parent_state, parent_sdfg, code)
+
+
 # A library expansion belongs to one node class
 @library.expansion
 class ExpandAllReduction(ExpandMaskReduction):
@@ -109,6 +150,21 @@ class ExpandAnyShortCircuit(ExpandMaskShortCircuit):
 
 @library.expansion
 class ExpandCountReduction(ExpandMaskReduction):
+    pass
+
+
+@library.expansion
+class ExpandAllCUDABlock(ExpandMaskCUDABlock):
+    pass
+
+
+@library.expansion
+class ExpandAnyCUDABlock(ExpandMaskCUDABlock):
+    pass
+
+
+@library.expansion
+class ExpandCountCUDABlock(ExpandMaskCUDABlock):
     pass
 
 
@@ -140,8 +196,13 @@ class MaskReduction(nodes.LibraryNode):
 class AllNode(MaskReduction):
     """Fortran ``ALL(mask [, dim])``: whether every element is true."""
 
-    implementations = {"reduction": ExpandAllReduction, "sequential": ExpandAllShortCircuit}
-    default_implementation = "reduction"
+    implementations = {
+        "Auto": in_kernel_block_or(ExpandAllReduction),
+        "reduction": ExpandAllReduction,
+        "sequential": ExpandAllShortCircuit,
+        "CUDA (block)": ExpandAllCUDABlock,
+    }
+    default_implementation = "Auto"
     WCR = "lambda a, b: a and b"
     IDENTITY = 1
 
@@ -150,8 +211,13 @@ class AllNode(MaskReduction):
 class AnyNode(MaskReduction):
     """Fortran ``ANY(mask [, dim])``: whether some element is true."""
 
-    implementations = {"reduction": ExpandAnyReduction, "sequential": ExpandAnyShortCircuit}
-    default_implementation = "reduction"
+    implementations = {
+        "Auto": in_kernel_block_or(ExpandAnyReduction),
+        "reduction": ExpandAnyReduction,
+        "sequential": ExpandAnyShortCircuit,
+        "CUDA (block)": ExpandAnyCUDABlock,
+    }
+    default_implementation = "Auto"
     WCR = "lambda a, b: a or b"
     IDENTITY = 0
 
@@ -160,8 +226,12 @@ class AnyNode(MaskReduction):
 class CountLibraryNode(MaskReduction):
     """Fortran ``COUNT(mask [, dim])``: the number of true elements."""
 
-    implementations = {"pure": ExpandCountReduction}
-    default_implementation = "pure"
+    implementations = {
+        "Auto": in_kernel_block_or(ExpandCountReduction),
+        "pure": ExpandCountReduction,
+        "CUDA (block)": ExpandCountCUDABlock,
+    }
+    default_implementation = "Auto"
     INPUT_CONNECTOR_NAME = "_cnt_in"
     OUTPUT_CONNECTOR_NAME = "_cnt_out"
     ELEMENT = dtypes.int32

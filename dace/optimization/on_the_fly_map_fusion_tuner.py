@@ -55,7 +55,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
             yield i + 1, [cutout.start_state.node_id(m) for m in subgraph]
 
     def pre_evaluate(self, cutout: dace.SDFG, measurements: int, **kwargs) -> dict:
-        cutout.start_state.instrument = self.instrument
+        optim_utils.instrument_state(cutout.start_state, self.instrument)
 
         new_kwargs = {
             "space_kwargs": {"cutout": cutout},
@@ -213,7 +213,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
 
                         if base_runtime is None:
                             baseline = SDFGCutout.singlestate_cutout(state, *(state.nodes()), make_copy=False)
-                            baseline.start_state.instrument = dace.InstrumentationType.GPU_Events
+                            optim_utils.instrument_state(baseline.start_state, dace.InstrumentationType.GPU_Events)
 
                             dreport_ = {}
                             for cstate in baseline.nodes():
@@ -244,7 +244,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                         experiment_maps_ids = [experiment_state_.node_id(me) for me in subgraph_maps]
                         experiment_sdfg = copy.deepcopy(experiment_sdfg_)
                         experiment_state = experiment_sdfg.start_state
-                        experiment_state.instrument = dace.InstrumentationType.GPU_Events
+                        optim_utils.instrument_state(experiment_state, dace.InstrumentationType.GPU_Events)
 
                         experiment_maps = [experiment_state.node(m_id) for m_id in experiment_maps_ids]
                         experiment_subgraph = helpers.subgraph_from_maps(

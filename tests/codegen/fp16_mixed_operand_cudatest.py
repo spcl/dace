@@ -51,10 +51,11 @@ CASES = {
         "c = min(a, b)",
         lambda a, b: np.minimum(a, b.astype(np.float64)),
     ),
+    # min and max take no mixed kinds: an integer meets a half through an explicit cast.
     "min_half_int": (
         {"a": HALVES, "b": INTS},
         np.float16,
-        "c = min(a, b)",
+        "c = min(a, dace.float16(b))",
         lambda a, b: np.minimum(a.astype(np.float32), b).astype(np.float16),
     ),
     "sin_half": (

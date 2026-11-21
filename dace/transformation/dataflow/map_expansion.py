@@ -43,6 +43,14 @@ class MapExpansion(pm.SingleStateTransformation):
         allow_none=True,
         default=None,
     )
+    split_at = Property(
+        category="Parameters",
+        desc="If set, split into exactly two maps instead: the first ``split_at`` dimensions outside (keeping the "
+        "schedule), the rest inside (``inner_schedule``).",
+        dtype=int,
+        allow_none=True,
+        default=None,
+    )
 
     @classmethod
     def expressions(cls):
@@ -55,10 +63,22 @@ class MapExpansion(pm.SingleStateTransformation):
 
     def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False):
         # A candidate subgraph matches the map-expansion pattern when it
-        # includes an N-dimensional map, with N greater than one.
-        return self.map_entry.map.get_param_num() > 1
+        # includes an N-dimensional map, with N greater than one, and ``split_at`` leaves dimensions on both sides.
+        params = self.map_entry.map.get_param_num()
+        return params > 1 and (self.split_at is None or 0 < self.split_at < params)
 
     def generate_new_maps(self, current_map: nodes.Map):
+        if self.split_at is not None:
+            k, ranges, tiles = self.split_at, current_map.range.ranges, current_map.range.tile_sizes
+            outer = nodes.Map(current_map.label, current_map.params[:k], subsets.Range(ranges[:k]))
+            inner = nodes.Map(
+                current_map.label + "_inner",
+                current_map.params[k:],
+                subsets.Range(ranges[k:]),
+                schedule=self.inner_schedule or current_map.schedule,
+            )
+            outer.range.tile_sizes, inner.range.tile_sizes = tiles[:k], tiles[k:]
+            return [outer, inner]
         if self.expansion_limit is None:
             full_expand = True
         elif isinstance(self.expansion_limit, int):
@@ -158,7 +178,7 @@ class MapExpansion(pm.SingleStateTransformation):
         if graph.in_degree(map_entry) == 0 or all(
             e.dst_conn is None or not e.dst_conn.startswith("IN_") for e in graph.in_edges(map_entry)
         ):
-            graph.add_memlet_path(map_entry, *entries, memlet=dace.Memlet())
+            graph.add_memlet_path(map_entry, *entries, memlet=dace.Memlet(), propagate=False)
         else:
             for edge in graph.in_edges(map_entry):
                 if edge.dst_conn is None:
@@ -170,7 +190,12 @@ class MapExpansion(pm.SingleStateTransformation):
                 out_conn = "OUT_" + in_conn[3:]
                 if in_conn not in entries[-1].in_connectors:
                     graph.add_memlet_path(
-                        map_entry, *entries, memlet=copy.deepcopy(edge.data), src_conn=out_conn, dst_conn=in_conn
+                        map_entry,
+                        *entries,
+                        memlet=copy.deepcopy(edge.data),
+                        src_conn=out_conn,
+                        dst_conn=in_conn,
+                        propagate=False,
                     )
 
         # Modify dynamic map ranges
@@ -193,7 +218,13 @@ class MapExpansion(pm.SingleStateTransformation):
         for edge in graph.in_edges(map_exit):
             graph.remove_edge(edge)
             graph.add_memlet_path(
-                edge.src, *exits[::-1], map_exit, memlet=edge.data, src_conn=edge.src_conn, dst_conn=edge.dst_conn
+                edge.src,
+                *exits[::-1],
+                map_exit,
+                memlet=edge.data,
+                src_conn=edge.src_conn,
+                dst_conn=edge.dst_conn,
+                propagate=False,
             )
 
         from dace.sdfg.scope import ScopeTree
@@ -210,6 +241,8 @@ class MapExpansion(pm.SingleStateTransformation):
         else:
             raise ValueError("Cannot find scope in state")
 
+        # The one propagation: it rewrites every external edge from the innermost new scope outwards, so the paths
+        # above are built from the unpropagated memlets rather than propagated once more on the way.
         propagate_memlets_scope(sdfg, state=graph, scopes=scope)
         consolidate_edges(sdfg, scope)
 

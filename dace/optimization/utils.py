@@ -44,8 +44,33 @@ def measure(sdfg, dreport=None, repetitions=30, print_report: bool = False):
     if print_report:
         print(report)
 
-    durations = next(iter(next(iter(report.durations.values())).values()))
+    # One list per instrumented element (a state, or each kernel of one); an invocation's time is their sum.
+    timings = [
+        values for events in report.durations.values() for threads in events.values() for values in threads.values()
+    ]
+    invocations = min(len(values) for values in timings)
+    durations = [sum(values[i] for values in timings) for i in range(invocations)]
     return np.median(np.array(durations))
+
+
+def instrument_sdfg(sdfg: dace.SDFG, itype: dace.InstrumentationType) -> None:
+    """Time ``sdfg`` with ``itype``; ``GPU_Events`` instrument every kernel of its states (:func:`instrument_state`)."""
+    if itype != dace.InstrumentationType.GPU_Events:
+        sdfg.instrument = itype
+        return
+    for state in sdfg.states():
+        instrument_state(state, itype)
+
+
+def instrument_state(state: dace.SDFGState, itype: dace.InstrumentationType) -> None:
+    """Time ``state`` with ``itype``: ``GPU_Events`` time kernels only, so every ``GPU_Device`` map of the state is
+    instrumented instead of the state (:func:`measure` sums them)."""
+    if itype != dace.InstrumentationType.GPU_Events:
+        state.instrument = itype
+        return
+    for node in state.nodes():
+        if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.ScheduleType.GPU_Device:
+            node.map.instrument = itype
 
 
 def partition(it, size):

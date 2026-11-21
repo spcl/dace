@@ -4,6 +4,15 @@ Available Passes
 ================
 
 
+Accelerator Offloading
+----------------------
+
+.. automodule:: dace.transformation.passes.offloading.offload_to_accelerator
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
 Scalar-to-Symbol Promotion
 --------------------------
 
@@ -72,6 +81,14 @@ Memlet Consolidation
    :undoc-members:
    :show-inheritance:
 
+
+Constant Table Folding
+----------------------
+
+.. automodule:: dace.transformation.passes.fold_constant_tables
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
 Memlet Access Policies (Loop-Carried Address Cursors)
 -----------------------------------------------------

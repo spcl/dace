@@ -96,7 +96,7 @@ class ReverseReduce(BackwardImplementation):
 
         result = BackwardResult.empty()
 
-        return ReverseReduce._backward_reduction(
+        return ReverseReduce.backward_reduction(
             forward_node,
             context,
             result,
@@ -149,7 +149,7 @@ class ReverseReduce(BackwardImplementation):
         )
 
     @staticmethod
-    def _backward_reduction(
+    def backward_reduction(
         forward_node: Node,
         context: BackwardContext,
         result: BackwardResult,
@@ -189,20 +189,24 @@ class ReverseReduce(BackwardImplementation):
         rev_input_conn_name = "input_gradient"
         rev_output_conn_name = "output_gradient"
 
-        result.required_grad_names[output_name] = rev_output_conn_name
-        result.given_grad_names[input_name] = rev_input_conn_name
+        # Keyed by the FORWARD node's connectors: a required gradient is looked up by the input
+        # connector it flows back to, a given gradient by the output connector it arrives from.
+        # Reduce used to declare no connectors, so both keys were None and the two were
+        # indistinguishable; now that it declares ``_in`` and ``_out`` the distinction is load-bearing.
+        result.required_grad_names[input_name] = rev_output_conn_name
+        result.given_grad_names[output_name] = rev_input_conn_name
 
         sdfg.add_array(rev_input_conn_name, shape=out_desc.shape, dtype=out_desc.dtype, strides=out_desc.strides)
         sdfg.add_array(rev_output_conn_name, shape=in_desc.shape, dtype=in_desc.dtype, strides=in_desc.strides)
 
-        nsdfg_inputs = {rev_input_conn_name}
+        nsdfg_inputs = [rev_input_conn_name]
 
         if is_extremal:
-            extremal_conn_name = f"input_{type_name}"
-            extremal_idx_conn_name = f"input_{type_name}_idx"
+            extremal_conn_name = f"input_{type_name}_val"
+            extremal_idx_conn_name = f"input_{type_name}_arr"
             sdfg.add_array(extremal_conn_name, shape=out_desc.shape, dtype=out_desc.dtype, strides=out_desc.strides)
             sdfg.add_array(extremal_idx_conn_name, shape=in_desc.shape, dtype=in_desc.dtype, strides=in_desc.strides)
-            nsdfg_inputs.update({extremal_conn_name, extremal_idx_conn_name})
+            nsdfg_inputs += [extremal_conn_name, extremal_idx_conn_name]
 
             # Add transient array to count matching elements per output position. State lifetime,
             # because ``setzero`` clears the counter where it is ALLOCATED: a Scope-lifetime heap

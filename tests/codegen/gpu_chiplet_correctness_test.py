@@ -136,12 +136,13 @@ def test_cloudsc_tidy_branch_gpu_chiplet_distribution():
 
             # The kernel has to remain one that the distribution applies to, otherwise the results
             # below are those of a kernel that was never distributed. These mirror the assertions in
-            # gpu_chiplet_grid_test.py: the first grid dimension (KLON / 32 thread-blocks) is padded to
-            # a multiple of the number of chiplets, and permuted so that every chiplet owns a
+            # gpu_chiplet_grid_test.py: the first grid dimension (KLON / block-width thread-blocks) is
+            # padded to a multiple of the number of chiplets, and permuted so that every chiplet owns a
             # contiguous chunk of it.
             if chiplets > 1:
                 code = sdfg.generate_code()[1].code
-                chunk = math.ceil((KLON // 32) / chiplets)
+                width = int(dace.config.Config.get("compiler", "cuda", "default_block_size").split(",")[0])
+                chunk = math.ceil((KLON // width) / chiplets)
                 assert f"dim3({chunk * chiplets}, {KLEV}, 1)" in code
                 assert f"((blockIdx.x % {chiplets}) * {chunk} + blockIdx.x / {chiplets})" in code
 

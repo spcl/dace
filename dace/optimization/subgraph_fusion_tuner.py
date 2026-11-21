@@ -79,7 +79,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
             yield i + 1, [cutout.start_state.node_id(m) for m in subgraph]
 
     def pre_evaluate(self, cutout: dace.SDFG, measurements: int, **kwargs) -> dict:
-        cutout.start_state.instrument = self.instrument
+        optim_utils.instrument_state(cutout.start_state, self.instrument)
 
         new_kwargs = {
             "space_kwargs": {"cutout": cutout},
@@ -93,7 +93,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         dreport = self._sdfg.get_instrumented_data()
 
         candidate = dace.SDFG.from_json(cutout)
-        candidate.start_state.instrument = dace.InstrumentationType.GPU_Events
+        optim_utils.instrument_state(candidate.start_state, dace.InstrumentationType.GPU_Events)
         for node in candidate.start_state:
             if isinstance(node, dace.nodes.MapEntry):
                 break
@@ -179,7 +179,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                 # Check that cutout can be constructed.
                 try:
                     cutout = SDFGCutout.singlestate_cutout(state, *(state.nodes()), make_copy=False)
-                    cutout.start_state.instrument = dace.InstrumentationType.GPU_Events
+                    optim_utils.instrument_state(cutout.start_state, dace.InstrumentationType.GPU_Events)
                 except AttributeError as e:
                     continue
 
@@ -220,7 +220,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                         # State is applicable to fusion, compute baseline once.
                         if base_runtime is None:
                             baseline = SDFGCutout.singlestate_cutout(state, *(state.nodes()), make_copy=False)
-                            baseline.start_state.instrument = dace.InstrumentationType.GPU_Events
+                            optim_utils.instrument_state(baseline.start_state, dace.InstrumentationType.GPU_Events)
 
                             dreport_ = {}
                             for cstate in baseline.nodes():
@@ -283,7 +283,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                                     except:
                                         continue
 
-                            experiment_state.instrument = dace.InstrumentationType.GPU_Events
+                            optim_utils.instrument_state(experiment_state, dace.InstrumentationType.GPU_Events)
                             pattern_runtime = optim_utils.subprocess_measure(experiment_sdfg, dreport_, i=192, j=192)
 
                             if pattern_runtime >= best_pattern_runtime:

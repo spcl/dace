@@ -106,6 +106,20 @@ def test_preprocess():
     assert np.allclose(out, inp)
 
 
+def test_accumulating_copy_stays_accumulating():
+    sdfg = dace.SDFG("accumulating_copy_to_map")
+    sdfg.add_array("a", [4], dace.float64)
+    sdfg.add_array("b", [4], dace.float64)
+    state = sdfg.add_state()
+    memlet = dace.Memlet("a[0:4]", wcr="lambda x, y: x + y")
+    state.add_edge(state.add_read("a"), None, state.add_write("b"), None, memlet)
+    assert sdfg.apply_transformations(CopyToMap, options={"ignore_strides": True}) == 1
+
+    a, b = np.arange(4.0), np.ones(4)
+    sdfg(a=a, b=b)
+    assert np.array_equal(b, a + 1)
+
+
 if __name__ == "__main__":
     test_copy_to_map()
     test_flatten_to_map()

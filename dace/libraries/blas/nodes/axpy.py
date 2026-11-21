@@ -1,11 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
+import warnings
+
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace import SDFG, SDFGState
+from dace import SDFG, SDFGState, symbolic
 from dace import data as dt
 from dace import memlet as mm
+from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries import hip_dialect
+from dace.libraries.blas import blas_helpers, block, environments, gpu_dialect
+from dace.libraries.standard.environments.cuda import CUDA
+from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -77,6 +85,135 @@ class ExpandAxpyVectorized(ExpandTransformation):
         return axpy_sdfg
 
 
+def _axpy_strides(node, parent_sdfg, parent_state):
+    """Extract the leading-dim strides from the ``_x`` and ``_y`` memlets."""
+    sx = sy = None
+    for e in parent_state.in_edges(node):
+        sq = copy.deepcopy(e.data.subset)
+        dims = sq.squeeze()
+        desc = parent_sdfg.arrays[e.data.data]
+        if e.dst_conn == "_x":
+            sx = desc.strides[dims[0]]
+        elif e.dst_conn == "_y":
+            sy = desc.strides[dims[0]]
+    return sx, sy
+
+
+@dace.library.expansion
+class ExpandAxpyOpenBLAS(ExpandTransformation):
+    """``cblas_?axpy(N, alpha, X, incX, Y, incY)`` -- writes the result back into ``_res``.
+
+    Because cBLAS ``?axpy`` updates ``Y`` in-place but the DaCe node has a
+    separate ``_res`` output, the expansion emits a ``cblas_?copy`` from
+    ``_y`` into ``_res`` first, then calls ``?axpy`` with ``_res`` in the
+    ``Y`` position. This preserves the node's three-buffer convention.
+    """
+
+    environments = [environments.openblas.OpenBLAS]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        x_outer = parent_sdfg.arrays[next(parent_state.in_edges_by_connector(node, "_x")).data.data]
+        dtype = x_outer.dtype.base_type
+        try:
+            func, _, _ = blas_helpers.cublas_type_metadata(dtype)
+        except TypeError as ex:
+            warnings.warn(f"{ex}. Falling back to pure expansion")
+            return ExpandAxpyVectorized.expansion(node, parent_state, parent_sdfg, **kwargs)
+        sx, sy = _axpy_strides(node, parent_sdfg, parent_state)
+        prefix = func.lower()
+        n = node.n
+        a = node.a
+        if dtype in (dace.complex64, dace.complex128):
+            code = f"""
+            {dtype.ctype} __alpha = {dtype.ctype}({a});
+            cblas_{prefix}copy({sym2cpp(n)}, _y, {sym2cpp(sy)}, _res, {sym2cpp(sy)});
+            cblas_{prefix}axpy({sym2cpp(n)}, &__alpha, _x, {sym2cpp(sx)}, _res, {sym2cpp(sy)});
+            """
+        else:
+            code = f"""
+            cblas_{prefix}copy({sym2cpp(n)}, _y, {sym2cpp(sy)}, _res, {sym2cpp(sy)});
+            cblas_{prefix}axpy({sym2cpp(n)}, ({dtype.ctype})({a}), _x, {sym2cpp(sx)}, _res, {sym2cpp(sy)});
+            """
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
+
+
+@dace.library.expansion
+class ExpandAxpyMKL(ExpandTransformation):
+    environments = [environments.intel_mkl.IntelMKL]
+
+    @staticmethod
+    def expansion(*args, **kwargs):
+        return ExpandAxpyOpenBLAS.expansion(*args, **kwargs)
+
+
+@dace.library.expansion
+class ExpandAxpyGPUBLAS(ExpandTransformation):
+    """cuBLAS ``cublas?axpy(handle, n, &alpha, X, incX, Y, incY)`` with a prior ``copy`` into ``_res``."""
+
+    environments = []
+
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        x_outer = parent_sdfg.arrays[next(parent_state.in_edges_by_connector(node, "_x")).data.data]
+        dtype = x_outer.dtype.base_type
+        try:
+            func, _, _ = blas_helpers.cublas_type_metadata(dtype)
+        except TypeError as ex:
+            warnings.warn(f"{ex}. Falling back to pure expansion")
+            return ExpandAxpyVectorized.expansion(node, parent_state, parent_sdfg, **kwargs)
+        sx, sy = _axpy_strides(node, parent_sdfg, parent_state)
+        n, a = node.n, node.a
+        code = cls.environments[0].handle_setup_code(node)
+        code += gpu_dialect.host_scalar_mode(
+            cls.dialect,
+            f"""
+        {dtype.ctype} __alpha = {dtype.ctype}({a});
+        {cls.dialect.func(func, "copy")}({cls.dialect.handle}, {n}, _y, {sy}, _res, {sy});
+        {cls.dialect.func(func, "axpy")}({cls.dialect.handle}, {n}, &__alpha, _x, {sx}, _res, {sy});
+        """,
+        )
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
+
+
+@dace.library.expansion
+class ExpandAxpyCuBLAS(ExpandAxpyGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    dialect = gpu_dialect.CUBLAS
+
+
+ExpandAxpyHipBLAS = hip_dialect.hip_expansion(ExpandAxpyCuBLAS, environments.hipblas.hipBLAS, hip_dialect.BLAS)
+
+
+@dace.library.expansion
+class ExpandAxpyCUDABlock(ExpandTransformation):
+    """In-kernel AXPY by ONE thread block: each lane computes elements of ``_res``, strided over the block."""
+
+    runs_inside_kernel = True
+    environments = [CUDA]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        sdfg = blas_helpers.connector_sdfg(node, parent_state, parent_sdfg)
+        if block.vector_types(sdfg):
+            return ExpandAxpyVectorized.expansion(node, parent_state, parent_sdfg, **kwargs)
+        dtype = sdfg.arrays["_res"].dtype
+        store = (
+            f"{block.at(sdfg, '_res', '__i')} = __a * {block.at(sdfg, '_x', '__i')} + {block.at(sdfg, '_y', '__i')};"
+        )
+        code = block.coefficients(dtype, a=node.a) + block.block_contraction_code(
+            [("__i", sdfg.arrays["_res"].shape[0])], [], "", store, dtype.ctype
+        )
+        return block.block_sdfg(node, parent_state, sdfg, code, (node.a,))
+
+
 @dace.library.node
 class Axpy(dace.sdfg.nodes.LibraryNode):
     """
@@ -88,6 +225,11 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
     # Global properties
     implementations = {
         "pure": ExpandAxpyVectorized,
+        "OpenBLAS": ExpandAxpyOpenBLAS,
+        "MKL": ExpandAxpyMKL,
+        "cuBLAS": ExpandAxpyCuBLAS,
+        "hipBLAS": ExpandAxpyHipBLAS,
+        "CUDA (block strided)": ExpandAxpyCUDABlock,
     }
     default_implementation = None
 
@@ -96,7 +238,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
     n = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("n"), category="Semantics")
 
     def __init__(self, name, a=None, n=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_x", "_y"}, outputs={"_res"}, **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(("_x", "_y")), outputs={"_res"}, **kwargs)
         self.a = dace.symbolic.symbol("a") if a is None else a
         self.n = n or dace.symbolic.symbol("n")
 
@@ -119,15 +261,16 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Expected exactly one output from axpy")
 
         out_memlet = out_edges[0].data
-        size = in_memlets[0].subset.size()
+        # A vector a kernel slices out of a batch keeps its unit batch dimension
+        size, size_y, size_res = (blas_helpers.operand(self, state, sdfg, c).shape for c in ("_x", "_y", "_res"))
 
         if len(size) != 1:
             raise ValueError("axpy only supported on 1-dimensional arrays")
 
-        if size != in_memlets[1].subset.size():
+        if not symbolic.shapes_equal(size, size_y):
             raise ValueError("Inputs to axpy must have equal size")
 
-        if size != out_memlet.subset.size():
+        if not symbolic.shapes_equal(size, size_res):
             raise ValueError("Output of axpy must have same size as input")
 
         if in_memlets[0].wcr is not None or in_memlets[1].wcr is not None or out_memlet.wcr is not None:

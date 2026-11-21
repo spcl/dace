@@ -22,7 +22,7 @@ from dace.sdfg.performance_evaluation.helpers import (
 from dace.sdfg.performance_evaluation.op_in_helpers import AccessStack, CacheLineTracker, compute_mape, fit_curve, plot
 from dace.sdfg.performance_evaluation.work_depth import analyze_sdfg, get_tasklet_work
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, FunctionCallRegion, LoopRegion, SDFGState
-from dace.symbolic import SymExpr, pystr_to_symbolic, simplify, symbol
+from dace.symbolic import Predicate, SymExpr, pystr_to_symbolic, simplify, symbol
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
@@ -88,7 +88,7 @@ def symeval(val, symbols):
     """
     first_replacement = {pystr_to_symbolic(k): pystr_to_symbolic("__REPLSYM_" + k) for k in symbols.keys()}
     second_replacement = {pystr_to_symbolic("__REPLSYM_" + k): v for k, v in symbols.items()}
-    return simplify(val.subs(first_replacement).subs(second_replacement))
+    return val.subs(first_replacement).subs(second_replacement)
 
 
 def evaluate_symbols(base, new):
@@ -332,11 +332,8 @@ def scope_misses(
         elif isinstance(node, nd.LibraryNode):
             # add a symbol to the top level sdfg, such that the user can define it in the extension
             top_level_sdfg = state.parent
-            try:
-                top_level_sdfg.add_symbol(f"{node.name}_misses", dtypes.int64)
-            except FileExistsError:
-                pass
-            lib_node_misses = symbol(f"{node.name}_misses", positive=True)
+            top_level_sdfg.add_symbol(f"{node.name}_misses", dtypes.int64, predicates=frozenset({Predicate.POSITIVE}))
+            lib_node_misses = symbol(f"{node.name}_misses")
             lib_node_misses = lib_node_misses.subs(mapping)
             scope_misses += lib_node_misses
             update_map(op_in_map, get_uuid(node, state), lib_node_misses)
@@ -730,7 +727,7 @@ def analyze_sdfg_op_in(
         sympy_fs = {}
         for k, v in cache_miss_measurements.items():
             final_f, sympy_f, r_s = fit_curve(x_values[:-test_set_size], v[:-test_set_size], symbol_name)
-            op_in_map[k] = simplify(sympy_f * L)
+            op_in_map[k] = simplify(sympy_f * L, sdfg.facts())
             sympy_fs[k] = sympy_f
             if k == get_uuid(sdfg):
                 # compute MAPE on total SDFG

@@ -4,7 +4,7 @@ import collections
 import onnx
 
 import dace.frontend.common.op_repository as dace_op_repo
-from dace import SDFG, SDFGState, config
+from dace import SDFG, SDFGState, config, dtypes
 from dace.frontend.python.common import StringLiteral
 from dace.frontend.python.newast import ProgramVisitor
 from dace.libraries.onnx.nodes import onnx_op
@@ -303,6 +303,8 @@ def _initialize_onnx_registry():
                             result = cls.forward_impl.forward(node, state, sdfg, **kwargs)
                             if hasattr(cls.forward_impl, "environments"):
                                 cls.environments.extend(cls.forward_impl.environments)
+                            if isinstance(result, SDFG) and node.schedule in dtypes.GPU_SCHEDULES:
+                                result.apply_gpu_transformations()
                             return result
 
                 implementation_name = args["name"]

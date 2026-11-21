@@ -1,9 +1,8 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """State elimination transformations"""
 
-import networkx as nx
-
 from dace import data as dt
+from dace import graphlib as nx
 from dace import sdfg, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -107,11 +106,13 @@ class StartStateElimination(transformation.MultiStateTransformation):
 
     def apply(self, graph, sdfg):
         state = self.start_state
-        # Move assignments to the nested SDFG node's symbol mappings
+        # Move assignments to the nested SDFG node's symbol mappings, rewritten in outer symbols
         node = sdfg.parent_nsdfg_node
         edge = graph.out_edges(state)[0]
         for k, v in edge.data.assignments.items():
-            node.symbol_mapping[k] = v
+            rhs = symbolic.pystr_to_symbolic(v)
+            subs = {sym: node.symbol_mapping[str(sym)] for sym in rhs.free_symbols if str(sym) in node.symbol_mapping}
+            node.symbol_mapping[k] = rhs.subs(subs, simultaneous=True)
         graph.remove_node(state)
 
 
@@ -224,11 +225,12 @@ class StateAssignElimination(transformation.MultiStateTransformation):
 
 
 def _alias_assignments(sdfg: SDFG, edge: InterstateEdge):
-    return {
+    assignments_to_consider = {
         var: assign
         for var, assign in edge.assignments.items()
         if assign in sdfg.symbols or (assign in sdfg.arrays and isinstance(sdfg.arrays[assign], dt.Scalar))
     }
+    return assignments_to_consider
 
 
 @transformation.explicit_cf_compatible

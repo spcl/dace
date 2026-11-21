@@ -4,7 +4,7 @@
 from dace import SDFG, SDFGState, library, nodes, properties
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.standard.helper import broadcast_indices, broadcast_map_expansion
+from dace.libraries.standard.helper import broadcast_indices, broadcast_map_expansion, in_kernel_block_or
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -22,6 +22,20 @@ class ExpandBroadcastPure(ExpandTransformation):
         )
 
 
+@library.expansion
+class ExpandBroadcastCUDABlock(ExpandTransformation):
+    """In-kernel lowering: the ``pure`` map spread over the block's lanes."""
+
+    runs_inside_kernel = True
+    environments: list[type] = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        from dace.libraries.standard.block_reduce import spread_over_lanes
+
+        return spread_over_lanes(ExpandBroadcastPure.expansion(node, parent_state, parent_sdfg), node.label)
+
+
 @library.node
 class Broadcast(nodes.LibraryNode):
     """Replicate a source array across the destination's shape.
@@ -31,8 +45,12 @@ class Broadcast(nodes.LibraryNode):
     * ``dim`` ``None``: NumPy ``broadcast_to``, right-align the axes and stretch those of extent 1.
     """
 
-    implementations = {"pure": ExpandBroadcastPure}
-    default_implementation = "pure"
+    implementations = {
+        "Auto": in_kernel_block_or(ExpandBroadcastPure),
+        "pure": ExpandBroadcastPure,
+        "CUDA (block)": ExpandBroadcastCUDABlock,
+    }
+    default_implementation = "Auto"
 
     dim = properties.Property(
         dtype=int,

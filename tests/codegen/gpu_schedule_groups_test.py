@@ -38,12 +38,32 @@ def kernel_with_inner_map(inner: dtypes.ScheduleType) -> dace.SDFG:
     return sdfg
 
 
-@pytest.mark.parametrize("schedule", NEW_SCHEDULES, ids=lambda s: s.name)
+@pytest.mark.parametrize(
+    "schedule",
+    [
+        # The experimental CUDA codegen emits GPU_Warp maps
+        pytest.param(s, marks=pytest.mark.old_gpu_codegen_only) if s == dtypes.ScheduleType.GPU_Warp else s
+        for s in NEW_SCHEDULES
+    ],
+    ids=lambda s: s.name,
+)
 def test_a_schedule_without_code_generation_is_refused_by_name(schedule):
     """Generating code for one of them fails loudly, naming the schedule, instead of emitting something else."""
     sdfg = kernel_with_inner_map(schedule)
-    with pytest.raises(NotImplementedError, match=schedule.name):
-        sdfg.generate_code()
+    with dace.config.set_temporary("compiler", "cuda", "implementation", value="legacy"):
+        with pytest.raises(NotImplementedError, match=schedule.name):
+            sdfg.generate_code()
+
+
+@pytest.mark.parametrize(
+    "schedule", [dtypes.ScheduleType.GPU_Chiplet, dtypes.ScheduleType.GPU_ThreadBlockCluster], ids=lambda s: s.name
+)
+def test_the_experimental_code_generator_refuses_a_schedule_it_does_not_emit_by_name(schedule):
+    """The experimental generator emits GPU_Warp, but not chiplet or cluster maps."""
+    sdfg = kernel_with_inner_map(schedule)
+    with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
+        with pytest.raises(NotImplementedError, match=schedule.name):
+            sdfg.generate_code()
 
 
 def test_schedule_inference_picks_thread_blocks_inside_a_kernel():

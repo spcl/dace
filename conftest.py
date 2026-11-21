@@ -4,6 +4,7 @@ Root pytest configuration file.
 """
 
 import os
+import pathlib
 import subprocess
 
 import pytest
@@ -18,14 +19,20 @@ def parse_worker_index(worker_id: str) -> int:
     return int(digits) if digits else 0
 
 
+def list_hip_devices() -> list:
+    """Enumerate HIP device indices from the amdkfd topology, where CPU nodes have ``gpu_id`` 0, without touching HIP."""
+    nodes = pathlib.Path("/sys/class/kfd/kfd/topology/nodes").glob("*/gpu_id")
+    return [str(index) for index in range(sum(node.read_text().strip() != "0" for node in nodes))]
+
+
 def list_cuda_devices() -> list:
-    """Enumerate CUDA device indices via `nvidia-smi -L`, without touching CUDA in this process."""
+    """Enumerate GPU device indices via `nvidia-smi -L`, else HIP's, without touching CUDA in this process."""
     try:
         result = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
-        return []
+        return list_hip_devices()
     if result.returncode != 0:
-        return []
+        return list_hip_devices()
     device_lines = [line for line in result.stdout.splitlines() if line.startswith("GPU ")]
     return [str(index) for index in range(len(device_lines))]
 

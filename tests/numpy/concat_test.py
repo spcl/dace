@@ -34,6 +34,19 @@ def test_concatenate_out():
     return c + 1
 
 
+def test_concatenate_a_call_result():
+    """A call inside the tuple literal (cumsum_exclusive's zero row) is its array, not a one-element list."""
+
+    @dace.program
+    def exclusive(x: dace.float64[N, M], out: dace.float64[N + 1, M]):
+        out[:] = np.concatenate((np.zeros_like(x[0][None, :]), x), axis=0)
+
+    x = np.random.rand(N, M)
+    out = np.empty((N + 1, M))
+    exclusive(x, out)
+    assert np.array_equal(out, np.concatenate((np.zeros((1, M)), x), axis=0))
+
+
 def test_concatenate_symbolic():
     n = dace.symbol("n")
     m = dace.symbol("m")
@@ -122,6 +135,7 @@ if __name__ == "__main__":
     test_concatenate()
     test_concatenate_four()
     test_concatenate_out()
+    test_concatenate_a_call_result()
     test_concatenate_symbolic()
     test_concatenate_fail()
     test_concatenate_flatten()

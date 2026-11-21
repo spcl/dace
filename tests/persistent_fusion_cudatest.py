@@ -17,10 +17,10 @@ def _make_sdfg():
     bfs = dace.SDFG("bfs")
 
     # Inputs to the BFS SDFG
-    bfs.add_array("col_index", shape=[nnz], dtype=dace.int32)
-    bfs.add_array("row_index", shape=[N + 1], dtype=dace.int32)
+    bfs.add_array("col_index", shape=[nnz], dtype=dace.uint32)
+    bfs.add_array("row_index", shape=[N + 1], dtype=dace.uint32)
     bfs.add_scalar("root", dtype=dace.int32)
-    bfs.add_array("result", shape=[N], dtype=dace.int32)
+    bfs.add_array("result", shape=[N], dtype=dace.uint32)
     bfs.add_symbol("depth", dace.int32)
 
     # Transients fot interstate data transfers
@@ -291,13 +291,14 @@ if res[neighbor] == -1:
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses SDFG Stream data descriptors (not supported by experimental codegen)
 def test_persistent_fusion():
     sdfg, s_init = _make_sdfg()
 
     sdfg.apply_gpu_transformations(validate=False, simplify=False)  # Only validate after fusion
 
-    # All nodes but copy-in, copy-out, and init
-    content_nodes = set(sdfg.nodes()) - {sdfg.start_state, sdfg.sink_nodes()[0], s_init}
+    # All nodes but copy-in, copy-out, and init: GPU copies land right before the first use, so copy-in is two states
+    content_nodes = {node for node in sdfg.nodes() if not node.label.startswith("copy_")} - {s_init}
 
     subgraph = SubgraphView(sdfg, content_nodes)
     transform = GPUPersistentKernel()
@@ -346,6 +347,7 @@ def test_persistent_fusion():
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses SDFG Stream data descriptors (not supported by experimental codegen)
 def test_persistent_fusion_interstate():
     N = dace.symbol("N", dtype=dace.int64)
 
@@ -382,6 +384,7 @@ def test_persistent_fusion_interstate():
 
 
 # Actual execution
+
 if __name__ == "__main__":
     test_persistent_fusion()
     test_persistent_fusion_interstate()

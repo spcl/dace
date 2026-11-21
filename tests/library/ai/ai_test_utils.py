@@ -95,11 +95,13 @@ def prompt_of(provider: StubProvider) -> str:
 @contextlib.contextmanager
 def offline(build_folder: str | None = None):
     """
-    Runs with sessions and the answer cache off, in a temporary build folder root.
+    Runs with sessions and the answer cache off, in a temporary build folder root. The root carries no rank
+    suffix, so a test that names a path under it holds under a launcher (``srun`` sets ``SLURM_PROCID``) too.
 
     :param build_folder: The build folder root, or ``None`` for a new temporary directory.
     """
     with dace.config.set_temporary("ai", "sessions", value=False):
         with dace.config.set_temporary("ai", "cache", value=False):
             with dace.config.set_temporary("default_build_folder", value=build_folder or tempfile.mkdtemp()):
-                yield
+                with dace.config.set_temporary("cache_distaware", value=False):
+                    yield

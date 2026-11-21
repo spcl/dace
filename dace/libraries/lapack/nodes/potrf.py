@@ -5,9 +5,13 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import block as lapack_block
 from dace.libraries.lapack import environments
+from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock
+from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -33,12 +37,14 @@ class ExpandPotrfOpenBLAS(ExpandTransformation):
         (desc_x, stride_x, rows_x, cols_x), desc_result = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
+        cast = {"c": "(lapack_complex_float*)", "z": "(lapack_complex_double*)"}.get(lapack_dtype, "")
         if desc_x.dtype.veclen > 1:
             raise (NotImplementedError)
 
         n = n or node.n
         uplo = "'L'" if node.lower else "'U'"
-        code = f"_res = LAPACKE_{lapack_dtype}potrf(LAPACK_ROW_MAJOR, {uplo}, {rows_x}, _xin, {stride_x});"
+        order = blas_helpers.lapack_order(desc_x)
+        code = f"_res = LAPACKE_{lapack_dtype}potrf({order}, {uplo}, {rows_x}, {cast}_xin, {stride_x});"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
@@ -55,11 +61,17 @@ class ExpandPotrfMKL(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandPotrfCuSolverDn(ExpandTransformation):
-    environments = [environments.cusolverdn.cuSolverDn]
+class ExpandPotrfGPUSolver(ExpandTransformation):
+    """Cholesky factorization on a vendor GPU solver.
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+    cuSolverDn sizes and allocates a workspace through ``*_bufferSize`` before the call; hipSOLVER
+    is the same call renamed. Validation, the veclen division and the fill mode are shared.
+    """
+
+    environments = []
+
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, n=None, **kwargs):
         (desc_x, stride_x, rows_x, cols_x), desc_result = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
@@ -70,25 +82,9 @@ class ExpandPotrfCuSolverDn(ExpandTransformation):
         n = n or node.n
         if veclen != 1:
             n /= veclen
-        uplo = "CUBLAS_FILL_MODE_LOWER" if node.lower else "CUBLAS_FILL_MODE_UPPER"
+        uplo = cls.fill_enum(node.lower)
 
-        code = (
-            environments.cusolverdn.cuSolverDn.handle_setup_code(node)
-            + f"""
-                int __dace_workspace_size = 0;
-                {cuda_type}* __dace_workspace;
-                cusolverDn{func}_bufferSize(
-                    __dace_cusolverDn_handle, {uplo}, {rows_x}, _xin,
-                    {stride_x}, &__dace_workspace_size);
-                cudaMalloc<{cuda_type}>(
-                    &__dace_workspace,
-                    sizeof({cuda_type}) * __dace_workspace_size);
-                cusolverDn{func}(
-                    __dace_cusolverDn_handle, {uplo}, {rows_x}, _xin,
-                    {stride_x}, __dace_workspace, __dace_workspace_size, _res);
-                cudaFree(__dace_workspace);
-                """
-        )
+        code = cls.environments[0].handle_setup_code(node) + cls.call(func, cuda_type, uplo, rows_x, stride_x)
 
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
@@ -100,10 +96,58 @@ class ExpandPotrfCuSolverDn(ExpandTransformation):
         return tasklet
 
 
+@dace.library.expansion
+class ExpandPotrfCuSolverDn(ExpandPotrfGPUSolver):
+    environments = [environments.cusolverdn.cuSolverDn]
+
+    @classmethod
+    def fill_enum(cls, lower: bool) -> str:
+        return "CUBLAS_FILL_MODE_LOWER" if lower else "CUBLAS_FILL_MODE_UPPER"
+
+    @classmethod
+    def call(cls, func, ctype, uplo, rows, stride) -> str:
+        return f"""
+                int __dace_workspace_size = 0;
+                cusolverDn{func}_bufferSize(
+                    __dace_cusolverDn_handle, {uplo}, {rows}, ({ctype}*)_xin,
+                    {stride}, &__dace_workspace_size);
+                {ctype}* __dace_workspace = static_cast<{ctype}*>(
+                    __state->cusolverDn_handle.Workspace(0, sizeof({ctype}) * __dace_workspace_size, __dace_current_stream));
+                cusolverDn{func}(
+                    __dace_cusolverDn_handle, {uplo}, {rows}, ({ctype}*)_xin,
+                    {stride}, __dace_workspace, __dace_workspace_size, _res);
+                """
+
+
+ExpandPotrfHipSolverDn = hip_dialect.hip_expansion(
+    ExpandPotrfCuSolverDn, environments.hipsolverdn.hipSolverDn, hip_dialect.SOLVER
+)
+
+
+@dace.library.expansion
+class ExpandPotrfBlock(ExpandLapackBlock):
+    """In-kernel Cholesky by one thread block (``block_lapack::potrf``); the other triangle is left as it is."""
+
+    @classmethod
+    def body(cls, node, ops, uid):
+        lower = "true" if node.lower else "false"
+        return (
+            lapack_block.copy_code(ops, "_xin", "_xout")
+            + f"const int __info = dace::block_lapack::potrf({lapack_block.mat(ops, '_xout')}, {lapack_block.order(ops, '_xin')}, {lower});\n"
+            + lapack_block.info_code(ops, "__info")
+        )
+
+
 @dace.library.node
 class Potrf(dace.sdfg.nodes.LibraryNode):
     # Global properties
-    implementations = {"OpenBLAS": ExpandPotrfOpenBLAS, "MKL": ExpandPotrfMKL, "cuSolverDn": ExpandPotrfCuSolverDn}
+    implementations = {
+        "OpenBLAS": ExpandPotrfOpenBLAS,
+        "MKL": ExpandPotrfMKL,
+        "cuSolverDn": ExpandPotrfCuSolverDn,
+        "hipSolverDn": ExpandPotrfHipSolverDn,
+        BLOCK_LAPACK: ExpandPotrfBlock,
+    }
     default_implementation = None
 
     # Object fields
@@ -111,7 +155,7 @@ class Potrf(dace.sdfg.nodes.LibraryNode):
     lower = dace.properties.Property(dtype=bool, default=True, category="Semantics")
 
     def __init__(self, name, lower=True, n=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_xin"}, outputs={"_xout", "_res"}, **kwargs)
+        super().__init__(name, *args, inputs={"_xin"}, outputs=OrderedSet(("_xout", "_res")), **kwargs)
         self.lower = lower
 
     def validate(self, sdfg, state):
@@ -145,7 +189,10 @@ class Potrf(dace.sdfg.nodes.LibraryNode):
         if desc_xin.dtype.base_type != desc_xout.dtype.base_type:
             raise ValueError("Basetype of input and output must be equal!")
 
-        stride_x = desc_xin.strides[sqdims1[0]]
+        layout = blas_helpers.matrix_layout(blas_helpers.operand(self, state, sdfg, "_xin"))
+        if layout is None:
+            raise ValueError("Matrix must be contiguous along one dimension")
+        stride_x = layout.leading[0]
         shape_x = squeezed1.size()
         rows_x = shape_x[0]
         cols_x = shape_x[1]

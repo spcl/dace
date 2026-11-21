@@ -144,10 +144,11 @@ def instrument(
     :param annotate_states: If True, instruments states in the SDFGs.
     :param annotate_sdfgs: If True, instruments whole SDFGs and sub-SDFGs.
     """
+    from dace import dtypes
     from dace.codegen.instrumentation.report import InstrumentationReport
     from dace.hooks import on_call
     from dace.sdfg import SDFGState
-    from dace.sdfg.nodes import EntryNode, Tasklet
+    from dace.sdfg.nodes import EntryNode, MapEntry, Tasklet
 
     # Create filtering function based on input
     filter_func = _make_filter_function(filter)
@@ -164,6 +165,11 @@ def instrument(
 
         @contextmanager
         def __call__(self, sdfg: "SDFG"):
+            kernels_only = itype == dtypes.InstrumentationType.GPU_Events
+            if kernels_only and (annotate_sdfgs or annotate_states or annotate_tasklets):
+                raise ValueError(
+                    "GPU_Events instrumentation times kernels only: annotate maps, not SDFGs, states or tasklets"
+                )
             # Instrument SDFG
             if annotate_sdfgs:
                 for sd in sdfg.all_sdfgs_recursive():
@@ -175,6 +181,8 @@ def instrument(
                 should_try = False
                 should_try |= annotate_states and isinstance(n, SDFGState)
                 should_try |= annotate_maps and isinstance(n, EntryNode)
+                if kernels_only:  # only a GPU_Device map is a kernel
+                    should_try &= isinstance(n, MapEntry) and n.map.schedule == dtypes.ScheduleType.GPU_Device
                 should_try |= annotate_tasklets and isinstance(n, Tasklet)
 
                 if should_try and filter_func(n):

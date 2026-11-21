@@ -1,5 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+import pytest
 
 import dace
 from dace.transformation.dataflow import MapExpansion
@@ -237,6 +238,52 @@ def test_collapse_is_clamped_to_the_remaining_dimensions():
     assert np.allclose(b, a * 2.0)
 
 
+def test_split_at_keeps_the_leading_dimensions_in_one_outer_map():
+    """``split_at=2`` on ``(i, j, k)``: one outer map over ``(i, j)`` keeping the schedule, one inner over ``k``."""
+    sdfg = dace.SDFG("expansion_split_at")
+    sdfg.add_array("a", (8, 6, 4), dace.float64)
+    sdfg.add_array("b", (8, 6, 4), dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    state.add_mapped_tasklet(
+        "m",
+        {"i": "0:8", "j": "0:6", "k": "0:4"},
+        {"inp": dace.Memlet("a[i, j, k]")},
+        "o = inp * 2.0",
+        {"o": dace.Memlet("b[i, j, k]")},
+        schedule=dace.ScheduleType.CPU_Multicore,
+        external_edges=True,
+    )
+    options = dict(split_at=2, inner_schedule=dace.ScheduleType.Sequential)
+    assert sdfg.apply_transformations(MapExpansion, options=options) == 1
+    maps = sorted(
+        (n.map.params, n.map.schedule, state.entry_node(n) is None)
+        for n in state.nodes()
+        if isinstance(n, dace.nodes.MapEntry)
+    )
+    assert maps == [
+        (["i", "j"], dace.ScheduleType.CPU_Multicore, True),
+        (["k"], dace.ScheduleType.Sequential, False),
+    ], maps
+
+    a = np.random.rand(8, 6, 4)
+    b = np.zeros((8, 6, 4))
+    sdfg(a=a, b=b)
+    assert np.allclose(b, a * 2.0)
+
+
+@pytest.mark.parametrize("split_at", [0, 3])
+def test_a_split_leaving_no_dimension_on_one_side_is_refused(split_at):
+    """``split_at`` outside ``(0, 3)`` on ``(i, j, k)`` splits nothing: refused, not a full expansion instead."""
+    sdfg = dace.SDFG(f"expansion_split_at_{split_at}")
+    sdfg.add_array("a", (8, 6, 4), dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    state.add_mapped_tasklet(
+        "m", {"i": "0:8", "j": "0:6", "k": "0:4"}, {}, "o = 1.0", {"o": dace.Memlet("a[i, j, k]")}, external_edges=True
+    )
+    assert sdfg.apply_transformations(MapExpansion, options=dict(split_at=split_at)) == 0
+    assert [n.map.params for n in state.nodes() if isinstance(n, dace.nodes.MapEntry)] == [["i", "j", "k"]]
+
+
 if __name__ == "__main__":
     test_expand_with_inputs()
     test_expand_without_inputs()
@@ -244,3 +291,4 @@ if __name__ == "__main__":
     test_expand_with_limits()
     test_expand_with_dependency_edges()
     test_collapse_is_clamped_to_the_remaining_dimensions()
+    test_split_at_keeps_the_leading_dimensions_in_one_outer_map()

@@ -5,12 +5,13 @@ import copy
 import warnings
 from collections import defaultdict
 
+import dace.transformation.helpers as helpers
 from dace import sdfg as sd
 from dace import subsets
 from dace.memlet import Memlet
 from dace.sdfg import dealias, nodes
 from dace.sdfg import graph as gr
-from dace.transformation import helpers
+from dace.sdfg.state import SymbolResolver
 from dace.transformation import transformation as xf
 
 
@@ -61,9 +62,10 @@ class DeduplicateAccess(xf.SingleStateTransformation):
             # Matching condition: Bounding box union of subsets is smaller than
             # adding the subset sizes
             memlets: list[Memlet] = [e.data for e in graph.out_edges(map_entry) if e.src_conn == conn]
+            facts = SymbolResolver().facts_at(graph, node1)
             union_subset = memlets[0].subset
             for memlet in memlets[1:]:
-                union_subset = subsets.bounding_box_union(union_subset, memlet.subset)
+                union_subset = subsets.bounding_box_union(union_subset, memlet.subset, facts)
 
             # TODO: Enhance me!
             # NOTE: This does not always result in correct behaviour for certain
@@ -97,6 +99,7 @@ class DeduplicateAccess(xf.SingleStateTransformation):
         conn = sorted(edges1 & edges2)[0]
 
         edges = [e for e in graph.out_edges(map_entry) if e.src_conn == conn]
+        facts = SymbolResolver().facts_at(graph, node1)
 
         # Get original data descriptor
         dname = edges[0].data.data
@@ -109,18 +112,18 @@ class DeduplicateAccess(xf.SingleStateTransformation):
         try:
             # Start from stride-1 dimension
             contiguous_subsets = helpers.find_contiguous_subsets(
-                unique_subsets, dim=next(i for i, s in enumerate(desc.strides) if s == 1)
+                unique_subsets, facts, dim=next(i for i, s in enumerate(desc.strides) if s == 1)
             )
         except (StopIteration, NotImplementedError):
             warnings.warn("DeduplicateAcces::Not operating on Stride One Dimension!")
             contiguous_subsets = unique_subsets
         # Then find subsets for rest of the dimensions
-        contiguous_subsets = helpers.find_contiguous_subsets(contiguous_subsets)
+        contiguous_subsets = helpers.find_contiguous_subsets(contiguous_subsets, facts)
         # Map original edges to subsets
         edge_mapping = defaultdict(list)
         for e in edges:
             for ind, subset in enumerate(contiguous_subsets):
-                if subset.covers(e.data.subset):
+                if subset.covers(e.data.subset, facts):
                     edge_mapping[ind].append(e)
                     break
             else:

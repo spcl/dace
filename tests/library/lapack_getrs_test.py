@@ -3,7 +3,9 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries import lapack, linalg
+import dace.libraries.lapack as lapack
+import dace.libraries.linalg as linalg
+from dace.libraries.linalg.nodes.cholesky import SOLVER_BLAS
 from dace.memlet import Memlet
 
 ###############################################################################
@@ -40,7 +42,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
         Bin = state.add_access("B" + suffix)
         Bout = state.add_access("B" + suffix)
         transpose_in = linalg.Transpose("transpose_in", dtype=dtype)
-        transpose_in.implementation = "cuBLAS"
+        transpose_in.implementation = SOLVER_BLAS[implementation]
         state.add_nedge(Ahi, Ai, Memlet.from_array(*Ahost_arr))
         state.add_nedge(Bhi, Bin, Memlet.from_array(*Bhost_arr))
         state.add_nedge(Bout, Bho, Memlet.from_array(*Bhost_arr))
@@ -87,6 +89,8 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
         pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default, marks=pytest.mark.lapack),
         pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
         pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+        pytest.param("hipSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+        pytest.param("hipSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
     ],
 )
 def test_getrs(implementation, dtype, storage):
@@ -126,9 +130,30 @@ def test_getrs(implementation, dtype, storage):
 
 ###############################################################################
 
+
+def test_cusolver_nrhs_counts_the_right_hand_sides():
+    sdfg = dace.SDFG("solve_two_right_hand_sides")
+    state = sdfg.add_state()
+    sdfg.add_array("ain", [4, 4], dace.float64)
+    sdfg.add_array("bin", [4, 2], dace.float64)
+    sdfg.add_array("bout", [4, 2], dace.float64)
+    node = linalg.Solve("solve")
+    node.implementation = "cuSolverDn"
+    state.add_memlet_path(state.add_read("ain"), node, dst_conn="_ain", memlet=Memlet("ain[0:4, 0:4]"))
+    state.add_memlet_path(state.add_read("bin"), node, dst_conn="_bin", memlet=Memlet("bin[0:4, 0:2]"))
+    state.add_memlet_path(node, state.add_write("bout"), src_conn="_bout", memlet=Memlet("bout[0:4, 0:2]"))
+
+    sdfg.expand_library_nodes(recursive=True)
+
+    code = [n.code.as_string for n, parent in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
+    (call,) = [c for c in code if "getrs" in c]
+    assert "CUBLAS_OP_N, 4, 2," in call
+
+
 if __name__ == "__main__":
     test_getrs("MKL", dace.float32)
     test_getrs("MKL", dace.float64)
     test_getrs("cuSolverDn", dace.float32, dace.StorageType.GPU_Global)
     test_getrs("cuSolverDn", dace.float64, dace.StorageType.GPU_Global)
-###############################################################################
+    ###############################################################################
+    test_cusolver_nrhs_counts_the_right_hand_sides()
