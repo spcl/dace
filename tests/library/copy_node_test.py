@@ -2514,7 +2514,8 @@ def test_memory_engine_nested_subtile_tensor_map_is_host_evaluable():
     sdfg.validate()
     code = {o.title: o.clean_code for o in sdfg.generate_code()}
     assert f"_tma_dims[2] = {{(cuuint64_t)({_TMA_N}), (cuuint64_t)({_TMA_M})}}" in code["Frame"]
-    assert "(void *)(_tma_global + 0)" in code["Frame"]
+    # Tasklet connectors are inlined at codegen time, so the global pointer appears under the array name itself.
+    assert "(void *)(A + 0)" in code["Frame"]
     assert "block_j" in code["CUDA"] and "_tma_coords" in code["CUDA"]
 
 
