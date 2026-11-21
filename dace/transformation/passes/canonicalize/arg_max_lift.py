@@ -2275,6 +2275,46 @@ class ArgMaxLift(ppl.Pass):
 
     # Partial reductions: a fold into one element, nested to any depth.
 
+    def _unguarded_nest(self, loop: LoopRegion) -> list[LoopRegion] | None:
+        """The perfect nest from ``loop``, each level reached by unconditional edges without assignments."""
+        nest = [loop]
+        while True:
+            inner = self._single_child_region(nest[-1], LoopRegion)
+            if inner is None:
+                return nest
+            if any(e.data.assignments or not e.data.is_unconditional() for e in nest[-1].edges()):
+                return None
+            nest.append(inner)
+
+    @staticmethod
+    def _guard_bindings(innermost: LoopRegion, names: list[str]) -> dict[str, str] | None:
+        """The unconditional bindings of the innermost body, each name bound once and no loop variable among them."""
+        bindings: dict[str, str] = {}
+        for e in innermost.edges():
+            if not e.data.is_unconditional():
+                return None
+            for lhs, rhs in (e.data.assignments or {}).items():
+                if lhs in bindings or lhs in names:
+                    return None
+                bindings[lhs] = str(rhs)
+        return bindings
+
+    def _box_extents(self, nest: list[LoopRegion], varying: set[str]) -> list[tuple[Any, Any]] | None:
+        """The ``(start, end)`` of each unit-stride loop of the nest, when no bound moves with the nest."""
+        extents: list[tuple[Any, Any]] = []
+        for reduced in nest:
+            if reduced.inverted:
+                return None  # a do-while runs its body once even over an empty range
+            start = loop_analysis.get_init_assignment(reduced)
+            end = loop_analysis.get_loop_end(reduced)
+            stride = loop_analysis.get_loop_stride(reduced)
+            if start is None or end is None or stride is None or symbolic.simplify(stride) != 1:
+                return None
+            if self._names_in(start, end) & varying:
+                return None
+            extents.append((start, end))
+        return extents
+
     def match_partial_reduction(self, loop: LoopRegion, sdfg: SDFG) -> PartialReduction | None:
         """Match a perfect nest of unit-stride loops folding a box of ``source`` into ONE element ``carrier[K]``::
 
@@ -2296,14 +2336,9 @@ class ArgMaxLift(ppl.Pass):
 
         Matched on the outermost reduced loop; a loop around it whose variable ``K`` names stays a loop.
         """
-        nest = [loop]
-        while True:
-            inner = self._single_child_region(nest[-1], LoopRegion)
-            if inner is None:
-                break
-            if any(e.data.assignments or not e.data.is_unconditional() for e in nest[-1].edges()):
-                return None
-            nest.append(inner)
+        nest = self._unguarded_nest(loop)
+        if nest is None:
+            return None
         names = [n.loop_variable for n in nest]
         if not all(names) or len(set(names)) != len(names):
             return None
@@ -2311,30 +2346,14 @@ class ArgMaxLift(ppl.Pass):
         if skeleton is None or symbolic.simplify(required(loop_analysis.get_loop_stride(nest[-1]))) != 1:
             return None
         _, _, _, guard, true_branch = skeleton
-
         # The binding chain in front of the guard (``x_index := source[...]``, ``acc_index := carrier[K]``).
-        bindings: dict[str, str] = {}
-        for e in nest[-1].edges():
-            if not e.data.is_unconditional():
-                return None
-            for lhs, rhs in (e.data.assignments or {}).items():
-                if lhs in bindings or lhs in names:
-                    return None
-                bindings[lhs] = str(rhs)
+        bindings = self._guard_bindings(nest[-1], names)
+        if bindings is None:
+            return None
         varying = set(names) | set(bindings)
-
-        extents: list[tuple[Any, Any]] = []
-        for reduced in nest:
-            if reduced.inverted:
-                return None  # a do-while runs its body once even over an empty range
-            start = loop_analysis.get_init_assignment(reduced)
-            end = loop_analysis.get_loop_end(reduced)
-            stride = loop_analysis.get_loop_stride(reduced)
-            if start is None or end is None or stride is None or symbolic.simplify(stride) != 1:
-                return None
-            if self._names_in(start, end) & varying:
-                return None  # not a box: a bound moves with the nest
-            extents.append((start, end))
+        extents = self._box_extents(nest, varying)
+        if extents is None:
+            return None
 
         written = self.partial_write(true_branch, sdfg)
         if written is None:
@@ -2439,9 +2458,23 @@ class ArgMaxLift(ppl.Pass):
         element = into[0].data.get_dst_subset(into[0], state)
         if not isinstance(element, subsets.Range):
             return None
+        walked = self._copy_chain(state, sink, into[0].src, sdfg)
+        if walked is None:
+            return None
+        chain, value, scratch = walked
+        if len(chain) != len(state.nodes()):
+            return None  # something beside the chain: a second effect the rewrite would drop
+        return sink.data, element, value, scratch
+
+    @staticmethod
+    def _copy_chain(
+        state: SDFGState, sink: nodes.AccessNode, node: nodes.Node, sdfg: SDFG
+    ) -> tuple[list[nodes.Node], ast.expr | bool, set[str]] | None:
+        """Walk back from ``sink`` through identity tasklets and single-element scratch to a constant tasklet
+        ``out = True`` / ``False`` (right before the sink) or to a source element; the chain, the value (the constant
+        or ``source[I]``) and the scratch containers."""
         chain: list[nodes.Node] = [sink]
         scratch: set[str] = set()
-        node = into[0].src
         while True:
             chain.append(node)
             ins = state.in_edges(node)
@@ -2478,9 +2511,7 @@ class ArgMaxLift(ppl.Pass):
             if len(ins) != 1 or ins[0].data.wcr is not None:
                 return None
             node = ins[0].src
-        if len(chain) != len(state.nodes()):
-            return None  # something beside the chain: a second effect the rewrite would drop
-        return sink.data, element, value, scratch
+        return chain, value, scratch
 
     def substituted_guard(self, guard: str, bindings: dict[str, str]) -> ast.expr | None:
         """``guard`` parsed, every name the binding chain binds replaced by what it binds (one level: a binding
