@@ -25,13 +25,7 @@ RESIZABLE_STORAGE: tuple[dtypes.StorageType, ...] = (
 
 
 def named_in_text(sdfg: SDFG, name: str, code: dict[int, str]) -> bool:
-    """Whether ``name`` appears as a word in code a structural walk cannot see.
-
-    :param sdfg: SDFG to read (its own blocks only).
-    :param name: Descriptor name.
-    :param code: The code of each SDFG read so far, by ``id``: the pass rewrites none of it.
-    :returns: ``True`` when a tasklet body, interstate edge or loop header spells the name.
-    """
+    """Whether ``name`` appears as a word in code a structural walk cannot see."""
     if id(sdfg) not in code:
         texts = [code_text(sdfg.init_code), code_text(sdfg.exit_code)]
         for state in sdfg.states():
@@ -63,12 +57,7 @@ def uses_by_name(sdfg: SDFG) -> Uses:
 
 
 def map_local_accesses(uses: Uses, name: str) -> tuple[SDFGState, list[gr.MultiConnectorEdge[Memlet]]] | None:
-    """The state and edges of ``name`` when every access to it sits strictly inside ONE map body.
-
-    :param uses: :func:`uses_by_name` of the SDFG owning the descriptor.
-    :param name: Descriptor name.
-    :returns: ``(state, edges)``, or ``None`` when the accesses are not confined to one map body.
-    """
+    """The state and edges of ``name`` when every access to it sits strictly inside ONE map body."""
     if len(uses.get(name, ())) != 1:
         return None
     ((state, edges, nodes_here),) = uses[name]
@@ -95,11 +84,7 @@ def named_by_other_side(state: SDFGState, name: str) -> bool:
 
 
 def uniform_subset(edges: list[gr.MultiConnectorEdge[Memlet]]) -> subsets.Range | None:
-    """The one subset every edge in ``edges`` reads or writes, or ``None`` when they disagree.
-
-    :param edges: Edges naming one descriptor.
-    :returns: The shared subset, or ``None``.
-    """
+    """The one subset every edge in ``edges`` reads or writes, or ``None`` when they disagree."""
     shared: subsets.Range | None = None
     for edge in edges:
         memlet = edge.data
@@ -119,13 +104,7 @@ def map_body_accesses(
     uses: Uses, name: str
 ) -> tuple[SDFGState, list[gr.MultiConnectorEdge[Memlet]], dict[str, None]] | None:
     """The state and edges of ``name`` when its access nodes sit in ONE map body and every edge naming it lies in that
-    body or in a map nested in it, with the symbols those nested maps define.
-
-    :param uses: :func:`uses_by_name` of the SDFG owning the descriptor.
-    :param name: Descriptor name.
-    :returns: ``(state, edges, symbols)``, or ``None`` when an access leaves the body, reaches a nested SDFG, a View or
-        the body's exit, or sits under a scope that is not a map.
-    """
+    body or in a map nested in it, with the symbols those nested maps define."""
     if len(uses.get(name, ())) != 1:
         return None
     ((state, edges, nodes_here),) = uses[name]
@@ -164,11 +143,7 @@ def shared_dimensions(
     edges: list[gr.MultiConnectorEdge[Memlet]], defined: dict[str, None]
 ) -> list[tuple | None] | None:
     """Per dimension, the range every edge names when it is one unit-step range through symbols outside ``defined``,
-    else ``None`` (the dimension stays whole); ``None`` overall when an edge is a copy or no dimension is shared.
-
-    :param edges: Edges naming one descriptor.
-    :param defined: Symbols a scope inside the body defines: a range naming one differs between their values.
-    """
+    else ``None`` (the dimension stays whole); ``None`` overall when an edge is a copy or no dimension is shared."""
     shared: list[tuple | None] | None = None
     for edge in edges:
         memlet = edge.data
@@ -193,35 +168,14 @@ def shared_dimensions(
 
 
 def device_level_accesses(sdfg: SDFG, accesses: list[tuple[SDFGState, gr.MultiConnectorEdge[Memlet]]]) -> bool:
-    """Whether every access in ``accesses`` runs in device code, under a ``GPU_Device`` map.
-
-    A ``GPU_Global`` transient is resizable only there. Shrunk under a kernel, it becomes
-    thread-private; under a host map it would stay one device buffer shared by the host loop's
-    iterations.
-
-    :param sdfg: SDFG owning the states.
-    :param accesses: ``(state, edge)`` pairs naming the descriptor.
-    :returns: ``True`` when every edge is device-level.
-    """
+    """Whether every access in ``accesses`` runs in device code, under a ``GPU_Device`` map."""
     return all(is_devicelevel_gpu(sdfg, state, edge.dst) for state, edge in accesses)
 
 
 def nest_invariant_accesses(
     sdfg: SDFG, uses: Uses, name: str
 ) -> list[tuple[SDFGState, gr.MultiConnectorEdge[Memlet]]] | None:
-    """Every access to ``name`` when ``sdfg`` is a nested SDFG and all of them sit outside any map.
-
-    A per-iteration buffer also appears in a map body nested into its own SDFG, as a top-level
-    transient of the nest indexed by a symbol the nest receives from the enclosing map
-    (``tx_times_tx[_loop_it_27]`` in npbench warpx_boris_push). Each nest instance then touches one
-    box if nothing inside the nest reassigns the symbols the box names. :func:`box_is_invariant`
-    checks that condition.
-
-    :param sdfg: SDFG owning the descriptor.
-    :param uses: :func:`uses_by_name` of ``sdfg``.
-    :param name: Descriptor name.
-    :returns: ``(state, edge)`` pairs, or ``None`` when ``sdfg`` is the root or an access is in a map.
-    """
+    """Every access to ``name`` when ``sdfg`` is a nested SDFG and all of them sit outside any map."""
     if sdfg.parent_nsdfg_node is None:
         return None
     found: list[tuple[SDFGState, gr.MultiConnectorEdge[Memlet]]] = []
@@ -239,12 +193,7 @@ def nest_invariant_accesses(
 
 
 def box_is_invariant(sdfg: SDFG, box: subsets.Range) -> bool:
-    """Whether the symbols ``box`` names keep one value for a whole execution of ``sdfg``.
-
-    :param sdfg: SDFG whose control flow is checked (its own regions only).
-    :param box: The subset every access names.
-    :returns: ``False`` when an interstate edge assigns one of them or a loop iterates over one.
-    """
+    """Whether the symbols ``box`` names keep one value for a whole execution of ``sdfg``."""
     assigned = set()
     for edge in sdfg.all_interstate_edges():
         assigned.update(edge.data.assignments.keys())
@@ -257,17 +206,7 @@ def box_is_invariant(sdfg: SDFG, box: subsets.Range) -> bool:
 def bound_in_nests(
     accesses: list[tuple[SDFGState, gr.MultiConnectorEdge[Memlet]]], box: subsets.Range, code: dict[int, str]
 ) -> list[tuple[SDFG, str, list[gr.MultiConnectorEdge[Memlet]]]] | None:
-    """The descriptors nested SDFGs bind to a buffer whose ``accesses`` all name ``box``, each with its own accesses.
-
-    A nested SDFG holds its own descriptor of the buffer, laid out like the outer one, and indexes it itself: the
-    buffer may shrink only if every access in the nest names the same box under the nest's symbol mapping, through
-    symbols nothing in the nest rebinds. The descriptors of nests inside the nest follow.
-
-    :param accesses: ``(state, edge)`` pairs naming the buffer in the SDFG that owns it.
-    :param box: The subset each of them names.
-    :param code: See :func:`named_in_text`.
-    :returns: ``(nested SDFG, name, edges)`` per bound descriptor, or ``None`` when a nest touches anything else.
-    """
+    """The descriptors nested SDFGs bind to a buffer whose ``accesses`` all name ``box``, each with its own accesses."""
     found: list[tuple[SDFG, str, list[gr.MultiConnectorEdge[Memlet]]]] = []
     for _, outer in accesses:
         for node, name in ((outer.dst, outer.dst_conn), (outer.src, outer.src_conn)):
@@ -311,12 +250,7 @@ def names_the_box(inner: subsets.Range, mapping: dict[str, Any], box: subsets.Ra
 
 
 def shrinks_the_buffer(desc: data.Array, size: tuple[Any, ...]) -> bool:
-    """Whether a descriptor of extent ``size`` is provably smaller than ``desc``.
-
-    :param desc: The descriptor as it stands.
-    :param size: The candidate extent.
-    :returns: ``True`` when the candidate is provably the smaller buffer.
-    """
+    """Whether a descriptor of extent ``size`` is provably smaller than ``desc``."""
     smaller = desc.total_size
     for dim in size:
         smaller = smaller / dim
@@ -326,24 +260,7 @@ def shrinks_the_buffer(desc: data.Array, size: tuple[Any, ...]) -> bool:
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class ShrinkMapLocalTransients(ppl.Pass):
-    """Resize a map-body-local transient to the single box its accesses name.
-
-    A pass that internalizes a computation -- an inline of a nested SDFG, a fusion that pulls a
-    producer into its consumer -- can leave a FULL-EXTENT transient whose every access sits inside
-    one map body and names one box, e.g. ``rsq[i, j]`` under ``map[i, j, k]``. The descriptor is
-    then scope-local, so codegen allocates the whole extent ONCE PER ITERATION, and the scope
-    default storage inside a ``CPU_Multicore`` map is ``Register``: an ``N*N`` stack array per
-    iteration, which segfaults the moment ``N`` leaves the stack (measured on examinimd, where the
-    canonicalized form died in the OpenMP body while the plain lowering ran).
-
-    Only the buffer shrinks. The accesses stay private to the iteration that makes them -- each
-    one writes the box and reads it back within its own iteration, which is what makes rewriting
-    the subset to the origin an identity on the values.
-
-    A map body nested into its own SDFG is the same case one level down: the buffer is a
-    top-level transient of the nest and the box is named by symbols the nest receives, so it is
-    shrunk when every access names that one box and nothing in the nest reassigns its symbols.
-    """
+    """Resize a map-body-local transient to the single box its accesses name."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -354,12 +271,7 @@ class ShrinkMapLocalTransients(ppl.Pass):
         return bool(modified & (ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.Nodes))
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
-        """Shrink every map-body-local transient that names one box.
-
-        :param sdfg: SDFG to rewrite in place.
-        :param pipeline_results: Unused; the pass resolves its own facts.
-        :returns: The number of descriptors resized, or ``None`` when none were.
-        """
+        """Shrink every map-body-local transient that names one box."""
         shrunk = 0
         code: dict[int, str] = {}
         for sd in sdfg.all_sdfgs_recursive():
@@ -401,9 +313,7 @@ class ShrinkMapLocalTransients(ppl.Pass):
             return False
         desc.set_shape(size)
         if on_device:
-            # Thread-private by construction: every access sits under a kernel and names
-            # one iteration's box. Left in GPU_Global it would be one
-            # buffer shared by every thread.
+            # Thread-private by construction: every access sits under a kernel and names one iteration's box.
             desc.storage = dtypes.StorageType.Register(force=True)
         for inner, inner_name, _ in nested:
             inner.arrays[inner_name].set_shape(size)
@@ -417,11 +327,7 @@ class ShrinkMapLocalTransients(ppl.Pass):
     @staticmethod
     def shrink_shared_dimensions(sdfg: SDFG, uses: Uses, name: str, desc: data.Array, code: dict[int, str]) -> bool:
         """Resize ``name`` in the dimensions every access names alike (``t[i, 0:K]`` written, ``t[i, k]`` read under
-        ``map[i]``: the ``i`` dimension), keeping the others whole.
-
-        Each iteration of the body owns its buffer and touches only the shared range in such a dimension, so moving
-        that range to the origin renames the elements one iteration touches one to one.
-        """
+        ``map[i]``: the ``i`` dimension), keeping the others whole."""
         if desc.storage == dtypes.StorageType.GPU_Global or any(o != 0 for o in desc.offset):
             return False
         # The kept dimensions keep their layout: a packed row- or column-major buffer stays one
@@ -451,13 +357,7 @@ class ShrinkMapLocalTransients(ppl.Pass):
         return True
 
     def is_candidate(self, sdfg: SDFG, name: str, desc: data.Data) -> bool:
-        """Whether ``name`` is a plain resizable transient array of ``sdfg``.
-
-        :param sdfg: SDFG owning the descriptor.
-        :param name: Descriptor name.
-        :param desc: The descriptor.
-        :returns: ``True`` when the descriptor is one this pass may resize.
-        """
+        """Whether ``name`` is a plain resizable transient array of ``sdfg``."""
         if type(desc) is not data.Array or not desc.transient:
             return False
         if name in sdfg.constants_prop:

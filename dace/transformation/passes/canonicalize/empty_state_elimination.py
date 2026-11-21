@@ -1,23 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Splice out empty boundary ``SDFGState`` s left by map->loop lowering.
-
-``MapToForLoop`` emits empty ``MapState_*_pre_state`` / ``*_post_state``
-boundary states around the loop it creates. Inside a ``ConditionalBlock``
-branch they make the guarded body look like a heterogeneous chain
-``[empty_pre, empty_post, loop]`` instead of just ``[loop]``, which sends
-``MoveIfIntoLoop`` down its imperfect-nest path and wraps *empty* states in
-trivial loops -- pure churn that degrades to a sticky ``NestedSDFG``.
-``StateFusionExtended`` does not remove these (it will not fuse a state into
-a ``LoopRegion`` successor).
-
-This is a canonicalization-only cleanup: it removes a state that holds no
-dataflow nodes and splices its predecessors onto its successor, merging the
-two edges' assignments onto the bypass edge. An empty state pinned only by an
-assignment keeps two states apart, which keeps their maps apart, which blocks
-fusion -- so merging rather than refusing is what makes this a fusion-prep
-pass. The merge is only performed when it is provably value-preserving (see
-``merge_assignments``); anything else is left untouched.
-"""
+"""Splice out empty boundary ``SDFGState`` s left by map->loop lowering."""
 
 from typing import Any
 
@@ -29,11 +11,7 @@ from dace.transformation.interstate.block_fusion import splice_empty_state
 
 
 def elide_one(region: ControlFlowRegion) -> bool:
-    """Splice out one empty, trivially-connected ``SDFGState`` of ``region``.
-
-    :param region: The control-flow region to scan.
-    :returns: ``True`` if a state was removed (caller should re-scan).
-    """
+    """Splice out one empty, trivially-connected ``SDFGState`` of ``region``."""
     return any(
         isinstance(state, SDFGState) and state.number_of_nodes() == 0 and splice_empty_state(region, state)
         for state in region.nodes()
@@ -56,11 +34,7 @@ class EmptyStateElimination(ppl.Pass):
         return []
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
-        """Splice out empty boundary states until none remain.
-
-        :param sdfg: The SDFG to transform in place.
-        :returns: Number of states removed, or ``None`` if none.
-        """
+        """Splice out empty boundary states until none remain."""
         count = 0
         changed = True
         while changed:

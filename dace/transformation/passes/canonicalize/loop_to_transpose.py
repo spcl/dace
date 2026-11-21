@@ -1,45 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lift a pure tensor-permutation loop nest to a transpose library node.
-
-A hand-written transpose is a perfectly nested loop whose innermost body copies
-one array element to another with the axes permuted::
-
-    for i in range(N):            for i in range(M):
-      for j in range(M):            for j in range(N):
-        B[i, j] = A[j, i]             for k in range(K):
-                                        B[i, j, k] = A[k, i, j]
-
-The body is a PURE copy (``out[perm(idx)] = in[idx]``, no arithmetic, no
-reduction, no carry). This pass recognises such a nest -- ``d`` perfectly nested
-unit-or-strided loops whose innermost single body state copies one ``d``-D array
-to a DISTINCT ``d``-D array at point subscripts that are a bijective permutation
-of the loop variables -- and replaces it with a single library node:
-
-- ``d == 2``  -> :class:`~dace.libraries.linalg.nodes.transpose.Transpose`
-  (a BLAS ``omatcopy`` / ``cublasgeam`` matrix transpose).
-- ``d >= 3``  -> :class:`~dace.libraries.linalg.nodes.ttranspose.TensorTranspose`
-  (an HPTT / cuTENSOR N-D axis permutation), with ``axes`` set to the permutation.
-
-Matching is by MEMLET SUBSET, not AST: each of the read and write memlets must be
-a point subset whose per-dimension index is affine in exactly ONE loop variable
-(``coeff*v + off``, ``coeff`` a positive integer constant), and the loop-variable
--> dimension map must be a bijection on each side. The permutation ``axes[b]`` is
-the input dimension indexed by the same loop variable as output dimension ``b``.
-
-The match is conservative -- it REFUSES on any deviation:
-
-- The identity permutation (``B[i, j] = A[i, j]``): a plain copy, not a transpose.
-- A repeated axis / mixed-variable subscript (``A[i + j]``, ``A[i, i]``): not a
-  clean bijection.
-- Any arithmetic in the body (``B[i, j] = A[j, i] + 1``): not a pure copy.
-- ``in`` and ``out`` the same array (in-place): LoopToSymmetrize's domain.
-- A non-constant / non-positive loop stride, or a subscript coefficient that is
-  not a positive integer constant.
-
-Strided / offset loops (``for i in range(lo, hi, inc)``, ``inc > 0``) are handled:
-the emitted memlets carry the exact ``lo:hi:inc`` sub-region, which the library node
-reads in the array's strides scaled by the step.
-"""
+"""Lift a pure tensor-permutation loop nest to a transpose library node."""
 
 from collections.abc import Sequence
 from typing import Any
@@ -87,12 +47,7 @@ def _is_copy_tasklet(node: nodes.Node) -> bool:
 
 
 def _node_side_subset(state: SDFGState, edge: MultiConnectorEdge[Memlet], node: nodes.Node) -> subsets.Subset | None:
-    """The subset of ``edge`` on ``node``'s side, where ``node`` is an endpoint of ``edge``.
-
-    Which of ``subset`` / ``other_subset`` names the source is carried by the memlet's own
-    ``_is_data_src`` flag, NOT by the endpoint names -- when both ends name the same array (an
-    intermediate scratch reusing the operand's name) a name test cannot disambiguate at all.
-    ``get_src_subset`` / ``get_dst_subset`` are the only correct readers of the pair."""
+    """The subset of ``edge`` on ``node``'s side, where ``node`` is an endpoint of ``edge``."""
     mem = edge.data
     return mem.get_src_subset(edge, state) if node is edge.src else mem.get_dst_subset(edge, state)
 
@@ -111,11 +66,8 @@ def single_source_and_sink(
 def match_copy_chain(
     state: SDFGState,
 ) -> tuple[nodes.AccessNode, nodes.AccessNode, subsets.Subset | None, subsets.Subset | None] | None:
-    """Match ``state`` as one pure copy chain: a single source and a single sink AccessNode joined
-    only by transient scratch AccessNodes and ``__out = __inp`` copy tasklets.
-
-    :returns: ``(src, sink, read_subset, write_subset)`` or ``None``.
-    """
+    """Match ``state`` as one pure copy chain: a single source and a single sink AccessNode joined only by transient
+    scratch AccessNodes and ``__out = __inp`` copy tasklets."""
     sdfg = state.sdfg
     access = [n for n in state.nodes() if isinstance(n, nodes.AccessNode)]
     others = [n for n in state.nodes() if not isinstance(n, nodes.AccessNode)]
@@ -143,10 +95,7 @@ def match_copy_chain(
 
 
 def _extract_permutation_copy(state: SDFGState) -> tuple[str, str, subsets.Subset, subsets.Subset] | None:
-    """Match a pure copy chain from one ``d``-D array to a DISTINCT one, both at a single point.
-
-    :returns: ``(in_array, out_array, read_subset, write_subset)`` or ``None``.
-    """
+    """Match a pure copy chain from one ``d``-D array to a DISTINCT one, both at a single point."""
     m = match_copy_chain(state)
     if m is None:
         return None
@@ -161,13 +110,9 @@ def _extract_permutation_copy(state: SDFGState) -> tuple[str, str, subsets.Subse
 def _axis_affine(
     idx: symbolic.SymbolicType, loop_var_syms: Sequence[sympy.Symbol]
 ) -> tuple[sympy.Symbol, int, symbolic.SymbolicType] | None:
-    """Classify a single-point index expression ``idx``. Returns
-    ``(loop_var_sym, coeff, off)`` if ``idx`` is affine in EXACTLY one loop
-    variable (``coeff*v + off``, ``coeff`` a positive integer constant, ``off``
-    loop-variable-free), else ``None``."""
-    # Equalized first: membership, diff and the subtraction below all go through symbol IDENTITY,
-    # and the loop variable reaches here as a different instance than the one inside idx. Unequalized,
-    # diff silently returns 0 and the offset check below misses a loop variable it must reject.
+    """Classify a single-point index expression ``idx``."""
+    # Equalized first: membership, diff and the subtraction below all go through symbol IDENTITY, and the loop variable
+    # reaches here as a different instance than the one inside idx.
     idx, *loop_var_syms = symbolic.equalize_symbols_across(idx, *loop_var_syms)
     used = [v for v in loop_var_syms if v in idx.free_symbols]
     if len(used) != 1:
@@ -188,11 +133,7 @@ def _axis_affine(
 def _classify_side(
     subset: subsets.Subset, loop_var_syms: Sequence[sympy.Symbol], ndims: int
 ) -> tuple[dict[sympy.Symbol, int], dict[sympy.Symbol, int], dict[sympy.Symbol, symbolic.SymbolicType]] | None:
-    """Match every axis of ``subset`` (a point subset of ``ndims`` axes) to one
-    loop variable. Returns ``(axis_of_var, coeff_of_var, off_of_var)`` -- dicts
-    keyed by loop-variable symbol -- forming a bijection loop-var <-> axis, or
-    ``None`` on any deviation (non-point axis, repeated / missing variable,
-    mixed subscript)."""
+    """Match every axis of ``subset`` (a point subset of ``ndims`` axes) to one loop variable."""
     ndr = list(subset.ndrange())
     if len(ndr) != ndims:
         return None
@@ -312,8 +253,7 @@ class LoopToTranspose(ppl.Pass):
         in_axis, in_coeff, in_off = read_side
         out_axis, out_coeff, out_off = write_side
 
-        # Permutation: output axis b is indexed by some loop var w; axes[b] is the
-        # INPUT axis that same w indexes. TensorTranspose(axes) == np.transpose(in, axes).
+        # Permutation: output axis b is indexed by some loop var w; axes[b] is the INPUT axis that same w indexes.
         var_at_out = {b: v for v, b in out_axis.items()}
         axes = [in_axis[var_at_out[b]] for b in range(d)]
         if axes == list(range(d)):

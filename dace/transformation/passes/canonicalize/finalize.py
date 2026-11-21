@@ -95,7 +95,7 @@ def blas_addresses(node: nodes.LibraryNode, state: SDFGState) -> bool:
 
 def canonicalize_fast_library_priority(device: dtypes.DeviceType) -> list[str]:
     """The fast implementations canonicalize selects, in ``find_fast_library``'s order (the two pipelines are compared
-    column against column), restricted to the libraries installed on this host. MKL is never listed."""
+    column against column), restricted to the libraries installed on this host."""
     if device == dtypes.DeviceType.GPU:
         # ``pure`` is auto_optimize's fallback, not a forced pick.
         return [impl for impl in find_fast_library(device) if impl != "pure"]
@@ -121,8 +121,7 @@ class SilentPureLowering(RuntimeError):
 
 def refuse_silent_pure(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     """Raise :class:`SilentPureLowering` for every top-level library node left on ``pure`` whose type has one of the
-    device's fast lowerings. Nodes in a parallel region or a kernel, and a GEMM no BLAS call addresses, are left on
-    ``pure`` deliberately."""
+    device's fast lowerings."""
     fast = (
         set(find_fast_library(device)) - {"pure"} if device == dtypes.DeviceType.GPU else set(CPU_FAST_IMPLEMENTATIONS)
     )
@@ -235,10 +234,9 @@ def canonicalize_set_fast_implementations(
     small_dim: int = SMALL_MATMUL_DIM,
     selects: Callable[[nodes.LibraryNode, SDFGState], bool] | None = None,
 ) -> None:
-    """Select every library node's fast implementation (:func:`canonicalize_fast_library_priority`), then the
-    per-node overrides below; a GEMM/MatMul whose every extent is a constant of at most ``small_dim`` takes the
-    inlined ``rowwise`` loop nest. On GPU, a node the device graph keeps on the host (:func:`libnode_on_host`) is
-    selected as on the CPU. ``selects`` restricts the selection to the nodes it accepts."""
+    """Select every library node's fast implementation (:func:`canonicalize_fast_library_priority`), then the per-node
+    overrides below; a GEMM/MatMul whose every extent is a constant of at most ``small_dim`` takes the inlined
+    ``rowwise`` loop nest."""
     if device == dtypes.DeviceType.GPU and selects is None:
         canonicalize_set_fast_implementations(
             sdfg, dtypes.DeviceType.CPU, small_dim, lambda node, state: libnode_on_host(node, state, sdfg)
@@ -259,8 +257,7 @@ def canonicalize_set_fast_implementations(
             continue
         impls = type(node).implementations
         # A node inside a parallel or repeated scope must not open its own parallel region (a fork/join per outer
-        # iteration). Decided by scope: ``node.schedule`` is storage-derived. The schedule is pinned too, so its
-        # expansion stays serial.
+        # iteration).
         sequential = libnode_is_sequential(node, state, sdfg)
         if sequential and node.schedule != dtypes.ScheduleType.Sequential:
             node.schedule = dtypes.ScheduleType.Sequential
@@ -336,12 +333,8 @@ def allocated_unconditionally(sdfg: SDFG, name: str) -> bool:
 def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     """Finalize the storage of a canonicalized (or vectorized) SDFG's transients, in place: map-body-local transients
     shrink to the box they name, length-1 arrays become scalars, small constant-size scratch moves to registers,
-    independent top-level transients become persistent, map- and loop-scoped arrays are pinned to the stack on the
-    CPU, and device transients come from the stream-ordered pool on the GPU.
-
-    :param sdfg: SDFG whose transient storage is finalized in place.
-    :param device: codegen device type (selects GPU WCR-reset / storage rules).
-    """
+    independent top-level transients become persistent, map- and loop-scoped arrays are pinned to the stack on the CPU,
+    and device transients come from the stream-ordered pool on the GPU."""
     # Codegen cannot emit a call in an OpenMP loop header; the analyses before needed it in the range.
     HoistLoopRangeCalls().apply_pass(sdfg, {})
     # Before the length-one conversion and storage inference, so a per-iteration transient lands on one element.
@@ -425,12 +418,8 @@ def outermost_map(state: SDFGState, node: nodes.Node) -> nodes.EntryNode | None:
 
 
 def force_map_scoped_registers(sdfg: SDFG, in_map: bool = False) -> int:
-    """Pin every transient array allocated inside a map body to ``StorageType.Register(force=True)``: it lives for
-    one iteration, and unforced, codegen moves a symbolically sized one to the heap. An SDFG nested in a map counts
-    as inside it; otherwise every access node must sit in one state under one outermost map.
-
-    :returns: the number of arrays pinned, nested SDFGs included.
-    """
+    """Pin every transient array allocated inside a map body to ``StorageType.Register(force=True)``: it lives for one
+    iteration, and unforced, codegen moves a symbolically sized one to the heap."""
     homes: dict[str, set[tuple[SDFGState, nodes.EntryNode | None]]] = {}
     pinned = 0
     for state in sdfg.states():
@@ -458,11 +447,7 @@ def force_map_scoped_registers(sdfg: SDFG, in_map: bool = False) -> int:
 
 
 def force_registers(sdfg: SDFG, host_only: bool = False) -> int:
-    """Pin every remaining ``Register`` container to ``Register(force=True)``, so it stays on the stack.
-
-    :param host_only: pin only containers no device code accesses (MoveArrayOutOfKernel lifts those).
-    :returns: the number of containers pinned, nested SDFGs included.
-    """
+    """Pin every remaining ``Register`` container to ``Register(force=True)``, so it stays on the stack."""
     pinned = 0
     for sd in sdfg.all_sdfgs_recursive():
         loose = [
@@ -492,11 +477,7 @@ def enclosing_loops(state: SDFGState) -> list[LoopRegion]:
 
 def force_loop_scoped_registers(sdfg: SDFG, sdfgs: list[SDFG] | None = None) -> int:
     """Take every transient array a sequential loop allocates once per iteration off the per-iteration heap: one of a
-    size fixed on entry to the program is allocated once per call, every other one becomes a stack VLA.
-
-    :param sdfgs: the SDFGs whose arrays are moved; ``sdfg`` and every nested SDFG by default.
-    :returns: the number of arrays moved.
-    """
+    size fixed on entry to the program is allocated once per call, every other one becomes a stack VLA."""
     moved = 0
     for sd in sdfg.all_sdfgs_recursive() if sdfgs is None else sdfgs:
         homes: dict[str, set[SDFGState]] = {}
@@ -552,10 +533,7 @@ def vector_operands(state: SDFGState, node: nodes.LibraryNode) -> bool:
 
 def expand_gathered_dots(sdfg: SDFG) -> int:
     """Expand each DOT a map of its own state feeds, then fuse that map into the product: a gathered operand has a
-    per-row extent no kernel may allocate, and the expanded register sum takes the gather into the multiply.
-
-    :returns: The number of DOTs expanded.
-    """
+    per-row extent no kernel may allocate, and the expanded register sum takes the gather into the multiply."""
     count = 0
     while True:
         found = next(
@@ -588,19 +566,15 @@ def expand_gathered_dots(sdfg: SDFG) -> int:
 
 
 def recompute_fuse_for_gpu(sdfg: SDFG) -> int:
-    """Fuse producer->consumer map chains into one map recomputing each intermediate in registers
-    (``OTFMapFusion`` to fixpoint): on the device the intermediates' global-memory round trips bound the time.
-
-    :returns: The number of ``OTFMapFusion`` applications.
-    """
+    """Fuse producer->consumer map chains into one map recomputing each intermediate in registers (``OTFMapFusion`` to
+    fixpoint): on the device the intermediates' global-memory round trips bound the time."""
     # The offload validates once at its end.
     return sdfg.apply_transformations_repeated(OTFMapFusion, validate=False, validate_all=False)
 
 
 def unroll_short_loops(sdfg: SDFG) -> None:
     """Fully unroll every constant-trip loop of at most ``optimizer.canonicalization.unroll_limit`` iterations
-    (``ShortLoopUnroll``), in every SDFG, the innermost first. A target's choice, so the canonical form keeps the
-    loops."""
+    (``ShortLoopUnroll``), in every SDFG, the innermost first."""
     for nested in reversed(list(sdfg.all_sdfgs_recursive())):
         ShortLoopUnroll().apply_pass(nested, {})
     UniqueLoopIterators().apply_pass(sdfg, {})
@@ -608,17 +582,7 @@ def unroll_short_loops(sdfg: SDFG) -> None:
 
 
 def offload_to_gpu(sdfg: SDFG, validate: bool = False, tile_programs: bool = False) -> None:
-    """Move a canonicalized SDFG onto the GPU, in place. A step of its own, so a caller may run passes between
-    ``canonicalize(s, target='gpu')`` and it, or substitute its own offload recipe, before
-    ``finalize_for_target(s, 'gpu')``.
-
-    Everything runs on the single default stream (``max_concurrent_streams = -1``): the many small device maps and
-    copies of a canonical graph make cross-stream events error-prone. A kernel a tile DSL writes as one program per
-    tile (``tile_programs``) keeps its warp tiles sequential for the vectorizer and its scatter threads uncoarsened.
-
-    :param validate: Validate the SDFG once at the end.
-    :param tile_programs: Whether the kernels run as tile programs.
-    """
+    """Move a canonicalized SDFG onto the GPU, in place."""
     Config.set("compiler", "cuda", "max_concurrent_streams", value=-1)
     unroll_short_loops(sdfg)
     # Inside the function: a caller's passes since canonicalize leave the pipeline's own cleanup stale.
@@ -666,10 +630,7 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False, tile_programs: bool = Fal
 
 def assert_offloaded(sdfg: SDFG) -> None:
     """Raise unless ``sdfg`` has a ``GPU_Device`` map or a ``GPU_Global`` array: finalizing a host graph for the GPU
-    would yield a CPU graph with a GPU label. A graph with no map and no library node has nothing to offload.
-
-    :raises ValueError: If ``sdfg`` was never offloaded.
-    """
+    would yield a CPU graph with a GPU label."""
     offloadable = False
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device:
@@ -691,10 +652,7 @@ def assert_offloaded(sdfg: SDFG) -> None:
 
 def assert_no_nested_parallel_maps(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     """Raise when a map or library node on the device's parallel schedule (``CPU_Multicore``, ``GPU_Device``) sits
-    inside a map of the same schedule, across nested SDFGs: only top-level maps parallelize.
-
-    :raises ValueError: On the first nested parallel scope.
-    """
+    inside a map of the same schedule, across nested SDFGs: only top-level maps parallelize."""
     from dace.transformation.helpers import get_parent_map_and_loop_scopes
 
     parallel = dtypes.ScheduleType.GPU_Device if device == dtypes.DeviceType.GPU else dtypes.ScheduleType.CPU_Multicore
@@ -726,14 +684,7 @@ def codegen_aids(sdfg: SDFG, device: dtypes.DeviceType) -> None:
 
 def finalize_for_target(sdfg: SDFG, target: str = "cpu", validate: bool = False) -> SDFG:
     """Apply the performance tail to a canonicalized ``sdfg``, in place: fast library implementations (expanded at
-    codegen) and transient storage. ``target='gpu'`` needs an already-offloaded graph (:func:`offload_to_gpu`).
-
-    :param sdfg: A canonicalized SDFG; for ``target='gpu'``, an offloaded one.
-    :param target: ``'cpu'`` or ``'gpu'``.
-    :param validate: Validate the SDFG once at the end.
-    :returns: The same ``sdfg`` instance, finalized.
-    :raises ValueError: If ``target='gpu'`` and ``sdfg`` was never offloaded.
-    """
+    codegen) and transient storage."""
     if target not in TARGET_DEVICE:
         raise ValueError(f"target must be one of {sorted(TARGET_DEVICE)}; got {target!r}")
     device = TARGET_DEVICE[target]
@@ -754,8 +705,7 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     # The states the last canonicalization stages left adjacent and fusible
     FuseStates(aggressive_merges=True, order_array_seeds=True).apply_pass(sdfg, {})
 
-    # Schedules before the library selection, which follows them. On CPU, cpu_specialize infers them once it has
-    # decided the maps' schedules.
+    # Schedules before the library selection, which follows them.
     if device == dtypes.DeviceType.CPU:
         # While canonicalization's maps are still Default: a demoted level map's plane maps are decided top-level.
         demote_strided_level_maps(sdfg)
@@ -787,16 +737,13 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     # the threads of a parallel map share.
     SplitMapLocalTransients().apply_pass(sdfg, {})
     finalize_transient_storage(sdfg, device)
-    # Once storage and lifetimes are final, and before the parallel-region hoist reads dependences by name. On GPU
-    # it runs in GPUCodegenPreprocessPipeline instead, after MoveArrayOutOfKernel lifts kernel arrays.
+    # Once storage and lifetimes are final, and before the parallel-region hoist reads dependences by name.
     if device == dtypes.DeviceType.CPU:
         MinimizeTransients().apply_pass(sdfg, {})
 
-    # One OpenMP team per sequential loop instead of one per trip; after storage, so the transients the hoisted loop
-    # uses are already persistent. The outlined loop's connectors are new, hence the re-inference.
+    # One OpenMP team per sequential loop instead of one per trip
     if device == dtypes.DeviceType.CPU:
-        # Strip-mining takes the carried nests it can tile: one worksharing construct outside the carry. A loop it
-        # declines gets one team around the loop, so each trip pays a barrier per map instead of a fork/join.
+        # Strip-mining takes the carried nests it can tile: one worksharing construct outside the carry.
         tiled = StripMineInterchange().apply_pass(sdfg, {})
         if HoistParallelRegion().apply_pass(sdfg, {}) or tiled:
             infer_types.infer_connector_types(sdfg)

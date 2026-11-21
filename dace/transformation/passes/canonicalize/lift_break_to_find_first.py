@@ -1,39 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lift an early-exit loop to a parallel find-first, the body below the hit and the exit effect once.
-
-Pattern (TSVC ``s332`` / ``s481`` / ``s482``, llr40 ``ext_break_capture``)::
-
-    for i in range(b, e):
-        pre(i)                     # states and symbol assignments, before the test
-        if p(i):
-            effect(i)
-            break
-        post(i)
-
-becomes, when ``pre`` or ``post`` does work, a sequential loop over chunks of the range::
-
-    for c in range(b, e, C):
-        first = FindFirst(p, c, min(c + C, e))   # parallel, cancelling: smallest hit in the chunk
-        for i in range(c, first):               # an ordinary loop; LoopToMap makes it a map when it is one
-            pre(i); post(i)
-        if first < min(c + C, e):
-            pre(first); effect(first)
-            break
-
-and, when the loop body is the test alone, one ``FindFirst`` over the whole range and the effect after it.
-Chunking is what makes the body's second read of the predicate's arrays a cache hit and bounds the
-search past the hit to one chunk; :data:`FIND_FIRST_HINT` records the alternatives on the node.
-
-Sound when ``p`` reads nothing the loop writes and every element it reads through the counter exists at
-every index of the range (the search tests indices past the hit): then every test sees the values the
-sequential loop saw, all tests can run before any body, and the iterations below the hit run exactly ``pre; post``.
-``effect`` runs once, after them, exactly where the sequential loop ran it. Refused when the loop
-counter or a symbol the body assigns is read after the loop (the sequential loop leaks its last
-value), when the test reads data the loop writes, or when the body holds another jump.
-
-:class:`~dace.libraries.standard.nodes.find_first.FindFirst` is chunked and cancelling on both CPU and
-GPU, so an early hit costs about one chunk instead of the whole range.
-"""
+"""Lift an early-exit loop to a parallel find-first, the body below the hit and the exit effect once."""
 
 import ast
 import copy
@@ -139,11 +105,7 @@ def written_data(blocks: list[ControlFlowBlock]) -> set[str]:
 def searched(
     sdfg: SDFG, name: str, reads: list[list[str]] | None, lo: symbolic.SymbolicType, hi: symbolic.SymbolicType
 ) -> Memlet:
-    """The memlet of a search over ``[lo, hi)`` on ``name``, its volume the span of the affine indices it reads.
-
-    A dimension indexed by anything that is not affine in the index with a constant slope, and a
-    container read whole (a scalar), keeps its full extent.
-    """
+    """The memlet of a search over ``[lo, hi)`` on ``name``, its volume the span of the affine indices it reads."""
     desc = sdfg.arrays[name]
     if not reads or isinstance(desc, data.Scalar):
         return Memlet.from_array(name, desc)
@@ -292,12 +254,7 @@ class LiftBreakToFindFirst(ppl.Pass):
         return match
 
     def reads_stay_in_bounds(self, sdfg: SDFG, match: Match) -> bool:
-        """Whether every element the test reads through the counter exists at every index of the range.
-
-        The search evaluates the test past the hit, where the sequential loop read nothing: ``a[idx[i]]`` behind
-        a sentinel is refused, and so is an affine index not proven inside its dimension. An index the counter
-        does not move is read by the first iteration already.
-        """
+        """Whether every element the test reads through the counter exists at every index of the range."""
         facts = sdfg.facts()
         for name, reads in match.reads.items():
             for read in reads:
@@ -349,12 +306,7 @@ class LiftBreakToFindFirst(ppl.Pass):
         return INDEX_NAME in match.predicate
 
     def private_to_loop(self, sdfg: SDFG, match: Match) -> bool:
-        """Whether the counter and every symbol an iteration assigns stay inside the loop.
-
-        Those leak their last iteration's value, which the lifted form does not reproduce when nothing
-        hits. A symbol only the effect assigns may be read after the loop: the effect runs exactly once
-        at the hit in both forms, and with no hit both leave it as it was before the loop.
-        """
+        """Whether the counter and every symbol an iteration assigns stay inside the loop."""
         use_sites, descriptor_symbols = symbol_use_sites(sdfg)
         inside = {id(match.loop)}
         inside.update(id(b) for b in match.loop.all_control_flow_blocks())
@@ -405,11 +357,7 @@ class LiftBreakToFindFirst(ppl.Pass):
         hi: symbolic.SymbolicType,
         chunked: bool,
     ) -> None:
-        """Search ``[lo, hi)``, run the body below the hit, then the effect at it, inside ``container``.
-
-        Chunked, ``container`` is the new chunk loop and the effect ends in the original ``break``;
-        otherwise the search replaces the loop in ``container`` and the effect simply ends.
-        """
+        """Search ``[lo, hi)``, run the body below the hit, then the effect at it, inside ``container``."""
         loop = match.loop
         counter = loop.loop_variable
         first_data, _ = sdfg.add_scalar(f"{loop.label}_first", dtypes.int64, transient=True, find_new_name=True)

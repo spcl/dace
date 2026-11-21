@@ -1,20 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Normalize a map body to a single NestedSDFG (or all tasklets).
-
-MapFusion co-locates independent computations under one map, but leaves each as
-its own ``NestedSDFG`` -- ``map: { nsdfg1, nsdfg2 }``. That form blocks
-downstream normalization: two same-condition guards trapped in separate nested
-SDFGs are never merged (``ConditionFusion`` only matches consecutive
-``ConditionalBlock``s in ONE control-flow graph), and ``MoveMapInvariantIfUp``
-cannot hoist a guard split across two nested SDFGs.
-
-This pass consolidates every map body that mixes control flow with siblings into
-exactly one NestedSDFG whose control-flow graph *sequences* the merged bodies
-(``map: { nsdfg{ body1; body2 } }``). A subsequent ``ConditionFusion`` then folds
-the now-consecutive same-condition guards, and the guard can hoist. The canonical
-target form is ``map_consists_of_single_nsdfg_or_no_nsdfg``: a map body is either
-all tasklets (no control flow, left untouched) or exactly one NestedSDFG.
-"""
+"""Normalize a map body to a single NestedSDFG (or all tasklets)."""
 
 import copy
 from collections import Counter
@@ -36,14 +21,9 @@ from dace.utils import find_new_name
 def _map_body_nsdfgs(
     state: SDFGState, map_entry: nodes.MapEntry, order_of: Callable[[SDFGState], dict[nodes.Node, int]]
 ) -> list[nodes.NestedSDFG]:
-    """The NestedSDFG nodes in ``map_entry``'s OWN scope, in dependency
-    (topological) order so a producer is always merged before its consumer.
-
-    :param order_of: The topological order of a state, memoized by the caller.
-    """
+    """The NestedSDFG nodes in ``map_entry``'s OWN scope, in dependency (topological) order so a producer is always
+    merged before its consumer."""
     # THIS scope only: ``scope_children`` lists exactly the nodes whose scope is ``map_entry``.
-    # Merging the body of a map nested inside this one would move it out of the scope its own
-    # MapEntry opens, leaving the inner map's exit under a FOREIGN entry.
     nsdfgs = [n for n in state.scope_children()[map_entry] if isinstance(n, nodes.NestedSDFG)]
     if len(nsdfgs) < 2:
         return nsdfgs
@@ -54,24 +34,15 @@ def _map_body_nsdfgs(
 
 
 def _map_body_size(state: SDFGState, map_entry: nodes.MapEntry) -> int:
-    """Body nodes excluding inner scope entries/exits. Counts scope MEMBERS: a body holding a
-    write-only scratch scalar used to count 0 here, and 0 reads as "already a lone NestedSDFG"."""
+    """Body nodes excluding inner scope entries/exits."""
     return sum(
         1 for n in map_scope.map_body_nodes(state, map_entry) if not isinstance(n, (nodes.MapEntry, nodes.MapExit))
     )
 
 
 def _uniquify_data_against(inner: SDFG, taken_data: Iterable[str]) -> dict[str, str]:
-    """Rename ``inner``'s data descriptors that collide with ``taken_data`` to
-    fresh names, so ``inner`` can be spliced into another SDFG without a clash.
-
-    Symbols are deliberately NOT renamed: the sibling bodies come from the same
-    replicated NestedSDFG, so they already agree on symbol names (the map index
-    and shape symbols), and renaming would sever that sharing. A collision on a
-    connector name (e.g. both read ``a``) is resolved by giving the tail a fresh
-    connector reading the same outer array -- redundant but correct; a later
-    SimplifyPass dedups it.
-    """
+    """Rename ``inner``'s data descriptors that collide with ``taken_data`` to fresh names, so ``inner`` can be spliced
+    into another SDFG without a clash."""
     drepl = {}
     for name in list(inner.arrays.keys()):
         if name in taken_data:
@@ -84,32 +55,7 @@ def _uniquify_data_against(inner: SDFG, taken_data: Iterable[str]) -> dict[str, 
 def shared_carrier_connectors(
     state: SDFGState, keep: nodes.NestedSDFG, drop: nodes.NestedSDFG
 ) -> dict[str, tuple[str, nodes.AccessNode, bool]] | None:
-    """Connectors of ``drop`` that read a container ``keep`` writes, or ``None`` to refuse the merge.
-
-    ``MapFusion`` leaves a producer and its consumer as siblings wired through one outer AccessNode
-    (``nsdfg0 -> X -> nsdfg1``). Merging them makes X both a predecessor and a successor of the
-    single surviving node, which no state can express -- the value would have to leave and re-enter
-    the node that produces it. :func:`_append_cfg` already sequences base before tail, so the
-    dependence belongs INSIDE: bind tail's inner array to keep's, and the value crosses the
-    sequencing edge instead of the state.
-
-    Two refusals:
-
-    * the REVERSE direction (``keep`` reads what ``drop`` writes) forms the same cycle, but
-      publishing the write would need a second AccessNode plus every downstream reader moved onto
-      it -- no corpus kernel merges siblings that way;
-    * a carrier anything else writes is no value of ``keep`` alone, and a carrier only ``drop`` reads is private: its
-      outer write goes, since it would strand a sink inside the map scope that reaches no exit (``all_nodes_between``
-      then reports the whole body as empty and every pass that walks map bodies skips the map), so a private carrier
-      another state observes, or that is no transient, cannot be internalized.
-
-    A carrier other nodes read as well stays published: ``keep`` still writes it for them.
-
-    :param state: The state holding both nested SDFGs.
-    :param keep: The merge base, topologically first.
-    :param drop: The sibling being folded into ``keep``.
-    :returns: ``{drop in-connector: (keep out-connector, carrier node, private)}``, or ``None`` to refuse.
-    """
+    """Connectors of ``drop`` that read a container ``keep`` writes, or ``None`` to refuse the merge."""
     produced = {e.data.data: e.src_conn for e in state.out_edges(keep) if e.data.data is not None}
     consumed = {e.data.data for e in state.in_edges(keep) if e.data.data is not None}
     if any(e.data.data in consumed for e in state.out_edges(drop) if e.data.data is not None):
@@ -134,17 +80,7 @@ def shared_carrier_connectors(
 
 
 def co_written_connectors(state: SDFGState, keep: nodes.NestedSDFG, drop: nodes.NestedSDFG) -> dict[str, str]:
-    """Out-connectors of ``drop`` that write the access node ``keep`` writes too, each with ``keep``'s connector.
-
-    ``OTFMapFusion`` leaves one producer per element of a window, each writing its element of one buffer
-    (``nsdfg0 -> t[0]``, ``nsdfg1 -> t[1]``). Merged, the writes are one array of the node, written in sequence:
-    tail's inner array is bound to keep's, and the outer write covers both elements.
-
-    :param state: The state holding both nested SDFGs.
-    :param keep: The merge base.
-    :param drop: The sibling being folded into ``keep``.
-    :returns: ``{drop out-connector: keep out-connector}``.
-    """
+    """Out-connectors of ``drop`` that write the access node ``keep`` writes too, each with ``keep``'s connector."""
     # Through an access node only: two writes through a map exit leave by connectors of their own
     plain = [
         e
@@ -160,13 +96,7 @@ def co_written_connectors(state: SDFGState, keep: nodes.NestedSDFG, drop: nodes.
 
 
 def bound_apart(keep: nodes.NestedSDFG, drop: nodes.NestedSDFG) -> dict[str, str]:
-    """New names for the symbols of ``drop`` that cannot keep their name in the merged body:
-
-    * a symbol ``keep`` binds to another value than ``drop`` binds the same name to gets a fresh name;
-    * a symbol that a scope of ``keep`` binds (a map parameter or loop variable of its body) cannot also be a symbol of
-      the merged body. It moves onto the symbol ``keep`` already receives that outer value as (the lane hoist names its
-      copy ``<parameter>_lane`` and leaves the parameter itself to the body), else it gets a fresh name.
-    """
+    """New names for the symbols of ``drop`` that ``keep`` binds to another value or binds in a scope of its body."""
     keep_bound = scope_bound_names(keep.sdfg)
     drop_bound = scope_bound_names(drop.sdfg)
     taken = dict.fromkeys(
@@ -194,8 +124,7 @@ def bound_apart(keep: nodes.NestedSDFG, drop: nodes.NestedSDFG) -> dict[str, str
 
 def bound_apart_in_tail(base: SDFG, tail: SDFG) -> dict[str, str]:
     """Fresh names for the parameters a scope of ``tail`` binds that ``base`` declares as symbols: sequenced into
-    ``base``, such a scope would bind a symbol of the merged body. The symbol is the one the rest of ``base`` reads, so
-    it is the scope's name that moves."""
+    ``base``, such a scope would bind a symbol of the merged body."""
     clash = base.symbols.keys() & scope_bound_names(tail)
     taken = dict.fromkeys(
         [*base.symbols, *base.arrays, *tail.symbols, *tail.arrays, *scope_bound_names(base), *scope_bound_names(tail)]
@@ -228,11 +157,7 @@ def linked_through_other_nodes(
 
 
 def _append_cfg(base: SDFG, tail: SDFG) -> None:
-    """Splice ``tail``'s control-flow graph after ``base``'s sink, in place.
-
-    ``tail`` is a private deep copy; its blocks are moved into ``base`` and an
-    unconditional edge links ``base``'s sink to ``tail``'s (former) start block.
-    """
+    """Splice ``tail``'s control-flow graph after ``base``'s sink, in place."""
     sink = base.sink_nodes()[0]
     tail_start = tail.start_block
     blocks = list(tail.nodes())
@@ -247,19 +172,11 @@ def _append_cfg(base: SDFG, tail: SDFG) -> None:
 
 
 def _dedup_boundary_aliases(state: SDFGState, keep: nodes.NestedSDFG) -> None:
-    """Fold duplicate boundary reads left by sibling consolidation.
-
-    After MapFusion the merged siblings read ``g[_loop_it_0]`` and ``g_0[_loop_it_1]``: the same
-    predicate spelled twice, which ConditionFusion would multiply out. An in-connector whose memlet
-    duplicates an earlier one (source node, connector, data, subset) is renamed onto it, and
-    symbol-mapping keys bound to the same outer value collapse. Reads only; value-preserving.
-    """
+    """Fold duplicate boundary reads left by sibling consolidation."""
     base = keep.sdfg
 
-    # Symbol-mapping dedup: group keys by the outer value they bind to, and
-    # collapse each >=2 group onto one canonical key (prefer the key whose name
-    # already IS the bound value, e.g. the map parameter).
-    # A key the nest assigns holds the bound value only up to that edge: it aliases no other key.
+    # Symbol-mapping dedup: group keys by the outer value they bind to, and collapse each >=2 group onto one canonical
+    # key (prefer the key whose name already IS the bound value, e.g. the map parameter).
     assigned = {name for edge in base.all_interstate_edges() for name in edge.data.assignments}
     groups: dict[str, list[str]] = {}
     for k, v in keep.symbol_mapping.items():
@@ -274,18 +191,14 @@ def _dedup_boundary_aliases(state: SDFGState, keep: nodes.NestedSDFG) -> None:
             if k != canon:
                 sym_repl[k] = canon
     if sym_repl:
-        # replace_keys=False: rewrite symbol USES (memlets, conditions, ranges)
-        # but not the descriptor/symbol dict keys -- the redundant keys are
-        # dropped explicitly below.
+        # replace_keys=False: rewrite symbol USES (memlets, conditions, ranges) but not the descriptor/symbol dict keys
         base.replace_dict(sym_repl, replace_keys=False)
         for old in sym_repl:
             keep.symbol_mapping.pop(old, None)
             if old in base.symbols:
                 base.symbol_repo.remove(old)
 
-    # In-connector dedup: an in-edge whose outer memlet matches an earlier one
-    # reads identical data; rename its inner descriptor onto the earlier
-    # connector and drop the duplicate edge + connector.
+    # In-connector dedup: an in-edge whose outer memlet matches an earlier one reads identical data
     seen: dict[tuple, str] = {}
     data_repl: dict[str, str] = {}
     for e in list(state.in_edges(keep)):
@@ -305,14 +218,7 @@ def _dedup_boundary_aliases(state: SDFGState, keep: nodes.NestedSDFG) -> None:
 
 @properties.make_properties
 class NormalizeMapBody(ppl.Pass):
-    """Consolidate each control-flow-bearing map body into a single NestedSDFG.
-
-    A map body of all tasklets (no nested SDFG) is left untouched. A body with a
-    single NestedSDFG is already normalized. A body with >=2 NestedSDFGs, or one
-    NestedSDFG plus sibling tasklets, is merged into one NestedSDFG that
-    sequences the sibling bodies, exposing same-condition guards as consecutive
-    ConditionalBlocks for ``ConditionFusion``.
-    """
+    """Consolidate each control-flow-bearing map body into a single NestedSDFG."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -351,8 +257,7 @@ class NormalizeMapBody(ppl.Pass):
         return merged or None
 
     def _merge_siblings(self, state: SDFGState, siblings: list[nodes.NestedSDFG]) -> bool:
-        """Merge sibling NestedSDFGs in ``state`` into ``siblings[0]`` by
-        sequencing their control-flow graphs. Returns whether any sibling was merged."""
+        """Merge sibling NestedSDFGs in ``state`` into ``siblings[0]`` by sequencing their control-flow graphs."""
         keep = siblings[0]
         base = keep.sdfg
         merged = False
@@ -370,12 +275,8 @@ class NormalizeMapBody(ppl.Pass):
             symbol_repl = bound_apart(keep, drop)
             tail.replace_dict(symbol_repl)
             tail.replace_dict(bound_apart_in_tail(base, tail))
-            # Rename tail's data that collides with any base identifier, tracking how
-            # drop's connectors were renamed so we can rewire the outer edges. DaCe forbids
-            # an array name that also names a symbol, constant, or tasklet connector -- so
-            # the reserved set is base's arrays PLUS its symbols, constants, and every node
-            # connector (e.g. symm's ``reset_tmp`` writes a connector ``tmp``; a tail array
-            # ``tmp`` merged in unchecked would collide with it).
+            # Rename tail's data that collides with any base identifier, tracking how drop's connectors were renamed so
+            # we can rewire the outer edges.
             reserved = dict.fromkeys([*base.arrays.keys(), *base.symbols.keys(), *base.constants_prop.keys()])
             for bstate in base.states():
                 for bnode in bstate.nodes():
@@ -410,13 +311,6 @@ class NormalizeMapBody(ppl.Pass):
             _append_cfg(base, tail)
 
             # Re-point drop's boundary edges onto keep with (possibly renamed) connectors.
-            # ``force=True``: a carrier read by one sibling and written by another (an
-            # in-place update like ``b`` in TSVC s212 -- ``a = a*b`` then ``b = b + ...``)
-            # legitimately becomes BOTH an in- and an out-connector of the merged nested
-            # SDFG. Without ``force`` the second ``add_*_connector`` silently no-ops
-            # because the name already exists on the other side, leaving an edge that
-            # references a nonexistent connector (invalid SDFG: "b written but only given
-            # as an input connector").
             for e in list(state.in_edges(drop)):
                 if e.dst_conn in carried:
                     state.remove_edge(e)  # satisfied inside; re-adding it would close a cycle
@@ -448,9 +342,7 @@ class NormalizeMapBody(ppl.Pass):
                 state.add_edge(keep, conn, e.dst, e.dst_conn, copy.deepcopy(e.data))
                 state.remove_edge(e)
 
-            # A carrier only ``drop`` read is now produced AND consumed inside ``keep``, so its outer plumbing is
-            # dead. Left in place it is a sink the map exit never reaches, which makes the whole
-            # body invisible to ``all_nodes_between``.
+            # A carrier only ``drop`` read is now produced AND consumed inside ``keep``, so its outer plumbing is dead.
             for keep_conn, carrier, alone in carried.values():
                 if not alone:
                     continue
@@ -466,16 +358,12 @@ class NormalizeMapBody(ppl.Pass):
                 keep.symbol_mapping.setdefault(symbol_repl.get(k, k), v)
             state.remove_node(drop)
 
-        # Fold redundant boundary connectors / symbol-mapping aliases the merge
-        # introduced, so same-condition guards from independent-but-identical
-        # reads (``g[i]`` in both siblings) become syntactically identical and
-        # the follow-up ConditionFusion folds them instead of building a
-        # cartesian product.
+        # Fold redundant boundary connectors / symbol-mapping aliases the merge introduced, so same-condition guards
+        # from independent-but-identical reads (``g[i]`` in both siblings) become syntactically identical and the
+        # follow-up ConditionFusion folds them instead of building a cartesian product.
         _dedup_boundary_aliases(state, keep)
 
         # ``base.add_node`` re-homed every nested SDFG the tail carried and spliced the CFG list in place.
-        # Not recursive: that descends THROUGH NestedSDFG nodes, so a state owned by a deeper SDFG
-        # would get ``base`` as its owner and later miss that SDFG's own arrays.
         for blk in base.all_control_flow_blocks():
             blk.sdfg = base
         return merged

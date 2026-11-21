@@ -1,18 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Prune dead connectors and inline single-state nested SDFGs, in the order the matcher applied them.
-
-The traversal half of ``PatternApplyOnceEverywhere([PruneConnectors(), InlineSDFG()])``, which restarts
-its enumeration after every application: a graph collapse per state and both predicates per nested SDFG
-over the prefix it already refused (CloudSC ``reduction_to_wcr_map``: 339 inlines, 43488 probes of each
-transformation, 110772 collapses). This pass walks the same order -- regions preorder, a region's states
-before its children, in a state every ``PruneConnectors`` probe before any ``InlineSDFG`` probe -- and
-applies the first accepted candidate, so the application sequence is the matcher's.
-
-It skips only refusals nothing could have changed. Both predicates read the candidate's state, its nested
-SDFG's contents and its owner's descriptors of names that state uses. An application in state ``T``
-rewrites ``T`` (any state split off it is new) and thereby the contents of ``T``'s SDFG, which is what the
-state holding that SDFG's own node reads; refusals on ``T`` and its ancestors are dropped.
-"""
+"""Prune dead connectors and inline single-state nested SDFGs, in the order the matcher applied them."""
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -145,12 +132,7 @@ class PruneAndInlineNestedSDFGs(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Prune and inline until neither transformation accepts a nested SDFG of ``sdfg``; a state that inlined a body
-        inside a scope has its memlets propagated (the scope's outer memlets summarized the nested SDFG).
-
-        :param sdfg: The SDFG to transform in place.
-        :param pipeline_results: Unused; neither transformation reads pipeline results.
-        :returns: Number of applications, or ``None`` if none.
-        """
+        inside a scope has its memlets propagated (the scope's outer memlets summarized the nested SDFG)."""
         inline = InlineSDFG()
         inline.connector_names = {}
         probes: list[Probe] = [(PruneConnectors(), PruneConnectors.nsdfg), (inline, InlineSDFG.nested_sdfg)]

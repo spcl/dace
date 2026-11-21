@@ -1,158 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lift a conditional-append (stream compaction) loop to a parallel scan + scatter.
-
-The sequential shape -- TSVC ``s341`` / ``s342`` / ``s343`` -- carries an output
-cursor across iterations and bumps it only on the taken branch::
-
-    j = -1
-    for i in range(N):
-        if b[i] > 0.0:
-            j = j + 1
-            a[j] = b[i]
-
-``j`` is the ONLY loop-carried value, so ``LoopToMap`` sees a carried scalar plus
-a data-dependent write subset ``a[j]`` and refuses; the loop stays sequential.
-Neither ``LoopToScan`` (the carried value is not the written array -- it is the
-write INDEX) nor ``LoopToReduce`` / ``LiftLoopCarriedReduction`` (there is no
-associative combine on an accumulator) claims this shape, and
-``ScatterToGuardedMaps`` only guards an idx array the loop already READS.
-
-The lift replaces the cursor with its closed form. Let ``mask[i] = cond(i)`` and
-``rank[i] = mask[0] + ... + mask[i-1]`` (the EXCLUSIVE prefix sum). The value of
-the cursor on entry to iteration ``i`` is exactly ``c_in + K * rank[i]`` for a
-per-taken-iteration increment ``K`` -- a closed form with no carry -- so every
-iteration can compute its own cursor and the guarded writes land on slots that
-are DISJOINT BY CONSTRUCTION (``rank`` is strictly increasing on taken
-iterations, and a non-taken iteration writes nothing).
-
-Soundness -- the lift is value-preserving when, for the loop ``L``, the guard
-``cond``, the branch body ``B`` and the cursor ``c``:
-
-* ``c`` is bumped by exactly ONE interstate assignment ``c = c + K`` in all of
-  ``L``, that assignment lives inside ``B``, and ``K`` is loop-invariant. Two
-  bumps, a bump outside the guard, or a data-dependent ``K`` all break
-  ``cursor(i) = c_in + K * rank[i]``;
-* ``c`` is free of the loop bounds, of the preamble that computes ``cond``, and
-  of ``cond`` itself -- otherwise phase 1 cannot compute ``mask`` without
-  already knowing the cursor;
-* every array written through ``c`` is never read in ``L`` (an in-place
-  compaction ``Z[c] = Z[i]`` aliases its own input: sequentially ``c <= i`` so
-  it is safe, in parallel it is a read/write race) and is written ONLY through
-  ``c``; every array read through ``c`` is never written in ``L``;
-* an array the guard reads and the body writes is touched at ONE point subset,
-  identical on both sides and an injective affine image of the iteration vector,
-  so hoisting all guard reads (phase 1) ahead of all body writes (phase 3) cannot
-  reorder a real dependence;
-* the residual body -- with the cursor modelled by an affine index in the
-  outermost iterator -- passes ``LoopToMap.can_be_applied`` non-permissively.
-  This pass owns the proof that the CURSOR-indexed accesses are disjoint;
-  ``LoopToMap`` owns everything else, so no dependence is waived by assumption.
-
-The match is a NEST, not a single loop: a chain of unit-stride rectangular loops
-whose innermost body holds the guard. TSVC ``s343`` is ``for i: for j: if ...``
-with the cursor carried across BOTH levels, so lifting only the inner loop leaves
-the three phases inside a sequential outer loop -- one fork/join pair per phase
-per outer iteration, and a ``Scan`` / ``Reduce`` that see an enclosing loop and so
-take their sequential expansion. Claiming the whole nest at once gives ``mask`` /
-``rank`` ONE DIMENSION PER LEVEL, which puts the phases at the nest's own nesting
-depth: three passes for the whole kernel instead of three per outer iteration, and
-a top-level ``Scan`` that takes the parallel ``inscan`` lowering. A default-strided
-array is row-major, so the buffers' flat order is the outermost-major order the
-sequential cursor advances in -- which is the order the ``Scan`` walks, and what
-makes a single scan over the whole nest the right prefix. A single-loop match is
-the one-level case of the same code.
-
-Rewrite (``mask`` / ``rank`` are fresh transients shaped by the levels' trip counts
-and ``total`` a fresh scalar -- each with exactly ONE writer, which is what keeps
-state fusion from splitting a buffer across two access nodes and leaving the reader
-on the wrong one)::
-
-    BEFORE                                    AFTER
-
-    -- {c: INIT} -->                          -- {c_in: c} -->
-    for i in start:end                        for i in start:end          (phase 1, parallel)
-    |  preamble  -- {s: b[i]} -->             |  preamble -- {s: b[i]} -->
-    +- if (cond(s))                           +- mask[i - start] = cond(s)
-       +- -- {c: c + K} -->                   rank  = exclusive_scan(mask) (phase 2, Scan)
-          a[c] = f(i)                         total = sum(mask)            (phase 2, Reduce)
-                                              for i in start:end          (phase 3, parallel)
-                                              |  preamble -- {s: b[i]} -->
-                                              +- -- {c: c_in + K*rank[i - start]} -->
-                                                 if (cond(s))
-                                                 +- -- {c: c + K} -->
-                                                    a[c] = f(i)
-                                              -- {c: c_in + K*total} -->
-
-Phase 3 keeps the branch body VERBATIM, including the ``c = c + K`` bump:
-rebinding ``c`` on the edge into the guard gives every iteration the right
-entry value, and the bump then reproduces the original in-iteration value at
-every use, whether the source bumped before or after the writes. ``total``
-comes from a ``Reduce``, not from a spare scan slot, so a zero-trip loop reads
-nothing out of bounds and publishes the untouched ``c_in``.
-
-Blocks after the guard in the innermost body (the tail) run on every iteration;
-phase 1 drops them with the guard and phase 3 keeps them. Side effects next to the
-append, behind the guard or in the tail, run only in phase 3, and whether its
-iterations may run concurrently is the probe's verdict like any other access: a
-scatter-add is a reduction (an in-place update ``h[s] = h[s] + 1`` becomes WCR in
-phase 3 when that is what the probe needs), and a plain write through
-``s = idx[i]`` is disjoint only if a fact (``INJECTIVE``) proves it. The appended
-order is the sequential one, so no consumer sees a change.
-
-Algorithm (pseudocode)::
-
-    for loop in every LoopRegion, outermost first:     # a claimed nest detaches its inner levels,
-        m = match(loop)                                # so the widest match wins and the levels
-        if m is None: continue                         # below it are never revisited
-        mask, rank, total = fresh transients, one dimension per level
-        emit phase 1 nest  (preamble copy + mask store at the iteration vector)
-        emit Scan(SUM, exclusive, identity 0) and Reduce(+, identity 0) off one mask read
-        emit phase 3 nest  (nest copy + cursor rebind on the guard in-edge)
-        publish c = c_in + K * total
-        force LoopToMap on the phase 1 / phase 3 roots (the disjointness proof is ours)
-
-Outermost-first is what makes the nest claim self-selecting: when a level breaks a
-gate -- the cursor is initialized inside it, its extent moves with an outer
-iterator, the probe refuses -- the outer match fails, the sweep walks on to the
-level below, and the narrower lift fires there. Correct either way, just with the
-phases back inside a sequential outer loop.
-
-Refusals -- each names the miscompile it prevents:
-
-* Non-unit stride / unanalyzable bounds -- ``rank`` is indexed by ``i - start``
-  with unit steps; any other stride mis-indexes ``mask``.
-* A non-rectangular nest -- an inner bound that moves with an outer iterator has
-  no constant extent, so it cannot be a ``mask`` dimension.
-* A level that holds both a guard and an inner loop, or two inner loops -- the
-  shaped index models ONE path down to ONE guard.
-* Guard is not a single one-armed ``ConditionalBlock``, or the body is not a
-  linear chain -- ``rank`` counts ONE guard; an ``else`` arm or a second guard
-  would append on a path the mask does not model.
-* Zero or several cursor bumps, a bump outside the guard, a bump by a
-  data-dependent amount -- the closed form ``c_in + K * rank[i]`` is wrong.
-* The cursor reaches the loop bounds, the preamble or the guard -- phase 1
-  would need the cursor it is being computed to replace.
-* ``break`` / ``continue`` / ``return``, a nested SDFG, a side-effecting
-  tasklet, a stream inside the loop, or a WCR write in a preamble -- phase 1
-  re-executes the preamble and phase 3 re-executes the body, so any effect would
-  run twice or out of order.
-* A non-empty tail after an inner loop, or a tail that names the cursor -- phase
-  1 keeps an outer level's tail, and on a non-taken iteration the rebound cursor
-  names the slot the next taken iteration appends to.
-* The guard reads a data container directly instead of an interstate-bound
-  symbol -- the mask tasklet emits the guard as symbol-only code; a bare array
-  name would be a dangling read.
-* The preamble writes a non-transient array -- phase 1 and phase 3 both run it.
-* An array written through the cursor is read anywhere in the loop (in-place
-  compaction), or written by anything but the cursor; an array read through the
-  cursor is written in the loop -- the scatter would race against its own
-  input.
-* A guard-read array is written by the body at anything other than the single
-  identical injective point subset -- hoisting the guard reads would then see a
-  value the sequential loop had already overwritten.
-* The affine-cursor probe fails ``LoopToMap.can_be_applied`` -- the residual
-  body carries a dependence this pass does not model.
-"""
+"""Lift a conditional-append (stream compaction) loop to a parallel scan + scatter."""
 
 import ast
 import copy
@@ -191,33 +38,17 @@ BASE_PREFIX = "compaction_base_"
 #: Index dtype of the rank buffer, the total and the cursor base symbol. An index stays int64.
 COUNT_DTYPE = dtypes.int64
 
-#: The rank buffer and the total narrow to this when every cursor offset ``K * rank`` fits it: half
-#: the scan's write and phase 3's read. When that is not provable, a runtime test of the nest's reach
-#: picks between the narrow lift and an int64 copy of it.
+#: The rank buffer and the total narrow to this when every cursor offset ``K * rank`` fits it: half the scan's write and
+#: phase 3's read.
 NARROW_COUNT_DTYPE = dtypes.int32
 NARROW_COUNT_LIMIT = 2**31 - 1
 
-#: Element type of the predicate mask. ONE BYTE, not an index width: ``mask`` holds 0 or 1, and it
-#: is the buffer the phases touch most -- phase 1 writes it, the ``Scan`` reads it and the ``Reduce``
-#: reads it again. At int64 the three phases moved ~40N bytes of auxiliary traffic against the
-#: sequential original's ~16N; at int8 that is ~19N, which is what takes the lift from a loss to
-#: roughly parity on a narrow machine and keeps its win on a wide one. The consumers accumulate in
-#: the OUTPUT type, so the sum never runs at this width: see ``Scan``'s
-#: :func:`~dace.libraries.standard.nodes.scan.widening_is_value_preserving` and
-#: ``dace::reduce::sum<T, U>``. ``rank`` is NOT narrowed -- it is a write cursor, i.e. an index.
+#: Element type of the predicate mask.
 MASK_DTYPE = dtypes.int8
 
 
 class NestLevel(NamedTuple):
-    """One unit-stride loop level of the matched compaction nest.
-
-    :param loop: The loop region at this level.
-    :param start: First value of its loop variable.
-    :param trip: Number of iterations at this level, ``end - start + 1``.
-    :param preamble: The blocks of its body that run before ``child``.
-    :param child: The next level's loop, or the guard at the innermost level.
-    :param tail: The blocks after the guard at the innermost level; only phase 3 runs them.
-    """
+    """One unit-stride loop level of the matched compaction nest."""
 
     loop: LoopRegion
     start: symbolic.SymbolicType
@@ -228,18 +59,7 @@ class NestLevel(NamedTuple):
 
 
 class CompactionMatch(NamedTuple):
-    """A matched conditional-append nest and everything the rewrite touches.
-
-    :param root: The outermost loop of the nest -- the block the rewrite replaces.
-    :param levels: The nest levels, outermost first; the last one holds the guard.
-    :param parent: ``root.parent_graph`` -- where the phase chain is spliced in.
-    :param sdfg: The SDFG owning ``root``, where the transients are declared.
-    :param cond_block: The single one-armed guard inside the innermost body.
-    :param cond_str: The guard condition, as a symbol-only Python expression.
-    :param cursor: Name of the loop-carried output cursor symbol.
-    :param step: The per-taken-iteration cursor increment ``K`` (nest-invariant).
-    :param accumulators: The containers whose in-place updates phase 3 turns into WCR writes.
-    """
+    """A matched conditional-append nest and everything the rewrite touches."""
 
     root: LoopRegion
     levels: tuple[NestLevel, ...]
@@ -395,24 +215,7 @@ class LoopToStreamCompaction(ppl.Pass):
     def nest_index(
         self, levels: tuple[NestLevel, ...], loops: list[LoopRegion], iterator_dtypes: list[dtypes.typeclass]
     ) -> list[symbolic.SymbolicType]:
-        """The origin-shifted iteration vector, one component per level, SYMBOLIC.
-
-        ``mask`` / ``rank`` carry one DIMENSION per level rather than a linearized index. Both are
-        the same buffer in memory -- a default-strided array is row-major, so its flat order is the
-        outermost-major order the cursor advances in, which is what the ``Scan`` walks. The shaped
-        form is what keeps the buffers analyzable: ``LoopToMap`` classifies a write as uniquely
-        indexed only when it matches ``a*i + b`` with a provably ``|a| >= 1``, and the linearized
-        ``mask[T1*i + j]`` has ``a = T1``, unprovable for a symbolic extent. Per-level dimensions
-        give every level ``a = 1``.
-
-        The iterator is minted at the width :meth:`rename_iterator` DECLARED it at, and the
-        component never becomes text. ``dtype`` is part of symbol identity on this branch, so a
-        component formatted to a string and re-parsed comes back as a SECOND symbol of the same
-        name at the default width: ``Min(i, i)`` stops folding, a difference over the axis stops
-        cancelling, and the injectivity check that ``LoopToMap`` runs over this very subset then
-        judges an ``a = 1`` write non-affine. No declaration fixes that -- only never spelling the
-        component out.
-        """
+        """The origin-shifted iteration vector, one component per level, SYMBOLIC."""
         return [
             symbolic.symbol(loop.loop_variable, dtype) - level.start
             for level, loop, dtype in zip(levels, loops, iterator_dtypes)
@@ -456,12 +259,7 @@ class LoopToStreamCompaction(ppl.Pass):
         return chain
 
     def body_is_pure(self, loop: LoopRegion, sdfg: SDFG, levels: tuple[NestLevel, ...]) -> bool:
-        """Reject anything phase 1's re-execution or phase 3's reordering could break.
-
-        A WCR write is an accumulation; behind the guard or in the tail only phase 3 runs it, and whether its
-        iterations may run concurrently is the probe's question, as for any other write. In a preamble phase 1
-        would run it a second time.
-        """
+        """Reject anything phase 1's re-execution or phase 3's reordering could break."""
         for blk in loop.all_control_flow_blocks(recursive=False):
             if isinstance(blk, (BreakBlock, ContinueBlock, ReturnBlock)):
                 return False
@@ -488,8 +286,7 @@ class LoopToStreamCompaction(ppl.Pass):
         """Find the unique ``c = c + K`` interstate assignment; it must live inside ``branch``."""
         assigned: dict[str, int] = {}
         bumps: list[tuple[str, symbolic.SymbolicType, bool]] = []
-        # all_interstate_edges descends into nested guards and loops; only an unconditional edge on the
-        # branch's own single path runs exactly once per taken iteration, which is what the mask models.
+        # all_interstate_edges descends into nested guards and loops
         on_path = self.body_chain(branch) is not None
         branch_edges = {id(e) for e in branch.edges() if on_path and e.data.is_unconditional()}
         for edge in loop.all_interstate_edges(recursive=False):
@@ -591,8 +388,7 @@ class LoopToStreamCompaction(ppl.Pass):
                         else (cursor_read if uses_cursor else read)
                     )
                     target[name] = target.get(name, 0) + 1
-        # Interstate edges and branch conditions read data too; a compaction whose source read is
-        # bound to a symbol (``t = Z[i]``) aliases its target exactly as a dataflow read would.
+        # Interstate edges and branch conditions read data too
         for memlet in self.meta_reads(loop, sdfg):
             uses_cursor = cursor in {str(s) for s in required(memlet.subset).free_symbols}
             target = cursor_read if uses_cursor else read
@@ -600,14 +396,7 @@ class LoopToStreamCompaction(ppl.Pass):
         return cursor_written, cursor_read, plain_written, read
 
     def cursor_writes_move_with_iteration(self, loop: LoopRegion, levels: tuple[NestLevel, ...], cursor: str) -> bool:
-        """Does a cursor-indexed write also read a symbol that changes from one iteration to the next?
-
-        The probe models the cursor as ``K * (i - start)``. For a write ``a[c + o]`` with ``o`` fixed
-        across iterations that model collides exactly when the real ``c_in + K * rank[i]`` does,
-        since both step by multiples of ``K``. A subset that also moves with the iteration does not
-        keep that property: ``b[2*c - i]`` is injective under the model and repeats under the real
-        cursor. Map parameters vary only within one iteration and stay allowed.
-        """
+        """Does a cursor-indexed write also read a symbol that changes from one iteration to the next?"""
         moving = {level.loop.loop_variable for level in levels}
         for edge in loop.all_interstate_edges():
             moving.update(edge.data.assignments.keys())
@@ -658,12 +447,7 @@ class LoopToStreamCompaction(ppl.Pass):
         return True
 
     def subset_is_injective_point(self, subset: subsets.Subset, loop_vars: list[symbolic.SymbolicType]) -> bool:
-        """A single point that is an injective affine image of the nest's iteration vector.
-
-        Injective here means: every iterator carries exactly one dimension with a nonzero integer
-        coefficient, and no dimension mixes two iterators -- so distinct iteration vectors land on
-        distinct elements, dimension by dimension.
-        """
+        """A single point that is an injective affine image of the nest's iteration vector."""
         if not isinstance(subset, subsets.Range):
             return False
         carried: list[symbolic.SymbolicType] = []
@@ -690,23 +474,7 @@ class LoopToStreamCompaction(ppl.Pass):
     def affine_cursor_probe(
         self, loop: LoopRegion, cursor: str, step: symbolic.SymbolicType, levels: tuple[NestLevel, ...]
     ) -> frozenset[str] | None:
-        """Ask ``LoopToMap`` about the residual body with the cursor modelled as an injective affine index.
-
-        The model is the OUTERMOST level's index, ``K * (i - start)``: the probe's job is to judge
-        the accesses this pass does NOT reason about, and the cursor-indexed ones are exactly the
-        ones it does -- ``cursor_arrays_are_isolated`` has already established that an array reached
-        through the cursor is written only through it and never read in the nest, so no other access
-        can alias it and ``LoopToMap``'s verdict on the model index is not load-bearing. Keeping the
-        model affine in one iterator with an integer coefficient is what keeps it CLASSIFIABLE; a
-        linearized inner index would carry a symbolic coefficient and refuse every symbolic extent.
-
-        A refusal on a container whose every access is an in-place update (``hist[s] = hist[s] + 1``)
-        is retried with those updates as WCR writes (:attr:`LoopLift.assume_wcr`), as
-        ``CarriedAccumulationToWCR`` does for a plain loop; phase 3 then makes them WCR. An update the
-        preamble makes stays refused: phase 1 would run it as well.
-
-        :returns: the containers whose updates phase 3 turns into WCR (empty if none), or ``None`` on a refusal.
-        """
+        """Ask ``LoopToMap`` about the residual body with the cursor modelled as an injective affine index."""
         from dace.transformation.interstate.loop_to_map import LoopLift, Refusal
         from dace.transformation.passes.canonicalize.carried_accumulation import all_convertible
         from dace.transformation.passes.loop_to_reduce import only_read_modify_written
@@ -868,13 +636,11 @@ class LoopToStreamCompaction(ppl.Pass):
         for name in sorted(m.accumulators):
             convert_updates(scatter_nest, name)
         self.parallelize(scatter_nest, sdfg, targets)
-        # Symbols, descriptors, regions and interstate edges all changed; every table built from
-        # this SDFG's base is stale.
+        # Symbols, descriptors, regions and interstate edges all changed
         resolver.invalidate_sdfg(sdfg)
 
     def clone_loop(self, m: CompactionMatch, suffix: str) -> LoopRegion:
-        """Copy the matched nest into the parent region; ownership is what makes it editable. The copy owns its
-        scratch (:meth:`own_scratch`)."""
+        """Copy the matched nest into the parent region; ownership is what makes it editable."""
         loop = copy.deepcopy(m.root)
         loop.label = m.root.label + suffix
         m.parent.add_node(loop, ensure_unique_name=True)
@@ -890,14 +656,7 @@ class LoopToStreamCompaction(ppl.Pass):
         return loops, guard
 
     def iterator_dtype(self, loop: LoopRegion, sdfg: SDFG, resolver: scopes.ScopedSymbolResolver) -> dtypes.typeclass:
-        """The dtype ``loop``'s iterator is declared with.
-
-        A LoopRegion binds its iterator through ``new_symbols``, which infers it from the init,
-        step and end -- so the scoped table of a state INSIDE the loop is the authority, and
-        ``sdfg.symbols`` is only the fallback for a name declared but not inferable. ``dtype`` is
-        part of symbol identity here: a rename that retypes the iterator turns one axis into two
-        symbols across the three phases.
-        """
+        """The dtype ``loop``'s iterator is declared with."""
         body = next(iter(loop.states()), None)
         if body is not None:
             scoped = resolver.tabulate(body)[None].get(loop.loop_variable)
@@ -950,15 +709,12 @@ class LoopToStreamCompaction(ppl.Pass):
         for loop, dtype in zip(loops, iterator_dtypes):
             self.rename_iterator(loop, m.sdfg, loop.label, dtype)
         inner = loops[-1]
-        # An interstate assignment IS text -- ``InterstateEdge.assignments`` holds source, parsed
-        # by the consumer -- so this one component is spelled out. It reaches a CodeBlock, not a
-        # subset, and no symbol object survives that boundary in either direction.
+        # An interstate assignment IS text
         index = ", ".join(symbolic.symstr(comp) for comp in self.nest_index(m.levels, loops, iterator_dtypes))
         binding = f"({base_sym}) + ({symbolic.symstr(m.step)}) * {idx_name}[{index}]"
         edges = inner.in_edges(guard)
         if not edges:
             # No preamble: the guard is the body's first block, so there is no edge to bind on.
-            # Dropping the rebinding would leave the cursor at its stale carried value.
             bind = inner.add_state(root.label + "_bind", is_start_block=True)
             inner.add_edge(bind, guard, dace.InterstateEdge(assignments={m.cursor: binding}))
             return
@@ -982,21 +738,7 @@ class LoopToStreamCompaction(ppl.Pass):
     def emit_scan_and_count(
         self, state: SDFGState, mask: str, rank: str, total: str, shape: list[symbolic.SymbolicType]
     ) -> None:
-        """Phase 2: ``rank = exclusive_scan(mask)`` and ``total = sum(mask)``, off one mask read.
-
-        The whole shaped buffer is one span: ``Scan`` sizes its loop from the subset's element
-        count and walks the (default-strided, hence row-major) storage, which is the outermost-major
-        order the sequential cursor advances in.
-
-        Every buffer here has exactly ONE writer. A partial second write to ``mask`` -- padding a
-        spare slot to carry the total, say -- survives this pass but not state fusion, which splits
-        the two writers onto two access nodes and leaves the reader on the wrong one.
-
-        Both consumers WIDEN: ``mask`` is ``int8`` (see :data:`MASK_DTYPE`) while ``rank`` and
-        ``total`` are ``int64``, and each accumulates in its OUTPUT type -- the ``Scan`` through
-        :func:`~dace.libraries.standard.nodes.scan.widening_is_value_preserving`, the ``Reduce``
-        through ``dace::reduce::sum<T, U>``. Summing at the mask's width would wrap at 127.
-        """
+        """Phase 2: ``rank = exclusive_scan(mask)`` and ``total = sum(mask)``, off one mask read."""
         from dace.libraries.standard.nodes.reduce import Reduce
         from dace.libraries.standard.nodes.scan import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, Scan, ScanOp
 
@@ -1020,13 +762,7 @@ class LoopToStreamCompaction(ppl.Pass):
         )
 
     def parallelize(self, loop: LoopRegion, sdfg: SDFG, targets: frozenset[str] = frozenset()) -> None:
-        """Best effort -- the three-phase form is correct whether or not the phases become Maps.
-
-        ``targets`` are the arrays phase 3 writes through ``rank``, which is strictly increasing on the taken
-        iterations: the disjointness proof this pass owns and ``LoopToMap`` cannot reconstruct. Only their
-        conflicts are waived; every other write (a scalar the body stages a value through) still gets the
-        dependence test, so it is privatized or the loop stays sequential. Phase 1 waives nothing.
-        """
+        """Best effort -- the three-phase form is correct whether or not the phases become Maps."""
         from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
         parallelize = ParallelizeLoops()
@@ -1036,8 +772,7 @@ class LoopToStreamCompaction(ppl.Pass):
 
 def own_scratch(copy_: LoopRegion, original: LoopRegion, sdfg: SDFG) -> None:
     """Give ``copy_``, a deep copy of ``original`` placed in the graph, its own copy of every transient that only
-    ``original`` accesses. Each phase and each count-width twin then holds its scratch alone, so a parallelization
-    of one finds that scratch confined to its loop and privatizes it, instead of meeting the other copies' accesses."""
+    ``original`` accesses."""
     inside = {node.data for state in original.states() for node in state.data_nodes()}
     outside: set[str] = set()
     for state in sdfg.states():

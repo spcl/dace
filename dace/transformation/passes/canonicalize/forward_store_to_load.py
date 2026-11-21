@@ -1,36 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Read a value the same iteration just stored from a register instead of from memory.
-
-TSVC ``s323`` is the shape::
-
-    for i in range(1, N):
-        a[i] = b[i - 1] + c[i] * d[i]
-        b[i] = a[i] + c[i] * e[i]
-
-``a[i]`` is written and read at the SAME ``i``, so it carries nothing; the only loop-carried
-edge is ``b[i-1] -> b[i]``, and substituting ``a[i]`` leaves ``b[i] = b[i-1] + c[i]*d[i] +
-c[i]*e[i]`` -- a unit-coefficient first-order recurrence, i.e. a prefix sum. Nothing here has
-to run sequentially.
-
-The round trip through ``a`` hides that. ``a`` is read AND written at loop-variant subsets, so
-every carrier-based matcher counts it as a second carrier alongside ``b``, and the ``b`` update
-reads ``a`` rather than the value it was handed. ``SplitStatements`` cannot separate the two
-statements either: ``a[i]`` pulls the ``a`` group first while ``b[i-1]`` pulls the ``b`` group
-first, and two arrays wanting opposite orders is a refusal.
-
-Forwarding the stored value settles both. The value goes into a transient on its way to the
-array, the in-iteration reader is fed from the transient, and the store to ``a`` STAYS -- ``a``
-is a declared output. Only one array, ``b``, then crosses between the two statements, so
-``SplitStatements`` orders them and ``LoopToScan`` sees the prefix sum it always could lift.
-
-The same-iteration proof is structural, not name-based. The write and the reads sit on ONE
-access node in ONE state, where dataflow order makes the out-edges observe what the in-edge
-wrote, and every read subset must be the SAME single-element subset as the write. A body that
-reads ``a[i-1]`` instead has a different subset -- the value of an earlier iteration, which
-this state never wrote -- and is refused. Anything the pass cannot see through is refused too:
-a second access node for the array in the state, a view, a ``may_alias`` descriptor, a WCR or
-dynamic memlet, or a producer/consumer in another scope.
-"""
+"""Read a value the same iteration just stored from a register instead of from memory."""
 
 import copy
 from collections import OrderedDict
@@ -50,21 +19,12 @@ def point() -> subsets.Range:
 
 
 def in_same_scope(state: SDFGState, node: nodes.Node, other: nodes.Node) -> bool:
-    """Whether ``node`` and ``other`` sit under the same map entry (or both at the top).
-
-    A producer or consumer one scope out reaches the access node through a map boundary, where
-    the memlet is the PROPAGATED subset of a whole iteration space rather than the element this
-    pass forwards.
-    """
+    """Whether ``node`` and ``other`` sit under the same map entry (or both at the top)."""
     return state.entry_node(node) is state.entry_node(other)
 
 
 def loop_body_states(sdfg: SDFG) -> "OrderedDict[SDFGState, list[str]]":
-    """Every state inside a loop, mapped to the iteration variables of the loops enclosing it.
-
-    Built by descent from the ``LoopRegion`` s rather than by ascent from the states, so it needs
-    no control-flow parent bookkeeping and keeps the pipeline's insertion order.
-    """
+    """Every state inside a loop, mapped to the iteration variables of the loops enclosing it."""
     found: OrderedDict[SDFGState, list[str]] = OrderedDict()
     for region in sdfg.all_control_flow_regions(recursive=True):
         if not isinstance(region, LoopRegion) or not region.loop_variable:
@@ -77,15 +37,7 @@ def loop_body_states(sdfg: SDFG) -> "OrderedDict[SDFGState, list[str]]":
 def forwardable_store(
     state: SDFGState, node: nodes.AccessNode, loop_variables: list[str]
 ) -> tuple[Any, list[Any], subsets.Range] | None:
-    """Match a store on ``node`` that the same state reads back at the same element.
-
-    :param state: The state holding the candidate access node.
-    :param node: The access node to test.
-    :param loop_variables: Iteration variables of the enclosing loops; the store must depend on
-                           one, or there is no per-iteration value to forward and no carrier to
-                           remove.
-    :returns: ``(write_edge, read_edges, write_subset)``, or ``None`` if the shape is not proven.
-    """
+    """Match a store on ``node`` that the same state reads back at the same element."""
     sdfg = state.sdfg
     desc = sdfg.arrays.get(node.data)
     if desc is None or isinstance(desc, dt.View) or not isinstance(desc, dt.Array):
@@ -140,8 +92,7 @@ def forward_one(
     )
     for read in reads:
         dst, dst_conn = read.dst, read.dst_conn
-        # Where the read LANDED is the reader's business and is preserved verbatim; only where it
-        # came from changes.
+        # Where the read LANDED is the reader's business and is preserved verbatim; only where it came from changes.
         landing = copy.deepcopy(read.data.get_dst_subset(read, state)) if isinstance(dst, nodes.AccessNode) else None
         state.remove_edge(read)
         state.add_edge(forwarded, None, dst, dst_conn, Memlet(data=name, subset=point(), other_subset=landing))
@@ -150,10 +101,7 @@ def forward_one(
 @properties.make_properties
 @xf.explicit_cf_compatible
 class ForwardStoreToLoad(ppl.Pass):
-    """Feed an in-iteration read from the stored value instead of from the array it was stored to.
-
-    See the module docstring for the shape, the same-iteration proof and the refusals.
-    """
+    """Feed an in-iteration read from the stored value instead of from the array it was stored to."""
 
     CATEGORY: str = "Optimization Preparation"
 
@@ -164,11 +112,7 @@ class ForwardStoreToLoad(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
-        """Forward every proven same-iteration store-to-load in every loop body.
-
-        :param sdfg: The SDFG to rewrite.
-        :returns: The number of stores forwarded, or ``None`` if the SDFG was left untouched.
-        """
+        """Forward every proven same-iteration store-to-load in every loop body."""
         count = 0
         for nested in sdfg.all_sdfgs_recursive():
             for state, loop_variables in loop_body_states(nested).items():

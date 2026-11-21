@@ -1,13 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Fuse a producer map and a consumer map where one iterates over a subset of the other's axes.
-
-``for i, k: T[i, k] = f(i, k)`` followed by ``for i: g(T[i, 4], T[i, 7])`` becomes
-``for i: { for k: t[k] = f(i, k); g(t[4], t[7]) }``: the producer splits into an outer map over the axes the
-consumer shares (equal ranges) and an inner map over the rest, and the outer map fuses vertically with the consumer.
-Mirrored, ``for i: T[i] = f(i)`` followed by ``for i, k: g(T[i], k)`` splits the consumer instead:
-``for i: { t = f(i); for k: g(t, k) }``. A split that does not fuse is merged back into the original map.
-A consumer that shares the axes at inner ones keeps its loop order and both maps get a ``specialization_hint``.
-"""
+"""Fuse a producer map and a consumer map where one iterates over a subset of the other's axes."""
 
 from typing import Any
 
@@ -24,8 +16,7 @@ from dace.transformation.passes import analysis as ap
 
 def shared_axes(producer: nodes.Map, consumer: nodes.Map, pairs: dict[str, str] | None = None) -> list[str] | None:
     """The producer parameters, in the consumer's parameter order, that iterate the consumer's ranges; ``None`` unless
-    every consumer parameter has one and the producer keeps at least one axis of its own. A consumer parameter takes
-    the producer parameter ``pairs`` names for it when their ranges agree, before any other of its range."""
+    every consumer parameter has one and the producer keeps at least one axis of its own."""
     if len(consumer.params) >= len(producer.params):
         return None
     ranges = dict(zip(producer.params, producer.range.ranges, strict=False))
@@ -59,8 +50,7 @@ def candidates(
     state: SDFGState, inner_axis: list | None = None
 ) -> list[tuple[nodes.MapEntry, nodes.AccessNode, nodes.MapEntry, list[str], bool]]:
     """Top-level ``(producer entry, transient, consumer entry, shared axes, split consumer)`` tuples of ``state``: the
-    shared axes are parameters of the map with more axes, the consumer when ``split consumer``. A consumer sharing
-    the producer's axes at inner ones goes to ``inner_axis`` instead, as ``(producer, transient, consumer, axes)``."""
+    shared axes are parameters of the map with more axes, the consumer when ``split consumer``."""
     sdict = state.scope_dict()
     found = []
     for node in state.data_nodes():

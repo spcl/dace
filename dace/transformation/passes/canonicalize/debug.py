@@ -1,28 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Per-stage debugging harness for the canonicalize pipeline.
-
-Runs the canonicalize stages one at a time and, after each stage, checks
-that the SDFG is still (i) structurally valid and (ii) numerically
-equivalent to the un-canonicalized original on small random inputs. This
-pinpoints the exact stage that breaks validity or changes results -- the
-two failure modes the canonicalize work keeps hitting.
-
-The harness generates inputs with every free (sizing) symbol set to a
-small value and every data array/scalar filled with small-magnitude
-random numbers (so transcendental kernels do not overflow), runs the
-original SDFG once to get the reference outputs, then re-runs the
-cumulative post-stage SDFG after each stage and compares.
-
-Typical use::
-
-    from dace.transformation.passes.canonicalize.debug import (
-        canonicalize_with_stage_checks)
-    results = canonicalize_with_stage_checks(sdfg)
-    for r in results:
-        print(r)
-    # first failing stage:
-    bad = next((r for r in results if not r.ok), None)
-"""
+"""Per-stage debugging harness for the canonicalize pipeline."""
 
 import copy
 from dataclasses import dataclass
@@ -44,19 +21,7 @@ DEFAULT_INT_RANGE: tuple[int, int] = (1, 4)
 
 @dataclass
 class StageCheckResult:
-    """Outcome of validating + numerically checking one canonicalize stage.
-
-    :param index: Stage position in the flat pipeline (0-based).
-    :param label: Stage label (e.g. ``'fuse'``).
-    :param pass_name: Class name of the applied pass.
-    :param valid: Whether ``sdfg.validate()`` passed after the stage.
-    :param validation_error: Validation exception text, or ``None``.
-    :param numerically_correct: ``True``/``False`` if the post-stage SDFG ran
-        and matched the reference; ``None`` if it could not be run.
-    :param max_abs_diff: Largest absolute output difference vs. the reference
-        across all compared arrays, or ``None`` if not run.
-    :param run_error: Compile/run exception text, or ``None``.
-    """
+    """Outcome of validating + numerically checking one canonicalize stage."""
 
     index: int
     label: str
@@ -86,13 +51,7 @@ class StageCheckResult:
 
 
 def _resolve_shape(shape: tuple[Any, ...], symbol_values: dict[str, int]) -> tuple[int, ...]:
-    """Substitute symbol values into a (symbolic) descriptor shape.
-
-    :param shape: Descriptor shape; each dimension is an int or a symbolic
-        expression.
-    :param symbol_values: Concrete value for every free symbol in ``shape``.
-    :returns: The fully concrete shape.
-    """
+    """Substitute symbol values into a (symbolic) descriptor shape."""
     out: list[int] = []
     for dim in shape:
         val = symbolic.evaluate(dim, symbol_values) if symbolic.issymbolic(dim) else dim
@@ -101,13 +60,7 @@ def _resolve_shape(shape: tuple[Any, ...], symbol_values: dict[str, int]) -> tup
 
 
 def _random_for_dtype(dtype: dtypes.typeclass, shape: tuple[int, ...], rng: np.random.Generator) -> Any:
-    """Build small-magnitude random data of ``dtype`` and ``shape``.
-
-    :param dtype: Element type of the data.
-    :param shape: Concrete shape; an empty tuple yields a scalar.
-    :param rng: Random generator drawn from for the data.
-    :returns: A scalar of ``dtype`` if ``shape`` is empty, else an ndarray.
-    """
+    """Build small-magnitude random data of ``dtype`` and ``shape``."""
     np_dtype = dtype.as_numpy_dtype()
     if np.issubdtype(np_dtype, np.integer):
         lo, hi = DEFAULT_INT_RANGE
@@ -126,16 +79,7 @@ def _random_for_dtype(dtype: dtypes.typeclass, shape: tuple[int, ...], rng: np.r
 def _build_random_inputs(
     sdfg: SDFG, symbol_value: int, rng: np.random.Generator
 ) -> tuple[dict[str, int], dict[str, Any]]:
-    """Build ``(symbol_values, data_values)`` for one run of ``sdfg``.
-
-    Every free symbol is set to ``symbol_value``; every non-transient
-    array/scalar is filled with small random data.
-
-    :param sdfg: The SDFG whose argument list drives input construction.
-    :param symbol_value: Value assigned to every free symbol.
-    :param rng: Random generator drawn from for the data.
-    :returns: ``(symbols, arrays)`` -- two dicts keyed by argument name.
-    """
+    """Build ``(symbol_values, data_values)`` for one run of ``sdfg``."""
     free_syms = dict.fromkeys(str(s) for s in sdfg.free_symbols)
     symbols: dict[str, int] = dict.fromkeys(free_syms, symbol_value)
 
@@ -154,18 +98,7 @@ def _build_random_inputs(
 
 
 def _run_capture(sdfg: SDFG, symbols: dict[str, int], arrays: dict[str, Any], tag: str) -> dict[str, np.ndarray]:
-    """Run a fresh copy of ``sdfg`` on copies of the inputs.
-
-    A copy of every input is passed so callers can reuse the same inputs
-    across runs without the in-place array writes of one run leaking into
-    the next.
-
-    :param sdfg: The SDFG to run.
-    :param symbols: Concrete value for every free symbol.
-    :param arrays: Input array/scalar values, keyed by argument name.
-    :param tag: Suffix appended to the run copy's name to keep it unique.
-    :returns: The post-run array values (outputs), keyed by argument name.
-    """
+    """Run a fresh copy of ``sdfg`` on copies of the inputs."""
     run_sdfg = copy.deepcopy(sdfg)
     run_sdfg.name = f"{run_sdfg.name}_{tag}"
     call_args = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in arrays.items()}
@@ -175,14 +108,7 @@ def _run_capture(sdfg: SDFG, symbols: dict[str, int], arrays: dict[str, Any], ta
 
 
 def _compare(ref: dict[str, np.ndarray], got: dict[str, np.ndarray], rtol: float, atol: float) -> tuple[bool, float]:
-    """Compare two output dicts arraywise.
-
-    :param ref: Reference outputs from the un-canonicalized SDFG.
-    :param got: Outputs from the post-stage SDFG.
-    :param rtol: Relative tolerance for the comparison.
-    :param atol: Absolute tolerance for the comparison.
-    :returns: ``(all_close, max_abs_diff)`` over the arrays present in both.
-    """
+    """Compare two output dicts arraywise."""
     max_diff = 0.0
     all_close = True
     for name, ref_val in ref.items():
@@ -204,21 +130,7 @@ def canonicalize_with_stage_checks(
     atol: float = 1e-9,
     stop_on_failure: bool = False,
 ) -> list[StageCheckResult]:
-    """Canonicalize ``sdfg`` stage-by-stage, checking validity + numerical
-    equivalence after every stage.
-
-    The input ``sdfg`` is NOT mutated; a copy is canonicalized internally.
-
-    :param sdfg: The SDFG to debug-canonicalize.
-    :param symbol_value: Small value assigned to every free symbol.
-    :param seed: RNG seed for the random inputs.
-    :param rtol: Relative tolerance for the output comparison.
-    :param atol: Absolute tolerance for the output comparison.
-    :param stop_on_failure: Stop at the first invalid / mismatching stage.
-    :returns: One :class:`StageCheckResult` per applied stage, in order.
-    :raises RuntimeError: If the original (un-canonicalized) SDFG cannot be
-        run to produce a reference (the harness needs a baseline).
-    """
+    """Canonicalize ``sdfg`` stage-by-stage, checking validity + numerical equivalence after every stage."""
     original = copy.deepcopy(sdfg)
     rng = np.random.default_rng(seed)
     symbols, arrays = _build_random_inputs(original, symbol_value, rng)
@@ -267,13 +179,8 @@ def canonicalize_with_stage_checks(
 
 
 def first_failing_stage(sdfg: SDFG, **kwargs: Any) -> StageCheckResult | None:
-    """Convenience: return the first stage that broke validity or values,
-    or ``None`` if the whole pipeline stayed valid + numerically correct.
-
-    :param sdfg: The SDFG to debug-canonicalize.
-    :param kwargs: Forwarded to :func:`canonicalize_with_stage_checks`.
-    :returns: The first failing :class:`StageCheckResult`, or ``None``.
-    """
+    """Convenience: return the first stage that broke validity or values, or ``None`` if the whole pipeline stayed valid
+    + numerically correct."""
     kwargs.setdefault("stop_on_failure", True)
     results = canonicalize_with_stage_checks(sdfg, **kwargs)
     return next((r for r in results if not r.ok), None)

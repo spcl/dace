@@ -1,15 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Fold the frontend's scalar copies into direct tasklet accesses: reads (``A[i] -> A_index -> tasklet``)
-and results (``tasklet -> result -> A[i]``, the copy ``TrivialTaskletElimination`` leaves of an assign tasklet).
-
-The Python frontend reads an array element into a transient Scalar before a tasklet uses it. The copy is a
-SNAPSHOT: the tasklet sees ``A[i]`` as it was when the copy ran. Reading ``A[i]`` directly instead is the
-same value exactly when nothing can write ``A`` between the copy and the tasklet. Copy and consumers sit in
-one state, so a write in another state runs wholly before or wholly after both and cannot interfere; only a
-write in the same state that is ordered neither before the copy nor after every consumer can. A result
-copy folds by the mirror rule: no other access to the array may fall between the producing tasklet and the
-write.
-"""
+"""Fold the frontend's scalar copies into direct tasklet accesses: reads (``A[i] -> A_index -> tasklet``) and results
+(``tasklet -> result -> A[i]``, the copy ``TrivialTaskletElimination`` leaves of an assign tasklet)."""
 
 from collections.abc import Iterator
 from typing import Any
@@ -78,8 +69,7 @@ def reads_in_place(sdfg: SDFG, state: SDFGState, consumer: nodes.Node, storage: 
 
 
 def foldable(sdfg: SDFG, state: SDFGState, copy: Any, counts: dict[str, int], scopes: bool = False) -> Memlet | None:
-    """The direct read of the source element if the copy edge ``copy`` may be folded, else ``None``. With ``scopes``
-    a consumer may also be a scope entry that hands the scalar to its body (a map broadcasting it)."""
+    """The direct read of the source element if the copy edge ``copy`` may be folded, else ``None``."""
     scalar = copy.dst
     desc = sdfg.arrays[scalar.data]
     if not (isinstance(desc, data.Scalar) and desc.transient and counts.get(scalar.data) == 1):
@@ -90,8 +80,7 @@ def foldable(sdfg: SDFG, state: SDFGState, copy: Any, counts: dict[str, int], sc
     kinds = (nodes.Tasklet, nodes.EntryNode) if scopes else nodes.Tasklet
     if not consumers or not all(isinstance(edge.dst, kinds) and read_by_tasklets(state, edge) for edge in consumers):
         return None
-    # An empty edge out of the snapshot orders the read before a later overwrite of the source; folding would
-    # leave the reading tasklets unordered against that overwrite.
+    # An empty edge out of the snapshot orders the read before a later overwrite of the source
     if any(edge.data.is_empty() for edge in consumers):
         return None
     root = state.memlet_path(copy)[0].src
@@ -123,8 +112,7 @@ def foldable(sdfg: SDFG, state: SDFGState, copy: Any, counts: dict[str, int], sc
 
 
 def fold(state: SDFGState, copy: Any, read: Memlet) -> None:
-    """Connect every consumer of the copy's scalar to the copy's source, then drop the scalar. A scope's memlet tree
-    reads the source element from its entry down to every leaf."""
+    """Connect every consumer of the copy's scalar to the copy's source, then drop the scalar."""
     scalar = copy.dst
     for edge in list(state.out_edges(scalar)):
         memlet = Memlet.from_memlet(read)
@@ -139,11 +127,7 @@ def fold(state: SDFGState, copy: Any, read: Memlet) -> None:
 
 
 def foldable_write(sdfg: SDFG, state: SDFGState, produce: Any, counts: dict[str, int]) -> Any | None:
-    """The copy edge out of the result scalar ``produce`` fills, if the scalar may be folded away.
-
-    ``TrivialTaskletElimination`` has already turned the frontend's ``y = x`` assign tasklet into that copy, so
-    the shape is ``tasklet -> result -> A[i]``.
-    """
+    """The copy edge out of the result scalar ``produce`` fills, if the scalar may be folded away."""
     scalar = produce.dst
     desc = sdfg.arrays[scalar.data]
     if not (isinstance(desc, data.Scalar) and desc.transient and counts.get(scalar.data) == 1):

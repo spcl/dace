@@ -1,11 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lower bounds on extent symbols that the program's own accesses imply.
-
-An access every execution makes must be in bounds: ``Psi[i, j, NZ - 2]`` in a state that always runs needs
-``NZ >= 2``. Such a bound is often what a proof is missing (bout_elm_pb's ``ddt_P[..., 0]`` and
-``ddt_P[..., NZ - 1]`` are disjoint only when ``NZ >= 2``). Only bounds on a single symbol are kept, the tightest per
-symbol, and each is declared as an assumption, so it is checked when the program is called.
-"""
+"""Lower bounds on extent symbols that the program's own accesses imply."""
 
 from typing import Any
 
@@ -62,10 +56,7 @@ def single_symbol_bound(slack: sympy.Expr, names: frozenset[str]) -> tuple[str, 
 
 
 def declare_in_bounds_extents(sdfg: SDFG) -> dict[str, int]:
-    """Declare on ``sdfg`` (the root) the single-symbol lower bounds its always-executed accesses imply; returns them.
-
-    A nested SDFG contributes only accesses whose symbols its caller passes through unchanged.
-    """
+    """Declare on ``sdfg`` (the root) the single-symbol lower bounds its always-executed accesses imply; returns them."""
     names = frozenset(sdfg.free_symbols)
     bounds: dict[str, int] = {}
     for nested in sdfg.all_sdfgs_recursive():

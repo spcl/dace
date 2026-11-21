@@ -1,41 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Emit a runtime guard that aborts if an assumption canonicalization relied on
-is violated by the values passed at the SDFG boundary.
-
-Two kinds of assumption are guarded, both with the same abort-only, no-recovery
-discipline as the scatter no-conflict guard
-(:mod:`dace.transformation.passes.scatter_conflict_guard`):
-
-* **Nonnegative symbols.** Canonicalization builds every free symbol with
-  ``nonnegative=True`` (see [[feedback_symbols_nonnegative_canonicalization]]):
-  the offset-sign reasoning that lets ``LoopToMap`` / the subset-based transforms
-  decide a write is in-bounds and race-free is only sound when the symbols
-  supplied at the boundary are ``>= 0``. That contract is otherwise implicit --
-  nothing checks it at runtime, so a caller who passes a negative size/offset
-  gets silently wrong (or out-of-bounds) code from a pipeline that reasoned as if
-  it could not happen.
-
-* **Tracked relations.** A rewrite may be value-preserving only under a relation
-  the compiler cannot prove -- e.g. the modular-wrap split needs the wrap offset
-  below the modulus (``K < N``, see
-  :mod:`dace.transformation.passes.canonicalize.tracked_assumptions`). Such a
-  relation is recorded on the SDFG when the rewrite is applied and emitted here
-  as a trap on its negation.
-
-This pass makes the whole contract explicit and *checked*. It prepends a new
-start state whose single side-effecting tasklet calls ``abort()`` when
-any guarded condition is violated. Only **signed** integer symbols are guarded
-for nonnegativity (an unsigned symbol is nonnegative by construction, so
-``x < 0`` is a tautology the guard would waste a comparison on). A tracked
-relation is emitted only when all of its symbols are SDFG free symbols -- i.e.
-in scope as function arguments at the entry state.
-
-The tasklet has no connectors: it reads only symbols, which are in scope at the
-SDFG entry. It is marked ``side_effects = True`` so the terminal
-``SimplifyPass`` / ``DeadDataflowElimination`` does not prune a tasklet that has
-no data outputs (the same drop that silently removed scatter guards before they
-were marked side-effecting).
-"""
+"""Emit a runtime guard that aborts if an assumption canonicalization relied on is violated by the values passed at the
+SDFG boundary."""
 
 from collections.abc import Iterable
 from typing import Any
@@ -74,11 +39,7 @@ def root_of(sdfg: SDFG) -> SDFG:
 
 def declare_nonnegative_symbols(sdfg: SDFG, names: Iterable[str]) -> None:
     """Record on the root of ``sdfg`` the symbols its caller knows to be nonnegative: the only ones canonicalization
-    assumes nonnegative. A name that is a scalar argument now and a symbol later is registered once it is one.
-
-    :param sdfg: The SDFG (or one nested in it) being canonicalized.
-    :param names: Symbol (or scalar argument) names whose values are never negative.
-    """
+    assumes nonnegative."""
     vars(root_of(sdfg))[NONNEGATIVE_ATTR] = frozenset(names)
 
 
@@ -89,11 +50,7 @@ def declared_nonnegative_symbols(sdfg: SDFG) -> frozenset[str]:
 
 def names_still_plain(sdfg: SDFG) -> dict[str, None]:
     """The signed-integer symbols ``sdfg`` declares with no sign predicate yet: the ones
-    :func:`set_symbol_nonnegative_assumptions` would assume nonnegative (one level of ``sdfg``).
-
-    :param sdfg: The SDFG to inspect (one level; callers iterate nested SDFGs themselves).
-    :returns: The names, membership-checked only.
-    """
+    :func:`set_symbol_nonnegative_assumptions` would assume nonnegative (one level of ``sdfg``)."""
     predicates = sdfg.symbol_repo.params.predicates
     declared = declared_nonnegative_symbols(sdfg)
     return dict.fromkeys(
@@ -137,18 +94,7 @@ def passed_through(node: nodes.NestedSDFG, name: str) -> bool:
 
 def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> int | None:
     """Register as nonnegative, in the symbol repository of the root of ``sdfg``, every signed-integer symbol it
-    declares that the caller named (:func:`declare_nonnegative_symbols`); no other symbol is assumed anything. A
-    nested SDFG is left alone: it inherits the facts through its symbol mapping, and assuming more there than the
-    mapped values prove is what validation refuses.
-
-    Proofs over the symbols (``RelaxIntegerPowers`` deciding an integer power is ``>= 0``, the offset-sign reasoning
-    ``LoopToMap`` relies on) read it from the SDFG's facts. A symbol already declared with a sign keeps it.
-    :func:`insert_assumption_guards` emits the matching runtime trap so the assumption is checked at the boundary
-    rather than merely assumed.
-
-    :param sdfg: the SDFG whose symbols are updated in place.
-    :returns: the number of symbols updated, or ``None`` if none.
-    """
+    declares that the caller named (:func:`declare_nonnegative_symbols`); no other symbol is assumed anything."""
     root = root_of(sdfg)
     predicates = root.symbol_repo.params.predicates
     updated = 0
@@ -161,9 +107,8 @@ def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> int | None:
 @xf.explicit_cf_compatible
 class SetSymbolNonnegativeAssumptions(ppl.Pass):
     """Set the SymPy ``nonnegative=True`` assumption on the SDFG's signed-integer free symbols
-    (:func:`set_symbol_nonnegative_assumptions`) -- the compile-time nonnegativity contract,
-    WITHOUT the runtime guard state. Used where a later proof needs the assumption but the
-    guard's start-block splice would be unsafe mid-pipeline (the vectorizer)."""
+    (:func:`set_symbol_nonnegative_assumptions`) -- the compile-time nonnegativity contract, WITHOUT the runtime guard
+    state."""
 
     CATEGORY: str = "Optimization Preparation"
 
@@ -177,13 +122,10 @@ class SetSymbolNonnegativeAssumptions(ppl.Pass):
         return set_symbol_nonnegative_assumptions(sdfg)
 
 
-#: Label of the guard state. NOT the idempotence marker -- state fusion absorbs the guard state
-#: into its successor, so re-running dedups on the emitted trap code instead.
+#: Label of the guard state.
 GUARD_STATE_LABEL = "_assume_nonneg_syms"
 
-#: Symbols with these dtypes can be negative and so are worth guarding. Unsigned
-#: integer symbols are nonnegative by construction; float symbols are not part
-#: of the offset/size nonnegativity contract.
+#: Symbols with these dtypes can be negative and so are worth guarding.
 SIGNED_INTEGER_DTYPES: dict[dtypes.typeclass, None] = dict.fromkeys(
     [dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64]
 )
@@ -191,15 +133,7 @@ SIGNED_INTEGER_DTYPES: dict[dtypes.typeclass, None] = dict.fromkeys(
 
 @xf.explicit_cf_compatible
 class AssumeSymbolConstraints(ppl.Pass):
-    """Prepend a start state that traps when an assumption canonicalization relied on is violated.
-
-    Guards both the nonnegativity of signed-integer free symbols and every
-    relation recorded via
-    :func:`~dace.transformation.passes.canonicalize.tracked_assumptions.record_assumption`.
-    Runs at the very end of canonicalization (after the terminal ``SimplifyPass``,
-    so nothing re-runs simplify over the new state) and splices its guard state in
-    as the new start block, making it the first thing the generated program does.
-    """
+    """Prepend a start state that traps when an assumption canonicalization relied on is violated."""
 
     CATEGORY: str = "Optimization Preparation"
 
@@ -211,40 +145,21 @@ class AssumeSymbolConstraints(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
-        # Set the compile-time nonnegativity assumption on the symbols (so a downstream proof
-        # sees ``s >= 0``) AND emit the runtime trap that checks it. Both halves of the same
-        # contract; the guard makes the assumption sound rather than merely asserted.
+        # Set the compile-time nonnegativity assumption on the symbols (so a downstream proof sees ``s >= 0``) AND emit
+        # the runtime trap that checks it.
         assumed = set_symbol_nonnegative_assumptions(sdfg)
         guarded = insert_assumption_guards(sdfg)
         return (assumed or 0) + (guarded or 0) or None
 
 
 def is_assumption_guard_block(block: ControlFlowBlock) -> bool:
-    """True if ``block`` is the runtime assumption-guard state emitted by
-    :func:`insert_assumption_guards` (label ``_assume_nonneg_syms``).
-
-    Its ``abort()`` guard tasklets are infrastructure -- they read only symbols
-    and touch no data -- so structural counts that verify a "tile-only descent"
-    exclude them exactly as they already exclude the ``tile_runtime`` divisibility
-    trip guards. Exposed so tests / audits recognize the guard without importing
-    the private label constant.
-    """
+    """True if ``block`` is the runtime assumption-guard state emitted by :func:`insert_assumption_guards` (label
+    ``_assume_nonneg_syms``)."""
     return isinstance(block, SDFGState) and block.label == GUARD_STATE_LABEL
 
 
 def _signed_integer_free_symbols(sdfg: SDFG) -> list[str]:
-    """Sorted names of the SDFG's signed-integer argument symbols that canonicalization assumed
-    nonnegative.
-
-    ``used_symbols(all_symbols=False)`` is the set ``arglist`` builds the signature from, i.e. the
-    values a caller passes in. ``free_symbols`` is NOT that set: it unions every registered
-    ``sdfg.symbols`` key, so it also names symbols a map defines inside a scope (a transient sized
-    by its enclosing map parameter registers one on inlining), and guarding those put them in the
-    signature -- ``Missing program argument``. Of those, only a name that sizes or indexes
-    something (:func:`sized_symbols`, anywhere in the nesting) or that a rewrite reasoned about
-    (a tracked relation) carries the assumption; a symbol read only by a branch condition never
-    did, and trapping it aborted ``if K > 0`` at ``K = -1`` (llr fuse_move_ifs).
-    """
+    """Sorted names of the SDFG's signed-integer argument symbols that canonicalization assumed nonnegative."""
     predicates = root_of(sdfg).symbol_repo.params.predicates
     declared = declared_nonnegative_symbols(sdfg)
     args = {
@@ -271,23 +186,8 @@ def sized_names(sdfg: SDFG) -> set[str]:
 
 
 def collect_assumptions(sdfg: SDFG) -> list[symbolic.SymbolicType]:
-    """The full list of relations that must hold at runtime for the SDFG to be
-    correct, deduped and ordered for a stable guard.
-
-    Two sources, unified into one list of sympy booleans:
-
-    * **Auto-collected from the symbols** -- every signed-integer argument symbol that sizes or
-      indexes something is assumed nonnegative (``s >= 0``), the offset-sign contract
-      canonicalization reasons under (see [[feedback_symbols_nonnegative_canonicalization]]);
-      one declared positive is assumed ``s > 0``.
-    * **Recorded by the passes** -- every relation a rewrite stashed via
-      :func:`~dace.transformation.passes.canonicalize.tracked_assumptions.record_assumption`,
-      kept only when all of its symbols are argument symbols so it is evaluable at
-      the entry state (a symbol defined by an interstate assignment or by a map is
-      not in scope there). Parallelizations that keep a sequential fallback specialize
-      with an ``if (cond) parallel else sequential`` branch instead of recording an
-      assumption here, so only genuine no-fallback preconditions reach the trap.
-    """
+    """The full list of relations that must hold at runtime for the SDFG to be correct, deduped and ordered for a stable
+    guard."""
     free = dict.fromkeys(sdfg.used_symbols(all_symbols=False))
     # A symbol declared positive is reasoned about as ``> 0`` (an empty-range guard is dropped for it), so zero
     # violates its contract as much as a negative value does
@@ -305,15 +205,7 @@ def collect_assumptions(sdfg: SDFG) -> list[symbolic.SymbolicType]:
 
 
 def lead_with_assumption_guard(sdfg: SDFG) -> bool:
-    """Move the guard state to the head of the top-level block list; ``True`` if it moved.
-
-    The guard is already the START block, but ``nodes()`` reports insertion order, so its
-    POSITION in that list records only when it was built. Emitted by the terminal stage, it is
-    APPENDED on a first canonicalize; re-canonicalizing the result runs the whole pipeline with
-    the guard already in place, and the blocks appended before it are the ones the middle stages
-    fuse away -- so the same graph comes out with the guard FIRST. Same SDFG, different node
-    indices, different content digest. Pin the position to the role instead.
-    """
+    """Move the guard state to the head of the top-level block list; ``True`` if it moved."""
     blocks = sdfg.nodes()
     guard = next((b for b in blocks if is_assumption_guard_block(b)), None)
     if guard is None or blocks[0] is guard:
@@ -323,20 +215,11 @@ def lead_with_assumption_guard(sdfg: SDFG) -> bool:
 
 
 def insert_assumption_guards(sdfg: SDFG) -> int | None:
-    """Prepend one guard state whose tasklets trap on any violated assumption;
-    return ``1`` if emitted or repositioned, else ``None``.
-
-    Every assumption from :func:`collect_assumptions` becomes its OWN
-    side-effecting guard tasklet (``if not assumption: abort()``) in a
-    single new start state -- one tasklet per assumption so a fault points at the
-    exact violated relation, all in one state so the guard is a single dominating
-    block. ``symstr`` prints the negation of a sympy relational directly
-    (``Not(K < N)`` -> ``(K >= N)``, ``Not(s >= 0)`` -> ``(s < 0)``).
-    """
-    # Dedup on the emitted TRAP CODE, not on the guard state's label: re-canonicalizing an
-    # already-canonicalized SDFG (the vectorizer canonicalizes at its own entry) fuses the guard
-    # state into its successor, so the label is gone and a label check re-emits every trap -- they
-    # accumulate one full copy per run. The code string is the assumption, so this is exact.
+    """Prepend one guard state whose tasklets trap on any violated assumption; return ``1`` if emitted or repositioned,
+    else ``None``."""
+    # Dedup on the emitted TRAP CODE, not on the guard state's label: re-canonicalizing an already-canonicalized SDFG
+    # (the vectorizer canonicalizes at its own entry) fuses the guard state into its successor, so the label is gone and
+    # a label check re-emits every trap -- they accumulate one full copy per run.
     guards = {node.code.as_string for state in sdfg.states() for node in state.nodes() if tutil.is_abort_guard(node)}
     conditions = [symbolic.symstr(sympy.Not(a)) for a in collect_assumptions(sdfg)]
     checks = [c for c in conditions if tutil.abort_guard_code(c) not in guards]
@@ -345,28 +228,19 @@ def insert_assumption_guards(sdfg: SDFG) -> int | None:
             return None
         return 1
 
-    # ``add_state_before`` prepends the guard before the current start and
-    # reconnects predecessors to it, so it correctly becomes the new start block
-    # (``is_start_block=True``). This pass runs LAST in canonicalization: a guard
-    # prepended earlier is orphaned by any pass that builds its own entry state
-    # (LoopToScan's scan-init, reduction init, ...) and resets the top-level
-    # start, leaving the guard a disconnected source that dominator analyses
-    # KeyError on. Running last -- nothing reshapes the start after -- is safe.
+    # ``add_state_before`` prepends the guard before the current start and reconnects predecessors to it, so it
+    # correctly becomes the new start block (``is_start_block=True``).
     guard_state = sdfg.add_state_before(sdfg.start_block, GUARD_STATE_LABEL, is_start_block=True)
     for i, condition in enumerate(checks):
         # Side-effecting, so DeadDataflowElimination keeps the output-less guard.
         tutil.add_abort_guard(guard_state, f"check_assumption_{i}", condition)
-        # ``ordered_side_effects`` is left at its default (ordered): the trap has to run BEFORE the
-        # computation it guards, and it is only a separate block that keeps it there.
-        # ``StateFusionExtended`` refuses to fuse a state carrying an ordered side effect -- the
-        # refusal that names "a trap guard" -- so the guard survives as its own dominating block.
+        # ``ordered_side_effects`` is left at its default (ordered): the trap has to run BEFORE the computation it
+        # guards, and it is only a separate block that keeps it there.
     lead_with_assumption_guard(sdfg)
     return 1
 
 
-#: Backwards-compatible aliases. The pass historically guarded only symbol
-#: nonnegativity; it now emits every tracked assumption, but existing pipelines
-#: and tests import it under the old names.
+#: Backwards-compatible aliases.
 AssumeSymbolsNonnegative = AssumeSymbolConstraints
 insert_symbol_nonnegative_guard = insert_assumption_guards
 

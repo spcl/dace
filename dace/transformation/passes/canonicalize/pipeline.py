@@ -1,10 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-"""SDFG canonicalization pipeline.
-
-Rewrites an SDFG into a deterministic canonical form so later passes (fusion,
-vectorization, scheduling, equivalence checks) observe one shape per
-computation.
-"""
+"""SDFG canonicalization pipeline."""
 
 import os
 from collections.abc import Callable, Iterable, Sequence
@@ -169,41 +164,13 @@ CANON_SIMPLIFY_OPTIONS: dict[str, Any] = {"FuseStates.aggressive_merges": True}
 
 
 def disable_openmp_sections(sdfg: SDFG) -> None:
-    """Opt ``sdfg`` and every nested SDFG out of ``#pragma omp parallel sections``.
-
-    ``framecode.py`` wraps a state's independent components in sections whenever
-    ``sdfg.openmp_sections`` is on (the property defaults to
-    ``compiler.cpu.openmp_sections``), so a caller who flipped the knob globally would
-    otherwise get the construct in canonicalized/vectorized output too. It is a loss there:
-    the parallelism already lives in the maps, and a map inside a section re-enters OpenMP at
-    nesting level 2, where the default ``OMP_MAX_ACTIVE_LEVELS=1`` hands it a team of ONE.
-    Local opt-out only -- the generic codegen path stays available to every other caller.
-    Call at pipeline entry AND exit: a nested SDFG minted mid-pipeline takes the property
-    default, which follows the global config.
-    """
+    """Opt ``sdfg`` and every nested SDFG out of ``#pragma omp parallel sections``."""
     for nested in sdfg.all_sdfgs_recursive():
         nested.openmp_sections = False
 
 
 def _structural_cleanup(label: str) -> list[tuple[str, ppl.Pass]]:
-    """Tidy symbols, then the state machine, between phases; never ``SimplifyPass`` mid-pipeline.
-
-    Symbol phase: :func:`symbol_phase`, then ``SymbolDedup`` again LAST (propagation and the prune both mint
-    new mergeable pairs; 7 kernels kept one otherwise). It runs at every boundary because two
-    names for one address make syntactic subset tests (``AugAssignToWCR``) silently decline; that
-    once turned an indirect accumulate into a scatter that aborted at run time
-    (``scatter_accum_dup`` is the canary). Dedup costs 0.8% of canonicalize.
-
-    Structural phase: ``StateFusionExtended`` once everywhere (cheap per boundary, not a fixpoint),
-    ``RedundantOrderingEdgeElimination`` last, since fusion is what makes ordering edges redundant.
-    Fusion unions assignments, so duplicates it mints wait for the next boundary's symbol phase.
-
-    Placed only where a phase ends (see the recipe comment below). ``SymbolSSA`` is not part of it: the runs after
-    ``ShortLoopUnroll`` and at the head of ``derive_parallelism`` already cover it.
-
-    :param label: The owning stage label.
-    :returns: ``(stage_label, pass)`` pairs, in order.
-    """
+    """Tidy symbols, then the state machine, between phases; never ``SimplifyPass`` mid-pipeline."""
     return [(label, StructuralCleanup())]
 
 
@@ -238,12 +205,7 @@ def symbol_phase() -> list[ppl.Pass]:
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class PropagateAndPrune(ppl.Pass):
-    """Fold symbols and constants, then drop the dataflow that folding made dead -- TWICE.
-
-    Two rounds, not a fixpoint. The prune is what exposes the second round's propagation, and a
-    fixpoint pays a third round that only confirms convergence: on the corpus the third round has
-    nothing to fold and nothing to drop, so it is three whole-SDFG walks for no rewrite.
-    """
+    """Fold symbols and constants, then drop the dataflow that folding made dead -- TWICE."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -265,8 +227,7 @@ class PropagateAndPrune(ppl.Pass):
             # A Pipeline per round, not bare passes: DeadDataflowElimination declares a
             # ControlFlowBlockReachability dependency that only a Pipeline resolves.
             pipeline = ppl.Pipeline([PropagateSymbols(), DeadDataflowElimination()])
-            # A round that modified nothing hands every later round the identical graph (CloudSC: 2.0s of 5.3s). The
-            # results dict also holds the resolved analyses, so only the members' own keys say it did.
+            # A round that modified nothing hands every later round the identical graph (CloudSC: 2.0s of 5.3s).
             if not changed_the_graph(pipeline, pipeline.apply_pass(sdfg, {})):
                 break
             changed += 1
@@ -276,12 +237,7 @@ class PropagateAndPrune(ppl.Pass):
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class StructuralCleanup(ppl.Pass):
-    """The between-phase structural cleanup, as ONE unit.
-
-    One unit rather than nine so the pipeline can skip the whole block when nothing has touched the
-    graph since the last one -- the block is spliced in at 8 stage boundaries and on a settled graph
-    every member reports no change.
-    """
+    """The between-phase structural cleanup, as ONE unit."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -295,18 +251,7 @@ class StructuralCleanup(ppl.Pass):
         return []
 
     def units(self) -> list[ppl.Pass]:
-        """The block's members, in order. Symbols are folded before the state machine is rewritten,
-        then ``FuseStates`` walks the region's edges to fuse what it can.
-
-        ``FuseStates`` now drives the same ``StateFusionExtended.can_be_applied`` a ``PatternApplyOnceEverywhere``
-        matcher would, plus ``BlockFusion`` on non-state blocks -- the removed matcher only re-derived
-        the same matches through VF2 for a fixpoint the walk reaches alone. Fusion is not confluent, so
-        results can still differ (channel_flow: 11 states via the matcher, 12 via the walk).
-
-        ``PruneUnreferencedTransients`` is LAST, after the state deletions above have taken the
-        readers with them, so it decides against the block's own final graph. It pays for itself:
-        on CloudSC the terminal band alone collects 3857 dead descriptors in 0.53 s, and every
-        stage between two cleanups was walking them."""
+        """The block's members, in order."""
         walk_fuse = FuseStates(aggressive_merges=True)
         walk_fuse.progress = False
         return [
@@ -342,69 +287,25 @@ class StructuralCleanup(ppl.Pass):
 
 
 def run_structural_cleanup(sdfg: SDFG) -> None:
-    """Apply the between-phase structural cleanup once, to a finished SDFG.
-
-    The recipe's own helper, for callers that run their own stage after the pipeline returns
-    (:func:`~dace.transformation.passes.canonicalize.finalize.offload_to_gpu` does) and need the
-    same tidy-up on the graph they were handed. One source of truth for what "structural cleanup"
-    means, rather than a second copy of the list.
-
-    :param sdfg: The SDFG to clean up in place.
-    """
+    """Apply the between-phase structural cleanup once, to a finished SDFG."""
     for label, unit in _structural_cleanup("structural_cleanup"):
         unit.apply_pass(sdfg, {})
 
 
 def _inline_single_state(label: str) -> list[tuple[str, ppl.Pass]]:
-    """Flatten single-state NestedSDFG bodies; un-inlined, they report whole-array memlets and
-    every dependence test refuses on the box (seidel_2d). ``PruneConnectors`` shares the fixpoint
-    because a dead connector is a hard ``InlineSDFG`` refusal; ``RouteOrderingThroughData`` runs first
-    because an ordering edge to or from a non-scope node is another.
-
-    :param label: The owning stage label.
-    :returns: ``(stage_label, pass)`` pairs, in order.
-    """
+    """Flatten single-state NestedSDFG bodies; un-inlined, they report whole-array memlets and every dependence test
+    refuses on the box (seidel_2d)."""
     return [(label, RouteOrderingThroughData()), (label, PruneAndInlineNestedSDFGs())]
 
 
 #: Cap on the IV-substitution / statement-fission alternation.
-#:
-#: TWO, because the second round is the IDEMPOTENCE CHECK, not a second attempt at optimizing.
-#: A canonical form is by definition a fixpoint: the output must be a graph the round cannot
-#: change again. At one round that property is assumed; at two it is observed, and the loop below
-#: exits the moment the observation comes back clean.
-#:
-#: Measured over three corpora -- 205 kernels of tsvc, polybench and npbench, comparing loops,
-#: maps, library nodes and surviving symbols -- 48 kernels reached a second round (the early exit
-#: refused it for the other 157) and every one of the 48 came out identical. That is the evidence
-#: the fixpoint converges at one round, which is exactly what the second round is here to confirm;
-#: it is not a reason to stop confirming it. The cost is one no-op round on 23% of compiles.
 IV_SPLIT_MAX_ROUNDS = 2
 
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class IvSubstitutionFissionFixpoint(ppl.Pass):
-    """Alternate induction-variable substitution with statement fission until neither fires.
-
-    A FIXPOINT rather than an ordering, because the two enable each other and neither order
-    dominates. ``InductionVariableSubstitution`` closes a counter that would otherwise hold a body
-    together -- while an IV is live every statement reads it, so the body is one dependence
-    component and no fission is legal (TSVC ``s126``). ``SplitStatements`` in turn produces the
-    single-statement bodies the IV matcher requires, which is the entire reason
-    ``HoistInductionVariableUpdates`` exists. At any FIXED depth one of the two is left with work
-    it could only have done after the other, so the alternation is iterated to a fixpoint instead.
-
-    The prep stays INSIDE the round on purpose. ``s318`` (``k += inc``, ``inc`` an argument) and
-    ``s453`` both decline until ``ScalarToSymbolPromotion`` has turned the read-only argument into
-    a symbol, so an IV pass placed ahead of the promotion is a no-op that costs compile time and
-    finds nothing.
-
-    Stops as soon as a round changes nothing, which is what makes it a fixpoint rather than a
-    fixed sequence and doubles as the idempotence check: on a graph the previous round settled,
-    the next must be a provable no-op. Measured on a settled graph every member reports no
-    change, so the early exit is reachable and not dead code.
-    """
+    """Alternate induction-variable substitution with statement fission until neither fires."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -425,12 +326,7 @@ class IvSubstitutionFissionFixpoint(ppl.Pass):
         return False
 
     def round_units(self) -> tuple[ppl.Pass, ...]:
-        """The passes one round runs, in order.
-
-        A method rather than a literal buried in ``apply_pass`` because this round OWNS a
-        ``SimplifyPass``: a recipe invariant that asks where simplification happens can only be
-        checked if the composite says what it contains.
-        """
+        """The passes one round runs, in order."""
         promote = ScalarToSymbolPromotion()
         promote.transients_only = False
         return (
@@ -442,15 +338,11 @@ class IvSubstitutionFissionFixpoint(ppl.Pass):
         )
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
-        """Run the round up to ``max_rounds`` times, stopping early on a no-op round.
-
-        :returns: the number of rounds actually run, or ``None`` if the first round did nothing.
-        """
+        """Run the round up to ``max_rounds`` times, stopping early on a no-op round."""
         units = self.round_units()
         rounds = 0
         for _ in range(self.max_rounds):
-            # Each pass reports differently -- a count, a set of promoted names, a results dict --
-            # so test each for truthiness rather than summing them.
+            # Each pass reports differently
             changed = False
             for unit in units:
                 if isinstance(unit, SimplifyPass):
@@ -465,16 +357,7 @@ class IvSubstitutionFissionFixpoint(ppl.Pass):
 
     @staticmethod
     def simplify_until_settled(simplify: SimplifyPass, sdfg: SDFG) -> bool:
-        """``simplify.apply_pass(sdfg, {})`` without the tail of its confirming sweep.
-
-        ``FixedPointPipeline`` repeats whole sweeps until one changes nothing. A pass that reported no
-        change on the current graph reports none again, so once every simplification pass has done so
-        since the last change the rest of that sweep is skipped. On CloudSC that tail is most of a sweep.
-
-        :param simplify: The round's ``SimplifyPass``; its own ``apply_subpass`` runs every pass.
-        :param sdfg: The SDFG to simplify.
-        :returns: Whether any simplification pass changed ``sdfg``.
-        """
+        """``simplify.apply_pass(sdfg, {})`` without the tail of its confirming sweep."""
         names = simplify._pass_names
         state: dict[str, Any] = {}
         settled: dict[str, None] = {}
@@ -507,12 +390,9 @@ class IvSubstitutionFissionFixpoint(ppl.Pass):
 
 
 class _ThenIfChanged(ppl.Pass):
-    """The ``first`` units in order, then the ``then`` units only when a watched one of them rewrote the graph: the
-    lift that follows a rewrite re-probes every loop, which a whole-program kernel pays for nothing when there was
-    nothing to rewrite.
-
-    :param first: ``(unit, watched)`` pairs; only a watched unit's result decides.
-    """
+    """The ``first`` units in order, then the ``then`` units only when a watched one of them rewrote the graph: the lift
+    that follows a rewrite re-probes every loop, which a whole-program kernel pays for nothing when there was nothing to
+    rewrite."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -544,12 +424,6 @@ class _ThenIfChanged(ppl.Pass):
 
 
 # Per-target knob presets; explicit knob args to ``canonicalize(..., target=...)`` override them.
-#
-# ``interchange_carry_with_map``: ``Loop[jk]{Map[jl]}`` -> ``Map[jl]{Loop[jk]}``, carry per thread.
-#   CPU 4.6-5.2x, GPU 0.73-0.80x (BW-bound; short coalesced kernels win).
-# ``scatter_to_guarded_maps``: sort + duplicate guard, ~1.04x CPU / ~1.03x GPU.
-# ``normalize_loop_and_map_origin``: rebase ranges to 0 keeping the stride (``NormalizeLoopsAndMaps``
-#   folded it and lost TSVC s172's map); off on both targets.
 CPU_DEFAULTS: dict[str, Any] = {
     "interchange_carry_with_map": True,
     "scatter_to_guarded_maps": True,
@@ -564,8 +438,7 @@ TARGET_DEFAULTS: dict[str, dict[str, Any]] = {"cpu": CPU_DEFAULTS, "gpu": GPU_DE
 
 
 def _resolve_target_default(target: str, knob: str, explicit: Any | None, fallback: Any) -> Any:
-    """Pick ``explicit`` if not ``None``, else the per-target preset, else
-    ``fallback``. Used to resolve every per-target knob in one place."""
+    """Pick ``explicit`` if not ``None``, else the per-target preset, else ``fallback``."""
     if explicit is not None:
         return explicit
     return TARGET_DEFAULTS.get(target, {}).get(knob, fallback)
@@ -576,24 +449,7 @@ def _resolve_target_default(target: str, knob: str, explicit: Any | None, fallba
 FIND_FIRST_CHUNK: dict[str, int] = {"cpu": 1 << 20, "gpu": 1 << 21}
 
 
-# The recipe
-# The phased canonicalization recipe: the paper's phases in order, with a structural cleanup between them.
-#
-# Phases (doc/sdfg/canonicalize.rst): ingest, normalize statements, lift semantics, derive parallelism, then recompose
-# (maximal fusion and what it exposes) and finish. Specialization is a separate call (``finalize_for_target``).
-#
-# - ``StructuralCleanup`` runs at the start, after lowering, before derivation, before fusion, whose rounds run it
-#   too, and at the head of ``finish``; nowhere else is it the reason a phase ends.
-# - ``SimplifyPass`` (itself a fixpoint) runs twice: on the raised input, and once after normalization.
-# - A fixpoint of several passes (:class:`PhaseFixpoint`) is allowed inside a phase.
-# - Guards are pushed inward (``MoveIfIntoLoop``, ``MoveIfIntoMap``) and never hoisted here: how far up an invariant
-#   guard goes is a target decision, made by ``hoist_invariant_guards`` in ``cpu_specialize`` / the GPU
-#   specialization.
-#
-# Units whose matcher needs a shape another phase destroys stay where that shape exists but carry the
-# ``lift_semantics`` label, so ``stage_labels`` shows every out-of-phase placement; the lifts of what fusion exposes
-# close every round of maximal fusion (``fuse``) instead. No label before ``fuse`` recurs after it, so ``stages``
-# sliced at ``fuse`` (or any phase) runs exactly the recipe prefix and suffix.
+# The recipe The phased canonicalization recipe: the paper's phases in order, with a structural cleanup between them.
 
 Stages = list[tuple[str, ppl.Pass]]
 
@@ -629,11 +485,7 @@ def prepared(units: list[ppl.Pass]) -> list[ppl.Pass]:
 
 @transformation.explicit_cf_compatible
 class PhaseFixpoint(ppl.Pass):
-    """Run fresh instances of a list of units, in order, until a round changes nothing, at most ``max_rounds``.
-
-    With ``drivers`` set, only a change by a unit of one of those class names earns another round. Fresh units
-    every round: several units keep per-apply state.
-    """
+    """Run fresh instances of a list of units, in order, until a round changes nothing, at most ``max_rounds``."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -676,9 +528,7 @@ class PhaseFixpoint(ppl.Pass):
 
 @transformation.explicit_cf_compatible
 class SimplifyAsParsed(ppl.Pass):
-    """The frontend's ``to_sdfg(simplify=True)``: each nested SDFG simplified before its parent. Simplify is a
-    fixpoint and the later phases depend on where it fused, so with it first the form does not depend on whether the
-    caller simplified."""
+    """The frontend's ``to_sdfg(simplify=True)``: each nested SDFG simplified before its parent."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -704,10 +554,8 @@ def rail(label: str = CLEANUP) -> Stages:
 
 
 def clean_anti_dependency_units() -> list[ppl.Pass]:
-    """CleanAntiDependency (WAR, WAW) by renaming: per-scope versions of a container wherever a dominating write
-    allows it, per-iteration copies of a constant slot a loop rewrites before reading. A scratch buffer's copies are
-    made by the lift (``ParallelizeLoops.expand_buffers``), for the loops refused on it. The read-ahead WAR a snapshot breaks is the other half, ``BreakAntiDependence`` in :func:`derive_parallelism`: its
-    offset proof reads guard symbols that only SymbolSSA and propagation there settle."""
+    """CleanAntiDependency (WAR, WAW) by renaming: per-scope versions of a container wherever a dominating write allows
+    it, per-iteration copies of a constant slot a loop rewrites before reading."""
     return [
         PrivatizeScalarsAndArrays(),
         PromoteConstantIndexAccess(),
@@ -730,9 +578,8 @@ def first_lift() -> ParallelizeLoops:
 
 
 def statement_round() -> list[ppl.Pass]:
-    """One round of statement normalization: IV substitution, split, privatize, invariant motion, WCR
-    normalization, dead dataflow. Split and privatization precede invariant motion: it hoists whole statements,
-    and a temporary rewritten every iteration must not be hoisted."""
+    """One round of statement normalization: IV substitution, split, privatize, invariant motion, WCR normalization,
+    dead dataflow."""
     promote = ScalarToSymbolPromotion()
     promote.transients_only = False
     # Fold symbol copies before the IV matchers: the frontend spells ``k = k + inc`` as ``t = k + inc; k = t``, and
@@ -894,15 +741,10 @@ def derive_parallelism(
     validate: bool = False,
     wavefront: bool = True,
 ) -> Stages:
-    """LoopToMap, rescue the loops it refused, LoopToMap again, guarded and reduction loops, wavefront skew.
-
-    :param validate: Whether the pipeline validates its result; best-effort peeling then validates its own once.
-    :param wavefront: Whether the last :class:`Parallelize` skews loops refused on a carried dependence into wavefronts.
-    """
+    """LoopToMap, rescue the loops it refused, LoopToMap again, guarded and reduction loops, wavefront skew."""
     label = DERIVE_PARALLELISM
     s: Stages = [(label, SymbolSSA())]
-    # SSA leaves one definition per name, which is when propagation can substitute it (``j = j_0 + 1`` into
-    # ``b[j]``); demoted first, its operand is a scalar read and the symbol stays.
+    # SSA leaves one definition per name, which is when propagation can substitute it (``j = j_0 + 1`` into ``b[j]``)
     s += [(label, PropagateSymbols())]
     # Before demotion: the anti-dependence proof reads a guard's symbols (``A[P]`` under ``P > i`` reads ahead), which
     # a demoted guard turns into opaque scalar reads.
@@ -913,7 +755,6 @@ def derive_parallelism(
     # iteration
     s += [(label, DeadFillElimination())]
     # Before the lift: a wrapping modulo the dependence proof would map as a modular scatter maps as its affine bands.
-    # Rescue after it: each rewrite acts only on a loop LoopToMap refuses.
     segments: list = []
     split: list[tuple[ppl.Pass, bool]] = []
     rescue: list[tuple[ppl.Pass, bool]] = []
@@ -935,8 +776,7 @@ def derive_parallelism(
                     *((unit, False) for unit in dead_dataflow_units()),
                     (PrivatizeScalarsAndArrays(), False),
                 ],
-                # Peeling copies a loop with the symbols its body assigns; SSA names each copy's apart, or the lifted
-                # copy's inner symbols shadow the other's and memlet propagation carries them out of the nested SDFG.
+                # Peeling copies a loop with the symbols its body assigns
                 [PropagateSymbols(), CascadeInterstateEdgeAssignmentsUp(), UniqueLoopIterators(), SymbolSSA()],
             ),
         )
@@ -959,8 +799,7 @@ def derive_parallelism(
         (label, ParallelizeLoops(propagate=False, hold_sibling_chains=True)),
         (label, PrivatizeScalarsAndArrays()),
     ]
-    # Inlined bodies show their in-place accumulations; as WCR they let a loop refused on them map, ahead of the
-    # guarded-scatter versioning below. Either rewrite, the inlining or the WCR, can leave a loop that now maps.
+    # Inlined bodies show their in-place accumulations
     s += [
         (
             label,
@@ -992,7 +831,6 @@ def derive_parallelism(
     # checks the data facts its segment confinement rests on (nfa_frontier's components).
     s += [(label, _ThenIfChanged([(SegmentConfinedLoops(), True)], symbol_phase()))]
     # Wavefront: map what now maps, then skew the nests left sequential on a carried dependence.
-    # Accumulator steps above leave a WCR that conflicts with nothing (a masked count two map levels deep)
     s += [(label, RevertNonReductionWCR()), *_inline_single_state(label)]
     # The accumulator steps leave the increment's tasklet a plain copy
     s += [(label, EliminateTrivialTasklets())]
@@ -1006,13 +844,8 @@ def derive_parallelism(
 
 
 def maximal_fusion(target: str, after: Callable[[], list[ppl.Pass]] | None = None) -> PhaseFixpoint:
-    """Maximal fusion: (FuseStates x FuseLoops x MapCollapse x FuseMaps, single-state bodies inlined first) to a fixpoint
-    inside a fixpoint that re-permutes, interchanges and fuses conditions. The recompose phase runs it, and so does
-    specialization after hoisting guards (``hoist_invariant_guards``): one definition of "fuse everything".
-
-    :param after: Fresh units closing every outer round (recompose's lifts of what fusion exposed), so what they
-                  expose fuses in the next round.
-    """
+    """Maximal fusion: (FuseStates x FuseLoops x MapCollapse x FuseMaps, single-state bodies inlined first) to a
+    fixpoint inside a fixpoint that re-permutes, interchanges and fuses conditions."""
 
     def inner_round() -> list[ppl.Pass]:
         return [
@@ -1082,9 +915,8 @@ def after_fusion_units(lift: bool, lift_copy: bool, target: str) -> list[ppl.Pas
 
 
 def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
-    """(MapCollapse x FuseMaps x FuseStates) to a fixpoint inside a fixpoint that re-permutes, interchanges and
-    fuses conditions; lift what fusion exposed; the final tidy. Invariant guards stay pushed in: hoisting them is
-    the specialization step ``hoist_invariant_guards``."""
+    """(MapCollapse x FuseMaps x FuseStates) to a fixpoint inside a fixpoint that re-permutes, interchanges and fuses
+    conditions; lift what fusion exposed; the final tidy."""
     label = RECOMPOSE
     # The maps' propagated memlets show always-executed accesses the frontend form hides, and fusion proves with them
     s: Stages = [(label, DeclareInBoundsExtents())]
@@ -1124,12 +956,10 @@ def finish() -> Stages:
         # Spelled for the code generator once nothing analyzes the form any more: the runtime call is opaque to the
         # symbolic and SMT reasoning that sees a floored ``Mod`` through
         (FINISH, RewriteModuloToPyMod()),
-        # Fusion leaves plain copies through its intermediates; a map broadcasting an element reads it itself, or
-        # on GPU the element takes a device-to-host copy and a stream synchronization per launch
+        # Fusion leaves plain copies through its intermediates
         (FINISH, EliminateTrivialTasklets()),
         (FINISH, FoldScalarReadCopies(scopes=True)),
-        # A staging copy sits in its readers' map scope, fed from the map entry, only once the terminal inlining has
-        # run; the reclaim stays last for the arrays the fold leaves.
+        # A staging copy sits in its readers' map scope, fed from the map entry, only once the terminal inlining has run
         (FINISH, PatternApplyOnceEverywhere([RedundantMapReadCopy()])),
         (FINISH, ppl.Pipeline([ArrayElimination(fold_ordered_copies=True, nested=True)])),
     ]
@@ -1151,13 +981,7 @@ def build_stages(
     validate: bool = False,
     wavefront: bool = True,
 ) -> Stages:
-    """Build the canonicalization recipe: the paper's phases in order (see the section comment above).
-
-    :param validate: The pipeline's ``validate``, for the units that validate their own rewrite only when asked.
-    :param wavefront: Skew loops refused on a carried dependence into wavefronts (see :func:`derive_parallelism`).
-
-    :returns: ``(label, pass)`` pairs in run order, fresh instances each call.
-    """
+    """Build the canonicalization recipe: the paper's phases in order (see the section comment above)."""
     lift, lift_copy = semantic_lifting and lift, semantic_lifting and lift_copy
     s = ingest(target)
     s += normalize_statements(lift, unroll_limit, perfect_loop_nesting, target, normalize_loop_and_map_origin)
@@ -1180,11 +1004,7 @@ def build_stages(
 
 
 def disable_unit_validation(unit: ppl.Pass) -> None:
-    """Turn off a stage unit's own validation, nested pipeline members included.
-
-    This pipeline's ``validate`` / ``validate_all`` own validation: a unit validating the whole SDFG itself
-    repeats that walk, and validation is not read-only (``Fill.validate`` drops an unconnected input).
-    """
+    """Turn off a stage unit's own validation, nested pipeline members included."""
     if isinstance(unit, (PatternMatchAndApply, FuseMaps)):
         unit.validate = False
         unit.validate_all = False
@@ -1203,14 +1023,7 @@ StageFactory = Callable[[], list[ppl.Pass]]
 
 
 def _stage_runs() -> list[tuple[str, int, int]]:
-    """Split the flat recipe into contiguous runs of one stage label.
-
-    A label may appear in several places in the recipe (``lift_semantics``, ``cleanup`` and ``fuse`` all do).
-    Grouping by label alone would gather those separated occurrences at the position of the first one and so
-    reorder the recipe: the out-of-phase lifts run where the shape they match exists. Runs preserve the real order.
-
-    :returns: ``(label, start, stop)`` index ranges into the flat recipe.
-    """
+    """Split the flat recipe into contiguous runs of one stage label."""
     runs: list[list] = []
     for i, (lbl, unit) in enumerate(build_stages()):
         if runs and runs[-1][0] == lbl and runs[-1][2] == i:
@@ -1221,37 +1034,19 @@ def _stage_runs() -> list[tuple[str, int, int]]:
 
 
 def _stage_factory(start: int, stop: int) -> StageFactory:
-    """Return a factory yielding fresh passes for one run of the recipe.
-
-    :param start: Index of the run's first pass in the flat recipe.
-    :param stop: Index one past the run's last pass.
-    :returns: A factory that builds that run's passes in order.
-    """
+    """Return a factory yielding fresh passes for one run of the recipe."""
     return lambda: [p for lbl, p in build_stages()[start:stop]]
 
 
-#: Grouped view of :func:`build_stages`: ``(label,
-#: factory)`` per stage, in order, where ``factory()`` builds that stage's
-#: fresh passes. ``build_stages`` (flat ``(label, pass)``) is the source of
-#: truth used by the pipeline; this view exists for callers that iterate
-#: stage-by-stage (``for name, factory in CANONICALIZE_STAGES:
-#: for unit in factory(): ...``).
+#: Grouped view of :func:`build_stages`: ``(label, factory)`` per stage, in order, where ``factory()`` builds that
+#: stage's fresh passes.
 CANONICALIZE_STAGES: list[tuple[str, StageFactory]] = [
     (label, _stage_factory(start, stop)) for label, start, stop in _stage_runs()
 ]
 
 
 def _assert_self_contained(unit: ppl.Pass) -> None:
-    """Guard the empty-``pipeline_results`` invariant.
-
-    Every unit is applied with an empty results dict, so it must either have
-    no dependencies or be a self-resolving ``Pipeline`` (e.g. ``SimplifyPass``,
-    or the ``Pipeline`` wrapping ``FuseMaps``). A bare dependency-bearing
-    pass placed directly in a stage would silently lose its inputs.
-
-    :param unit: The pass about to be applied.
-    :raises AssertionError: If ``unit`` has unresolved dependencies.
-    """
+    """Guard the empty-``pipeline_results`` invariant."""
     assert not unit.depends_on() or isinstance(unit, ppl.Pipeline), (
         f"{type(unit).__name__} has dependencies but is not a self-resolving "
         f"Pipeline; wrap it so its depends_on() is satisfied."
@@ -1281,9 +1076,8 @@ SETTLED_UNITS: tuple[type[ppl.Pass], ...] = (
 
 
 class Settled:
-    """The change clock of one run of units: a unit of :data:`SETTLED_UNITS` is skipped when no unit has
-    changed the graph since it last ran. Keyed by class: these units take no options, and the one that does runs
-    every time with it set."""
+    """The change clock of one run of units: a unit of :data:`SETTLED_UNITS` is skipped when no unit has changed the
+    graph since it last ran."""
 
     __slots__ = ("clock", "ran_at")
 
@@ -1309,54 +1103,7 @@ class Settled:
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class CanonicalizationPipeline(ppl.Pass):
-    """Rewrite an SDFG into its canonical form.
-
-    The recipe (:func:`build_stages`) is one flat ordered list of passes
-    applied once, imperatively, as ``auto_optimize`` does. A single
-    :class:`~dace.transformation.pass_pipeline.Pipeline` cannot be used because
-    it forbids duplicate pass types and the recipe reuses ``SimplifyPass`` and
-    ``StructuralCleanup`` across stages. Composites that need
-    iteration iterate internally; the pipeline itself does not re-run.
-
-    :param validate: Validate the SDFG once at the end. OFF by default -- validation is a whole-SDFG
-                     walk and a measurable share of the pipeline on a large graph.
-    :param validate_all: Validate the SDFG after EVERY stage -- a debugging bisect aid, off by
-                         default. Set ``validate`` to check the result, and this as well to find
-                         WHICH stage broke it.
-    :param unroll_limit: Fully unroll constant-trip loops with at most this many
-                         iterations. 0 (default): the canonical form keeps them, and the
-                         specializations unroll them (``unroll_short_loops`` in ``finalize``).
-    :param peel_limit: Best-effort loop peeling before parallelize (0 disables); defaults to
-                       ``optimizer.canonicalization.peel_limit``.
-    :param perfect_loop_nesting: Run ``PerfectLoopNesting`` at the end of ``normalize_statements``. ON by
-                                 default.
-    :param target: ``'cpu'`` (default) or ``'gpu'``. Picks the per-target knob
-                   preset (see ``CPU_DEFAULTS`` / ``GPU_DEFAULTS``). Any
-                   explicit knob argument (e.g. ``interchange_carry_with_map=...``)
-                   overrides the preset for that knob.
-    :param interchange_carry_with_map: ``LoopToScan`` knob: relocate the carry
-                                       ``LoopRegion`` INTO the per-column Map so
-                                       the scan runs sequential-per-thread.
-                                       ``None`` (default) -> per-target preset.
-    :param normalize_loop_and_map_origin: Run ``NormalizeLoopAndMapOrigin`` at the end of
-                                          ``normalize_statements``. ``None`` (default) -> per-target
-                                          preset (off on both targets; see ``CPU_DEFAULTS``).
-    :param specialize_constants: Optional ``{symbol or scalar argument: value}`` map (e.g.
-                             CloudSC's ``{'nclv': 5, 'yrecldp_nssopt': 1}``, or a kernel's shape
-                             symbols like ``{'Norb': 3}``) baked into the SDFG via
-                             ``specialize_symbols`` (recursively, dropping the symbol) or
-                             ``specialize_scalars`` (folding the reads, keeping the argument)
-                             BEFORE canonicalization -- the same specialization the
-                             cloudsc parallelization pipeline does. Symbolic trip
-                             counts that become concrete then unroll under
-                             ``ShortLoopUnroll``, and concrete matmul extents let
-                             ``canonicalize_set_fast_implementations`` pick the inlined
-                             ``'pure'`` GEMM for known-small dims. ``None`` leaves every
-                             symbol symbolic.
-    :param stages: Stage labels to run, in recipe order (see :func:`stage_labels`); ``None``
-                   (default) runs every stage. A label that does not occur in the recipe
-                   raises ``ValueError``.
-    """
+    """Rewrite an SDFG into its canonical form."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -1512,10 +1259,7 @@ class CanonicalizationPipeline(ppl.Pass):
         return []
 
     def build_stages(self) -> list[tuple[str, ppl.Pass]]:
-        """Build this pipeline's flat recipe, honoring every knob property.
-
-        :returns: ``(stage_label, pass)`` pairs, in recipe order, fresh instances each call.
-        """
+        """Build this pipeline's flat recipe, honoring every knob property."""
         return build_stages(
             unroll_limit=self.unroll_limit,
             peel_limit=self.peel_limit,
@@ -1533,18 +1277,10 @@ class CanonicalizationPipeline(ppl.Pass):
         )
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
-        """Canonicalize ``sdfg`` in place.
-
-        :param sdfg: The SDFG to canonicalize.
-        :returns: The number of passes applied.
-        """
+        """Canonicalize ``sdfg`` in place."""
         disable_openmp_sections(sdfg)
-        # Specialize chosen symbols to constants first (e.g. ``nclv = 5``), so the
-        # otherwise-symbolic species-loop trip counts become concrete and unroll.
-        # ``specialize_symbols`` descends into nested SDFGs (and strips their
-        # ``symbol_mapping``); a plain ``replace_dict`` would leave nested-SDFG
-        # bodies -- the bulk of a real cloudsc build -- unspecialized. Baking the whole
-        # set in one call costs one graph walk per SDFG instead of one per symbol.
+        # Specialize chosen symbols to constants first (e.g. ``nclv = 5``), so the otherwise-symbolic species-loop trip
+        # counts become concrete and unroll.
         if self._specialize_constants:
             from dace.sdfg.utils import specialize_scalars, specialize_symbols
 
@@ -1568,9 +1304,8 @@ class CanonicalizationPipeline(ppl.Pass):
         if self.dump_dir:
             os.makedirs(self.dump_dir, exist_ok=True)
             sdfg.save(os.path.join(self.dump_dir, "000_input.sdfgz"), compress=True)
-        # The cleanup block and the inline step are spliced in at every stage boundary, and on a settled
-        # graph they report no change: skip one unless a unit touched the graph since it last ran. Only
-        # non-cleanup units re-dirty it, so a cleanup that tidies something does not earn the next one.
+        # The cleanup block and the inline step are spliced in at every stage boundary, and on a settled graph they
+        # report no change: skip one unless a unit touched the graph since it last ran.
         settled = Settled()
         recorder = canon_stats.of(sdfg)
         for index, (label, unit) in enumerate(stages, start=1):
@@ -1589,8 +1324,7 @@ class CanonicalizationPipeline(ppl.Pass):
             if recorder is not None:
                 recorder.stage_done(sdfg)
             settled.record(unit, changed_the_graph(unit, result), dirties=not is_cleanup)
-            # apply_pass returns non-None iff it modified the SDFG, so an unchanged SDFG needs no
-            # re-validation -- that is what makes validate_all affordable by default.
+            # apply_pass returns non-None iff it modified the SDFG, so an unchanged SDFG needs no re-validation
             if self.validate_all and result is not None and not is_pipeline:
                 sdfg.validate()
             # Dump AFTER every stage, including no-ops: a bisect needs a dense index, and a stage
@@ -1605,14 +1339,7 @@ class CanonicalizationPipeline(ppl.Pass):
 
 
 def stage_labels(target: str = "cpu") -> list[str]:
-    """Ordered, de-duplicated stage labels of the canonicalization recipe for ``target``.
-
-    Lets a caller slice :func:`canonicalize` -- run every stage up to (not including) a chosen
-    label, do its own thing, then run the rest via ``CanonicalizationPipeline(stages=...)``.
-
-    :param target: ``'cpu'`` (default) or ``'gpu'``.
-    :returns: Stage labels in first-occurrence recipe order.
-    """
+    """Ordered, de-duplicated stage labels of the canonicalization recipe for ``target``."""
     seen = OrderedSet(label for label, _ in CanonicalizationPipeline(target=target).build_stages())
     return list(seen)
 
@@ -1639,77 +1366,7 @@ def canonicalize(
     stats: dict | str | None = None,
     wavefront: bool = True,
 ) -> SDFG:
-    """Canonicalize ``sdfg`` in place and return it.
-
-    One-call recipe analogous to ``auto_optimize``.
-
-    Canonicalization is the FIRST of two stages, and it stops where the target begins: wherever the
-    choice between a parallel and a sequential form is open it takes parallel, because that is the
-    form a GPU, a vectorizer and a CPU can each still specialize from. Nothing here decides whether
-    a scope earns an OpenMP region. That is
-    :func:`~dace.transformation.passes.cpu_specialization.pipeline.cpu_specialize`, run afterwards
-    (:func:`~dace.transformation.passes.canonicalize.finalize.finalize_for_target` calls it), and it
-    is where a map is made sequential again for its size or its nesting.
-
-    :param sdfg: The SDFG to canonicalize.
-    :param validate: Validate the SDFG after canonicalization. OFF by default -- validation is a
-                     whole-SDFG walk and a measurable share of the pipeline on a large graph.
-    :param validate_all: Validate the SDFG after EVERY stage -- a debugging bisect aid, off by
-                         default. Set ``validate`` to check the result, and this as well to find
-                         WHICH stage broke it.
-    :param unroll_limit: Unroll constant-trip loops <= this many iterations (0 disables).
-    :param peel_limit: Best-effort loop peeling before parallelize; ``None``
-                       (default) -> ``optimizer.canonicalization.peel_limit``.
-    :param target: ``'cpu'`` (default) or ``'gpu'``. Picks the per-target knob
-                   preset (see ``CPU_DEFAULTS`` / ``GPU_DEFAULTS``). Explicit
-                   knob args override the preset.
-    :param interchange_carry_with_map: ``LoopToScan`` knob; ``None`` (default) ->
-                                       per-target preset (CPU=True, GPU=False).
-    :param normalize_loop_and_map_origin: Rebase every Map range / ``LoopRegion`` counter to a
-                                   0-based begin, keeping the stride (``NormalizeLoopAndMapOrigin``),
-                                   at the end of ``normalize_statements``. ``None`` (default) ->
-                                   per-target preset (off on both targets).
-    :param assume_parallel_guards: Assume every parallel-guard condition holds --
-                                   ``ParallelizeUnderConstraint`` and
-                                   ``ScatterToGuardedMaps`` emit only the parallel
-                                   Map (no ``if cond: par else: seq`` fallback, no
-                                   scatter sort/trap). Unsound if a condition is
-                                   violated at runtime; ``False`` (default) keeps
-                                   the sound guards.
-    :param perfect_loop_nesting: Distribute a loop over its data-independent statement groups
-                                 (``PerfectLoopNesting``) so each statement gets its own complete
-                                 nest and parallelizes on its own axes. ``True`` (default); pass ``False`` to
-                                 keep bodies undistributed.
-    :param specialize_constants: Optional ``{symbol or scalar argument: value}`` baked in via
-                             ``specialize_symbols`` / ``specialize_scalars`` (cloudsc-style,
-                             recursive into nested SDFGs) before canonicalization, so symbolic trip counts
-                             unroll (e.g. ``{'nclv': 5}``) and concrete matmul extents
-                             (e.g. ``{'Norb': 3}``) enable the small-GEMM ``'pure'`` path.
-    :param lift: Lift tensor-contraction maps (matmul chains) to ``Einsum`` library
-                 nodes for BLAS lowering (default ``True``). Set ``False`` to skip
-                 that optimization and keep matmuls as plain WCR loop nests -- a
-                 correctness-safe escape hatch.
-    :param lift_copy: Lift contiguous element-wise-copy / constant-zero maps to
-                      ``Copy`` / ``Memset`` library nodes (default ``True``). Set
-                      ``False`` to keep them as plain maps.
-    :param semantic_lifting: Master gate for the post-LoopToMap map->library-node
-                             lifts (Einsum + Copy/Fill). Default ``True``; the
-                             vectorizer sets ``False`` to keep the residual as raw
-                             maps (a library node is not vectorizable).
-    :param stages: Stage labels to run, in recipe order (see :func:`stage_labels`); ``None``
-                   (default) runs every stage. A label that does not occur in the recipe
-                   raises ``ValueError``.
-    :param nonnegative_symbols: The symbols (and scalar arguments promoted to symbols) the caller knows are never
-                                negative. Registered in the SDFG's facts before the first pass, so every proof reads
-                                them, and checked at program entry. Any other symbol has an unknown sign. ``None``
-                                (default) keeps what an earlier call declared, else none.
-    :param stats: Record which stage settled each loop and the time spent, in total and inside Z3 and isl
-                  (:mod:`~dace.transformation.passes.analysis.canon_stats`): a dict is filled with the record, a
-                  path gets it appended as one JSON line. ``None`` (default) records nothing.
-    :param wavefront: Skew the loops left sequential on a carried dependence into wavefronts (default ``True``).
-                      ``False`` leaves them sequential loops, for a caller that decides the skew itself.
-    :returns: The same ``sdfg`` instance, canonicalized.
-    """
+    """Canonicalize ``sdfg`` in place and return it."""
     arguments = (
         validate,
         validate_all,
@@ -1748,12 +1405,7 @@ def canonicalize_recorded(sdfg: SDFG, nonnegative_symbols: Iterable[str] | None,
         declare_nonnegative_symbols(sdfg, nonnegative_symbols)
     set_symbol_nonnegative_assumptions(sdfg)
     declare_in_bounds_extents(sdfg)
-    # Every stage below recovers loop bounds from STRING-backed properties, which means re-parsing
-    # them -- and an unscoped parse mints ``DEFAULT_SYMBOL_TYPE``. Declaring the SDFG's own symbol
-    # table as the authority for the whole run is what keeps one name spelled as ONE symbol, so a
-    # bound and a descriptor shape still cancel (see ``sympy_to_dace``). Nested SDFGs are covered
-    # by name: a nested scope re-declares the same names, and only names this table does not carry
-    # keep the default.
+    # Every stage below recovers loop bounds from STRING-backed properties, which means re-parsing them
     authority = {name: dtype for nested in sdfg.all_sdfgs_recursive() for name, dtype in nested.symbols.items()}
     with symbolic.serialization_symbol_dtypes(authority):
         return canonicalize_under_authority(sdfg, *arguments)
@@ -1810,10 +1462,8 @@ def canonicalize_under_authority(
         if isinstance(region, ControlFlowRegion) and len(region.source_nodes()) == 1:
             region._start_block = None
             region._cached_start_block = None
-    # Canonicalized output opts in to OpenMP array-section reduction codegen (whole-buffer
-    # WCR accumulators of a parallel map -> ``reduction(op:A[0:n])`` instead of per-element
-    # atomics; complex via ``declare reduction``). Off by default elsewhere; only provably
-    # contiguous cases take the clause, everything else still falls back to atomics.
+    # Canonicalized output opts in to OpenMP array-section reduction codegen (whole-buffer WCR accumulators of a
+    # parallel map -> ``reduction(op:A[0:n])`` instead of per-element atomics; complex via ``declare reduction``).
     for nested in sdfg.all_sdfgs_recursive():
         nested.openmp_array_reductions = True
     # Enforced, not hoped for: the pipeline opts out of omp sections at entry and exit, and a

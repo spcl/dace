@@ -1,27 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Sink the store of a running value into a scan that is read only at its last element.
-
-Shape (cp2k ``cumsum(...)[-1]``)::
-
-    for i in range(N):              for i in range(N):
-        acc = acc + x[i]      ->        acc = acc + x[i]
-        scan[i] = acc               scan[N - 1] = acc
-
-Every element but the last is dead, so the per-iteration stores go. The loop is pinned sequential:
-a cumsum fixes the summation order, and reassociating it changes results (cp2k flips a branch).
-
-Contract, per loop ``L`` (``i`` from 0, step 1, last value ``e``, no break/continue) and transient
-array ``scan``:
-
-* the store ``scan[..., i, ...] = acc`` is in a state directly in ``L``, copies a one-element
-  ``acc``, and every other index of it is a constant;
-* ``acc`` is written in ``L`` only in that state, and not after the store;
-* ``scan`` is written in ``L`` only by the store and read only outside ``L``, always at the store's
-  index with ``i := e`` (interstate reads included); it is not named in loop or branch code, and the
-  symbols of ``e`` are never assigned.
-
-Zero trips: ``i`` starts at 0, so ``e < 0`` and the original read ``scan[e]`` is out of bounds.
-"""
+"""Sink the store of a running value into a scan that is read only at its last element."""
 
 from typing import Any
 

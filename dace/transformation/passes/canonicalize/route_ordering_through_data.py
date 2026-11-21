@@ -1,19 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Drop, or move onto the access nodes it reads and writes, the ordering edges of a nested SDFG.
-
-``InlineSDFG`` refuses a nested SDFG with an empty (ordering) memlet to or from anything but a scope node,
-since nothing inside the nest would carry it once the node is gone. The frontend leaves such edges for
-write-after-read order (CloudSC: ``where(zqxfg[2] > 0, ...)`` read by a nest before a later store to
-``zqxfg``), and the nest then survives canonicalization as a whole-array black box at the top of a loop
-body, where it blocks every dependence test and the team hoist.
-
-An ordering edge whose removal unorders no two conflicting accesses -- no pair of nodes it alone
-orders where one writes what the other touches -- is dropped (:func:`guards_nothing`). For the rest,
-the nest's data inputs and outputs are access nodes, so the same order is expressed by edges from the
-access nodes the nest writes to what had to follow it, and from what had to precede it to the access
-nodes it reads: the nest still runs between them, and inlining keeps those access nodes. That reroute
-is refused where it would close a cycle.
-"""
+"""Drop, or move onto the access nodes it reads and writes, the ordering edges of a nested SDFG."""
 
 from typing import Any
 
@@ -37,10 +23,7 @@ def blocking_ordering_edges(
 
 
 def reach_bits(state: SDFGState, order: list[nodes.Node], index: dict[nodes.Node, int], skipped) -> dict:
-    """Per node of ``state``, the bitset (bit ``index[n]``) of the nodes it reaches, not using edge ``skipped``.
-
-    One pass in reverse topological ``order``: a state is acyclic.
-    """
+    """Per node of ``state``, the bitset (bit ``index[n]``) of the nodes it reaches, not using edge ``skipped``."""
     bits: dict[nodes.Node, int] = {}
     for current in reversed(order):
         reach = 0
@@ -52,8 +35,8 @@ def reach_bits(state: SDFGState, order: list[nodes.Node], index: dict[nodes.Node
 
 
 class StateFacts:
-    """What the decisions in one state read and no drop, reroute or split changes: the data each view aliases and
-    each node's accesses. A split leaves every existing node's touched and written data as it was."""
+    """What the decisions in one state read and no drop, reroute or split changes: the data each view aliases and each
+    node's accesses."""
 
     def __init__(self, state: SDFGState) -> None:
         self.state = state
@@ -77,10 +60,8 @@ def viewed_data(state: SDFGState) -> dict[str, str | None]:
 
 
 def accesses(state: SDFGState, node: nodes.Node, roots: dict[str, str | None]) -> tuple[set[str], set[str]] | None:
-    """``(touched, written)`` data of ``node``, views resolved to what they alias; ``None`` where a view
-    does not resolve or the node has an ordered side effect, which no data shows. An access node touches its own data and the source of a copy into it, and writes its
-    data where a data edge other than a view's binding comes in; a map entry only reads (its out-edges carry its inputs into the scope); any
-    other node writes along its out-edges."""
+    """``(touched, written)`` data of ``node``, views resolved to what they alias; ``None`` where a view does not
+    resolve or the node has an ordered side effect, which no data shows."""
     if isinstance(node, nodes.CodeNode) and node.has_ordered_side_effects(state.sdfg):
         return None
     if isinstance(node, nodes.AccessNode):
@@ -103,21 +84,14 @@ def accesses(state: SDFGState, node: nodes.Node, roots: dict[str, str | None]) -
 
 
 def conflict(left: tuple[set[str], set[str]] | None, right: tuple[set[str], set[str]] | None) -> bool:
-    """Whether two ``(touched, written)`` access sets must stay ordered: one writes what the other touches.
-    An unresolved side conflicts with everything."""
+    """Whether two ``(touched, written)`` access sets must stay ordered: one writes what the other touches."""
     if left is None or right is None:
         return True
     return bool(left[1] & right[0] or right[1] & left[0])
 
 
 def guards_nothing(state: SDFGState, edge: MultiConnectorEdge[Memlet], facts: StateFacts) -> bool:
-    """Whether removing the ordering ``edge`` unorders no two nodes whose accesses conflict.
-
-    Removing ``u -> v`` unorders a node before (or at) ``u`` from a node after (or at) ``v`` exactly when
-    every path between them used the edge. Such a pair conflicts when one writes data the other reads or
-    writes, a view standing for the data it aliases; an access node counts as touching its data, since
-    the code it feeds may be on either side.
-    """
+    """Whether removing the ordering ``edge`` unorders no two nodes whose accesses conflict."""
     if state.degree(edge.src) < 2 or state.degree(edge.dst) < 2:
         return False  # the edge is all that keeps an endpoint in the state
     scope = state.scope_dict()
@@ -146,7 +120,7 @@ def guards_nothing(state: SDFGState, edge: MultiConnectorEdge[Memlet], facts: St
 def own_access(state: SDFGState, node: nodes.NestedSDFG, access: nodes.AccessNode, outgoing: bool) -> list:
     """``node``'s data edges into (``outgoing``) or out of ``access``, when ``access`` can hand them to an access node
     of its own: a non-view sink (source) with other writers (readers), whose in-edges (out-edges) are unordered among
-    themselves. ``[]`` otherwise."""
+    themselves."""
     if isinstance(access.desc(state.sdfg), data.View):
         return []
     if (state.out_degree(access) if outgoing else state.in_degree(access)) > 0:
@@ -158,14 +132,8 @@ def own_access(state: SDFGState, node: nodes.NestedSDFG, access: nodes.AccessNod
 
 
 def route_through_data(state: SDFGState, node: nodes.NestedSDFG, facts: StateFacts) -> bool:
-    """Drop ``node``'s blocking ordering edges that guard nothing, and replace the others by edges through
-    its data access nodes if that keeps the state acyclic.
-
-    An access node that closes the cycle only through its other writers (a shared sink) or readers (a shared source)
-    is first split, so that ``node`` gets an access node of its own.
-
-    :returns: Whether anything was dropped or rerouted.
-    """
+    """Drop ``node``'s blocking ordering edges that guard nothing, and replace the others by edges through its data
+    access nodes if that keeps the state acyclic."""
     ins, outs = blocking_ordering_edges(state, node)
     # One at a time against the current graph: parallel copies of one edge each guard nothing while the others stay
     dropped = []
@@ -229,10 +197,7 @@ class RouteOrderingThroughData(ppl.Pass):
         return []
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
-        """Drop or reroute every nested SDFG's blocking ordering edges in ``sdfg`` and its nests.
-
-        :returns: How many nested SDFGs changed, or ``None`` if none.
-        """
+        """Drop or reroute every nested SDFG's blocking ordering edges in ``sdfg`` and its nests."""
         rerouted = 0
         for owner in sdfg.all_sdfgs_recursive():
             for state in owner.states():

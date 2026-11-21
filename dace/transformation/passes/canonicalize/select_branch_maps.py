@@ -1,28 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Merge the two maps of an ``if/else`` over one range into one map that computes both and selects per element.
-
-fv3_dycore picks its limiter by a scalar that does not change inside the step::
-
-    if abs(ord) == 5:                        map (i, j, k): smt5[i, j, k] = bl * br < 0
-    else:                                    map (i, j, k): smt5[i, j, k] = 3 * abs(b0) < abs(bl - br)
-
-Kept as a conditional, the two maps sit in their own states and fuse with neither the maps producing ``bl``, ``br``,
-``b0`` nor the ones reading ``smt5``, so every operand stays a full-size array. Merged, the branch is one map with a
-select per output, which fuses like any element-wise map; the condition, made trivially true, is lifted by
-``LiftTrivialIf``.
-
-Contract, per ``ConditionalBlock`` with an ``if`` and an ``else`` branch:
-
-* each branch is states without interstate assignments, exactly one of them non-empty, holding one top-level map
-  whose body is tasklets and one-element access nodes only (no WCR), with every output written by a tasklet, and
-  no copy beside it;
-* the two maps have equal ranges (up to parameter names) and write the same arrays at the same subsets;
-* the condition reads symbols, none a map parameter, and one-element containers neither branch writes;
-* both bodies together have at most ``MAX_TASKLETS`` tasklets: each element computes both, so every access outside
-  the other branch stays in range without the guard, and no tasklet divides integers;
-* a map over the same range elsewhere in the block's region produces one of the branch inputs or reads one of its
-  outputs, so the merged map has a fusion partner.
-"""
+"""Merge the two maps of an ``if/else`` over one range into one map that computes both and selects per element."""
 
 import copy
 import re

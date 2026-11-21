@@ -1,21 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Turn the in-place updates ``X[s] = X[s] + r`` a refused loop carries into ``X[s] += r`` (WCR), so it maps.
-
-lavamd's box loop accumulates each box's forces into the box's own slice of ``fv``::
-
-    for l in range(n_boxes):
-        fv[box_offsets[l] : box_offsets[l] + ppb, k] += forces(l)
-
-The slice start is data, so ``LoopToMap`` cannot prove two boxes write apart and keeps the loop sequential. The
-update is an accumulation, though: as ``fv[...] += forces`` it is the same arithmetic whichever boxes overlap, and a
-loop whose only conflicting writes are WCR ones is a map (the WCR stays atomic across iterations). ``AugAssignToWCR``
-leaves such an update alone inside its own map -- every map index addresses one element, so the map has no conflict
-of its own -- which is right until an enclosing loop is to be lifted.
-
-Only the containers a refused loop names are rewritten, only when their updates as WCR let it map
-(:meth:`~dace.transformation.passes.parallelization.parallelize_loops.ParallelizeLoops.rescuing_wcr`), and only their
-in-place updates by a free tasklet or one in a top-level map.
-"""
+"""Turn the in-place updates ``X[s] = X[s] + r`` a refused loop carries into ``X[s] += r`` (WCR), so it maps."""
 
 from typing import Any
 
@@ -92,8 +76,7 @@ def all_convertible(loop: LoopRegion, names: set[str]) -> bool:
 
 
 def convert_updates(loop: LoopRegion, name: str) -> int:
-    """Turn every update of ``name`` in ``loop`` into WCR; :returns: how many. A rewrite may fission its state, so the
-    states are listed afresh after each."""
+    """Turn every update of ``name`` in ``loop`` into WCR; :returns: how many."""
     converted = 0
     while True:
         for state in loop.states():
@@ -107,9 +90,8 @@ def convert_updates(loop: LoopRegion, name: str) -> int:
 
 
 def writes_move_with_the_iteration(loop: LoopRegion, name: str) -> bool:
-    """Whether every write of ``name`` in ``loop`` addresses through the loop variable or a symbol the body defines:
-    a scatter whose iterations mostly write apart. A write of the same elements every iteration (``out += w[r] *
-    x``) is a reduction over the loop, which the loop's own parallel axes serve better than atomics across it."""
+    """Whether every write of ``name`` in ``loop`` addresses through the loop variable or a symbol the body defines: a
+    scatter whose iterations mostly write apart."""
     moving = loop_analysis.body_local_symbols(loop) | {loop.loop_variable}
     found = False
     for state in loop.states():

@@ -1,22 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Expand the library nodes that only remap indices into their pure map, so map fusion can inline them.
-
-A ``numpy.roll`` (``CShift``) or a ``broadcast_to`` (``Broadcast``) writes every element of its output from one
-element of its input at a remapped index: no arithmetic, no reduction, nothing a vendor library would do faster.
-Kept as a library node it reaches code generation as one full-size transient per call, because fusion cannot see
-through a library node. An 8th-order Laplacian (laplacian_stencil_3d) rolls its grid 24 times into one sum: 24 live
-copies of the grid, over the memory cap at the L preset. Expanded before maximal fusion, each remap is a gather map
-that fuses into its consumer as an index expression, and the transient goes.
-
-A ``numpy.where`` the frontend wires as a ``MergeLibraryNode`` is the same case: a per-element select, one map over
-its output and nothing a library does faster. Kept, it is the one node of an element-wise chain fusion cannot enter,
-so every operand and the result stay full-size transients and the chain is cut in two. ``velocity_tendencies``'
-CFL clip ``np.where(lo_clip, -0.85 * h / dtime, np.where(hi_clip, 0.85 * h / dtime, zc))`` kept five such
-``(nblks, nlev, nproma)`` temporaries, each allocated, written and re-read per call.
-
-A ``Transpose`` of an operand with at most one non-unit dimension (``x.T`` of an ``(N, 1)`` column) only reshapes:
-no locality for a library to win, and nbody's 20 per step each kept an ``N``-vector transient.
-"""
+"""Expand the library nodes that only remap indices into their pure map, so map fusion can inline them."""
 
 from typing import Any
 

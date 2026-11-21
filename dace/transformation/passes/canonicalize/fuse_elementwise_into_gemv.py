@@ -1,23 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lower a matrix-vector ``MatMul`` whose matrix is an elementwise map's private output to a WCR map, so fusion
-removes the matrix.
-
-Shape (nbody ``ax = (dx * inv_r3) @ mass``)::
-
-    map i, j: M[i, j] = f(...)          map i: y[i] = 0
-    y = M @ v                     ->    map i, j: y[i] += M[i, j] * v[j]
-
-A GEMV streams its matrix once, so the BLAS call buys nothing over the map, while the ``N x N`` matrix costs a
-write and a read per element. As a WCR map it fuses with its producer and the matrix becomes a scalar.
-
-Contract, per ``MatMul`` at the top level of a state, one operand 2-D and the other 1-D:
-
-* the matrix is a transient ``Array`` written in that state only by one map exit and read only by the ``MatMul``,
-  with no other access node anywhere in its SDFG;
-* every operand memlet and the output memlet is a step-1 range.
-
-GEMM (both operands matrices) is compute-bound and stays a library node.
-"""
+"""Lower a matrix-vector ``MatMul`` whose matrix is an elementwise map's private output to a WCR map, so fusion removes
+the matrix."""
 
 from typing import Any
 
@@ -116,8 +99,7 @@ class FuseElementwiseIntoGemv(ppl.Pass):
         mat_node, vec_node, out_node = src, vec.src, out.dst
         if not isinstance(vec_node, nodes.AccessNode):
             return 0
-        # ``y = (a * y) @ v``: the init below would zero ``y`` unordered with the read that builds the matrix. Another
-        # part of the container is no such read (``acc[:, 0]``, ``acc[:, 1]``: one product per column)
+        # ``y = (a * y) @ v``: the init below would zero ``y`` unordered with the read that builds the matrix.
         if any(
             n.data == out_name
             and n is not out_node

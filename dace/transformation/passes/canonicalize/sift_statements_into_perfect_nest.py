@@ -1,62 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Sift outer-level statements into the inner loop to make an imperfect nest perfect (GPU-only).
-
-The loop analogue of :class:`~dace.transformation.passes.move_if_into_loop.MoveIfIntoLoop`.
-An imperfect nest runs the outer-level statements once per outer iteration, on either
-side of the inner loop::
-
-    for i in range(N):
-        pre_body(i)              # blocks BEFORE the inner loop
-        for j in range(M):
-            body(i, j)
-        post_body(i)             # blocks AFTER the inner loop
-
-This pass sinks each of those statement groups into the inner loop body, guarded by the
-boundary iteration, so the nest becomes perfect and a later interchange / collapse can
-expose the outer axis for GPU parallelism::
-
-    for i in range(N):
-        for j in range(M):
-            if j == <first>: pre_body(i)
-            body(i, j)
-            if j == <last>:  post_body(i)
-
-It is a **GPU-only** canonicalization. On CPU it is a no-op: guarding the pre/post work by
-``j == <boundary>`` and burying it in the inner body destroys the sequential-fusion
-locality the outer level otherwise has, so the pass returns ``None`` unless ``target='gpu'``.
-
-Soundness. The pre/post blocks currently run once per ``i`` regardless of the inner trip
-count; after the sift they run only from inside the inner body, so the transform is only
-value-preserving when:
-
-* **S1 -- provably non-empty inner loop.** If the inner loop can execute zero times, the
-  guarded pre/post work would be dropped. The inner trip count must be provably ``>= 1``
-  (``sympy`` proof over the parsed init/condition/stride); otherwise the pass refuses.
-* **S7 -- outer-axis independence.** The sift only pays off if the outer ``i`` axis is
-  parallelizable after perfect nesting. If a container is written at ``i`` and read/written
-  at ``i +/- c`` (``c != 0``) anywhere across pre / body / post, a later interchange would
-  break that loop-carried dependence, so the pass refuses. An inner-``j`` carry (a scalar
-  reduction accumulator) is fine -- it never indexes the outer iterator.
-* A pre/post block whose feeding interstate-edge assignment LHS is reassigned by the inner
-  body is refused (its value at the boundary iteration would be ambiguous).
-* A nest whose pre/post statements accumulate across the outer axis -- read and write a container at
-  elements free of the outer iterator, velocity_tendencies' ``for n: (for b: g[b] = w[idx[b, n]]);
-  acc += c[n] * g`` -- is refused: the outer axis stays sequential either way, and the guarded
-  statement, reading what every inner iteration wrote, would make the inner loop sequential too.
-* A nest whose inner loop carries a container the pre/post statements write -- the
-  ``acc = 0; for j: acc += a[i, j]; c[i] = acc`` reduction -- is refused: ``LoopToReduce`` lifts
-  it as it stands and the outer axis then parallelizes, while the sifted form keeps the
-  accumulator, which ``LoopToMap`` cannot privatize, and leaves both loops sequential.
-* A nest whose inner body reads what a pre statement defines (a container or a symbol: srad's
-  ``north = iN[i]``) is refused: guarded, the first inner iteration defines it and every later one
-  reads it, a carry that leaves the inner loop sequential -- and the outer loop on the host around
-  one kernel per row -- while the unsifted nest maps on both axes.
-
-The construction mirrors ``MoveIfIntoLoop``: each statement group is deep-copied into a
-single-branch (no-else) :class:`ConditionalBlock` placed as the first (pre) / last (post)
-block of the inner body, and the interstate-edge data (conditions **and** assignments) that
-fed the moved blocks is re-emitted inside the guarded region so nothing is silently dropped.
-"""
+"""Sift outer-level statements into the inner loop to make an imperfect nest perfect (GPU-only)."""
 
 import copy
 
@@ -80,12 +23,7 @@ from dace.transformation.passes.move_if_into_loop import provably_nonempty
 
 
 def _last_reached_iterate(loop: LoopRegion) -> symbolic.SymbolicType | None:
-    """The value of the loop variable on the final executed iteration.
-
-    ``get_loop_end`` normalizes the raw bound (``i < a -> a-1``, ``i <= a -> a``); with a
-    non-unit stride the last *reached* iterate is ``init + ((end - init) // stride) * stride``
-    -- not the raw bound -- so the post-guard fires on the iteration that actually runs.
-    """
+    """The value of the loop variable on the final executed iteration."""
     init = get_init_assignment(loop)
     end = get_loop_end(loop)
     stride = get_loop_stride(loop)
@@ -96,20 +34,14 @@ def _last_reached_iterate(loop: LoopRegion) -> symbolic.SymbolicType | None:
     stride_s = symbolic.pystr_to_symbolic(stride)
     if stride_s == 1:
         return end_s
-    # ``int_floor``, never ``sympy.floor`` over a division: ``simplify`` distributes the floor into
-    # a rational and ``sym2cpp`` prints it without the floor, so the guard below compares against a
-    # truncated value and the post-body fires mid-loop. Same hazard documented in
-    # ``materialize_loop_exit_symbols``.
+    # ``int_floor``, never ``sympy.floor`` over a division: ``simplify`` distributes the floor into a rational and
+    # ``sym2cpp`` prints it without the floor, so the guard below compares against a truncated value and the post-body
+    # fires mid-loop.
     return symbolic.simplify(init_s + symbolic.int_floor(as_expr(end_s) - as_expr(init_s), stride_s) * stride_s)
 
 
 def _has_outer_carry(subset: Subset | None, iv: str) -> bool:
-    """``True`` iff ``subset`` indexes the outer iterator ``iv`` at a non-zero offset.
-
-    A single-point / range begin or end of the form ``iv`` (offset 0) is per-iteration and
-    safe; anything else that references ``iv`` -- ``iv-1``, ``iv+j``, ``2*iv`` -- is a
-    potential cross-outer-iteration access, so it is reported (conservatively) as a carry.
-    """
+    """``True`` iff ``subset`` indexes the outer iterator ``iv`` at a non-zero offset."""
     if subset is None:
         return False
     iv_sym = symbolic.pystr_to_symbolic(iv)
@@ -129,13 +61,7 @@ def _has_outer_carry(subset: Subset | None, iv: str) -> bool:
 
 
 def _outer_axis_independent(outer: LoopRegion, inner: LoopRegion, pre: list[SDFGState], post: list[SDFGState]) -> bool:
-    """S7: refuse if the outer axis carries a dependence a later interchange would break.
-
-    Restricted to the outer iterator: any *written* container that is accessed at ``iv +/- c``
-    (``c != 0``) anywhere across pre / inner-body / post is a loop-carried dependence on the
-    axis this pass is trying to make parallel. Scalar accumulators (no ``iv`` index) are inner
-    carries and stay clear of this check.
-    """
+    """S7: refuse if the outer axis carries a dependence a later interchange would break."""
     iv = str(outer.loop_variable)
     states: list[SDFGState] = list(pre) + list(post) + list(inner.states())
 
@@ -158,8 +84,8 @@ def _accumulates_across_outer(
     outer: LoopRegion, inner: LoopRegion, pre: list[SDFGState], post: list[SDFGState]
 ) -> bool:
     """Whether a ``pre`` / ``post`` statement updates a container at elements free of ``outer``'s iterator, reading the
-    value an earlier outer iteration left: every outer iteration then updates the same elements, a carry no
-    interchange can parallelize. A temporary the iteration writes before reading it carries nothing."""
+    value an earlier outer iteration left: every outer iteration then updates the same elements, a carry no interchange
+    can parallelize."""
     iv = str(outer.loop_variable)
     written: set[str] = set()
     exposed: set[str] = set()
@@ -213,11 +139,8 @@ def _body_written_names(inner: LoopRegion) -> dict[str, None]:
 
 
 def _match(sdfg: SDFG) -> tuple[LoopRegion, LoopRegion, list[SDFGState], list[SDFGState]] | None:
-    """Find an outer ``LoopRegion`` whose linear body is ``[pre..., one inner loop, post...]``
-    and that satisfies every soundness gate.
-
-    :returns: ``(outer, inner, pre, post)`` or ``None``.
-    """
+    """Find an outer ``LoopRegion`` whose linear body is ``[pre..., one inner loop, post...]`` and that satisfies every
+    soundness gate."""
     for outer in sdfg.all_control_flow_regions(recursive=True):
         if not isinstance(outer, LoopRegion) or not outer.loop_variable:
             continue
@@ -263,8 +186,7 @@ def _match(sdfg: SDFG) -> tuple[LoopRegion, LoopRegion, list[SDFGState], list[SD
         body_written = _body_written_names(inner)
         if any(s in sifted_lhs for s in body_written):
             continue
-        # The inner header runs before any sifted statement, so it must not read what ``pre`` produces; the guards
-        # read it in every iteration, so the body must not write it either.
+        # The inner header runs before any sifted statement, so it must not read what ``pre`` produces
         pre_written = _written_data(pre)
         if loop_header_names(inner) & (pre_written | sifted_lhs.keys() | body_written.keys()):
             continue
@@ -277,12 +199,7 @@ def _match(sdfg: SDFG) -> tuple[LoopRegion, LoopRegion, list[SDFGState], list[SD
 
 
 def _assemble_region(pairs: list[tuple[SDFGState, InterstateEdge | None]], label: str) -> ControlFlowRegion:
-    """Build a fresh linear ``ControlFlowRegion`` from ``(block, incoming-edge-data)`` pairs.
-
-    The first pair's edge data is ``None`` (it is the region start); every other block is
-    joined to its predecessor by the given interstate edge (carrying the preserved condition
-    and assignments) or a plain unconditional edge when ``None``.
-    """
+    """Build a fresh linear ``ControlFlowRegion`` from ``(block, incoming-edge-data)`` pairs."""
     region = ControlFlowRegion(label=label)
     for k, (blk, _) in enumerate(pairs):
         region.add_node(blk, is_start_block=(k == 0), ensure_unique_name=True)
@@ -311,8 +228,7 @@ def _sift(outer: LoopRegion, inner: LoopRegion, pre: list[SDFGState], post: list
         for k in range(1, len(pre)):
             e = edge_of[(pre[k - 1], pre[k])]
             pairs.append((pre_copies[k], copy.deepcopy(e.data)))
-        # Assignments on the edge that fed the inner loop run once, before the body; re-emit
-        # them at the boundary iteration via a trailing empty state inside the guard.
+        # Assignments on the edge that fed the inner loop run once, before the body
         e_into = edge_of[(pre[-1], inner)]
         if e_into.data.assignments:
             pairs.append((SDFGState("pre_guard_tail"), copy.deepcopy(e_into.data)))
@@ -323,8 +239,7 @@ def _sift(outer: LoopRegion, inner: LoopRegion, pre: list[SDFGState], post: list
     post_if = None
     if post:
         post_copies = [copy.deepcopy(b) for b in post]
-        # Assignments on the edge out of the inner loop run once, after the body; re-emit them
-        # via a leading empty state inside the guard.
+        # Assignments on the edge out of the inner loop run once, after the body
         e_outof = edge_of[(inner, post[0])]
         if e_outof.data.assignments:
             pairs = [(SDFGState("post_guard_lead"), None), (post_copies[0], copy.deepcopy(e_outof.data))]
@@ -351,8 +266,7 @@ def _sift(outer: LoopRegion, inner: LoopRegion, pre: list[SDFGState], post: list
         # prefers a unique source node, and a stale start corrupts dominator analysis).
         inner.start_block = inner.node_id(pre_if)
 
-    # Strip the now-sifted blocks from the outer body; it must be left with exactly one child
-    # (the inner loop). Reset the outer start block after the removals shift node ids.
+    # Strip the now-sifted blocks from the outer body; it must be left with exactly one child (the inner loop).
     for b in list(pre) + list(post):
         outer.remove_node(b)
     outer.start_block = outer.node_id(inner)
@@ -360,10 +274,6 @@ def _sift(outer: LoopRegion, inner: LoopRegion, pre: list[SDFGState], post: list
 
 def sift_imperfect_nests(sdfg: SDFG) -> int:
     """Sift every qualifying imperfect nest in ``sdfg``; return how many were sifted.
-
-    Driven by :class:`~dace.transformation.passes.canonicalize.perfect_loop_nesting.PerfectLoopNesting`
-    under ``target='gpu'`` -- this module holds the matcher and the rewrite, not a Pass of its own,
-    so perfect nesting has ONE entry point.
 
     :param sdfg: The SDFG to transform in place.
     :returns: The number of nests sifted (0 if none matched).

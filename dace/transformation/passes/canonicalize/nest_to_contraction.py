@@ -1,19 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lift a perfect loop/map nest around one contraction library node to a single ``Einsum``.
-
-A nest of ``LoopRegion``s and/or map scopes whose body is one ``Einsum``, ``MatMul``, ``Gemm``,
-``BatchedMatMul``, ``Gemv``, ``Dot`` or ``TensorDot`` (operands optionally behind a view or a
-whole-slice copy) becomes one ``Einsum`` with one extra index per nest variable::
-
-    for b in map[0:NB]: C[b] = A[b] @ B           ->  einsum('bik,kj->bij', A, B)
-    for k in range(K):  C += A[k] @ B[k]          ->  einsum('kij,kjl->il', A, B), beta=1
-
-Contract: every operand and output dimension is either indexed by exactly one nest variable
-(unit coefficient) or is a full range; nest ranges are rectangular with unit step; a map
-variable indexes the output; a loop variable absent from the output is contracted and needs an
-accumulating body (``beta == 1``, an ``X = X + T`` map or a WCR-sum copy); no operand is the
-output.
-"""
+"""Lift a perfect loop/map nest around one contraction library node to a single ``Einsum``."""
 
 import string
 from dataclasses import dataclass
@@ -166,8 +152,7 @@ def body_contraction(node: nodes.LibraryNode, ranks: dict[str, int]) -> tuple[st
 
 @dataclass(slots=True)
 class BodyMatcher:
-    """Reads one nest body. ``claimed`` collects every node the contraction accounts for; ``wcr_sum`` records an
-    accumulation through a WCR Sum write, which a parallel axis may contract."""
+    """Reads one nest body."""
 
     sdfg: SDFG
     state: SDFGState
@@ -593,8 +578,7 @@ def nest_einsum(
     axes: dict[str, Axis],
     wcr_sum: bool,
 ) -> tuple[str, bool] | None:
-    """The body's einsum with a letter per nest axis, and whether an axis is contracted. ``None`` when an axis
-    indexes no operand, or a parallel axis is contracted without a WCR sum."""
+    """The body's einsum with a letter per nest axis, and whether an axis is contracted."""
     unused = iter(c for c in string.ascii_letters if c not in einsum_str)
     letters = {param: next(unused, None) for param in axes}
     if None in letters.values():

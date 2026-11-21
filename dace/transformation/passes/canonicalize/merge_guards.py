@@ -1,19 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Merge guards that test the same predicate, so the bodies they keep apart meet in one branch.
-
-Three shapes merge, and nothing else does:
-
-* consecutive guards with the same predicate (``if c: A`` then ``if c: B`` becomes ``if c: A; B``) or with
-  opposite predicates (``if c: A`` then ``if not c: B`` becomes ``if c: A else: B``), when nothing between the two
-  tests changes what the second reads;
-* a guard alone in the only branch of another (``if a: if b: X`` becomes ``if (a) and (b): X``), also behind
-  in-bounds symbol loads, which move above the outer guard;
-* a guard alone in the ``else`` of another (``if a: X else: if b: Y else: Z`` becomes ``if a: X elif b: Y else: Z``).
-
-Every body moves; none is copied. Guards that test different predicates stay apart: merging them takes one copy
-of a body per combination of branches, and the copies keep their transients' names, so a scratch transient of a
-map body turns into one shared by every copy and code generation hoists it out of the parallel loop.
-"""
+"""Merge guards that test the same predicate, so the bodies they keep apart meet in one branch."""
 
 import ast
 from collections import deque
@@ -130,11 +116,7 @@ SAFE_LOAD_NODES = (
 
 def hoist_loads(outer: ConditionalBlock, inner: ConditionalBlock) -> bool:
     """Move the symbol loads between ``outer``'s test and ``inner`` above ``outer``, leaving ``inner`` alone in the
-    branch (dbcsr's ``if a_bid >= 0: {b_bid = b_index[ib, 2]; if b_bid >= 0: ...}``).
-
-    Hoisted, a load also runs where ``outer`` skips, so the states between hold nothing, every load provably reads
-    inside its array's extents and divides or calls nothing, reads nothing the guarded body writes, and binds a
-    symbol that ``outer``'s test and everything outside ``outer`` leave alone."""
+    branch (dbcsr's ``if a_bid >= 0: {b_bid = b_index[ib, 2]; if b_bid >= 0: ...}``)."""
     branch = inner.parent_graph
     order = _linear_blocks(branch, allow_assignments=True)
     if order is None or order[-1] is not inner or any(b.number_of_nodes() for b in order[:-1]):
@@ -274,13 +256,9 @@ class MergeGuards(ppl.Pass):
         return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
-        """Merge every qualifying guard of ``sdfg`` and its nested SDFGs, to a fixpoint.
-
-        :returns: How many merges were applied, or ``None`` if none.
-        """
+        """Merge every qualifying guard of ``sdfg`` and its nested SDFGs, to a fixpoint."""
         merged = 0
-        # Every region once, nested SDFGs included; a merge queues what it changed, so nothing is scanned again
-        # for a merge elsewhere.
+        # Every region once, nested SDFGs included
         pending = deque(sdfg.all_control_flow_regions(recursive=True))
         verdicts: Verdicts = {}
         while pending:

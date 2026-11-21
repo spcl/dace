@@ -1,9 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A matrix transpose whose only reader is a BLAS operand becomes that operand's transpose flag.
-
-``hpsi = beta @ (dij @ (beta.T @ psi))`` materialized ``beta.T`` (116 MB on kleinman_bylander_nonlocal) for a GEMM that
-takes a transposed operand by its ``transA``/``transB`` flag. A transpose several products read folds into each.
-"""
+"""A matrix transpose whose only reader is a BLAS operand becomes that operand's transpose flag."""
 
 from dace import SDFG, data, symbolic
 from dace.libraries.blas.nodes.gemm import Gemm
@@ -40,8 +36,8 @@ def covers(memlet: Memlet, desc: data.Data) -> bool:
 
 
 def fold_one(sdfg: SDFG, state: SDFGState, transpose: nodes.LibraryNode, access_counts: dict[str, int]) -> bool:
-    """Feed ``transpose``'s input straight into the BLAS operands that are the only readers of the transient it
-    writes, each with its transpose flag flipped. Returns whether it did."""
+    """Feed ``transpose``'s input straight into the BLAS operands that are the only readers of the transient it writes,
+    each with its transpose flag flipped."""
     ins, outs = state.in_edges(transpose), state.out_edges(transpose)
     if len(ins) != 1 or len(outs) != 1:
         return False
@@ -61,8 +57,7 @@ def fold_one(sdfg: SDFG, state: SDFGState, transpose: nodes.LibraryNode, access_
             return False
         if not covers(reader.data, out_desc):
             return False  # the operand is a window of the transpose, not the flipped matrix
-    # One reader is ordered before a later write of the source by whatever ordered the transpose before it; a second
-    # reader need not be (``t = A.T; C = t @ B; A = C; D = t @ C``). A view's source is written under another name.
+    # One reader is ordered before a later write of the source by whatever ordered the transpose before it
     if len(readers) > 1 and (
         isinstance(src_desc, data.View)
         or any(n.data == src.data and n is not src and state.in_degree(n) > 0 for n in state.data_nodes())
@@ -80,10 +75,7 @@ def fold_one(sdfg: SDFG, state: SDFGState, transpose: nodes.LibraryNode, access_
 
 def transposes_as_blas_flags(sdfg: SDFG) -> int:
     """Fold every matrix transpose feeding only a BLAS operand into that operand's transpose flag, in ``sdfg`` and its
-    nests.
-
-    :returns: how many transposes were folded.
-    """
+    nests."""
     folded = 0
     for sd in sdfg.all_sdfgs_recursive():
         access_counts: dict[str, int] = {}

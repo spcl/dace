@@ -1,61 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Cascade interstate-edge symbol assignments up out of enclosing loops.
-
-The LICM analogue for interstate-edge symbol assignments: if an interstate
-edge inside a loop body carries ``key = rhs`` where ``rhs`` is invariant
-w.r.t. every enclosing ``LoopRegion`` (and the move would be observationally
-neutral on every block between the new location and the old one), move the
-assignment up to the outermost legal scope. This complements
-:class:`~dace.transformation.passes.loop_invariant_code_motion.LoopInvariantCodeMotion`
-(which hoists tasklet / map-scope invariant code) and
-:class:`~dace.transformation.interstate.move_loop_invariant_if_up.MoveLoopInvariantIfUp`
-(which hoists invariant guards).
-
-The motivating shape is the Python-frontend symbol promotion ``kp1 = K + 1``
-that the frontend coins for non-symbol bound expressions (the
-``get_target_name`` heuristic in ``newast.py``). After canonicalize stages
-remix the CFG, the promoted assignment can end up *inside* the loop whose
-range reads it -- producing the body-assigns-loop-range-symbol shape that
-``LoopToMap``'s ``can_be_applied`` refuses ("Loop range references symbol(s)
-assigned by the loop body's interstate edges"). Cascading the invariant
-assignment up restores ``LoopToMap`` eligibility and stops the per-iteration
-re-assignment of values that never change.
-
-Binding rule (set by the user): *all-or-nothing
-upward*. A one-level partial hoist that leaves the assignment inside a
-different enclosing loop is forbidden -- the same scope-mismatch family of
-bugs reappears one level higher. The pass therefore either moves an
-assignment past every enclosing ``LoopRegion`` (to the first non-loop
-ancestor CFG) or leaves it where it is.
-
-Legality predicates (per assignment ``key = rhs`` on edge ``e`` in region
-``cfg``):
-
-* **L1 RHS invariance at D** -- every free symbol of ``rhs`` is defined
-  *above* ``D`` (not introduced by any loop variable / interstate-edge
-  assignment / tasklet write between ``D`` and ``e``).
-* **L2** -- no write to a free symbol of ``rhs`` between ``D``'s entry and
-  ``e`` (otherwise the move would change which ``rhs`` value materialises
-  ``key``).
-* **L3** -- no read of ``key`` between ``D``'s entry and ``e`` (otherwise
-  the moved assignment would shadow a previously-undefined / outer value
-  observed by those reads).
-* **L4** -- no other write to ``key`` between ``D``'s entry and ``e``.
-* **L5** -- ``e`` is unconditionally executed by ``D``: refuse if ``e``
-  lives inside a ``ConditionalBlock`` branch within ``D`` (conservative;
-  the user-permitted relaxation needs whole-program dataflow on ``key``
-  and is left as a future refinement).
-* **L6** -- if the move would cross one or more ``NestedSDFG`` boundaries,
-  each crossing needs a ``symbol_mapping`` passthrough. v1 refuses to
-  cross NSDFG boundaries (conservative); the next iteration will route
-  through ``symbol_mapping`` and drop the now-shadowed inner declaration.
-
-The pass is idempotent (no-op once nothing legal remains to hoist) and is
-designed to be invoked at *multiple* pipeline positions -- after the move-
-inward passes that may have buried invariant assignments inside loops, and
-again before the parallelization stage so the ``LoopToMap`` refuse-check
-sees a clean shape.
-"""
+"""Cascade interstate-edge symbol assignments up out of enclosing loops."""
 
 import ast
 from typing import Any
@@ -71,15 +15,7 @@ from dace.transformation.passes.analysis.loop_analysis import loop_header_names
 
 
 class HoistAnalysisCache:
-    """Per-round memo of the content-derived answers ``_cascade_once`` asks repeatedly.
-
-    Every legality check below is a pure function of the graph's CURRENT shape -- which
-    blocks precede which, what a block reads, what a region writes. None of that changes
-    across the many candidate assignments probed within one sweep; it changes only once a
-    hoist actually moves an assignment or inserts a state. So one instance is built lazily
-    over a whole ``_cascade_once`` call and cleared (forcing a lazy rebuild on next use)
-    right after every mutation, instead of recomputing the same answer per candidate.
-    """
+    """Per-round memo of the content-derived answers ``_cascade_once`` asks repeatedly."""
 
     __slots__ = ("reads", "writes", "preds", "region_indices")
 
@@ -121,13 +57,7 @@ class HoistAnalysisCache:
 
 
 def names_read_by(expr: str) -> dict[str, None]:
-    """Every name a string expression reads: symbols AND the data containers it subscripts.
-
-    Read off the AST, not off ``pystr_to_symbolic``: sympy renders ``A[0]`` as an indexed
-    object whose ``free_symbols`` is empty, so the array base is lost. A guard that compares
-    this against the containers written inside a region needs ``A``, or an element read is
-    treated as invariant and hoisted out of the loop that writes it.
-    """
+    """Every name a string expression reads: symbols AND the data containers it subscripts."""
     try:
         visitor = astutils.TaskletFreeSymbolVisitor([])
         visitor.visit(ast.parse(expr.strip(), mode="eval"))
@@ -138,11 +68,7 @@ def names_read_by(expr: str) -> dict[str, None]:
 
 
 def _region_writes(region: ControlFlowRegion) -> tuple[dict[str, None], dict[str, None]]:
-    """All symbols (interstate assignments) and data containers written
-    anywhere inside ``region`` and its descendants.
-
-    :returns: ``(assigned_symbols, written_data)``.
-    """
+    """All symbols (interstate assignments) and data containers written anywhere inside ``region`` and its descendants."""
     asyms: dict[str, None] = {}
     wdata: dict[str, None] = {}
     for e in region.all_interstate_edges():
@@ -158,12 +84,8 @@ def _region_writes(region: ControlFlowRegion) -> tuple[dict[str, None], dict[str
 
 
 def build_region_index(region: ControlFlowRegion) -> tuple[dict[str, list[str]], dict[str, None]]:
-    """Every interstate assignment's rhs, grouped by lhs, and every data name an
-    access node writes, anywhere inside ``region``.
-
-    Backing index for :func:`_key_has_other_writer`: the region walk it needs is
-    identical for every ``(key, rhs)`` pair asked about the same region.
-    """
+    """Every interstate assignment's rhs, grouped by lhs, and every data name an access node writes, anywhere inside
+    ``region``."""
     by_key: dict[str, list[str]] = {}
     written: dict[str, None] = {}
     for e in region.all_interstate_edges():
@@ -177,15 +99,7 @@ def build_region_index(region: ControlFlowRegion) -> tuple[dict[str, list[str]],
 
 
 def _key_has_other_writer(cache: HoistAnalysisCache, region: ControlFlowRegion, key: str, rhs: str) -> bool:
-    """True iff ``key`` is written inside ``region`` by anything other than a
-    ``key = rhs`` interstate assignment.
-
-    A different-``rhs`` interstate assignment (e.g. ``count = count + 1``) or a
-    data write to a scalar named ``key`` makes ``key`` loop-carried: it is
-    modified within the region, so a ``key = rhs`` reset is a *per-iteration*
-    reset that must not be hoisted out of the region -- hoisting it would run the
-    reset once and let the value diverge across iterations.
-    """
+    """True iff ``key`` is written inside ``region`` by anything other than a ``key = rhs`` interstate assignment."""
     by_key, written = cache.region_index(region)
     if key in written:
         return True
@@ -193,9 +107,7 @@ def _key_has_other_writer(cache: HoistAnalysisCache, region: ControlFlowRegion, 
 
 
 def _meets_binding_rule(dest: ControlFlowRegion, cfg: ControlFlowRegion, sdfg: SDFG) -> bool:
-    """The all-or-nothing upward rule: ``dest`` must be outside every
-    ``LoopRegion`` enclosing ``cfg``. Equivalently: ``dest`` is not a
-    ``LoopRegion`` and no ``LoopRegion`` strictly contains ``dest``."""
+    """The all-or-nothing upward rule: ``dest`` must be outside every ``LoopRegion`` enclosing ``cfg``."""
     if isinstance(dest, LoopRegion):
         return False
     p = dest.parent_graph
@@ -220,13 +132,7 @@ def _on_conditional_branch(cfg: ControlFlowRegion, dest: ControlFlowRegion, sdfg
 
 
 def _predecessors_in(parent: ControlFlowRegion, child: ControlFlowBlock) -> dict[ControlFlowBlock, None]:
-    """Strict predecessors of a block within its parent region.
-
-    :param parent: The region whose edges are walked.
-    :param child: The block whose predecessors are collected.
-    :returns: Blocks reachable backwards from ``child`` via ``parent``'s
-              edges, excluding ``child`` itself.
-    """
+    """Strict predecessors of a block within its parent region."""
     out: dict[ControlFlowBlock, None] = {}
     stack = [child]
     while stack:
@@ -240,14 +146,7 @@ def _predecessors_in(parent: ControlFlowRegion, child: ControlFlowBlock) -> dict
 
 
 def _read_after(parent: ControlFlowRegion, child: ControlFlowBlock, key: str, cache: HoistAnalysisCache) -> bool:
-    """True iff something after ``child`` in ``parent`` reads the value of ``key`` that ``child`` leaves.
-
-    :param parent: The region whose edges are walked.
-    :param child: The block to start after.
-    :param key: The symbol name.
-    :param cache: Per-round memo of the blocks' reads.
-    :returns: ``True`` if a later block or edge reads ``key``, or what a block reads is unknown.
-    """
+    """True iff something after ``child`` in ``parent`` reads the value of ``key`` that ``child`` leaves."""
     for e in parent.dfs_edges(child):
         reads = cache.block_reads(e.dst)
         if reads is None or key in e.data.read_symbols() or key in reads and key not in e.data.assignments:
@@ -256,15 +155,7 @@ def _read_after(parent: ControlFlowRegion, child: ControlFlowBlock, key: str, ca
 
 
 def _block_reads_symbols(block: ControlFlowBlock) -> dict[str, None] | None:
-    """The symbols a block reads from outside it (state, region, etc.).
-
-    This is a legality predicate, so it fails CLOSED: an unreadable ``free_symbols`` yields ``None``
-    rather than a partial set, because a partial set silently drops the very read the caller is
-    looking for and lets an illegal hoist through.
-
-    :param block: The state or region to scan.
-    :returns: The names of symbols read inside ``block``, or ``None`` if it cannot be determined.
-    """
+    """The symbols a block reads from outside it (state, region, etc.)."""
     try:
         return dict.fromkeys(str(s) for s in block.free_symbols)
     except Exception:
@@ -272,14 +163,7 @@ def _block_reads_symbols(block: ControlFlowBlock) -> dict[str, None] | None:
 
 
 def _block_writes(block: ControlFlowBlock) -> tuple[dict[str, None], dict[str, None]]:
-    """All symbols assigned and data containers written anywhere inside a block.
-
-    A state-only block contributes tasklet writes to its AccessNodes; a
-    region block delegates to :func:`_region_writes`.
-
-    :param block: The state or region to scan.
-    :returns: ``(assigned_symbols, written_data)``.
-    """
+    """All symbols assigned and data containers written anywhere inside a block."""
     if isinstance(block, (ControlFlowRegion, ConditionalBlock)):
         return _region_writes(block)
     asyms: dict[str, None] = {}
@@ -300,39 +184,17 @@ def _legal_to_hoist_into(
     sdfg: SDFG,
     cache: HoistAnalysisCache,
 ) -> bool:
-    """Decide whether an assignment inside ``child`` may move up one level.
-
-    Checks L1 RHS-invariance and L2/L3/L4 (no intervening reads/writes of
-    ``key`` or ``rhs_syms`` between ``parent``'s entry and the assignment's
-    location inside ``child``). L5 is handled by the caller's chain check.
-    L6 is handled by refusing to cross SDFG boundaries (the ``parent_graph``
-    chain stops at the owning SDFG).
-
-    :param parent: The region the assignment would be placed at the entry of.
-    :param child: The region currently containing the assignment.
-    :param key: The assigned symbol name.
-    :param rhs: The assignment's right-hand-side expression.
-    :param rhs_syms: The free symbols of ``rhs``.
-    :param sdfg: The owning SDFG (the upward walk does not cross it).
-    :param cache: Per-round memo of read/write answers, reused across candidates.
-    :returns: ``True`` if placing the assignment at ``parent``'s entry is legal.
-    """
-    # L1: any new symbol introduced by ``child`` (its loop variable, or any
-    # iedge assignment inside ``child`` other than the one being moved) that
-    # the rhs would now reference is a violation.
+    """Decide whether an assignment inside ``child`` may move up one level."""
+    # L1: any new symbol introduced by ``child`` (its loop variable, or any iedge assignment inside ``child`` other than
+    # the one being moved) that the rhs would now reference is a violation.
     if isinstance(child, LoopRegion) and child.loop_variable and str(child.loop_variable) in rhs_syms:
         return False
-    # A self-referential assignment (``key`` appears in its own rhs, e.g.
-    # ``j = j + 2``) is loop-carried: its value changes every iteration, so it
-    # is not invariant and must not be hoisted out of an enclosing loop. Hoisting
-    # it would both change semantics and (once it leaves) unblock hoisting the
-    # assignments that read ``key``, landing them on a shared edge -> a race.
+    # A self-referential assignment (``key`` appears in its own rhs, e.g. ``j = j + 2``) is loop-carried: its value
+    # changes every iteration, so it is not invariant and must not be hoisted out of an enclosing loop.
     if isinstance(child, LoopRegion) and key in rhs_syms:
         return False
-    # ``key`` modified elsewhere inside a loop is loop-carried: the assignment is a
-    # per-iteration reset (e.g. the ``count = 0`` seeding a stream-compaction loop whose
-    # body does ``count = count + 1``). Hoisting it past the loop would run the reset once
-    # and let ``count`` grow unbounded across iterations -> an out-of-bounds compaction.
+    # ``key`` modified elsewhere inside a loop is loop-carried: the assignment is a per-iteration reset (e.g. the
+    # ``count = 0`` seeding a stream-compaction loop whose body does ``count = count + 1``).
     if isinstance(child, LoopRegion) and _key_has_other_writer(cache, child, key, rhs):
         return False
     # The loop's own header runs ahead of the assignment on the first iteration.
@@ -350,8 +212,6 @@ def _legal_to_hoist_into(
         return False  # a tasklet inside child writes to a container our rhs reads
 
     # L2/L3/L4: examine strict predecessors of ``child`` in ``parent``.
-    # The new iedge will sit on ``child``'s in-edges; blocks that execute
-    # BEFORE ``child`` would observe a difference. L7 below covers the blocks after it.
     preds = cache.predecessors(parent, child)
     for b in preds:
         reads = cache.block_reads(b)
@@ -363,13 +223,8 @@ def _legal_to_hoist_into(
         if any(s in b_asyms for s in rhs_syms) or any(s in b_wdata for s in rhs_syms):
             return False  # L2: predecessor writes a rhs symbol
 
-    # Also any iedge in parent (other than the in-edges of ``child``) that
-    # writes ``key`` or a ``rhs_sym`` is a violation. ``child``'s own in-
-    # edges are fine -- they are where the hoist lands. An existing iedge
-    # that assigns ``key = rhs`` (the exact same rhs) is OK: it just
-    # means an earlier hoist of a sibling assignment already placed the
-    # invariant value; the new one redundant-but-harmless co-exists, and
-    # subsequent cleanup (or another canonicalize iteration) can dedupe.
+    # Also any iedge in parent (other than the in-edges of ``child``) that writes ``key`` or a ``rhs_sym`` is a
+    # violation.
     for e in parent.edges():
         if e.src in preds and key in e.data.read_symbols():
             return False  # L3: an edge ahead of ``child`` would observe the moved assignment
@@ -391,17 +246,8 @@ def _legal_to_hoist_into(
 def _find_destination(
     edge_region: ControlFlowRegion, key: str, rhs: str, sdfg: SDFG, origin: ControlFlowBlock, cache: HoistAnalysisCache
 ) -> ControlFlowRegion | None:
-    """Walk up the ``parent_graph`` chain from ``edge_region`` to find the
-    outermost ancestor ``D`` where the move is legal under L1-L6. Returns
-    ``None`` if the binding all-or-nothing rule is not met or if no move
-    is legal (D == ``edge_region``).
-
-    :param origin: The source block of the edge carrying the assignment. Even the first hoist step
-                   moves the assignment ahead of everything in ``edge_region`` that runs before this
-                   block, so those blocks are checked here; ``_legal_to_hoist_into`` only ever sees
-                   ``edge_region`` from the outside and cannot look in.
-    :param cache: Per-round memo of read/write answers, reused across candidates.
-    """
+    """Walk up the ``parent_graph`` chain from ``edge_region`` to find the outermost ancestor ``D`` where the move is
+    legal under L1-L6."""
     rhs_syms = names_read_by(rhs)
     # legality scan (early-exit AND): iteration order does not affect the True/False outcome
     for b in dict.fromkeys([*cache.predecessors(edge_region, origin), origin]):
@@ -409,7 +255,6 @@ def _find_destination(
         if reads is None or key in reads:
             return None
         # L5, for the edges of the region itself: an assignment behind a condition does not always run.
-        # L3, for those edges: an assignment ahead of ours that reads ``key`` reads the value from before it.
         if any(not e.data.is_unconditional() or key in e.data.read_symbols() for e in edge_region.out_edges(b)):
             return None
     dest: ControlFlowRegion = edge_region
@@ -443,17 +288,7 @@ def _find_destination(
 
 
 def _edge_landing_order(existing: dict[str, str], key: str, rhs_syms: dict[str, None]) -> str:
-    """How ``key = rhs`` must be sequenced against the assignments already on a landing edge.
-
-    Assignments on one interstate edge are unordered -- they all read the pre-edge symbol
-    state -- so co-placing two that depend on each other races (this is how a hoisted
-    ``ip_index = ip[i]`` came to share an edge with the loop's own ``i = i + 1``, TSVC s353).
-    A dependency in one direction is resolvable by splitting the edge in two; a dependency in
-    both directions is a cycle and is not.
-
-    :returns: ``'direct'`` if there is no dependency, ``'after'`` if ours must follow
-              ``existing``, ``'before'`` if ours must precede it, ``'conflict'`` if both.
-    """
+    """How ``key = rhs`` must be sequenced against the assignments already on a landing edge."""
     after = any(s in existing for s in rhs_syms if s != key)
     before = any(key in names_read_by(str(other_rhs)) for other_key, other_rhs in existing.items() if other_key != key)
     if after and before:
@@ -466,24 +301,7 @@ def _edge_landing_order(existing: dict[str, str], key: str, rhs_syms: dict[str, 
 
 
 def _lands_without_race(dest: ControlFlowRegion, child: ControlFlowRegion, key: str, rhs: str) -> bool:
-    """Whether ``key = rhs`` can join the edges it would land on, directly or via a split.
-
-    Every guard above examines ``child``'s interior and its predecessors; none looks at what
-    the DESTINATION edge already assigns. A one-directional dependency on an unconditional
-    landing edge is resolvable -- ``_place_assignment_at`` inserts a state that sequences the
-    two assignments. Refuse a same-edge cycle outright, refuse the 'existing depends on ours'
-    direction (v1 only implements the 'ours depends on existing' split), and refuse splitting a
-    conditional edge (it would run the split-off assignment regardless of the condition).
-
-    Self-reference is not a race: ``k = k + 1`` reads the pre-edge value, and validation excludes
-    it for the same reason.
-
-    :param dest: The region the assignment would be placed in.
-    :param child: The block the assignment must dominate within ``dest``.
-    :param key: The assigned symbol name.
-    :param rhs: The assignment's right-hand-side expression.
-    :returns: ``True`` if the placement is legal (directly or via a split) on every edge.
-    """
+    """Whether ``key = rhs`` can join the edges it would land on, directly or via a split."""
     if child is None:
         return True
     rhs_syms = names_read_by(rhs)
@@ -498,18 +316,7 @@ def _lands_without_race(dest: ControlFlowRegion, child: ControlFlowRegion, key: 
 
 
 def _place_assignment_at(dest: ControlFlowRegion, child: ControlFlowRegion, key: str, rhs: str) -> None:
-    """Add ``key = rhs`` so it dominates ``child`` inside ``dest``.
-
-    As in ``MoveLoopInvariantIfUp._move``: on every in-edge of ``child``, or on the edge out of a
-    fresh hoist state when ``child`` is the start block. If an in-edge already assigns something
-    ``rhs`` reads (``s1 = K + 1`` then ``s2 = 2 * s1``), the in-edges are rerouted one hop earlier so
-    ``key = rhs`` lands after them without a race.
-
-    :param dest: The region the assignment is placed in.
-    :param child: The block the assignment must dominate within ``dest``.
-    :param key: The assigned symbol name.
-    :param rhs: The assignment's right-hand-side expression.
-    """
+    """Add ``key = rhs`` so it dominates ``child`` inside ``dest``."""
     in_edges = list(dest.in_edges(child))
     # One suffix: a hoist state fused into ``child`` comes back as its label, which would grow by one each round
     label = f"{child.label.split('_iedge_hoist')[0]}_iedge_hoist"
@@ -527,16 +334,7 @@ def _place_assignment_at(dest: ControlFlowRegion, child: ControlFlowRegion, key:
 
 
 def _drop_inner_symbol_declarations(sdfg: SDFG, key: str, dest: ControlFlowRegion) -> None:
-    """Placeholder for the cross-NSDFG extension (currently a no-op).
-
-    If ``key`` were also declared in an inner NestedSDFG inside ``dest``,
-    the v2 cross-boundary hoist would drop that declaration. v1 does not
-    cross NSDFG boundaries, so there is nothing to do.
-
-    :param sdfg: The owning SDFG.
-    :param key: The assigned symbol name.
-    :param dest: The region the assignment was hoisted into.
-    """
+    """Placeholder for the cross-NSDFG extension (currently a no-op)."""
     return
 
 
@@ -553,8 +351,7 @@ def _direct_child(dest: ControlFlowRegion, edge_region: ControlFlowRegion) -> Co
 def _cascade_once(sdfg: SDFG) -> int:
     """One sweep across the SDFG; returns the number of assignments moved."""
     moved = 0
-    # Built lazily and reused across every candidate in this sweep; a hoist mutates the
-    # graph, so it invalidates the memo instead of leaving it to answer from a stale shape.
+    # Built lazily and reused across every candidate in this sweep
     cache = HoistAnalysisCache()
     for cfg in list(sdfg.all_control_flow_regions(recursive=True)):
         for edge in list(cfg.edges()):
@@ -578,11 +375,7 @@ def _cascade_once(sdfg: SDFG) -> int:
 
 def _hoist_to_body_head(sdfg: SDFG) -> int:
     """Move ``key = rhs`` off the edge leaving a loop body's first state onto the body's entry, when that state neither
-    reads ``key`` nor writes anything ``rhs`` reads. The value is the same, and the two states the assignment kept
-    apart can fuse (CloudSC's per-iteration ``iphase_index = iphase[jm]`` between two ``JL`` maps).
-
-    :returns: The number of assignments moved.
-    """
+    reads ``key`` nor writes anything ``rhs`` reads."""
     moved = 0
     for loop in list(sdfg.all_control_flow_regions(recursive=True)):
         if not isinstance(loop, LoopRegion):
@@ -622,11 +415,8 @@ def _hoist_to_body_head(sdfg: SDFG) -> int:
 
 @transformation.explicit_cf_compatible
 class CascadeInterstateEdgeAssignmentsUp(ppl.Pass):
-    """Cascade invariant interstate-edge symbol assignments past every
-    enclosing ``LoopRegion`` (all-or-nothing upward; fixpoint).
-
-    Standalone, idempotent, can be invoked at multiple pipeline positions.
-    """
+    """Cascade invariant interstate-edge symbol assignments past every enclosing ``LoopRegion`` (all-or-nothing upward;
+    fixpoint)."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -640,11 +430,7 @@ class CascadeInterstateEdgeAssignmentsUp(ppl.Pass):
         return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
-        """Repeatedly hoist legal interstate-edge assignments until a fixpoint.
-
-        :param sdfg: The SDFG to transform in place.
-        :returns: Total number of assignments moved, or ``None`` if none.
-        """
+        """Repeatedly hoist legal interstate-edge assignments until a fixpoint."""
         total = 0
         while True:
             n = _cascade_once(sdfg)

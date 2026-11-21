@@ -1,36 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lift a hand-written symmetric matrix-multiply nest to a ``Symm`` BLAS node.
-
-polybench ``symm`` computes ``C := alpha*A*B + beta*C`` with ``A`` symmetric and only its lower triangle stored,
-as a per-row in-place triangular accumulation rather than the BLAS ``xSYMM`` primitive::
-
-    for i in range(M):
-        for j in range(N):
-            temp2 = 0
-            for k in range(i):
-                C[k, j] += alpha * B[i, j] * A[i, k]        # scatter onto the rows above i
-                temp2 += B[k, j] * A[i, k]
-            C[i, j] = beta * C[i, j] + alpha * B[i, j] * A[i, i] + alpha * temp2
-
-The npbench spelling writes the scatter and the inner product with slices (``C[:i, j] += ...``,
-``temp2[j] = B[:i, j] @ A[i, :i]``) and prescales ``C *= beta`` before the nest. Both are recognized by what one
-outer iteration computes (:func:`~dace.transformation.passes.canonicalize.loop_iteration_value.summarize`).
-
-The iteration owns one row (``side='L'``, ``C = alpha*A*B``) or one column (``side='R'``, ``C = alpha*B*A``) ``r``
-of ``C`` -- ``r`` is ``i`` or ``extent - 1 - i`` -- and stores exactly two domains: the rows (columns) ``O`` on one
-side of ``r`` and ``r`` itself. Writing ``a(r, k)`` for the one ``A`` read the nest uses (``A[r, k]`` or
-``A[k, r]``), and ``B[r, j]`` / ``B[j, r]`` for side L / R::
-
-    C[p, j] = C[p, j] + alpha * B[r, j] * a(r, p)                                     # p in O
-    C[r, j] = beta * C[r, j] + alpha * B[r, j] * A[r, r] + alpha * Sum_{k in O} a(r, k) * B[k, j]
-
-Every ``A`` element read lies in one triangle: ``A[r, k]`` with ``O`` below ``r`` or ``A[k, r]`` with ``O`` above
-is ``uplo='L'``, the other two are ``'U'``. Row ``r`` must be finished before another iteration scatters into it:
-``O`` below ``r`` needs ``r`` rising over the loop, ``O`` above needs it falling. In the other direction the
-scatters land first, which still composes when ``beta`` is ``1`` and the finish only adds. ``alpha`` and ``beta``
-are numbers, runtime single-element containers, or their products; no prior ``C`` term is ``beta = 0``. Any
-deviation is a clean no-op.
-"""
+"""Lift a hand-written symmetric matrix-multiply nest to a ``Symm`` BLAS node."""
 
 from typing import Any, NamedTuple
 

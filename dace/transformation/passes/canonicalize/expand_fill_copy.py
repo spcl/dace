@@ -1,13 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Fill and copy library nodes as the maps they stand for, so fusion joins them with their producers and consumers.
-
-The one exception to canonicalization keeping library calls: a fill or a copy is an element-wise map, and as a
-library node it keeps the maps around it apart (a ``c *= beta`` map, its copy into a scratch array and the scratch
-array's reader stay three loops). Each node expands to the map its ``Auto`` selection takes for a large transfer
-outside a parallel scope. Three kinds stay library calls: a node inside a parallel map, where that selection takes
-the single call; a copy across storages (the map form cannot cross the host/device boundary); and a copy that
-changes rank, whose map walks one flattened index that no neighbouring map shares.
-"""
+"""Fill and copy library nodes as the maps they stand for, so fusion joins them with their producers and consumers."""
 
 from typing import Any
 

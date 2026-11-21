@@ -1,25 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Turn the guarded matrix product of a loop nest into ONE gathered batched product (GPU target).
-
-dbcsr's shape: every iteration of a nest that passes its guard multiplies two matrices it gathers from pools by
-data-dependent indices, then scatters the product::
-
-    for ia: for ib:                       c_count = -1;  NEST(append: c_count += 1)
-        bindings                          npairs = c_count + 1;  c_fill = -1
-        if guard:                   ->    NEST(append: c_fill += 1; AI[c_fill] = ia_x; BI[c_fill] = ib_x)
-            T = A[ia_x] @ B[ib_x]         P[0:npairs] = BatchedMatMul(A, B, AI, BI)       (one gemmBatched call)
-            scatter(T)                    c_use = -1;  NEST(append: c_use += 1; T = P[c_use]; scatter(T))
-
-Each NEST is the original nest with its guarded branch rewritten into a conditional append, which
-``LoopToStreamCompaction`` then lifts to a parallel mask, scan and scatter: the guarded pairs are counted, their
-indices gathered, and the products read back in the same order. ``P``, ``AI`` and ``BI`` are sized by the count,
-read back once from the device.
-
-Matched: a nest ``LoopToStreamCompaction`` takes the shape of, whose guarded branch is a chain of binding-only states,
-one state holding a ``MatMul`` or a ``Gemm`` with ``beta`` 0, then anything that reads its result. Every operand is
-a whole pool ``X[i, :, :]`` read at one index, at least one of them, or a whole shared matrix; the nest writes no
-operand, and the result is a transient nothing outside the branch reads.
-"""
+"""Turn the guarded matrix product of a loop nest into ONE gathered batched product (GPU target)."""
 
 import copy
 from typing import Any, NamedTuple

@@ -1,12 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A map that reads ``A[S]`` and writes a transient that is only copied back to ``A[S]`` writes ``A[S]`` itself.
-
-The frontend spells an update ``A[S] = A[S] + e`` as ``A[S] -> map -> t -> A[S]``: the operator's result, then the
-assignment's copy. Each iteration writes the element it read, so writing ``A`` in place is exact; the transient and
-the copy are gone, and the map is the read-modify-write ``AugAssignToWCR`` turns into a WCR write. A read of ``A``
-outside ``S`` sees no write either way (``A[0, :] = A[0, :] / A[1, :]``), and a transient used only in part (the
-``kidia:kfdia`` of a ``klon`` array) folds the same way: the map's writes all lie in what the copy takes.
-"""
+"""A map that reads ``A[S]`` and writes a transient that is only copied back to ``A[S]`` writes ``A[S]`` itself."""
 
 import copy
 from collections import Counter
@@ -55,8 +48,7 @@ def placed(write: subsets.Range, subset: subsets.Range, found: CopyBack) -> subs
 
 
 def lifted(write: subsets.Range, subset: subsets.Range, found: CopyBack) -> subsets.Range:
-    """``write`` of the transient, restated in the target's index space. Unlike :func:`placed` it keeps a range's
-    length, so a connector that described the whole transient can describe the target."""
+    """``write`` of the transient, restated in the target's index space."""
     ranges = list(subset.ranges)
     for dim, origin, (begin, end, step) in zip(found.kept, found.origin, write.ranges):
         base = ranges[dim][0]
@@ -72,9 +64,7 @@ def restate_connector(
     subset: subsets.Range,
     parent: SDFG,
 ) -> None:
-    """The connector described the transient this fold replaced. It now has to describe ``target``, and the memlets
-    inside move with :func:`lifted`. Symbols the target's shape uses are declared on the nested SDFG and mapped to
-    the parent's symbol of the same name (``back``'s ``T`` on viterbi)."""
+    """The connector described the transient this fold replaced."""
     described = copy.deepcopy(target)
     described.transient = False
     declare(node, parent, (str(sym) for sym in described.free_symbols))

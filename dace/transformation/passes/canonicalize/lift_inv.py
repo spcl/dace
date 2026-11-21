@@ -1,46 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lift a ``solve(A, I)`` matrix inversion to a single ``Inv`` library node.
-
-The dedicated way to invert a matrix is ``numpy.linalg.inv``, which the Python
-frontend already lowers straight to a
-:class:`~dace.libraries.linalg.nodes.inv.Inv` node -- so an inverse written that
-way needs no lifting. This pass targets the OTHER idiomatic spelling of a matrix
-inverse: solving the system against an identity right-hand side::
-
-    out = numpy.linalg.solve(A, numpy.eye(N))     # == A^-1
-
-which the frontend lowers to a :class:`~dace.libraries.linalg.nodes.solve.Solve`
-node (``_ain`` <- A, ``_bin`` <- the identity, ``_bout`` -> out) whose RHS operand
-is a freshly-built identity matrix (``numpy.eye`` / ``numpy.identity``: a square
-``[0:N, 0:N]`` mapped tasklet computing ``val = 1 if i == j else 0``). Because
-``solve(A, I)`` is exactly ``A^-1``, this pass recognises the pair -- the ``Solve``
-node plus its identity-construction map -- and replaces it with one ``Inv`` node
-(``getrf`` + ``getri``, the direct inverse that never materialises an identity
-RHS). ``Inv`` and ``Solve(A, I)`` both compute ``A^-1`` from the same LU
-factorisation, so the rewrite is value-preserving to floating-point tolerance.
-
-What is detected (narrow and conservative -- a no-op on any deviation):
-
-* a ``Solve`` node with the frontend's three connectors (``_ain``, ``_bin``,
-  ``_bout``), ``overwrite`` off, whose operands ``A`` / ``out`` are distinct
-  square 2-D arrays of matching size and base dtype;
-* whose ``_bin`` is a TRANSIENT square array produced, in the same state, ONLY by
-  an identity map: two loop parameters over ``[0:n, 0:n]``, no map inputs, a
-  single input-less tasklet ``out = 1 if p == q else 0`` (the true identity, so
-  a shifted diagonal ``numpy.eye(N, k != 0)`` is refused), writing the whole
-  array; and consumed ONLY by this ``Solve`` (so removing it is safe).
-
-What is NOT detected: a hand-written Gauss-Jordan / LU elimination loop nest (the
-inverse-as-elimination form); a non-identity RHS (that is a genuine linear
-solve, left as ``Solve``); a shifted / partial / rectangular identity; an
-identity array reused elsewhere.
-
-Placement: this runs in the early semantic-lift phase (alongside
-``LoopToSymm``), on the raw frontend shape, BEFORE ``MapToForLoop`` lowers the
-identity map to a loop and before the ITE-lowering passes rewrite its
-``1 if ... else 0`` body. Like the other semantic lifts it is gated on the
-``semantic_lifting`` knob, so the vectorizer path leaves ``solve(A, I)`` intact.
-"""
+"""Lift a ``solve(A, I)`` matrix inversion to a single ``Inv`` library node."""
 
 import ast
 from typing import Any
@@ -117,8 +76,7 @@ def is_identity_tasklet(tasklet: nodes.Tasklet, params: list[str]) -> bool:
     p0 = symbolic.pystr_to_symbolic(params[0], simplify=False)
     p1 = symbolic.pystr_to_symbolic(params[1], simplify=False)
     diff = as_expr(left) - as_expr(right)
-    # ``p == q`` (offset 0) is the true identity; ``p == q - k`` (k != 0) is a
-    # shifted diagonal (numpy.eye's k argument) and must be refused.
+    # ``p == q`` (offset 0) is the true identity
     return symbolic.simplify(diff - (p0 - p1)) == 0 or symbolic.simplify(diff - (p1 - p0)) == 0
 
 
@@ -135,11 +93,9 @@ class LiftInv(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
-        # Solve is imported inside the method: the linalg library nodes import
-        # dace.transformation.transformation (ExpandTransformation), so a
-        # top-level import here would form a cycle -- the same reason the sibling
-        # linalg lift passes (loop_to_symmetrize / loop_to_transpose / loop_to_einsum)
-        # import their library nodes locally.
+        # Solve is imported inside the method: the linalg library nodes import dace.transformation.transformation
+        # (ExpandTransformation), so a top-level import here would form a cycle -- the same reason the sibling linalg
+        # lift passes (loop_to_symmetrize / loop_to_transpose / loop_to_einsum) import their library nodes locally.
         from dace.libraries.linalg.nodes.solve import Solve
 
         candidates: list[tuple[dace.SDFG, SDFGState, nodes.LibraryNode]] = []
@@ -270,10 +226,6 @@ class LiftInv(ppl.Pass):
         if any(e.data is not None and not e.data.is_empty() for e in state.in_edges(map_entry)):
             return None
         # The scope holds exactly the identity tasklet (no scratch, no arithmetic).
-        # ``all_nodes_between`` returns EMPTY as soon as the scope holds a node with no out-edge, but the
-        # outcome is the same refusal either way: reaching here the map already writes ``b_node`` through
-        # ``map_exit``, so a sink is an EXTRA node and the true scope is >=2 -- and an empty walk gives 0.
-        # Only a relaxation of ``!= 1`` would make the difference observable; use scope membership then.
         body = list(state.all_nodes_between(map_entry, map_exit))
         if len(body) != 1 or not isinstance(body[0], nodes.Tasklet):
             return None

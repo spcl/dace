@@ -1,26 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Rewrite residual ``sympy.floor(a / b)`` into ``int_floor(a, b)``.
-
-Two things spell floor division, and only one of them is safe:
-
-* **Parsed DaCe source** -- a ``@dace.program`` body, a memlet string, an interstate assignment --
-  goes through ``pystr_to_symbolic``, which already maps ``//`` onto ``int_floor``. Writing
-  ``int_floor`` there instead fails ("not registered with an SDFG implementation"), so ``//`` is
-  the correct thing to write in a kernel.
-* **Python code operating on sympy objects** -- transformation and pass code -- gets sympy's own
-  ``__floordiv__``, i.e. ``sympy.floor(a / b)``. sympy distributes the division over the sum INSIDE
-  the floor, and ``sym2cpp`` prints the argument WITHOUT the floor, so each term truncates alone::
-
-      ((N + 1) * 4) // 8         ->  floor(N/2 + 1/2)  ->  C: (((N / 2) + (1 / 2)) / 1)  # N=3: 1
-      int_floor((N + 1) * 4, 8)                        ->  C: (((4 * N) + 4) / 8)        # N=3: 2
-
-  A bare ``i // 2`` survives by luck (C integer division coincides with floor for non-negatives),
-  so this only corrupts once the numerator is a SUM -- what tiling and delinearization produce.
-
-Call sites use ``int_floor`` directly; this pass is the net that keeps one missed ``//`` from
-reaching codegen as a wrong index. Recovery is exact: ``together`` puts the distributed argument
-back over a common denominator before it is split into numerator and denominator.
-"""
+"""Rewrite residual ``sympy.floor(a / b)`` into ``int_floor(a, b)``."""
 
 from typing import Any
 
@@ -101,11 +80,7 @@ class NormalizeFloorDivision(ppl.Pass):
         return []
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
-        """Normalize descriptors, map ranges and memlet subsets, recursively.
-
-        :param sdfg: The SDFG to transform in place.
-        :returns: Number of expressions rewritten, or ``None`` if none were.
-        """
+        """Normalize descriptors, map ranges and memlet subsets, recursively."""
         count = 0
         for sub in sdfg.all_sdfgs_recursive():
             for desc in sub.arrays.values():

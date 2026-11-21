@@ -1,29 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Loop fusion: the LoopRegion analogue of MapFusion, for the residual
-sequential loops left after ``LoopToMap``.
-
-``MapFusionVertical`` / ``MapFusionHorizontal`` only ever fuse ``MapEntry``
-nodes, so two consecutive sibling loops that ``LoopToMap`` refused (recurrences,
-Thomas sweeps, sequential scans) are never fused. This pass fuses such a pair --
-same iteration space, straight-line bodies -- into one loop whose body
-runs the first body then the second per iteration. It is the exact inverse of
-``LoopFission`` and shares its soundness kernel (``break_anti_dependence``'s
-``dep_class`` and ``loop_fission``'s per-iteration-subset reasoning), so a pair
-that fission would have separated is a pair that fusion may legally rejoin.
-
-Designed to run POST-``LoopToMap`` (every DOALL loop is already a Map, hence not
-a candidate), so it only ever sees sequential residual loops and cannot serialize
-parallel work. A defensive ``LoopToMap.can_be_applied_to`` guard refuses to fuse
-a loop that is independently DOALL, keeping the pass correct even out of position.
-
-Legality (per array touched by both bodies, under the shared iterator):
-  * flow (write in body1, read in body2): illegal if the read is READ-AHEAD
-    (``a[i+k]``, k>0) -- the fused loop reads a not-yet-produced value.
-  * anti (read in body1, write in body2): illegal if the read is READ-BEHIND
-    (``a[i-k]``, k>0) of what body2 overwrites earlier in the fused sweep.
-  * output (write in both): illegal unless the two writes hit the same index.
-Symbolic / indirected / complex offsets are refused conservatively (v1).
-"""
+"""Loop fusion: the LoopRegion analogue of MapFusion, for the residual sequential loops left after ``LoopToMap``."""
 
 from typing import Any
 
@@ -36,14 +12,7 @@ from dace.transformation.interstate.loop_fusion import LoopFusion
 
 @transformation.explicit_cf_compatible
 class FuseLoops(ppl.Pass):
-    """Fuse consecutive same-range sequential sibling loops into one loop.
-
-    The deterministic, fuse-everything-legal form of the ``LoopFusion`` transformation: it applies
-    ``LoopFusion`` to every qualifying consecutive-loop pair until a fixpoint. All the legality (same
-    iteration space, straight-line bodies, not independently DOALL, value-preserving dependence
-    classes) and the merge itself live on ``LoopFusion`` -- this pass owns only the traversal, so the pass
-    and the transformation can never disagree.
-    """
+    """Fuse consecutive same-range sequential sibling loops into one loop."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -57,13 +26,8 @@ class FuseLoops(ppl.Pass):
         return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
-        """Fuse every qualifying consecutive-loop pair in ``sdfg`` and its nested
-        SDFGs, repeating until no pair matches (a chain collapses one adjacency
-        per sweep).
-
-        :param sdfg: The SDFG to transform in place.
-        :returns: Number of fusions performed, or ``None`` if none.
-        """
+        """Fuse every qualifying consecutive-loop pair in ``sdfg`` and its nested SDFGs, repeating until no pair matches
+        (a chain collapses one adjacency per sweep)."""
         fused = 0
         for sd in sdfg.all_sdfgs_recursive():
             changed = True
@@ -78,17 +42,7 @@ class FuseLoops(ppl.Pass):
 
     @staticmethod
     def _fuse_one(sdfg: SDFG, cfg: ControlFlowRegion) -> bool:
-        """Find and fuse one legal consecutive same-range loop pair inside ``cfg`` via ``LoopFusion``.
-
-        Enumerates candidate adjacencies (a ``LoopRegion`` with a single out-edge to a ``LoopRegion``) in
-        node order and delegates the legality decision and the merge to :class:`LoopFusion` -- the shared
-        source of truth. First applicable pair wins, matching the original one-adjacency-per-sweep order.
-
-        :param sdfg: The owning SDFG (for the DOALL oracle LoopFusion consults).
-        :param cfg: The control-flow region to search (one level; deeper loops are reached via
-                    ``all_control_flow_regions``).
-        :returns: ``True`` if a pair was fused.
-        """
+        """Find and fuse one legal consecutive same-range loop pair inside ``cfg`` via ``LoopFusion``."""
         for first in cfg.nodes():
             if not isinstance(first, LoopRegion):
                 continue

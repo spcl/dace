@@ -1,49 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Materialize loop-defined IV-symbol exit values with a unique name.
-
-A loop whose body increments / multiplies an SDFG symbol per iteration
-(``k = k + step`` on an interstate edge) and whose post-loop code reads that
-symbol's *final* value blocks ``LoopToMap``: parallelisation has no canonical
-"last iteration", so the symbol's exit value is undefined under a map. The IV
-update itself is otherwise well-behaved -- the body is affine in ``k``, the
-trip count is known, and the closed form ``k_init + step * N`` is available --
-but it is the *post-loop reader* that pins the loop sequential.
-
-This pass detects the pattern, computes the closed-form exit value, allocates
-a *fresh unique* symbol ``_<sym>_post_<N>`` whose value is the closed form, and
-rewrites every reader reachable from the loop's exit edges to read the new
-symbol. The original ``sym`` keeps its pre-loop value untouched, the in-loop
-update is unaffected, and ``LoopToMap`` is no longer blocked by the
-"loop-defined symbol used after the loop" check.
-
-Inspired by the post-value epilogue path in
-:class:`~dace.transformation.passes.unique_loop_iterators.UniqueLoopIterators`,
-which materialises the loop iterator's exit value (under its original name) for
-Fortran-frontend compatibility. The key difference: that pass *renames in place*
-because the iterator is owned by the loop; this pass materialises under a
-*fresh* name because the underlying symbol may carry a value the pre-loop code
-also needs (so renaming everywhere would clobber the seed).
-
-Scope:
-
-* Loops with a single ``LoopRegion`` body, ``loop_variable`` set, and a known
-  ``init`` / ``end`` / ``stride`` for the trip-count formula.
-* Interstate-edge assignments of the affine form ``sym = sym + c`` /
-  ``sym = sym * c`` on the loop's body edges, where ``c`` is a numeric literal or
-  a loop-invariant SDFG symbol.
-* The symbol must have a known pre-loop seed (it appears in ``sdfg.symbols`` /
-  ``sdfg.free_symbols`` / ``sdfg.constants``).
-
-Out of scope:
-
-* Symbols whose update isn't ``sym = sym OP c`` (compound updates, conditional
-  updates, data-array reads in the increment expression).
-* Symbols assigned again after the loop: a reader there may not see the exit value.
-* Loops where the symbol is *also* read on the SAME interstate edge that
-  writes it (true loop-carried dependence -- closed form is still valid but the
-  in-loop reader must see the per-iteration value, which a single materialisation
-  does not produce).
-"""
+"""Materialize loop-defined IV-symbol exit values with a unique name."""
 
 import ast
 from typing import Any
@@ -57,8 +13,7 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis, scopes
 from dace.transformation.passes.iteration_domain import executed_trip_count
 
-#: Python literal names an expression may mention besides SDFG symbols. Modern ``ast`` renders
-#: these as ``Constant`` rather than ``Name``, so this is a belt-and-braces allowance.
+#: Python literal names an expression may mention besides SDFG symbols.
 LITERAL_NAMES = dict.fromkeys(["True", "False", "None"])
 
 #: Prefix for the materialised post-loop symbol; self-identifying in dumps and
@@ -67,11 +22,7 @@ POST_PREFIX = "_loop_exit_"
 
 
 def _parse_affine_update(rhs_str: str, lhs: str) -> tuple[type, str] | None:
-    """Parse ``rhs_str`` as ``lhs OP c`` (or ``c OP lhs``); return ``(ast op class, c_str)``.
-
-    Accepts ``Add`` and ``Mult`` operators. ``c`` may be any expression that
-    does NOT reference ``lhs`` itself (which would make the update non-affine).
-    """
+    """Parse ``rhs_str`` as ``lhs OP c`` (or ``c OP lhs``); return ``(ast op class, c_str)``."""
     try:
         expr = ast.parse(str(rhs_str), mode="eval").body
     except (SyntaxError, ValueError, TypeError):
@@ -95,12 +46,7 @@ def _parse_affine_update(rhs_str: str, lhs: str) -> tuple[type, str] | None:
 
 
 def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: set[str]) -> bool:
-    """Symbol exists in the SDFG and isn't reassigned inside the loop's body.
-
-    ``sdfg_free_symbols`` is ``sdfg.free_symbols`` precomputed by the caller: that
-    property walks the whole SDFG on every access, so it is passed in rather than
-    recomputed per candidate symbol.
-    """
+    """Symbol exists in the SDFG and isn't reassigned inside the loop's body."""
     if name == loop.loop_variable:
         return False
     if (
@@ -128,20 +74,15 @@ def _expr_is_loop_invariant(
             if n.id == loop.loop_variable:
                 return False
             if not _is_loop_invariant_symbol(n.id, loop, sdfg, sdfg_free_symbols):
-                # Only literal names pass. Probing ``builtins`` instead would admit ``open``,
-                # ``sum``, ``id``, ... as loop-invariant operands.
+                # Only literal names pass.
                 if n.id not in LITERAL_NAMES:
                     return False
     return True
 
 
 def _detect_iv_symbols(loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: set[str]) -> dict[str, tuple[type, str]]:
-    """Find symbols updated by ``sym = sym OP c`` on the loop body's interstate
-    edges, where the update appears at most once per traversal and ``c`` is
-    loop-invariant.
-
-    :returns: ``{sym_name: (ast_op_class, c_expr_string)}``.
-    """
+    """Find symbols updated by ``sym = sym OP c`` on the loop body's interstate edges, where the update appears at most
+    once per traversal and ``c`` is loop-invariant."""
     found: dict[str, tuple[type, str]] = {}
     seen_lhs: dict[str, None] = {}
     top_level = set(map(id, loop.edges()))
@@ -216,11 +157,7 @@ def _post_loop_blocks(parent: ControlFlowRegion, loop: LoopRegion) -> dict[Contr
 def reiterated_names(
     post_blocks: dict[ControlFlowBlock, None], iterators: dict[ControlFlowBlock, list[str]] | None = None
 ) -> dict[str, None]:
-    """Iterators of the loops in the post-loop region. Such a loop binds its iterator afresh, so a read inside it is
-    not a read of the exit value; renaming it to the exit symbol reads the wrong element (TSVC s1244 after fission).
-
-    :param iterators: Memo of each region's loop iterators, valid while the graph is unchanged.
-    """
+    """Iterators of the loops in the post-loop region."""
     iterators = {} if iterators is None else iterators
     names: dict[str, None] = {}
     for block in post_blocks:
@@ -257,9 +194,7 @@ def _rewrite_post_loop_readers(
     repl = {old_name: new_name}
     for block in post_blocks:
         block.replace_dict(repl)
-    # Interstate edges OUT of post-loop blocks (and between them) also need
-    # their assignments/conditions rewritten -- ``replace_dict`` on the block
-    # alone won't touch the edge data.
+    # Interstate edges OUT of post-loop blocks (and between them) also need their assignments/conditions rewritten
     for block in post_blocks:
         for e in parent.out_edges(block):
             if e.dst in post_blocks:
@@ -306,10 +241,8 @@ def _is_read_in(
     edge_texts: dict[int, str],
     block_states: dict[ControlFlowBlock, list] | None = None,
 ) -> bool:
-    """Whether ``name`` is read in ``blocks``: among a state's used symbols, or in the text of an
-    interstate edge that stays within ``blocks``. The edge half stays TEXT because the test is a
-    substring one, not an identifier one. All lookups are memoised in the caller's dicts.
-    """
+    """Whether ``name`` is read in ``blocks``: among a state's used symbols, or in the text of an interstate edge that
+    stays within ``blocks``."""
     block_states = {} if block_states is None else block_states
     for block in blocks:
         held = block_states.get(block)
@@ -335,12 +268,7 @@ def _is_read_in(
 @properties.make_properties
 @xf.explicit_cf_compatible
 class MaterializeLoopExitSymbols(ppl.Pass):
-    """Materialise per-loop exit values of affine-IV symbols under fresh names.
-
-    Run BEFORE ``LoopToMap`` so the "loop-defined symbol used after the loop"
-    refusal disappears for any IV-shaped symbol whose only post-loop role is
-    the closed-form exit value.
-    """
+    """Materialise per-loop exit values of affine-IV symbols under fresh names."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -351,16 +279,12 @@ class MaterializeLoopExitSymbols(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
-        """Materialise every eligible IV symbol's exit value. Returns the count
-        or ``None`` if nothing matched."""
+        """Materialise every eligible IV symbol's exit value."""
         materialised = 0
         resolver = scopes.ScopedSymbolResolver()
         with memoize_facts(sdfg):
             for sd in sdfg.all_sdfgs_recursive():
-                # ``sd.free_symbols`` walks the entire SDFG on every access. It is
-                # invariant across the per-loop scan below -- only our own
-                # materialisations mutate ``sd`` -- so compute it once here and refresh
-                # it only after a loop is actually materialised (which is rare).
+                # ``sd.free_symbols`` walks the entire SDFG on every access.
                 sd_free_symbols = sd.free_symbols
                 # What a state or an interstate edge reads does not depend on which loop asks, so each is
                 # read once per SDFG instead of once per loop before it; a materialisation clears both.
@@ -382,12 +306,7 @@ class MaterializeLoopExitSymbols(ppl.Pass):
     def exit_value_dtype(
         self, loop: LoopRegion, sdfg: SDFG, sym_name: str, resolver: scopes.ScopedSymbolResolver
     ) -> dace.dtypes.typeclass | scopes.UndeterminedDType:
-        """The dtype ``sym_name`` carries inside ``loop``, which its post-loop copy stands in for.
-
-        The loop iterator is bound by the loop scope and declared in no symbol table, so the scoped
-        table of a body state answers first; a body IV symbol is declared by the SDFG or bound by its
-        update edge.
-        """
+        """The dtype ``sym_name`` carries inside ``loop``, which its post-loop copy stands in for."""
         body = next(iter(loop.states()), None)
         if body is not None:
             scoped = resolver.tabulate(body)[None].get(sym_name)
@@ -416,9 +335,8 @@ class MaterializeLoopExitSymbols(ppl.Pass):
         # IV symbols updated by body interstate-edge assignments (``k = k + step``).
         iv_symbols = dict(_detect_iv_symbols(loop, sdfg, sdfg_free_symbols))
 
-        # The loop iterator itself: ``_loop_it_<N> = _loop_it_<N> + stride`` is the
-        # same affine recurrence, just emitted by ``loop.update_statement`` rather
-        # than a body interstate edge. Treat it identically.
+        # The loop iterator itself: ``_loop_it_<N> = _loop_it_<N> + stride`` is the same affine recurrence, just emitted
+        # by ``loop.update_statement`` rather than a body interstate edge.
         loop_var = loop.loop_variable
         if loop_var and loop_var not in iv_symbols:  # the loop binds it: no symbol table is asked
             stride = loop_analysis.get_loop_stride(loop)

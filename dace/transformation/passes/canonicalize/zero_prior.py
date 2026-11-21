@@ -1,23 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""The zeros a contraction sums onto: the store of ``0`` that leaves an accumulator at the sum's identity just before
-an ``Einsum`` adds into it.
-
-``LiftEinsum`` and ``LoopToEinsum`` choose ``beta``, the weight of the output's prior value, from whether anything
-else writes the output. A store of zeros is such a write, yet the einsum overwriting (``beta=0``) computes the same
-thing, and once nothing else reads the zeros and the einsum writes every element they cover, the store is dead. Three
-spellings reach the lifts:
-
-* the reduction init ``MapReduceFusion`` puts ahead of the sum it fuses, as a map of its own or joined into an
-  unrelated map by fusion (gemver's ``beta * y``);
-* a ``FillLibraryNode`` of ``0`` (``C[:] = 0`` ahead of an ``ijk`` accumulate loop);
-* either of them in a state before the nest, with only states that do not touch the array in between.
-
-A zero store is the array's write by a ``FillLibraryNode`` of constant ``0``, or by a tasklet of a top-level map that
-reads nothing and stores the literal ``0``. It is the sum's prior value when it runs right before it: in the sum's
-state, ordered before the sum's scope, with every other access of the array in that state either before the zeros or
-after the sum; or in an earlier state of the same region whose last access of the array it is, reached through a
-chain of single unconditional edges over states that do not name the array.
-"""
+"""The zeros a contraction sums onto: the store of ``0`` that leaves an accumulator at the sum's identity just before an
+``Einsum`` adds into it."""
 
 import ast
 from dataclasses import dataclass

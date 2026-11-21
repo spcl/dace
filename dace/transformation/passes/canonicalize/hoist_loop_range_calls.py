@@ -1,24 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Bind a loop STEP that contains a call to a symbol, so codegen emits a plain name.
-
-``int_ceil`` / ``int_floor`` / ``Min`` / ``Max`` carry exact integer semantics that the analysis
-passes depend on -- a chunked map's stride IS ``int_ceil(extent, threads)``, and rewriting it to a
-division would change what the pass proved. So they have to survive optimization.
-
-They must not survive into an emitted loop's INCREMENT. Measured against gcc: OpenMP's canonical
-loop form admits only a loop-invariant integer expression as the increment, and a call there is
-rejected outright ("invalid increment expression") -- while the same call in either BOUND compiles,
-under ``omp for`` and ``omp simd`` alike. So this binds the step and nothing else::
-
-    for (i = Min(a, b); i < c; i += int_ceil(d, e))
-    ->
-    __dace_rng_0 = int_ceil(d, e)
-    for (i = Min(a, b); i < c; i += __dace_rng_0)
-
-Runs AFTER canonicalization as a cleanup: the analysis passes need the call form, codegen needs the
-symbol form, and this is the seam between them. Names are minted from a counter that never reuses a
-value, so two ranges can never collide on one symbol.
-"""
+"""Bind a loop STEP that contains a call to a symbol, so codegen emits a plain name."""
 
 import itertools
 from collections.abc import Iterator
@@ -34,18 +15,12 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import scopes
 
-#: Prefix for a minted range symbol. ``__dace`` keeps it out of the ABI (``SDFG.arglist`` drops the
-#: prefix on both the scalar and free-symbol paths), which is what makes minting one free.
+#: Prefix for a minted range symbol.
 RANGE_SYMBOL_PREFIX = "__dace_rng_"
 
 
 def contains_call(expr: symbolic.SymbolicType) -> bool:
-    """Does ``expr`` render as anything other than names, numbers and operators?
-
-    Keyed on the sympy tree rather than on the emitted string: a substring match would trip on a
-    symbol whose NAME happens to contain a function's name, and miss a call sympy prints in an
-    unexpected form.
-    """
+    """Does ``expr`` render as anything other than names, numbers and operators?"""
     parsed = symbolic.pystr_to_symbolic(str(expr))
     if not isinstance(parsed, sympy.Basic):
         return False
@@ -96,23 +71,14 @@ class HoistLoopRangeCalls(ppl.Pass):
         step: symbolic.SymbolicType,
         resolver: scopes.ScopedSymbolResolver,
     ) -> dtypes.typeclass:
-        """The dtype the minted step symbol must be DECLARED with, so the declaration and the
-        instance placed in the range are one symbol.
-
-        ``dtype`` is part of symbol identity here, so minting the use from a bare name (default
-        ``int32``) against an ``int64`` declaration puts two symbols of one name inside a
-        ``subsets.Range``: ``Min(s, s)`` stops folding and a difference stops cancelling. The step is
-        an integer expression over its operands, so its type is ``result_type_of`` over them -- read
-        from the scoped table, the only source that sees an enclosing map parameter. Sorted by name
-        so the answer does not depend on sympy's set order.
-        """
+        """The dtype the minted step symbol must be DECLARED with, so the declaration and the instance placed in the
+        range are one symbol."""
         operands = [
             resolver.resolve_dtype(sym.name, state.sdfg, state, entry)
             for sym in sorted(symbolic.pystr_to_symbolic(str(step)).free_symbols, key=lambda s: s.name)
         ]
         if not operands:
-            # A call over numbers folds before it reaches here (``int_ceil(7, 2)`` is 4). One that
-            # did not would have no operand to read a type off: a finding, never a guessed default.
+            # A call over numbers folds before it reaches here (``int_ceil(7, 2)`` is 4).
             raise scopes.UndeterminedSymbolDType(str(step), state.sdfg.label)
         return dtypes.result_type_of(*operands)
 
@@ -121,10 +87,8 @@ class HoistLoopRangeCalls(ppl.Pass):
     ) -> int:
         sdfg = state.sdfg
         parent: ControlFlowRegion = state.parent_graph
-        # An interstate assignment is evaluated at STATE scope, so a component may only be hoisted
-        # when every symbol it names is live there. An inner map's bound routinely refers to the
-        # ENCLOSING map's parameter (``Min(n, chunk_i + stride - 1)``), which exists only inside
-        # that scope -- hoisting it would move the read outside the scope that defines it.
+        # An interstate assignment is evaluated at STATE scope, so a component may only be hoisted when every symbol it
+        # names is live there.
         enclosing = set()
         scope = state.scope_dict()
         parent_entry = scope.get(entry)
@@ -134,11 +98,7 @@ class HoistLoopRangeCalls(ppl.Pass):
         assignments: list[tuple[str, str]] = []
         ranges = []
         for begin, end, step in entry.map.range:
-            # ONLY the step. Measured against gcc: a call in an ``omp for`` INCREMENT is rejected
-            # ("invalid increment expression") because OpenMP's canonical form admits only a
-            # loop-invariant integer expression there, while the same call in either BOUND compiles
-            # in both ``omp for`` and ``omp simd``. So the begin and end are left exactly as the
-            # analysis passes built them, and only the stride is bound to a name.
+            # ONLY the step.
             if not contains_call(step) or (
                 {str(sym) for sym in symbolic.pystr_to_symbolic(str(step)).free_symbols} & enclosing
             ):
@@ -155,9 +115,8 @@ class HoistLoopRangeCalls(ppl.Pass):
             return 0
         entry.map.range = subsets.Range(ranges)
 
-        # The value has to exist before the state runs, and an interstate edge is the only place a
-        # symbol may be assigned. A state with no predecessor gets one, so the start block does not
-        # silently miss the definition.
+        # The value has to exist before the state runs, and an interstate edge is the only place a symbol may be
+        # assigned.
         in_edges = parent.in_edges(state)
         if not in_edges:
             parent.add_state_before(state, label=f"{state.label}_range_bind")
@@ -165,7 +124,6 @@ class HoistLoopRangeCalls(ppl.Pass):
         for edge in in_edges:
             for name, value in assignments:
                 edge.data.assignments[name] = value
-        # A new SDFG symbol and a new interstate assignment both feed the per-SDFG base every
-        # scoped table starts from.
+        # A new SDFG symbol and a new interstate assignment both feed the per-SDFG base every scoped table starts from.
         resolver.invalidate_sdfg(sdfg)
         return len(assignments)

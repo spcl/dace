@@ -1,16 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Give each map scope its own instance of a map-local transient that several scopes share by name.
-
-A ``Scope``-lifetime transient used in more than one state is allocated once for the whole SDFG
-(:meth:`~dace.codegen.targets.framecode.DaCeCodeGenerator.determine_allocation_lifetime`). When every use
-is inside a map body, that one buffer is shared by the threads of a parallel map: a race. Loop unswitching
-clones a loop into both branches of a guard and leaves exactly that (velocity_tendencies' ``lvn_only``).
-
-Contract: a transient (not a view, not ``Persistent``/``Global``, not named in control flow) whose every
-access node is inside a map scope, in two or more ``(state, outermost map)`` scopes, each of which writes what it
-reads before reading it, gets a fresh descriptor per scope after the first. Values never flow between the scopes,
-so renaming keeps the semantics; each instance is then allocated inside its own map.
-"""
+"""Give each map scope its own instance of a map-local transient that several scopes share by name."""
 
 import copy
 from typing import Any

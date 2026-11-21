@@ -1,16 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Give a while loop that counts its iterations a loop counter.
-
-``while i < N: ...; i += 1`` reaches the SDFG as a ``LoopRegion`` without a ``loop_variable``, and every
-dependence test needs one, so the loop is never examined and stays sequential. When the condition names a
-symbol ``i`` that the body bumps by a constant exactly once, on an interstate edge after which nothing reads
-``i``, the while loop and ``for (k = i; cond[i := k]; k = k + c)`` run the same iterations in the same order: the
-condition is checked before each iteration and the bump is the last thing an iteration does to ``i``.
-
-A condition held in a symbol (``while __tmp0`` with ``__tmp0 = i + 17 <= N`` recomputed at the end of the body)
-is replaced by its expression when nothing outside the loop reads that symbol. ``i`` itself stays the program's
-symbol and, when read after the loop, ends at its exit value, the first that fails the condition.
-"""
+"""Give a while loop that counts its iterations a loop counter."""
 
 from typing import Any
 
@@ -196,9 +185,7 @@ def start_edge(loop: LoopRegion, name: str):
 
 
 def exit_value(cond, name: str, start, step: int):
-    """The value ``name`` leaves the loop with: ``start`` plus ``step`` times the trip count, ``start`` for none.
-
-    Only for ``name < b`` / ``name <= b`` with a positive step, or ``>`` / ``>=`` with a negative one."""
+    """The value ``name`` leaves the loop with: ``start`` plus ``step`` times the trip count, ``start`` for none."""
     if not isinstance(cond, sympy.core.relational.Relational) or str(cond.lhs) != name:
         return None
     bound = cond.rhs
@@ -229,11 +216,7 @@ def solved_for(cond, name: str):
 
 
 def rewrite(loop: LoopRegion, cond, cond_symbol: str | None, name: str, edge, step: int, defining) -> None:
-    """Make ``name`` the loop's counter: started from ``defining``'s value, bumped as the update.
-
-    A loop counter is scope-bound and no SDFG symbol, so ``name`` leaves the SDFG's symbols. The defining assignment
-    moves into the loop header when it sits on the entry edge; further back, other blocks may still read it.
-    """
+    """Make ``name`` the loop's counter: started from ``defining``'s value, bumped as the update."""
     del edge.data.assignments[name]
     entries = loop.parent_graph.in_edges(loop)
     if cond_symbol is not None:

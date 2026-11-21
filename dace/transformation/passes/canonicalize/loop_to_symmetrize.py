@@ -1,23 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lift a triangular matrix-symmetrization loop nest to a ``Symmetrize`` node.
-
-A hand-written symmetrization::
-
-    for i in range(0, M - 1):
-        for j in range(i + 1, M):
-            X[j, i] = X[i, j]
-
-is embarrassingly parallel but reads/writes the SAME array at symmetric
-data-dependent indices, so ``LoopToMap`` refuses and leaves it sequential.
-This pass recognizes the nest -- outer loop, inner triangular loop (lower
-bound ``outer + offset``), body ``X[transpose] = X[src]`` on one 2-D array --
-and replaces it with a
-:class:`~dace.libraries.standard.nodes.symmetrize.Symmetrize` node.
-
-Match: both loops unit-stride, perfect one-child nest (empty connective
-states tolerated), constant nonnegative inner offset, single 2-D array at
-transposed single-point subscripts, no other body effect.
-"""
+"""Lift a triangular matrix-symmetrization loop nest to a ``Symmetrize`` node."""
 
 from typing import Any
 
@@ -109,9 +91,7 @@ class LoopToSymmetrize(ppl.Pass):
         if col_offset is None:
             return False
 
-        # Inner body: a single state doing an in-place transposed copy of ONE
-        # 2-D array -- either a direct ``X -> X`` copy edge or a
-        # ``X(read) -> copy-tasklet -> X(write)`` chain.
+        # Inner body: a single state doing an in-place transposed copy of ONE 2-D array
         extracted = self._extract_symmetric_copy(state, outer_var, inner_var)
         if extracted is None:
             return False
@@ -138,18 +118,7 @@ class LoopToSymmetrize(ppl.Pass):
     def _extract_symmetric_copy(
         self, state: SDFGState, outer_var: str, inner_var: str
     ) -> tuple[str, list[str], list[str]] | None:
-        """Match an in-place transposed copy of one 2-D array in ``state``.
-
-        The body must read one square array ``X`` at a single point, pass the
-        value through only copy-passthrough nodes (transient scratch AccessNodes
-        and/or ``__out = __inp`` copy tasklets), and write ``X`` at the
-        transposed point -- i.e. ``X[write] = X[read]`` with ``read`` and
-        ``write`` transposes. Handles the direct ``X -> X`` copy edge, the
-        ``X -> tasklet -> X`` form, and the ``X -> scratch -> X`` form uniformly.
-
-        :returns: ``(array, read_order, write_order)`` where each order lists
-                  which of ``{outer_var, inner_var}`` each axis is, or ``None``.
-        """
+        """Match an in-place transposed copy of one 2-D array in ``state``."""
         m = match_copy_chain(state)
         if m is None or m[0].data != m[1].data:
             return None
@@ -191,8 +160,7 @@ class LoopToSymmetrize(ppl.Pass):
         sym_state.add_node(node)
 
         def _full() -> dace.Memlet:
-            # Fresh subset object per edge -- DaCe forbids two memlets sharing
-            # one subset instance.
+            # Fresh subset object per edge -- DaCe forbids two memlets sharing one subset instance.
             return dace.Memlet(data=array, subset=dace.subsets.Range([(0, s - 1, 1) for s in desc.shape]))
 
         sym_state.add_edge(sym_state.add_read(array), None, node, "_in", _full())

@@ -1,36 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Rewrite negative-stride ``LoopRegion`` loops into semantically equivalent
-positive-stride form.
-
-A loop ``for i in range(start, end, -k)`` (with ``k > 0``, ``end < start``)
-visits the same values of ``i`` as
-
-    for _j in range(0, trip): i = start + (-k) * _j
-
-where ``trip = (start - end_inclusive) // k + 1``. The body sees ``i`` having
-the same per-iteration values in the same order, so downstream passes that
-require positive stride (``LoopToMap``'s linear-affine subset classifier,
-``LoopToScan``'s ``stride != 1`` refusal, ``RerollUnrolledLoops``) can match
-without changing semantics. The loop's iteration *order* is preserved -- the
-original symbol ``i`` is rebound on every iteration via an interstate-edge
-assignment from the fresh positive iterator -- so loop-carried recurrences and
-anti-dependences continue to behave exactly as before.
-
-Scope:
-
-* Loops whose stride is a negative literal or a symbol the facts prove negative. Symbolic-stride loops whose
-  sign is unknown are left untouched (a runtime ``abs`` would force the
-  rewrite to insert a guard, which is out of scope here).
-* The loop variable, ``init``, ``end``, and stride must all be resolvable via
-  the existing :mod:`dace.transformation.passes.analysis.loop_analysis` helpers.
-
-Out of scope:
-
-* Loops whose init / condition / update statements assign to additional
-  symbols beyond the loop variable; the rewrite would have to thread those
-  through the new positive-iterator form.
-* While loops (no ``loop_variable``).
-"""
+"""Rewrite negative-stride ``LoopRegion`` loops into semantically equivalent positive-stride form."""
 
 from typing import Any
 
@@ -67,10 +36,7 @@ class NormalizeNegativeStride(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
-        """Rewrite every eligible negative-stride loop in ``sdfg`` (and nested SDFGs).
-
-        :returns: The number of loops rewritten, or ``None`` if none.
-        """
+        """Rewrite every eligible negative-stride loop in ``sdfg`` (and nested SDFGs)."""
         rewritten = 0
         for sd in sdfg.all_sdfgs_recursive():
             for cfg in list(sd.all_control_flow_regions()):
@@ -103,20 +69,13 @@ class NormalizeNegativeStride(ppl.Pass):
 
         old_var = loop.loop_variable
         new_var = f"{POS_ITER_PREFIX}{lowest_free_suffix(sdfg, (POS_ITER_PREFIX,), with_free_symbols=True)}"
-        # Rebind the original symbol on the *first body block* via the existing
-        # loop_variable-to-body assignment edge; this preserves every reference
-        # to ``old_var`` in memlets / tasklet bodies without rewriting them.
-        # ``i = start + stride * new_var`` (stride is the original negative
-        # value, so ``start + (-k) * new_var`` walks back through the same
-        # iteration values in the same order).
+        # Rebind the original symbol on the *first body block* via the existing loop_variable-to-body assignment edge
         sub_expr = symbolic.symstr(symbolic.simplify(start + stride * symbolic.pystr_to_symbolic(new_var)))
         body_start = loop.start_block
         if body_start is None:
             return False
-        # Add the binding to every interstate edge that enters ``body_start``
-        # from inside the loop (i.e., the implicit "iteration entry" edges).
-        # If no such edges exist (degenerate single-block body), splice a fresh
-        # entry state that carries the binding on its in-edge.
+        # Add the binding to every interstate edge that enters ``body_start`` from inside the loop (i.e., the implicit
+        # "iteration entry" edges).
         in_edges_into_start = list(loop.in_edges(body_start))
         if in_edges_into_start:
             for e in in_edges_into_start:

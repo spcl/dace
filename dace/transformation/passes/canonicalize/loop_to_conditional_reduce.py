@@ -1,16 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lower a guarded reduction ``if cond(i): acc = acc OP x`` (TSVC ``s3111``) to an unconditional masked one,
-``masked = x if cond else IDENTITY(OP); acc = acc OP masked``, so the reduction stages lift it to a tree reduction
-instead of one atomic per passing iteration. The update stays its own tasklet: ``LoopToReduce`` keys off a fused
-tasklet's top-level ``OP`` and would drop the mask.
-
-Scope: one ``ConditionalBlock`` in the loop body, one guarded branch with no else content, holding one state whose
-only sink is a scalar accumulator updated by ``out = lhs OP rhs`` (``+``, ``-``, ``*``; min and max are
-:class:`ArgMaxLift`'s). Every other write goes to scratch nothing else reads, and every evaluation in the branch is
-safe on every iteration, since the guard no longer skips it: no integer division by a non-constant, no subscript in
-a tasklet, every read in bounds over the loop domain. A guard read is wired into the mask tasklet unless it is an
-indirection. Refusals leave the loop unmodified.
-"""
+"""Lower a guarded reduction ``if cond(i): acc = acc OP x`` (TSVC ``s3111``) to an unconditional masked one, ``masked =
+x if cond else IDENTITY(OP); acc = acc OP masked``, so the reduction stages lift it to a tree reduction instead of one
+atomic per passing iteration. The update stays its own tasklet: ``LoopToReduce`` keys off a fused tasklet's top-level
+``OP`` and would drop the mask."""
 
 import ast
 import copy
@@ -38,8 +30,7 @@ BINOP_TO_OP: dict[type, str] = {
     ast.Mult: "*",
 }
 
-#: Reduction operator string -> WCR lambda, to take the identity from :func:`~dace.dtypes.reduction_identity`. ``-``
-#: masks against the additive identity too.
+#: Reduction operator string -> WCR lambda, to take the identity from :func:`~dace.dtypes.reduction_identity`.
 OP_TO_WCR: dict[str, str] = {
     "+": "lambda a, b: a + b",
     "-": "lambda a, b: a + b",
@@ -365,8 +356,7 @@ class LoopToConditionalReduce(ppl.Pass):
         return None
 
     def read_in_bounds(self, edge: Any, state: SDFGState, sdfg: SDFG, bounds: tuple[str, Any, Any]) -> bool:
-        """Whether the read on ``edge`` stays inside its container on every iteration. Each subset bound must be
-        affine in the iterator, so its extremes over the loop sit at the iterator's lowest and highest value."""
+        """Whether the read on ``edge`` stays inside its container on every iteration."""
         if edge.data.dynamic:
             return False
         subset = edge.data.get_src_subset(edge, state)
@@ -480,8 +470,8 @@ class LoopToConditionalReduce(ppl.Pass):
     # rewrite
 
     def _rewrite(self, m: _Match, sdfg: SDFG) -> bool:
-        """Splice ``masked = __addend if cond else IDENTITY`` before the update and hoist the branch state, its
-        addend producer with it. ``False``, the loop untouched, when a guard read cannot be wired."""
+        """Splice ``masked = __addend if cond else IDENTITY`` before the update and hoist the branch state, its addend
+        producer with it."""
         loop = m.loop
         true_state = m.true_state
         # The guard's addend read becomes ``__addend``, every other array read a wired ``__guardN`` input.
@@ -521,9 +511,8 @@ class LoopToConditionalReduce(ppl.Pass):
                 true_state.add_read(arr_name), None, mask_tasklet, conn, mm.Memlet(data=arr_name, subset=idx_str)
             )
 
-        # 4. Hoist the true-branch state into the loop in the ConditionalBlock's
-        #    place, stripping dead iedge assignments (the resolved cond no longer
-        #    references the gather symbols).
+        # 4. Hoist the true-branch state into the loop in the ConditionalBlock's place, stripping dead iedge assignments
+        # (the resolved cond no longer references the gather symbols).
         was_start = m.cond_block is loop.start_block
         m.true_branch.remove_node(true_state)
         loop.add_node(true_state, is_start_block=was_start, ensure_unique_name=True)
@@ -537,9 +526,7 @@ class LoopToConditionalReduce(ppl.Pass):
 
         # 5. Drop the now-disconnected ConditionalBlock.
         loop.remove_node(m.cond_block)
-        # 6. Collapse empty wrapper states; if ``true_state`` ends up being
-        #    the unique non-empty block, the loop body is a clean single-
-        #    state accumulator that ``reduction_to_wcr_map`` lifts.
+        # 6. Collapse empty wrapper states
         self._collapse_empty_wrappers(loop)
         return True
 
@@ -563,13 +550,7 @@ class LoopToConditionalReduce(ppl.Pass):
         addend_conn_name: str = "__addend",
         guard_inputs: dict[str, tuple[str, str]] | None = None,
     ) -> str | None:
-        """Rewrite the cond expression over tasklet input connectors only.
-
-        Substitutes iedge-bound symbols by their RHS and subscripts matching an input edge by its
-        connector; any other read gets a ``__guardN`` connector recorded in ``guard_inputs`` for the
-        caller to wire (``None`` if not wireable, see :meth:`_wireable_guard_read`). AST-level, since
-        ``pystr_to_symbolic`` would turn ``a[i]`` into a non-Python sympy ``Subscript``.
-        """
+        """Rewrite the cond expression over tasklet input connectors only."""
         cond_text = m.cond_codeblock.as_string.strip()
         if guard_inputs is None:
             guard_inputs = {}
@@ -649,21 +630,7 @@ class LoopToConditionalReduce(ppl.Pass):
             return cond_text
 
     def _wireable_guard_read(self, m: _Match, sdfg: SDFG, arr_name: str, idx: ast.AST) -> bool:
-        """Can ``arr_name[idx]`` be handed to the mask tasklet as a plain input
-        edge? Requires that
-
-        * ``arr_name`` is a real data descriptor (not a symbol or a builtin);
-        * the index is a pure symbolic expression -- every ``Name`` in it is a
-          symbol available at the loop body (see :meth:`_available_symbols`) and
-          it contains no nested subscript/call. An index that is itself read from
-          memory (``a[b[i]]``) is an INDIRECTION: a memlet subset is a static
-          symbolic range, so the element the mask must read is not knowable
-          without materialising the indirection, which this pass does not do --
-          refuse and leave it to the gather passes;
-        * the true-branch does not WRITE ``arr_name``. The mask's read node has
-          no ordering edge against such a write, so wiring it would race with /
-          reorder against the branch's own update.
-        """
+        """Can ``arr_name[idx]`` be handed to the mask tasklet as a plain input edge?"""
         desc = sdfg.arrays.get(arr_name)
         if desc is None:
             return False
@@ -696,31 +663,16 @@ class LoopToConditionalReduce(ppl.Pass):
         return bounds is not None and self.subset_in_bounds(subset, desc, sdfg, bounds)
 
     def _available_symbols(self, m: _Match, sdfg: SDFG) -> dict[str, None]:
-        """Names usable in a memlet subset at the update tasklet, taken from the
-        DEFINED-symbol API rather than ``sdfg.symbols`` membership. ``sdfg.symbols``
-        holds only the SDFG's GLOBAL symbols, so it sees none of the three binders a
-        guard index is actually written in: a region-scoped loop iterator (mid-pipeline
-        the frontend's ``i`` is renamed to a ``_loop_it_0`` bound by the LoopRegion), a
-        map parameter, and an interstate-edge assignment. Gating on it silently refuses
-        every such guard read, so the guarded atomic survives to codegen.
-
-        :meth:`~dace.sdfg.state.SDFGState.symbols_defined_at` contributes what is bound
-        at the tasklet's POSITION -- the iterators of all enclosing ``LoopRegion``s and
-        the parameters of the dataflow scopes it sits in;
-        :meth:`~dace.sdfg.state.SDFGState.defined_symbols` contributes the symbols bound
-        by interstate-edge assignments, which the former does not walk. Constants are
-        usable in a subset too but are not symbols, so they are added explicitly."""
+        """Names usable in a memlet subset at the update tasklet, taken from the DEFINED-symbol API rather than
+        ``sdfg.symbols`` membership."""
         return dict.fromkeys(
             [*m.true_state.symbols_defined_at(m.upd_tasklet), *m.true_state.defined_symbols(), *sdfg.constants]
         )
 
     def _collapse_empty_wrappers(self, loop: LoopRegion) -> None:
-        """Eliminate empty SDFGState blocks in the loop body whose only role
-        is to host an iedge -- after we stripped the dead iedge assignments
-        in step 4 above, the wrapper is structurally empty AND its outgoing
-        iedge carries nothing. Splice the wrapper out by reconnecting its
-        predecessors directly to its successor.
-        """
+        """Eliminate empty SDFGState blocks in the loop body whose only role is to host an iedge -- after we stripped
+        the dead iedge assignments in step 4 above, the wrapper is structurally empty AND its outgoing iedge carries
+        nothing."""
         changed = True
         while changed:
             changed = False
@@ -729,9 +681,7 @@ class LoopToConditionalReduce(ppl.Pass):
                     continue
                 in_es = list(loop.in_edges(blk))
                 out_es = list(loop.out_edges(blk))
-                # Only collapse states with a single successor + no iedge
-                # assignments on the outgoing edge. Multi-successor empties
-                # may be deliberate branch joins.
+                # Only collapse states with a single successor + no iedge assignments on the outgoing edge.
                 if len(out_es) != 1:
                     continue
                 oe = out_es[0]

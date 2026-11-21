@@ -1,14 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-"""Normalize every map range and loop counter to canonical ``0:trip:1`` form.
-
-``OffsetLoopsAndMaps`` only shifts by a fixed expression and never changes the
-step, so it cannot produce the canonical zero-based / unit-stride form. This
-pass does: for a map parameter ``p`` with range ``b:e:s`` it substitutes
-``p -> b + s*p`` in the map's own scope (memlets + tasklets, param-local) and
-sets the range to ``0:(e-b)//s:1``. ``LoopRegion`` counters are normalized the
-same way. The substitution is value-preserving, so the SDFG result is
-unchanged. It reuses ``OffsetLoopsAndMaps``' tasklet token-replacement helpers.
-"""
+"""Normalize every map range and loop counter to canonical ``0:trip:1`` form."""
 
 from typing import Any
 
@@ -34,12 +25,7 @@ from dace.transformation.passes.offset_loop_and_maps import (
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
-    """Rewrite map ranges and loop counters to ``0:trip:1`` (zero-based, unit-stride).
-
-    Maps are normalized in their own scope via ``_normalize_map`` and
-    ``LoopRegion`` counters via ``_normalize_loop``; both rewrites are
-    value-preserving.
-    """
+    """Rewrite map ranges and loop counters to ``0:trip:1`` (zero-based, unit-stride)."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -58,12 +44,7 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
         return []
 
     def _normalize_map(self, state: dace.SDFGState, me: nodes.MapEntry) -> bool:
-        """Normalize one map's non-canonical parameters in place.
-
-        :param state: The state owning the map.
-        :param me: The map entry.
-        :returns: ``True`` if any parameter was rewritten.
-        """
+        """Normalize one map's non-canonical parameters in place."""
         new_ranges = list(me.map.range.ranges)
         repldict: dict[str, str] = {}
         subsdict: dict = {}
@@ -100,11 +81,9 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
                 md.other_subset = subs_range(md.other_subset)
         repl_tasklets_on_node_list(list(scope.nodes()), repldict)
         for n in scope.nodes():
-            # An inner map's RANGE reads the rewritten parameter as often as a memlet does: a tiled
-            # nest spells the inner sweep as ``outer : min(outer + C - 1, hi)``, and after the outer
-            # param stops being an index and starts being a tile ordinal, that bound means something
-            # else entirely. Missing it made ChunkAntiDependence's in-chunk sweep start at the chunk
-            # ORDINAL (s212, wrong values in the first chunk's worth of elements).
+            # An inner map's RANGE reads the rewritten parameter as often as a memlet does: a tiled nest spells the
+            # inner sweep as ``outer : min(outer + C - 1, hi)``, and after the outer param stops being an index and
+            # starts being a tile ordinal, that bound means something else entirely.
             if isinstance(n, nodes.MapEntry) and n is not me:
                 n.map.range = dace.subsets.Range(
                     [(_subs(rb), _subs(re), _subs(rs)) for rb, re, rs in n.map.range.ranges]
@@ -131,17 +110,7 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
         return True
 
     def _normalize_loop(self, loop: LoopRegion) -> bool:
-        """Normalize one ``LoopRegion`` to a ``0 : n : 1`` counter in place.
-
-        ``loop_analysis.get_loop_end`` returns the inclusive last iteration
-        value for ``< <= > >=``; with ``start``/``step`` the exact trip count
-        is ``floor((end-start)/step)+1``. The body is rewritten
-        ``var -> start + step*var`` (value-preserving) and the header reset to
-        ``var=0 ; var < n ; var = var+1``.
-
-        :param loop: The loop region.
-        :returns: ``True`` if the loop was rewritten.
-        """
+        """Normalize one ``LoopRegion`` to a ``0 : n : 1`` counter in place."""
         var = loop.loop_variable
         start = loop_analysis.get_init_assignment(loop)
         end = loop_analysis.get_loop_end(loop)
@@ -158,8 +127,7 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
         repldict = {str(var): f"(({start}) + ({step}) * {var})"}
         if tasklets_assign((node for st in loop.states() for node in st.nodes()), repldict):
             return False
-        # Rewrite the body (memlets/tasklets/interstate/nested); the loop's own
-        # header is not a node within itself, so reset it explicitly after.
+        # Rewrite the body (memlets/tasklets/interstate/nested)
         repl_recursive(loop, repldict)
         loop.init_statement = CodeBlock(f"{var} = 0")
         loop.loop_condition = CodeBlock(f"{var} < ({n})")
@@ -167,11 +135,7 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
         return True
 
     def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
-        """Normalize every map and loop in ``sdfg`` (recursively).
-
-        :param sdfg: The SDFG to normalize in place.
-        :returns: The number of maps/loops rewritten, or ``None`` if unchanged.
-        """
+        """Normalize every map and loop in ``sdfg`` (recursively)."""
         count = 0
         for node, parent in sdfg.all_nodes_recursive():
             if isinstance(node, nodes.MapEntry) and isinstance(parent, dace.SDFGState):
@@ -185,25 +149,8 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
 
 @transformation.explicit_cf_compatible
 class NormalizeStridedMaps(NormalizeLoopsAndMaps):
-    """Normalize only maps that carry a NON-UNIT step to ``0:trip:1``, folding
-    the step into the index (``a[i]`` under ``0:N:2`` -> ``a[2*k]`` under
-    ``0:int_floor(N-1,2)+1:1``). Unit-step maps and every ``LoopRegion`` counter
-    are left untouched.
-
-    The multi-dim tiler requires unit-step maps -- ``MarkTileDims`` and
-    ``LiftMapReductionToReduce`` both bail on ``step != 1``. Rather than teach
-    the whole tile lowering to carry a per-lane step (and hit the non-uniform
-    step/index composition pitfall -- ``a[i]`` needs ``*step`` but a reduction
-    buffer ``buf[i//step]`` must not), run this at the vectorizer entry: AFTER
-    ``LoopToMap`` (so, unlike an early loop-arm rewrite, it can never block a
-    lift by making a scatter's write index non-provably-injective) and BEFORE
-    the reduction lifts. The strided reduction map a frontend
-    ``for i in range(0, N, 2)`` lifts to then becomes dense, and its ``a[2*k]``
-    read is a plain STRIDED index the tiler's existing ``dim_strides`` machinery
-    vectorizes with no step-aware change anywhere in the tile lowering. The
-    ``p -> b + s*p`` substitution is value-preserving; the ``int_floor(e-b, s)``
-    trip is nonnegative under the canon "symbols nonnegative" contract.
-    """
+    """Normalize only maps that carry a NON-UNIT step to ``0:trip:1``, folding the step into the index (``a[i]`` under
+    ``0:N:2`` -> ``a[2*k]`` under ``0:int_floor(N-1,2)+1:1``)."""
 
     def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         """Normalize every map with a non-unit step; leave unit-step maps and

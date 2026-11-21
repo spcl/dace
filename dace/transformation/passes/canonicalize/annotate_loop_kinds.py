@@ -1,30 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Name every loop in the canonical form, so the standalone rendering says what each one is.
-
-CPF output is read by a specializing pass or by a person, and both arrive at a ``for`` loop with
-the same question: is this order required, or is it the order canonicalization happened to leave?
-The canonical form answers it -- a parallel axis is a Map, a required order is a LoopRegion -- but
-the rendering flattens both to ``for``, and the answer is gone.
-
-So it is written down, as a ``specialization_hint`` comment, in four kinds:
-
-* **parallel** -- a Map. Its iterations are independent; the schedule is a separate decision.
-* **sequential** -- a loop whose carried dependence ``LoopToMap`` PROVED. The order is required.
-* **potentially sequential** -- a loop ``LoopToMap`` declined without reaching a verdict. Nothing
-  was proven either way, and the difference from the line above is the whole point of this pass:
-  a proof closes the question, a decline does not.
-* **wavefront** -- the diagonal, front, tile and tile-interior axes a skew produces.
-  :mod:`~dace.transformation.passes.parallelization.wavefront.skew` labels those itself, because it is
-  the only thing that knows a loop is one; the wording lives here so all four kinds read alike.
-
-One pass, run last, rather than a label at each site that could have set one: a loop that a pass
-forgot would then carry no comment and read as "nobody looked", which is a claim in its own right.
-Here every loop is visited, and the classifier is ``LoopToMap.can_be_applied`` -- the pipeline's own oracle, so
-the comment and the pipeline's decision cannot disagree.
-
-A hint is a NOTE. Nothing in the pipeline dispatches on these strings, ``hint_comment`` drops them
-outside a standalone rendering, and this pass changes no graph.
-"""
+"""Name every loop in the canonical form, so the standalone rendering says what each one is."""
 
 import re
 from collections.abc import Iterator
@@ -47,20 +22,17 @@ from dace.transformation import transformation as xf
 from dace.transformation.interstate.loop_to_map import LoopRefusal, Refusal
 from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
 
-# Three classes, named by the first word of every loop hint: ``parallel`` and ``sequential`` are
-# settled and need no further dependence reasoning, ``unknown`` is the only open one. A role (a
-# wavefront axis, an inner tile) follows the class word as a qualifier, never replaces it.
+# Three classes, named by the first word of every loop hint: ``parallel`` and ``sequential`` are settled and need no
+# further dependence reasoning, ``unknown`` is the only open one.
 
 #: The first words of every loop hint: its class (see the three below).
 CLASS_PREFIXES = ("parallel -- ", "sequential -- ", "unknown -- ")
 
-#: A Map. Data-parallel by construction, whatever schedule it ends up carrying. What a settled class means for the
-#: reader is said once, in the rendering's header (``cpf.CONTRACT_LINES``), not under every loop.
+#: A Map.
 PARALLEL = "parallel -- independent: no iteration writes an element another iteration reads or writes"
 
-#: The class line of a Map that accumulates into a container through a WCR edge: its iterations are not
-#: independent, they reduce, and the operator and the accumulator are the evidence. ``{reductions}`` reads
-#: ``+ into s``, joined by ``and``.
+#: The class line of a Map that accumulates into a container through a WCR edge: its iterations are not independent,
+#: they reduce, and the operator and the accumulator are the evidence.
 REDUCTION = "parallel -- reduction: {reductions}; the other accesses are independent"
 
 #: The operator a reduction line names, by ``dtypes.ReductionType``; any other type is named by its member name.
@@ -80,10 +52,7 @@ REDUCTION_SYMBOLS = {
 #: the comment only above the outermost, so the inner ones are named here.
 MAP_DIMENSIONS = "the {count} nested loops over {params} are all parallel"
 
-#: A loop whose carried dependence was proven. ``{reason}`` is the carrying ACCESS, since that is
-#: the part a reader acts on -- the prose around it repeated on every such loop and said the same
-#: thing each time.
-#: The fixed start of both proven-dependence lines.
+#: A loop whose carried dependence was proven.
 PROVEN_PREFIX = "sequential -- proven dependence"
 SEQUENTIAL_PROVEN = PROVEN_PREFIX + " {reason}"
 
@@ -93,9 +62,7 @@ SEQUENTIAL_PROVEN_OVER_DOALL = (
     PROVEN_PREFIX + " {reason}; alt: skew this loop with the parallel loops inside it (a wavefront), not done here"
 )
 
-#: A loop the dependence test declined to answer, or never examined. NOT the same fact as the line
-#: above: not proven, and the wording has to keep saying so in one word. What "open" asks of the reader is said
-#: once, in the rendering's header.
+#: A loop the dependence test declined to answer, or never examined.
 UNKNOWN = "unknown -- {reason}"
 
 #: The ``UNKNOWN`` reason of a loop the dependence test never answered for; the specific cause follows a colon.
@@ -135,12 +102,7 @@ WAVEFRONT_TILE_INTERIOR = "sequential -- inside one wavefront tile {tile}: the o
 
 
 def skew_label(a: int, b: int, u: str, v: str) -> str:
-    """The skew that produced this wavefront, as ``(t = i + j)``.
-
-    Which skew was taken is the one fact about a wavefront a reader cannot recover from the emitted
-    loop: after the rewrite the axes are named t and p and the original iterators are gone. The
-    coefficient is written only where it is not 1, so the common unit skew stays short.
-    """
+    """The skew that produced this wavefront, as ``(t = i + j)``."""
 
     def term(coeff: int, name: str) -> str:
         return name if abs(coeff) == 1 else f"{abs(coeff)}*{name}"
@@ -155,14 +117,8 @@ def tile_label(bi: int, bj: int) -> str:
 
 
 def refusal_reason(loop: LoopRegion, session: Any = None) -> LoopRefusal | str | None:
-    """Why ``LoopToMap`` would refuse ``loop`` (its :class:`LoopRefusal`), ``None`` if it would accept, or the text
-    of why it was never examined; ``session`` the :class:`ProbeSession` the caller's probes share.
-
-    Asked with ``pinned_sequential`` set aside. The pin is a schedule decision an earlier pass made,
-    and "loop is pinned sequential" is not an answer to the dependence question a reader is asking --
-    it only names the pass that got there first. Restored either way; the probe reads the graph and
-    does not touch it.
-    """
+    """Why ``LoopToMap`` would refuse ``loop`` (its :class:`LoopRefusal`), ``None`` if it would accept, or the text of
+    why it was never examined; ``session`` the :class:`ProbeSession` the caller's probes share."""
     if not loop.loop_variable:
         return NO_COUNTER
     from dace.transformation.interstate.loop_to_map import LoopToMap
@@ -174,8 +130,7 @@ def refusal_reason(loop: LoopRegion, session: Any = None) -> LoopRefusal | str |
     try:
         applicable = ParallelizeLoops().accepts(loop, probe, session=session)
     except Exception as error:  # pylint: disable=broad-exception-caught
-        # A comment must not be able to fail the compilation that asked for it. Nothing downstream
-        # reads a hint, so a probe with no answer leaves the loop unknown and says so.
+        # A comment must not be able to fail the compilation that asked for it.
         return f"{NEVER_EXAMINED}: the dependence test failed ({type(error).__name__}), a compiler bug to report"
     finally:
         loop.pinned_sequential = pinned
@@ -248,8 +203,8 @@ SHORT_INDEX = 40
 
 
 def order_requirement(refusal: LoopRefusal) -> str | None:
-    """The class line of a loop whose order the program itself requires, or ``None``: an ordered call, or an exit that ends the loop
-    early. Neither is an open question, so neither is ``unknown``."""
+    """The class line of a loop whose order the program itself requires, or ``None``: an ordered call, or an exit that
+    ends the loop early."""
     if refusal.kind is Refusal.ORDERED_SIDE_EFFECT:
         found = ORDERED_EFFECT.search(refusal.message)
         name = found.group(1) if found is not None else "a call in the body"
@@ -271,8 +226,7 @@ def quoted(container: str | None, subset: Any) -> str:
 
 
 def unproven_reason(refusal: LoopRefusal) -> str:
-    """The reason of an ``unknown`` loop in the loop's words: which check failed, on which array or name. The test
-    found neither independence nor a conflicting pair of iterations."""
+    """The reason of an ``unknown`` loop in the loop's words: which check failed, on which array or name."""
     kind = refusal.kind
     first_write = refusal.writes[0] if refusal.writes else None
     first_read = refusal.reads[0] if refusal.reads else None
@@ -342,9 +296,8 @@ class Body(NamedTuple):
 
 
 def as_loop_names(expr: symbolic.SymbolicType, mapping: dict[str, sympy.Expr]) -> sympy.Expr:
-    """``expr`` rewritten through ``mapping`` (inner name -> outer expression) and reparsed, so one
-    name is one symbol instance whichever scope minted it. A ``SymExpr`` bound (a tiled map's ``Min(N - 1, g + 63)``,
-    over-approximated as ``g + 63``) is read exactly: its text names both and does not parse back."""
+    """``expr`` rewritten through ``mapping`` (inner name -> outer expression) and reparsed, so one name is one symbol
+    instance whichever scope minted it."""
     expr = symbolic.pystr_to_symbolic(str(expr.expr if isinstance(expr, symbolic.SymExpr) else expr))
     repl = {sym: mapping[sym.name] for sym in free_symbols(as_basic(expr)) if sym.name in mapping}
     expr = expr.subs(repl, simultaneous=True) if repl else expr
@@ -398,12 +351,7 @@ def edge_accesses(
 def nested_bindings(
     state: SDFGState, node: nodes.NestedSDFG, arrays: ArrayBindings, mapping: dict[str, sympy.Expr]
 ) -> tuple[ArrayBindings, dict[str, sympy.Expr]]:
-    """The arrays and symbols ``node``'s body sees, rebound to the loop's names.
-
-    An inner array binds only when its connector's outer subset has the inner rank; its element
-    ``k`` is then outer element ``begin + k``, or ``k`` itself when the connector is the whole container
-    (No-View). Anything else stays unbound and is ignored.
-    """
+    """The arrays and symbols ``node``'s body sees, rebound to the loop's names."""
     inner_arrays: ArrayBindings = {}
     for edge in list(state.in_edges(node)) + list(state.out_edges(node)):
         conn = edge.dst_conn if edge.dst is node else edge.src_conn
@@ -492,14 +440,7 @@ def carried_distance(write: Access, read: Access, loop_var: sympy.Symbol) -> sym
 
 
 def proven_carrying_access(loop: LoopRegion) -> str | None:
-    """``RAW on aa[i - 1, j]`` when two element accesses in ``loop``'s body PROVE a carried dependence.
-
-    ``LoopToMap`` judges a body by its propagated memlets, and a nested SDFG's are often the whole
-    array -- so it can only decline. The element accesses inside still say it: a write ``A[f(i)]``
-    and a read ``A[f(i - d)]`` with the same fixed indices elsewhere are ``d`` iterations apart.
-    Only a constant step, map ranges fixed across iterations and indices that are otherwise
-    loop-invariant or map params are admitted.
-    """
+    """``RAW on aa[i - 1, j]`` when two element accesses in ``loop``'s body PROVE a carried dependence."""
     stride = loop_analysis.get_loop_stride(loop)
     if stride is None or not as_basic(stride).is_Integer or stride == 0:
         return None
@@ -581,12 +522,7 @@ def copy_sites(
     mapping: dict[str, sympy.Expr],
     iters: tuple,
 ) -> list[Site]:
-    """Both ends of an array copy as sites, each range dimension a fresh iterator over that range.
-
-    A copy moves every element of both subsets, so unlike a tasklet's or a library node's range, which the code
-    behind it may touch only in part, it names elements that are certainly accessed. An inner or matrix product
-    (``Dot``, ``MatMul``) reads every element of an operand subset alike, so that subset is a read site the same way.
-    """
+    """Both ends of an array copy as sites, each range dimension a fresh iterator over that range."""
     product = type(edge.dst).__name__ in ("Dot", "MatMul") and isinstance(edge.dst, nodes.LibraryNode)
     if not (isinstance(edge.src, nodes.AccessNode) and (product or isinstance(edge.dst, nodes.AccessNode))):
         return []
@@ -634,11 +570,7 @@ def state_sites(
 def region_sites(
     region: ControlFlowRegion, arrays: ArrayBindings, mapping: dict[str, sympy.Expr], iters: tuple, out: list
 ) -> None:
-    """Fill ``out`` with the unconditional accesses under ``region``.
-
-    A branch body may never run, and a loop without a constant-stride counter has no range to name, so neither
-    contributes: a witness has to be an execution that happens.
-    """
+    """Fill ``out`` with the unconditional accesses under ``region``."""
     for block in region.nodes():
         if isinstance(block, SDFGState):
             state_sites(block, arrays, mapping, iters, out)
@@ -652,9 +584,7 @@ def region_sites(
 
 def size_symbols(sdfg: SDFG) -> set[str]:
     """The symbols a conflict witness may choose a value for: those the argument arrays' shapes are written in, and
-    those that only bound a loop (a trip count such as ``TSTEPS``), less any the program assigns.
-
-    Either only says how much work there is: a value for it is an execution of the program at that size."""
+    those that only bound a loop (a trip count such as ``TSTEPS``), less any the program assigns."""
     shapes = {
         s.name
         for desc in sdfg.arrays.values()
@@ -687,12 +617,7 @@ def size_symbols(sdfg: SDFG) -> set[str]:
 
 def is_scratch(sdfg: SDFG, name: str) -> bool:
     """Whether container ``name`` of ``sdfg`` is scratch: a transient here, or an argument of a nested SDFG that every
-    caller binds to scratch.
-
-    Outlining (``HoistParallelRegion``, a nested SDFG the frontend made) turns a caller's transient -- a scalar a loop
-    privatized, the accumulator of a reduction -- into an argument of the nested SDFG. It is still the caller's
-    scratch: a conflict on it proves no order, any more than on a transient declared in place.
-    """
+    caller binds to scratch."""
     desc = sdfg.arrays.get(name)
     if desc is None:
         return False
@@ -709,15 +634,8 @@ def is_scratch(sdfg: SDFG, name: str) -> bool:
 
 
 def witnessed_carrying_access(loop: LoopRegion) -> str | None:
-    """``RAW on A[k, j] (witness: N=3, k=0 and k=1)`` when the solver finds two iterations of ``loop`` that touch
-    one element of an argument array, choosing values for array sizes only.
-
-    Every access involved runs on every iteration (no branch, no early exit, counted loops only), and its index
-    and bounds name only iterators and sizes, so the witness is an execution of the program for that size. A
-    transient is scratch the loop may privatize, so a conflict on one proves no order (:func:`is_scratch`). A read
-    meeting a write is tried before two writes, since it names the dependence a reader acts on, unless the read's
-    own iteration also writes its element (:func:`rewritten_in_iteration`).
-    """
+    """``RAW on A[k, j] (witness: N=3, k=0 and k=1)`` when the solver finds two iterations of ``loop`` that touch one
+    element of an argument array, choosing values for array sizes only."""
     counter = loop_range(loop, {}) if loop.loop_variable else None
     if counter is None:
         return None
@@ -752,12 +670,7 @@ def witnessed_carrying_access(loop: LoopRegion) -> str | None:
 
 
 def rewritten_in_iteration(read: Site, sites: list[Site]) -> bool:
-    """Whether some write of the same iteration stores the very element ``read`` loads.
-
-    Then the read may see that write rather than an earlier iteration's, so a conflict with an earlier write is no
-    RAW: ``t[0] = a[i]; b[i] = t[0]`` reuses ``t`` and carries only a WAW, which the write pairs still find. The
-    sites carry no order, so a write after the read counts too; an in-place update ``s[0] = s[0] + x`` is then
-    named by its WAW, which holds as well."""
+    """Whether some write of the same iteration stores the very element ``read`` loads."""
     return any(
         site.access.write
         and site.access.array == read.access.array
@@ -812,8 +725,7 @@ def loop_hint(loop: LoopRegion, session: Any = None) -> str:
 
 
 def over_doall_nest(loop: LoopRegion) -> bool:
-    """Whether ``loop``'s body is a Do-All nest: maps, no reduction and no loop of its own (a time loop over a
-    stencil). A reduction inside gives a skew nothing to run in parallel."""
+    """Whether ``loop``'s body is a Do-All nest: maps, no reduction and no loop of its own (a time loop over a stencil)."""
     blocks = list(loop.all_control_flow_blocks())
     states = [block for block in blocks if isinstance(block, SDFGState)]
     return (
@@ -824,12 +736,8 @@ def over_doall_nest(loop: LoopRegion) -> bool:
 
 
 def proof_of_carry(loop: LoopRegion, reason: LoopRefusal) -> str | None:
-    """The access that proves ``loop`` carries a dependence, or ``None``: a solver witness, else a constant distance
-    or a carried symbol ``LoopToMap`` named.
-
-    The witness comes first because it names an execution as well as the access: two iterations and the sizes under
-    which they touch one element. The other two prove accesses the solver cannot encode.
-    """
+    """The access that proves ``loop`` carries a dependence, or ``None``: a solver witness, else a constant distance or
+    a carried symbol ``LoopToMap`` named."""
     witnessed = witnessed_carrying_access(loop)
     if witnessed is not None:
         return witnessed
@@ -837,8 +745,7 @@ def proof_of_carry(loop: LoopRegion, reason: LoopRefusal) -> str | None:
     # any read meeting a write, so its access alone reads as RAW for a read-ahead WAR too.
     access = proven_carrying_access(loop)
     if access is None and reason.kind is Refusal.CARRIED_SYMBOL and not has_branch(loop):
-        # A symbol one iteration hands to the next: the witness is two consecutive iterations. Only a body without a
-        # branch proves it, since a branch that skips the assignment or the use carries nothing on that input.
+        # A symbol one iteration hands to the next: the witness is two consecutive iterations.
         access = carrying_access(reason) + pattern_witness(loop, 1)
     return access
 
@@ -874,8 +781,7 @@ def entry_traps(sdfg: SDFG) -> list[tuple[str, set[str]]]:
 
 
 def map_names(state: SDFGState, entry: nodes.MapEntry) -> set[str]:
-    """The symbols the element accesses in ``entry``'s scope name: what independence can rest on. A bound only sets
-    how many iterations there are, so the range is left out."""
+    """The symbols the element accesses in ``entry``'s scope name: what independence can rest on."""
     names: set[str] = set()
     for edge in state.scope_subgraph(entry).edges():
         if isinstance(edge.src, nodes.Tasklet) or isinstance(edge.dst, nodes.Tasklet):
@@ -941,13 +847,7 @@ def partially_read_hint(state: SDFGState, node: nodes.LibraryNode) -> str | None
 
 @xf.explicit_cf_compatible
 class AnnotateLoopKinds(ppl.Pass):
-    """Open every Map's and LoopRegion's ``specialization_hint`` with its class.
-
-    Runs last in the canonicalize recipe, on the graph the rendering will see. A hint that already
-    opens with a class is left alone: the pass that set it knew something this one cannot re-derive
-    (that a loop is a wavefront axis, ``WavefrontSkew``). Any other hint is a note on what a pass did
-    (``BreakAntiDependence``) and keeps its place below the class line this pass puts first.
-    """
+    """Open every Map's and LoopRegion's ``specialization_hint`` with its class."""
 
     CATEGORY: str = "Analysis"
 

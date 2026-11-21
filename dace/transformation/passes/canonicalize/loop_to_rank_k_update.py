@@ -1,31 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lift a hand-written symmetric rank-k or rank-2k update nest to a ``Syrk`` / ``Syr2k`` BLAS node.
-
-polybench ``syrk`` (``C := alpha*A*A^T + beta*C``) and ``syr2k`` (``C := alpha*A*B^T + alpha*B*A^T + beta*C``)
-update one triangle of ``C``, one row per iteration of an outer loop over ``i``::
-
-    for i in range(N):
-        for j in range(i + 1):
-            C[i, j] *= beta
-        for k in range(M):
-            for j in range(i + 1):
-                C[i, j] += alpha * A[i, k] * A[j, k]                               # syrk
-                C[i, j] += A[j, k] * alpha * B[i, k] + B[j, k] * alpha * A[i, k]   # syr2k
-
-The slice spelling ``C[i, :i + 1] += alpha * A[i, k] * A[:i + 1, k]`` reaches ``lift_semantics`` as a chain of
-elementwise loops over vector temporaries instead; both are recognized by what one outer iteration computes
-(:func:`~dace.transformation.passes.canonicalize.loop_iteration_value.summarize`). The iteration must store only
-one row triangle of a square ``C``: ``C[r, 0:r+1]`` (``uplo='L'``) or ``C[r, r:N]`` (``'U'``), where the row ``r``
-is ``i`` or ``N - 1 - i`` (either loop direction), and there store exactly::
-
-    beta * C[r, j] + alpha * Sum_k A[r, k] * A[j, k]                                 # Syrk
-    beta * C[r, j] + alpha * Sum_k (A[r, k] * B[j, k] + B[r, k] * A[j, k])           # Syr2k
-
-with the operands read ``[r, k]`` / ``[j, k]`` (``trans='N'``) or ``[k, r]`` / ``[k, j]`` (``'T'``) and written
-nowhere in the nest. ``alpha`` and ``beta`` are numbers, runtime single-element containers, or their products; no
-prior ``C`` term is ``beta = 0``. Iterations store disjoint rows and read ``C`` only at the element they store, so
-the loop computes the BLAS update in either direction. Any deviation is a clean no-op.
-"""
+"""Lift a hand-written symmetric rank-k or rank-2k update nest to a ``Syrk`` / ``Syr2k`` BLAS node."""
 
 from typing import Any, NamedTuple
 

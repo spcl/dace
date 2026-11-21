@@ -1,27 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""What one iteration of a normalized loop nest computes, as a closed-form expression.
-
-The semantic lifts that recognize a BLAS operator in a hand-written nest (``LoopToSymm``, ``LoopToRankKUpdate``)
-compare what the nest COMPUTES against the operator's definition, not how it is spelled. The same kernel reaches
-the ``lift_semantics`` phase in several shapes: a slice statement is lowered to a chain of elementwise loops that
-pass values through vector temporaries, a scalar statement to one tasklet chain in one state, an inner product to
-a ``Dot`` / ``MatMul`` node or to a reduction loop. :func:`summarize` evaluates all of them to one value.
-
-Given an outer ``LoopRegion`` over ``i``, it returns, for every element of the one non-transient array ``C`` the
-body writes, the value the body stores there as a sympy expression over the values at iteration start:
-
-- an array read is an applied undefined function ``A(i, k)`` named after the container;
-- an elementwise loop (every write of the queried array indexes it by the loop variable) contributes the body
-  value of the one iteration that writes the element;
-- an accumulation loop (the queried element does not depend on the loop variable, and one iteration turns its
-  prior value ``P`` into ``P + T(k)``) contributes ``prior + Sum(T(k), (k, lo, hi))``;
-- a vector-vector ``Dot`` / ``MatMul`` contributes ``Sum(a[t] * b[t], (t, 0, L - 1))``.
-
-Elements are queried per write DOMAIN: every axis of a write is either fixed (an expression of ``i``) or a whole
-loop/map range, and a range axis becomes a fresh query symbol bounded by that range. Anything not proven exactly
--- a loop-carried read, a write that may or may not hit the queried element, a WCR, a conditional, a nested SDFG
--- raises :class:`Refused`, which the lifts treat as "no match".
-"""
+"""What one iteration of a normalized loop nest computes, as a closed-form expression."""
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -60,11 +38,7 @@ class Refused(Exception):
 
 
 def plain(value: object) -> sympy.Expr:
-    """``value`` as a sympy expression whose symbols are plain ``sympy.Symbol`` keyed by name only.
-
-    DaCe symbols carry a dtype in their identity, so a loop variable read from a memlet and the same name parsed from
-    a loop bound would be two symbols; by name they are one.
-    """
+    """``value`` as a sympy expression whose symbols are plain ``sympy.Symbol`` keyed by name only."""
     expr = value if isinstance(value, sympy.Basic) else symbolic.pystr_to_symbolic(str(value))
     return expr.xreplace({s: sympy.Symbol(s.name) for s in expr.free_symbols if type(s) is not sympy.Symbol})
 
@@ -308,8 +282,7 @@ class IterationEvaluator:
         lo, hi = self.value_range(x)
         if nonnegative(lo - axis.lo) and nonnegative(axis.hi - hi):
             return True
-        # Disjoint when even the write's lowest index lies above ``x``'s highest, or the reverse; a write index that
-        # is itself a bounded query symbol (a row ``q`` of another domain) contributes its whole range.
+        # Disjoint when even the write's lowest index lies above ``x``'s highest, or the reverse
         if positive(self.value_range(axis.lo)[0] - hi) or positive(lo - self.value_range(axis.hi)[1]):
             return False
         return None
@@ -333,10 +306,7 @@ class IterationEvaluator:
         return sympy.expand(x.xreplace({sym: lo})), sympy.expand(x.xreplace({sym: hi}))
 
     def hit(self, write: Write, index: tuple[sympy.Expr, ...]) -> dict[str, sympy.Expr] | None:
-        """The range-variable binding under which ``write`` stores ``index``, or ``None`` if it never does.
-
-        :raises Refused: when neither is proven.
-        """
+        """The range-variable binding under which ``write`` stores ``index``, or ``None`` if it never does."""
         if len(write) != len(index):
             raise Refused("rank mismatch")
         binding: dict[str, sympy.Expr] = {}
@@ -675,13 +645,7 @@ def written_arrays(block: ControlFlowBlock) -> dict[str, None]:
 
 
 def summarize(sdfg: SDFG, loop: LoopRegion) -> Summary:
-    """What one iteration of ``loop`` stores into the only non-transient container its body writes.
-
-    :raises Refused: when the nest is not a unit-stride loop over ``0 .. extent - 1`` (either direction) around a
-                     straight-line body, writes several
-                     non-transient containers or one with a write that is not a domain, or a value is not derived
-                     exactly.
-    """
+    """What one iteration of ``loop`` stores into the only non-transient container its body writes."""
     lo, hi = loop_range(loop, {})
     if not same(lo, 0):
         raise Refused("loop does not start at 0")
@@ -852,8 +816,7 @@ def splice_blas_update(
 ) -> None:
     """Replace ``loop`` by a state holding ``node``, a BLAS update ``_Cout = alpha * op(operands) + beta * _Cin`` whose
     coefficients are symbols: whole-array ``operands`` (connector to container), ``output`` as ``_Cin`` and as the
-    written ``_Cout``. A coefficient read at run time (polybench's ``alpha[0]``) becomes a symbol the edge into the
-    node's state assigns; ``beta=None`` means the prior ``C`` is dropped."""
+    written ``_Cout``."""
     sdfg = parent.sdfg
     state = replace_loop_with_state(parent, loop, node.label)
     assignments: dict[str, str] = {}

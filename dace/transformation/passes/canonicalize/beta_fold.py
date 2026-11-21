@@ -1,12 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Fold ``X = X + c * T`` onto the contraction library node that writes ``T``: the node writes ``X`` with ``beta=1``.
-
-Contract: the node (``Einsum``, ``MatMul``, ``Gemm``, ``BatchedMatMul`` or ``Gemv``, optionally through one view)
-writes the whole of a transient ``T`` with ``beta == 0``; ``T``'s only use, in its only state, is an elementwise map
-over all of ``T`` computing ``X[idx] = X[idx] + c * T[idx]`` (either operand order) with identical indices; ``X``
-has ``T``'s shape, strides, dtype and storage and is no operand of the node. ``T`` and the map are removed, and
-``alpha`` is scaled by ``c``.
-"""
+"""Fold ``X = X + c * T`` onto the contraction library node that writes ``T``: the node writes ``X`` with ``beta=1``."""
 
 from dataclasses import dataclass
 from typing import Any
@@ -188,8 +181,7 @@ def fold(sdfg: SDFG, state: SDFGState, node: nodes.LibraryNode, counts: dict[str
     target = found.write.data
     if not same_layout(desc, sdfg.arrays[target]) or target in operand_names(state, node):
         return False
-    # Gemm (``cin``) reads the prior output through a connector; the others, Gemv included (its BLAS call takes
-    # ``_y`` as one in/out pointer), accumulate in place.
+    # Gemm (``cin``) reads the prior output through a connector
     prior = "_c" if isinstance(node, blas.Gemm) and node.cin else None
 
     state.remove_nodes_from(state.scope_subgraph(found.entry, include_entry=True, include_exit=True).nodes())

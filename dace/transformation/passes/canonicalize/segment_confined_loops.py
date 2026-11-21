@@ -1,33 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lift a loop over the segments of a pointer array when every iteration touches only its own segment.
-
-``nfa_frontier`` runs one automaton component per iteration ``c``; component ``c`` owns the states
-``comp_ptr[c] .. comp_ptr[c + 1]`` and writes nothing outside them::
-
-    for c in range(C):
-        base = comp_ptr[c]
-        for k in range(start_ptr[c], start_ptr[c + 1]):
-            s = start_idx[k]
-            if enabled[s] == 0:
-                enabled[s] = 1; frontier[base + n] = s; n += 1
-        ...  # per symbol: walk frontier[base : base + n], children col_idx[row_ptr[s] : row_ptr[s + 1]]
-
-``LoopToMap`` sees writes to ``enabled[s]`` and ``frontier[base + n]`` at data-dependent indices and keeps the loop.
-They are disjoint across iterations because of facts about the DATA, which this pass establishes in two parts:
-
-* **Checked once at entry** (a trapping guard, like
-  :class:`~dace.transformation.passes.canonicalize.assume_symbols_nonnegative.AssumeSymbolConstraints`): the
-  pointer arrays are monotone, an index array read over a segment of a secondary pointer stays inside the
-  component (``start_idx[start_ptr[c] : start_ptr[c + 1]]``), and a CSR graph read from a member stays inside the
-  component (``col_idx[row_ptr[s] : row_ptr[s + 1]]`` for ``s`` in the component).
-* **Proven from the program**: a *member* is a value loaded through those facts, or loaded from a worklist that only
-  ever stores members; every written index is a member, the iteration variable itself, or ``base + n`` for a
-  counter ``n`` that provably stays below the component's width. A counter is bounded either by deduplication
-  (each increment claims a member whose flag it finds clear and sets, and no flag is cleared between the counter's
-  reset and the increment) or by its loop (at most one increment per trip of a loop bounded by such a counter).
-
-Anything the pass cannot classify keeps the loop sequential.
-"""
+"""Lift a loop over the segments of a pointer array when every iteration touches only its own segment."""
 
 import ast
 import copy

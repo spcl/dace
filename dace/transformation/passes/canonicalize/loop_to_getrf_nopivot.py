@@ -1,31 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lift a hand-written LU elimination without pivoting to a ``GetrfNoPivot`` LAPACK node.
-
-The right-looking (Doolittle) elimination of polybench/npbench ``lu`` and ``ludcmp``::
-
-    for k in range(N):
-        A[k + 1:, k] /= A[k, k]
-        A[k + 1:, k + 1:] -= np.outer(A[k + 1:, k], A[k, k + 1:])
-
-is recognized by what one outer iteration computes
-(:func:`~dace.transformation.passes.canonicalize.loop_iteration_value.summarize`), not by its spelling: slices, a
-scalar loop nest, a reciprocal kept in a temporary all reduce to the same values. Iteration ``k`` of an ``n x n``
-array ``A`` has to store exactly two domains, in terms of the values at iteration start::
-
-    A[i, k] = A[i, k] / A[k, k]                         i in k+1 .. n-1
-    A[i, j] = A[i, j] - A[i, k] * A[k, j] / A[k, k]     i, j in k+1 .. n-1
-
-with ``k`` visiting ``0 .. n-1`` (or ``0 .. n-2``: the last step is empty) in rising order. That is step ``k`` of
-the elimination, so the nest composes to the factorization ``A = L @ U``, ``L`` unit lower triangular, packed in
-place -- exactly ``GetrfNoPivot``. The nest may write no other non-transient container and leave no transient that
-is read after it. Anything else -- a pivot search, a scaled row instead of a column (the transposed, Crout
-factorization), a partial range -- is a clean no-op and the nest stays on the loop path.
-
-On CPU the node is expanded right away: its ``pure`` expansion is the plain right-looking nest, which the
-parallelism phase maps (a parallel trailing update per ``k``), so every spelling of the factorization reaches that
-phase as the one nest it parallelizes best. On GPU the node stays, and the target finalization lowers it to the
-vendor solver.
-"""
+"""Lift a hand-written LU elimination without pivoting to a ``GetrfNoPivot`` LAPACK node."""
 
 from typing import Any
 

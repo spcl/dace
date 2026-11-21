@@ -1,58 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Reorder a state sitting between two loops PAST the second loop, so the loops become adjacent.
-
-``LoopFusion`` (and the ``FuseLoops`` pass built on it) matches a two-node path graph, so
-``loop1 -> state -> loop2`` produces no candidate pair at all and the loops are never offered for
-fusion. ``state`` stays a SIBLING block at the same nesting level the whole time -- it is never
-nested into ``loop2``'s body, only reordered relative to it: ``loop1 -> loop2 -> state``. This is
-sound only when nothing about the reorder is left undecided; a permissive check here is a silent
-miscompile, not a crash, so every condition below is either PROVEN or the candidate is refused.
-
-Numbered against the checklist this pass must clear (see ``reorder_legal``/``escapes`` for where each
-one is enforced):
-
-  1. RAW  -- ``state`` writes data ``loop2`` reads.
-  2. WAR  -- ``state`` reads data ``loop2`` writes.
-  3. WAW  -- ``state`` writes data ``loop2`` also writes.
-  4. Aliasing -- a ``View``/``Reference`` makes name-disjointness meaningless (two names, one
-     memory); resolving an alias soundly in general needs data-flow this pass does not have, so ANY
-     touch of a ``View``/``Reference``-typed descriptor by either side refuses the whole candidate.
-  5. Nested SDFGs -- an access inside a ``NestedSDFG`` can escape its connectors' declared footprint
-     in ways this pass cannot cheaply re-verify; ANY ``NestedSDFG`` in ``state`` or in ``loop2``'s
-     body refuses the whole candidate (this also conservatively subsumes 4 and 6 for anything hidden
-     behind that boundary).
-  6. WCR / dynamic memlets / streams -- never given subset-level credit for being "probably fine";
-     the RAW/WAR/WAW checks are container-name-only (no subset reasoning at all), so a WCR or dynamic
-     write is exactly as disqualifying as a plain one, and a stream push/pop is just another access
-     node with degree -- no special case needed, no special case trusted.
-  7. Early exit -- a ``ReturnBlock``/``BreakBlock``/``ContinueBlock`` anywhere in ``loop2``'s body
-     (at any nesting depth) can land control somewhere other than ``loop2``'s normal successor; were
-     ``state`` moved to run only after that successor, such a path would never run ``state`` at all.
-     Refused outright, unconditionally on reachability (this pass does not attempt to prove a given
-     escape block is dead).
-  8. Symbols -- an assignment on the ``state -> loop2`` edge could define a symbol ``loop2``'s
-     bounds/condition/subsets consume; refused by requiring that edge (and the ``loop1 -> state``
-     edge) to carry no assignments at all, full stop.
-  9. Conditions -- a non-trivial condition on either edge around ``state`` is itself a control
-     dependence this pass does not attempt to re-home; both edges must be unconditional.
-  10. Topology -- ``state`` must be the ONLY path from ``loop1`` to ``loop2``: exactly one in-edge
-      (from ``loop1``) and one out-edge (to ``loop2``) on ``state`` itself, and ``loop2`` must have no
-      OTHER predecessor (which also catches a direct ``loop1 -> loop2`` edge running in parallel).
-  11. Side effects -- checked with ``node.has_side_effects(sdfg)`` (a method, not the ``Tasklet``
-      ``side_effects`` Property, which defaults to ``None`` and answers nothing). Scanned on BOTH
-      sides: a side-effecting node is one whose effects are NOT described by its memlets, so the
-      name-level RAW/WAR/WAW checks say nothing about it -- a side-effecting node in ``loop2`` could
-      read data ``state`` writes without that read appearing in any access set. ``NestedSDFG``'s own
-      override already recurses into arbitrarily deep nesting, so this scan is complete on its own
-      merits -- independent of the blanket nested-SDFG refusal in 5.
-  12. Entry block -- the reorder rewires the edges around ``state`` and ``loop2``, so if either is
-      ``cfg``'s start block the entry path itself changes shape (execution would begin partway
-      through the new chain). Refused; only a candidate whose blocks are all interior is considered.
-
-Checks run cheapest first: the edge shape (``candidates``), then the two loops' iteration spaces, then the
-bodies, then the name-level dependences. Only a reorder that is legal AND that ``LoopFusion.can_be_applied_to``
-accepts is kept: it is tried in place and undone on a refusal. The pass itself never fuses; ``FuseLoops`` does.
-"""
+"""Reorder a state sitting between two loops PAST the second loop, so the loops become adjacent."""
 
 from typing import Any
 
@@ -100,10 +47,7 @@ class ReorderStateForLoopFusion(ppl.Pass):
         return bool(modified & ppl.Modifies.CFG)
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
-        """Reorder every legal, fusion-unlocking between-loops state in ``sdfg``.
-
-        :returns: Number of states moved, or ``None`` if none.
-        """
+        """Reorder every legal, fusion-unlocking between-loops state in ``sdfg``."""
         reordered = 0
         for sd in sdfg.all_sdfgs_recursive():
             for cfg in list(sd.all_control_flow_regions()):
@@ -193,10 +137,7 @@ class ReorderStateForLoopFusion(ppl.Pass):
 
     @staticmethod
     def reorder_legal(state: SDFGState, second: LoopRegion) -> bool:
-        """Whether running ``state`` after ``second`` changes nothing (items 7, 5, 11, 4, 1-3, cheapest first).
-
-        Dependences are by container name: a shared name is a conflict whatever the subsets.
-        """
+        """Whether running ``state`` after ``second`` changes nothing (items 7, 5, 11, 4, 1-3, cheapest first)."""
         sdfg = state.sdfg
         if ReorderStateForLoopFusion.escapes(second):
             return False
@@ -213,10 +154,7 @@ class ReorderStateForLoopFusion(ppl.Pass):
     def reorder_past(
         cfg: ControlFlowRegion, first: LoopRegion, state: SDFGState, second: LoopRegion
     ) -> tuple[list, list]:
-        """Rewire ``first -> state -> second`` into ``first -> second -> state`` in place.
-
-        :returns: The removed and the added edges, for :meth:`undo_reorder`.
-        """
+        """Rewire ``first -> state -> second`` into ``first -> second -> state`` in place."""
         removed = [cfg.edges_between(first, state)[0], cfg.edges_between(state, second)[0], *cfg.out_edges(second)]
         for e in removed:
             cfg.remove_edge(e)

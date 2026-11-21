@@ -1,37 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lift a contraction / transpose loop nest to a single library node.
-
-A sibling of :class:`~dace.transformation.passes.loop_to_reduce.LoopToReduce`: a
-loop nest that computes one tensor contraction is replaced by a state holding a
-single :class:`~dace.libraries.blas.nodes.einsum.Einsum` node, and a pure matrix
-transpose by a :class:`~dace.libraries.linalg.nodes.transpose.Transpose` node.
-
-Recognised contraction shapes (all as ``@dace.program`` loop nests)::
-
-    for i:                for i: for j:              for i: for j: for k:
-      for j:                y[j] += A[i,j]*x[i]        C[i,j] += A[i,k]*B[k,j]
-        y[i] += A[i,j]*x[j] (transposed matvec:       (matmul: 'ij,jk->ik')
-    (matvec: 'ij,j->i')     'ij,i->j')
-
-and the pure transpose ``for i: for j: B[i,j] = A[j,i]`` (2-D, cross-array).
-
-The direct matcher (:func:`_match_nest`) reads the canonical loop form in place: no copy, no pipeline. Measured on
-the real form, the nest that reaches this pass is
-
-* a CHAIN of nested single-block ``LoopRegion``s -- one iteration axis each -- and/or
-  ``MapEntry`` scopes (a map carries several params at once), innermost body one
-  ``SDFGState``;
-* whose body accumulates via an explicit read/add/write (``C[i,j] = C[i,j] + prod`` or
-  ``C[i,j] = C[i,j] - prod``, what the frontend emits -- NOT a WCR) or via a WCR-sum edge
-  (what a ``@dace.map`` accumulation emits). Both are accepted directly;
-* whose product is spread over several tasklets joined by single-element transient
-  staging scalars (``A --A[i,k]--> A_index --> mul``), which the matcher walks through.
-
-The einsum is then read straight off the index expressions: every axis that indexes
-an operand but not the output is contracted. Acceptance mirrors ``LiftEinsum``'s
-``can_be_applied`` (>=2 tensor operands, at most one scalar coefficient, indices that
-are exactly axis parameters or ``0``, rectangular full ranges, non-scalar output).
-"""
+"""Lift a contraction / transpose loop nest to a single library node."""
 
 import ast
 import copy
@@ -101,10 +69,7 @@ class _Axis(NamedTuple):
 
 
 class _Nest(NamedTuple):
-    """A matched iteration nest: its axes and the innermost scope holding the compute.
-
-    ``entry`` is the innermost ``MapEntry`` (``None`` when the whole nest is
-    ``LoopRegion``s and the body is the state's top level)."""
+    """A matched iteration nest: its axes and the innermost scope holding the compute."""
 
     axes: list[_Axis]
     state: SDFGState
@@ -126,10 +91,7 @@ class _Product(NamedTuple):
 
 
 def _loop_axis(loop: LoopRegion) -> _Axis | None:
-    """``loop`` as one ``0 .. end`` unit-stride axis, or ``None`` if it is not one.
-    A non-zero start or a non-unit stride is refused for the same reason
-    ``LiftEinsum._partial_range`` refuses it: the contraction spans the operands' full
-    extent, so a partial sweep would compute the wrong (or a clobbering) result."""
+    """``loop`` as one ``0 .. end`` unit-stride axis, or ``None`` if it is not one."""
     if loop.inverted or not loop.loop_variable:
         return None
     init = loop_analysis.get_init_assignment(loop)
@@ -153,10 +115,8 @@ def _map_axes(entry: nodes.MapEntry) -> list[_Axis] | None:
 
 
 def _descend_maps(state: SDFGState, axes: list[_Axis], entry: nodes.MapEntry | None) -> _Nest | None:
-    """Follow one chain of nested map scopes down from ``entry`` (or from ``state``'s
-    top level when it is ``None``), appending each map's params to ``axes``. Refuses a
-    level that holds compute of its own or forks into several maps -- the lifted node
-    replaces the WHOLE scope, so nothing may be left behind."""
+    """Follow one chain of nested map scopes down from ``entry`` (or from ``state``'s top level when it is ``None``),
+    appending each map's params to ``axes``."""
     children = state.scope_children()
     while True:
         if entry is not None:
@@ -181,9 +141,7 @@ def _descend_maps(state: SDFGState, axes: list[_Axis], entry: nodes.MapEntry | N
 
 
 def _nest_of(root: LoopRegion) -> _Nest | None:
-    """The iteration nest rooted at a ``LoopRegion``. Loops contribute ONE axis each and
-    must form a perfect chain; the innermost body may then descend through map scopes
-    (a mixed ``for i: for j,k in dace.map[...]`` nest is one nest)."""
+    """The iteration nest rooted at a ``LoopRegion``."""
     nest = perfect_nest(root)
     if nest is None:
         return None
@@ -197,9 +155,7 @@ def _nest_of_map(state: SDFGState, entry: nodes.MapEntry) -> _Nest | None:
 
 
 def _point_index(memlet: Memlet, expect_data: str | None = None) -> tuple[str, list[str]] | None:
-    """``(array, one index expression per axis)`` for a single-element point access,
-    else ``None``. Mirrors ``LiftEinsum``'s per-edge screen (no dynamic memlets, exactly
-    one element)."""
+    """``(array, one index expression per axis)`` for a single-element point access, else ``None``."""
     if memlet is None or memlet.is_empty() or memlet.data is None or memlet.dynamic:
         return None
     if expect_data is not None and memlet.data != expect_data:
@@ -231,22 +187,16 @@ def _tasklet_expr(tasklet: nodes.Tasklet) -> symbolic.SymbolicType | None:
         expr = pystr_to_symbolic(astutils.unparse(stmt.value))
     except (TypeError, ValueError, AttributeError, sympy.SympifyError):
         return None
-    # A comparison / logical tasklet (``__out = __in1 > __in2``) parses to a sympy
-    # RELATIONAL or BooleanFunction, which cannot be divided or subtracted -- and is
-    # never a contraction anyway. Reject it here rather than let the arithmetic raise.
-    # NOT ``isinstance(expr, Boolean)``: sympy's ``Symbol`` derives from ``Boolean``, so
-    # that would also reject the bare-symbol copy tasklet ``__out = __inp`` (the pure
-    # transpose shape).
+    # A comparison / logical tasklet (``__out = __in1 > __in2``) parses to a sympy RELATIONAL or BooleanFunction, which
+    # cannot be divided or subtracted -- and is never a contraction anyway.
     if expr.is_Relational or isinstance(expr, sympy.logic.boolalg.BooleanFunction):
         return None
     return expr
 
 
 def _product_scale(tasklet: nodes.Tasklet) -> sympy.Basic | None:
-    """The numeric factor of a tasklet that multiplies ALL of its inputs together
-    (``__out = 2.5 * __in2`` -> ``2.5``; ``__out = __in1 * __in2`` -> ``1``), else
-    ``None``. Same test ``LiftEinsum`` applies to the fused tasklet, here applied per
-    tasklet so a product split across several of them still matches."""
+    """The numeric factor of a tasklet that multiplies ALL of its inputs together (``__out = 2.5 * __in2`` -> ``2.5``;
+    ``__out = __in1 * __in2`` -> ``1``), else ``None``."""
     expr = _tasklet_expr(tasklet)
     if expr is None or not tasklet.in_connectors:
         return None
@@ -292,9 +242,8 @@ def _is_sum_tasklet(tasklet: nodes.Tasklet) -> bool:
 def _resolve(
     state: SDFGState, sdfg: SDFG, edge: MultiConnectorEdge[Memlet], visited: dict[nodes.Node, None]
 ) -> _Leaf | _Product | None:
-    """The value flowing along ``edge``, chasing back through single-element transient
-    staging scalars and product tasklets to the leaf array reads. ``visited`` collects
-    every node consumed, so the caller can verify the body holds nothing else."""
+    """The value flowing along ``edge``, chasing back through single-element transient staging scalars and product
+    tasklets to the leaf array reads."""
     src = edge.src
     if isinstance(src, nodes.MapEntry):  # scope boundary: the inner memlet is the point read
         origin = state.memlet_path(edge)[0].src
@@ -324,8 +273,7 @@ def _resolve(
 def _resolve_tasklet(
     state: SDFGState, sdfg: SDFG, tasklet: nodes.Tasklet, visited: dict[nodes.Node, None]
 ) -> _Product | None:
-    """``tasklet`` as a product of its resolved inputs, or ``None``. Single-consumer
-    only: a re-used intermediate is not a tree and would be counted twice."""
+    """``tasklet`` as a product of its resolved inputs, or ``None``."""
     if tasklet in visited or state.out_degree(tasklet) != 1:
         return None
     scale = _product_scale(tasklet)
@@ -444,8 +392,7 @@ def _axis_subset(idx: list[str], axes: dict[str, _Axis]) -> subsets.Range:
 
 
 def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue, repeats: bool) -> EinsumSpec | None:
-    """The ``Einsum`` spec for an accumulated contraction, or ``None``. The acceptance
-    rule mirrors ``LiftEinsum.can_be_applied`` on the map this nest would become."""
+    """The ``Einsum`` spec for an accumulated contraction, or ``None``."""
     if not value.accumulates or (repeats and value.write_node is not None and value.write_node.setzero):
         return None
     axes = {a.param: a for a in nest.axes}
@@ -463,7 +410,6 @@ def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue, repeats: bool) ->
             return None  # an index that is not an axis parameter
         (tensors if any(i != "0" for i in leaf.idx) else coeffs).append(leaf)
     # >=2 tensor operands: a single one is a copy / transpose / reduction, not a matmul.
-    # At most one runtime scalar: the node wires exactly one ``_alpha`` connector.
     if len(tensors) < 2 or len(coeffs) > 1:
         return None
     if any(i != "0" and i not in axes for i in value.idx):
@@ -481,11 +427,7 @@ def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue, repeats: bool) ->
     if in_chars != dict.fromkeys(axes):
         return None  # an axis indexes nothing -- lifting would silently drop its repetition
 
-    # Canonical operand order. Any order is CORRECT (the einsum terms are emitted in the
-    # same order as the connectors that carry them, which is the pairing the expansion's
-    # ``*sorted(inputs)`` uses), but it must not depend on the frontend's edge insertion
-    # order -- otherwise the same contraction gets a different einsum string depending on
-    # how it was spelled. Sorting by operand identity pins it.
+    # Canonical operand order.
     tensors.sort(key=lambda t: (t.array, tuple(t.idx)))
 
     mapping: dict[str, str] = {}
@@ -512,26 +454,10 @@ def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue, repeats: bool) ->
 
 
 def _fold_coefficient(sdfg: SDFG, array: str, write_node: nodes.AccessNode | None, repeats: bool) -> float:
-    """The ``Einsum``'s ``beta``: ``out = alpha*contraction + beta*out_prior``. The SAME
-    three signals ``LiftEinsum.apply`` uses, in the same order -- folding onto undefined
-    memory and discarding a meaningful prior both miscompile:
-
-    1. The accumulator carries a zero identity (``setzero``) -> it starts at 0, so
-       OVERWRITE (beta=0). Zeros stored just before a lifted loop nest count too: the
-       lift turns its fold onto them into an overwrite (``zero_prior``).
-    2. Else there is another in-SDFG writer of the array (a reset / pre-scale loop, e.g.
-       atax's ``y[:] = 0`` before the matvec) -> FOLD onto it (beta=1).
-    3. Else a non-transient output: the CALLER supplies the prior value that ``+=`` reads
-       -> FOLD (beta=1).
-    4. Else a fresh, never-written transient (k3mm's ``E = define_local(...)`` accumulator)
-       -> OVERWRITE (beta=0) rather than fold uninitialized garbage, unless a repeat of the
-       nest folds onto what the last run left (``repeats``).
-    """
+    """The ``Einsum``'s ``beta``: ``out = alpha*contraction + beta*out_prior``."""
     if write_node is not None and write_node.setzero:
         return 0.0
-    # Scoped to THIS sdfg so a same-named array in an unrelated nested SDFG cannot
-    # false-positive a prior writer.
-    # Only a non-empty in-edge is a write: an ordering memlet transfers nothing.
+    # Scoped to THIS sdfg so a same-named array in an unrelated nested SDFG cannot false-positive a prior writer.
     has_prior_writer = any(
         n.data == array
         and n is not write_node
@@ -576,9 +502,8 @@ def _scope_boundary_is_ordered(state: SDFGState, entry: nodes.MapEntry) -> bool:
 
 
 def _may_hold_map_contraction(state: SDFGState) -> bool:
-    """Cheap NECESSARY condition for a map-form contraction, in ONE node walk: the state
-    must hold a map AND a multiplication. Building a state's scope tree is not free, and a
-    big weather/physics kernel is mostly maps that multiply nothing."""
+    """Cheap NECESSARY condition for a map-form contraction, in ONE node walk: the state must hold a map AND a
+    multiplication."""
     has_map, has_mul = False, False
     for node in state.nodes():
         if isinstance(node, nodes.MapEntry):
@@ -591,10 +516,7 @@ def _may_hold_map_contraction(state: SDFGState) -> bool:
 
 
 def _match_nest(nest: _Nest | None, sdfg: SDFG, repeats: bool) -> EinsumSpec | TransposeSpec | None:
-    """An ``EinsumSpec`` / ``TransposeSpec`` read directly off ``nest``, or ``None``.
-
-    :param repeats: an enclosing loop may run the nest again.
-    """
+    """An ``EinsumSpec`` / ``TransposeSpec`` read directly off ``nest``, or ``None``."""
     if nest is None or len(nest.axes) < 2:
         return None
     value = _body_value(nest, sdfg)
@@ -605,9 +527,7 @@ def _match_nest(nest: _Nest | None, sdfg: SDFG, repeats: bool) -> EinsumSpec | T
 
 @explicit_cf_compatible
 class LoopToEinsum(ppl.Pass):
-    """Lift a contraction nest to an ``Einsum`` node, or a transpose nest to a
-    ``Transpose`` node. The nest may be spelled as ``LoopRegion``s, as map scopes or as
-    a mix of both (see the module docstring)."""
+    """Lift a contraction nest to an ``Einsum`` node, or a transpose nest to a ``Transpose`` node."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -711,8 +631,7 @@ class LoopToEinsum(ppl.Pass):
         node.alpha = spec.alpha
         node.beta = spec.beta
         state.add_node(node)
-        # The operand order the spec fixes is authoritative; find each operand's outside
-        # AccessNode by name among the scope's sources (they are unique per array here).
+        # The operand order the spec fixes is authoritative
         sources = {e.src.data: e.src for e in state.in_edges(entry) if isinstance(e.src, nodes.AccessNode)}
         for conn, array, subset, dtype in spec.inputs:
             node.add_in_connector(conn, dtype)

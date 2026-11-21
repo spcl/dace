@@ -1,31 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Re-roll a manually-unrolled lane chain back into a step-``g`` loop.
-
-A hand-unrolled loop has a step ``S != 1`` and a body that is ``m`` copies of a
-single-position body -- copy ``k`` accessing every loop-variable-indexed array
-at an offset ``k * g`` past copy 0 (``a[i]``, ``a[i + g]``, ... ``a[i + (m-1)*g]``).
-TSVC ``s351`` (dense saxpy) and ``s353`` (indirect/gather saxpy) are the direct
-examples. This pass detects that shape, keeps lane 0, drops the other lanes, and
-re-rolls the loop to step ``g`` over the flattened range so each iteration does
-one position. ``LoopToMap`` can then parallelize the result -- the unrolled form
-blocks it because the lanes look like one strided ``S * i + k`` access.
-
-The match is conservative: a constant positive step, a body made only of states,
-``m`` lanes at equally-spaced offsets ``{0, g, ..., (m-1)g}`` (in memlet
-subscripts and/or in interstate gather assignments such as ``idx = b[ip[i+k]]``),
-lanes computing the same values one offset apart, nothing else in the body that
-counts its runs, and contiguous coverage (``step == m*g``, or overlapping pure
-writes at a multiple of ``g``). Anything else is left untouched.
-
-A lane that READS PAST its own position -- TSVC ``s116``, ``a[i+k] = a[i+k+1] *
-a[i+k]`` -- does not fit that per-edge classifier: its ``m`` lanes carry ``m + 1``
-distinct offsets, so ``step < m*g`` and the read-modify-write refusal fires.
-:meth:`RerollUnrolledLoops._try_reroll_chain` handles it on a second pass, keying
-a lane on the VALUE COMPONENT it forms and on the offset that component stores
-at, with the read-ahead as one more boundary edge at a relative offset every lane
-must agree on. It additionally requires the lanes to RUN in ascending offset
-order, which is what makes the read-ahead see the same value in both forms.
-"""
+"""Re-roll a manually-unrolled lane chain back into a step-``g`` loop."""
 
 import copy
 import re
@@ -65,12 +39,7 @@ class IteratorScaling:
 
 
 def fuse_body_states(loop: LoopRegion) -> None:
-    """Fuse the chain of states an unrolled body still has once its counter edges are empty.
-
-    The accumulator matcher reads one state; the copies of a counter-indexed body sat in one state each, split by the
-    counter assignments induction-variable substitution has since removed. Fusion preserves the body's semantics, so
-    it stays even when no matcher fires afterwards.
-    """
+    """Fuse the chain of states an unrolled body still has once its counter edges are empty."""
     from dace.transformation.interstate.state_fusion import StateFusion
 
     fused = True
@@ -135,15 +104,8 @@ def scaled_subsets(loop: LoopRegion, var: str) -> tuple[int, list[Memlet]] | Non
 
 
 def unscale_iterator(loop: LoopRegion) -> IteratorScaling | None:
-    """Rewrite a unit-step loop whose iterator appears only as ``m*i + c`` in subsets into a step-``m`` loop over ``i + c``.
-
-    Induction-variable substitution closes an unrolled body's strength-reduced counter into ``a[4*i + c]``: the
-    hand-unrolled shape with its iterator scaled. Scaling the range by ``m`` instead gives ``a[i + c]`` over step ``m``,
-    the shape the re-roll matchers read. The loop variable must not appear anywhere but memlet subsets, where every
-    occurrence has the one coefficient ``m >= 2``.
-
-    :returns: The undo record, or ``None`` (loop untouched).
-    """
+    """Rewrite a unit-step loop whose iterator appears only as ``m*i + c`` in subsets into a step-``m`` loop over ``i +
+    c``."""
     var = loop.loop_variable
     start = loop_analysis.get_init_assignment(loop)
     end = loop_analysis.get_loop_end(loop)
@@ -178,11 +140,7 @@ def unrolled_step(loop: LoopRegion) -> tuple[int | None, IteratorScaling | None]
 
 
 def _const_int(value: symbolic.SymbolicType | int) -> int | None:
-    """Return ``value`` as a Python ``int`` if it is a constant integer, else ``None``.
-
-    :param value: A symbolic expression or number.
-    :returns: The integer value, or ``None`` if not a constant integer.
-    """
+    """Return ``value`` as a Python ``int`` if it is a constant integer, else ``None``."""
     try:
         sym = symbolic.pystr_to_symbolic(value) if isinstance(value, str) else symbolic.pystr_to_symbolic(str(value))
         if sym.is_Integer:
@@ -193,12 +151,7 @@ def _const_int(value: symbolic.SymbolicType | int) -> int | None:
 
 
 def _offset_of_index(index_expr: str, loop_var: str) -> int | None:
-    """Constant offset ``k`` of an index expression ``loop_var + k``.
-
-    :param index_expr: The (string) index expression, e.g. ``i + 2``.
-    :param loop_var: The loop variable name.
-    :returns: The integer offset ``k`` (unit coefficient), else ``None``.
-    """
+    """Constant offset ``k`` of an index expression ``loop_var + k``."""
     try:
         expr = symbolic.pystr_to_symbolic(index_expr)
     except Exception:
@@ -209,13 +162,7 @@ def _offset_of_index(index_expr: str, loop_var: str) -> int | None:
 
 
 def _index_offset(subset: Subset, loop_var: str) -> int | None:
-    """Constant offset ``k`` of a one-dimensional ``loop_var + k`` subset.
-
-    :param subset: The memlet subset to inspect.
-    :param loop_var: The loop variable name.
-    :returns: The integer offset ``k`` if the subset is a single point
-              ``loop_var + k`` (unit coefficient), else ``None``.
-    """
+    """Constant offset ``k`` of a one-dimensional ``loop_var + k`` subset."""
     if subset is None or len(subset) != 1:
         return None
     rb, re_, rs = subset[0]
@@ -225,16 +172,7 @@ def _index_offset(subset: Subset, loop_var: str) -> int | None:
 
 
 def _assignment_offset(rhs: str, loop_var: str) -> int | None:
-    """Offset ``k`` of an interstate-assignment RHS ``loop_var + k`` or ``arr[loop_var + k]``.
-
-    The gather form ``ip[i + k]`` (an array access) is handled by extracting the
-    index between the brackets; the direct form ``i + k`` is used as-is.
-
-    :param rhs: The assignment right-hand side string.
-    :param loop_var: The loop variable name.
-    :returns: The integer offset ``k``, or ``None`` if the RHS does not reference
-              the loop variable as a single unit-coefficient offset.
-    """
+    """Offset ``k`` of an interstate-assignment RHS ``loop_var + k`` or ``arr[loop_var + k]``."""
     rhs = rhs.strip()
     index_expr = rhs
     if "[" in rhs and rhs.endswith("]"):
@@ -254,16 +192,7 @@ def lane_signature(
     written: set[str],
     ids: ValueIds,
 ) -> list | None:
-    """What lane ``lane`` hands out, spelled as lane 0 would: equal signatures mean one value computed one offset apart.
-
-    :param private: Per state, the nodes only this lane owns.
-    :param edges: Per state, the edges at the lane's offset.
-    :param aliases: The lane-private carried containers of all lanes, by the name lanes share for them.
-    :param sym_offset: The per-lane interstate symbols and their offsets.
-    :param gathers: Per lane symbol, what it is read from.
-    :param written: The transients the body writes.
-    :returns: The sorted keys, or ``None`` if a node's meaning is not in its key.
-    """
+    """What lane ``lane`` hands out, spelled as lane 0 would: equal signatures mean one value computed one offset apart."""
     var = loop.loop_variable
     stored: dict[str, int] = {}
 
@@ -340,16 +269,7 @@ class RerollUnrolledLoops(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
-        """Re-roll every matching unrolled loop in ``sdfg`` and its nested SDFGs.
-
-        Runs to a fixpoint: re-rolling one loop can expose a sibling or an
-        enclosing loop that only became a clean lane chain after the inner
-        collapse (a manually multi-level / nested-tiled unroll). Bounded by the
-        loop count so it always terminates.
-
-        :param sdfg: SDFG to mutate in place.
-        :returns: The number of loops re-rolled, or ``None`` if none.
-        """
+        """Re-roll every matching unrolled loop in ``sdfg`` and its nested SDFGs."""
         total = 0
         max_iters = 1 + sum(
             1
@@ -363,8 +283,7 @@ class RerollUnrolledLoops(ppl.Pass):
                 for cfg in list(sd.all_control_flow_regions(recursive=True)):
                     if not isinstance(cfg, LoopRegion) or not cfg.loop_variable:
                         continue
-                    # One stride read per loop -- all three matchers refuse on the same constant step >= 2,
-                    # and a matcher that mutates returns True, so the value cannot go stale between them.
+                    # One stride read per loop
                     step, undo = unrolled_step(cfg)
                     if step is None or step < 2:
                         continue
@@ -385,30 +304,14 @@ class RerollUnrolledLoops(ppl.Pass):
         return total or None
 
     def _body_states(self, loop: LoopRegion) -> list[SDFGState] | None:
-        """The loop's body states when the body is made only of states.
-
-        :param loop: Loop region to inspect.
-        :returns: The list of body states, or ``None`` if the body contains a
-                  non-state block (a nested region the matcher cannot reason about).
-        """
+        """The loop's body states when the body is made only of states."""
         blocks = list(loop.bfs_nodes(loop.start_block)) if loop.nodes() else []
         if not blocks or len(blocks) != len(loop.nodes()) or not all(isinstance(b, SDFGState) for b in blocks):
             return None
         return blocks
 
     def _interstate_lane_symbols(self, loop: LoopRegion, loop_var: str) -> dict[str, int] | None:
-        """Per-lane symbols defined on the body's interstate edges.
-
-        A gather is unrolled as one interstate assignment per lane, e.g.
-        ``ip_index = ip[i]``, ``ip_index_0 = ip[i + 1]``; the assigned symbol
-        then carries the lane offset into the next state's memlets.
-
-        :param loop: The loop region.
-        :param loop_var: The loop variable name.
-        :returns: ``{symbol: offset}`` for the loop-variable-dependent
-                  assignments, or ``None`` if any such assignment is not a clean
-                  single offset.
-        """
+        """Per-lane symbols defined on the body's interstate edges."""
         word = re.compile(r"\b%s\b" % re.escape(loop_var))
         sym_offset: dict[str, int] = {}
         for edge in loop.edges():
@@ -422,21 +325,7 @@ class RerollUnrolledLoops(ppl.Pass):
         return sym_offset
 
     def _edge_offset(self, subset: Subset | None, loop_var: str, sym_offset: dict[str, int]) -> tuple[int | None, bool]:
-        """Lane offset of a memlet subset, and whether it is a lane edge at all.
-
-            A subset indexed by ``loop_var + k`` has offset ``k``; a subset indexed by
-            a per-lane symbol (e.g. ``b[ip_index]``) inherits that symbol's offset.
-
-            :param subset: The memlet subset.
-            :param loop_var: The loop variable name.
-            :param sym_offset: The per-lane interstate symbols and their offsets.
-        :param gathers: Per lane symbol, what it is read from.
-        :param written: The transients the body writes.
-            :returns: ``(offset, ok)``. ``ok`` is ``False`` only when the subset
-                      references the loop variable or multiple lane symbols but cannot
-                      be reduced to one clean offset (the caller then refuses). A
-                      non-lane (shared/constant) subset returns ``(None, True)``.
-        """
+        """Lane offset of a memlet subset, and whether it is a lane edge at all."""
         if subset is None:
             return None, True
         names = dict.fromkeys(str(s) for s in subset.free_symbols)
@@ -450,22 +339,12 @@ class RerollUnrolledLoops(ppl.Pass):
             return sym_offset[next(iter(lane_syms))], True
         return None, True
 
-    #: Sympy class names of associative binary operations recognised as the
-    #: merge tasklet's reduction op. Indexed via ``type(expr).__name__`` so we
-    #: stay on the :mod:`dace.symbolic` interface (no direct ``import sympy``).
+    #: Sympy class names of associative binary operations recognised as the merge tasklet's reduction op.
     ASSOC_SYMPY_KIND: dict[str, str] = {"Add": "+", "Mul": "*", "Min": "min", "Max": "max"}
 
     def _associative_op_kind(self, node: nodes.Node) -> str | None:
-        """If ``node`` is a binary associative-op tasklet over its two inputs,
-        return its op kind (``'+'``, ``'*'``, ``'min'``, ``'max'``); else ``None``.
-
-        Lifts the tasklet RHS to a :mod:`dace.symbolic` expression -- sympy's
-        ``Add`` / ``Mul`` / ``Min`` / ``Max`` are associative by construction,
-        so we don't need to enumerate parenthesisation or whitespace variants.
-        The operands are the tasklet's own connectors rather than a fixed
-        ``__in1``/``__in2`` pair: the frontend names a binop's inputs that way
-        but a ``min``/``max`` call's ``__in_a``/``__in_b``.
-        """
+        """If ``node`` is a binary associative-op tasklet over its two inputs, return its op kind (``'+'``, ``'*'``,
+        ``'min'``, ``'max'``); else ``None``."""
         if not isinstance(node, nodes.Tasklet):
             return None
         code = node.code.as_string.strip()
@@ -487,22 +366,8 @@ class RerollUnrolledLoops(ppl.Pass):
         return self.ASSOC_SYMPY_KIND.get(type(expr).__name__)
 
     def _is_transparent_spine(self, state: SDFGState, node: nodes.Node) -> bool:
-        """Whether ``node`` carries a value through the reduction without itself
-        being a lane-unique computation or an associative merge op.
-
-        A manually-unrolled reduction (``acc += f(i) + f(i+g) + ...``; TSVC
-        ``s352`` dot, ``s31111`` sum) lowers to an SSA left-fold: associative
-        merge tasklets (``__out = __in1 + __in2``) interleaved with two kinds of
-        pass-through carriers that are reached by every lane but are NOT merges:
-
-        * a **transient AccessNode** -- the SSA value handed from one merge
-          tasklet to the next (``a_slice_b_slice_plus_...``, ``partial_v_k``);
-        * a single-input **pass-through tasklet** (``__out = __inp``) -- the
-          accumulator copy-back the frontend stages (``dot = __inp``).
-
-        Treating these as a transparent spine (rather than a disqualifying
-        non-associative merge) is what lets the chain collapse to lane 0.
-        """
+        """Whether ``node`` carries a value through the reduction without itself being a lane-unique computation or an
+        associative merge op."""
         if isinstance(node, nodes.AccessNode):
             desc = state.sdfg.arrays.get(node.data)
             return desc is not None and desc.transient
@@ -521,11 +386,7 @@ class RerollUnrolledLoops(ppl.Pass):
         return False
 
     def _carried_accumulator_op(self, state: SDFGState, acc: str) -> str | None:
-        """Op kind of a lane's ``acc = acc OP x`` update, or ``None`` if it is not that shape.
-
-        ``acc`` must be read once at the top of ``state``, combined by exactly one associative
-        tasklet, and handed to the write through transparent spine carriers only.
-        """
+        """Op kind of a lane's ``acc = acc OP x`` update, or ``None`` if it is not that shape."""
         acc_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == acc]
         src = [n for n in acc_nodes if state.in_degree(n) == 0]
         snk = [n for n in acc_nodes if state.out_degree(n) == 0]
@@ -545,13 +406,7 @@ class RerollUnrolledLoops(ppl.Pass):
         return op
 
     def _accumulators_folded_once(self, loop: LoopRegion, accs: dict[str, None], op: str) -> bool:
-        """Whether the loop's per-lane accumulators are consumed by ONE binary ``op`` tree.
-
-        Sound re-roll of ``s0 OP= f(i); ...; s(m-1) OP= f(i+(m-1)g)`` into lane 0 alone relies on
-        the dropped accumulators keeping their pre-loop value and re-entering through that fold,
-        so their only use after the loop must be a single ``m``-leaf tree of the SAME op (FP
-        policy: reassociation is sanctioned WITHIN a reduction combining op).
-        """
+        """Whether the loop's per-lane accumulators are consumed by ONE binary ``op`` tree."""
         sdfg = loop.sdfg
         body = dict.fromkeys(loop.all_control_flow_blocks(recursive=True))
         for e in sdfg.all_interstate_edges(recursive=True):
@@ -580,8 +435,6 @@ class RerollUnrolledLoops(ppl.Pass):
             return False
         state = next(iter(host))
         # Forward closure over the fold: ``op`` tasklets chained through single-consumer scalars.
-        # A consumer that is not such a tasklet ends the walk -- it is the tree root leaving the
-        # fold -- and the counting check below rejects it if the fold was not complete.
         ops: dict = {}
         inside = dict.fromkeys(leaves)
         frontier = list(leaves)
@@ -602,11 +455,7 @@ class RerollUnrolledLoops(ppl.Pass):
         return len(ops) == len(accs) - 1 and all(e.src in inside for t in ops for e in state.in_edges(t))
 
     def _shared_nodes(self, state: SDFGState) -> dict[nodes.Node, None]:
-        """Boundary access nodes of a state (external arrays + read-only sources).
-
-        :param state: The body state.
-        :returns: The AccessNodes the lane traversal must stop at.
-        """
+        """Boundary access nodes of a state (external arrays + read-only sources)."""
         shared: dict[nodes.Node, None] = {}
         for n in state.nodes():
             if not isinstance(n, nodes.AccessNode):
@@ -624,15 +473,7 @@ class RerollUnrolledLoops(ppl.Pass):
     def _lane_nodes(
         self, state: SDFGState, lane_edges: list[MultiConnectorEdge[Memlet]], shared: dict[nodes.Node, None]
     ) -> dict[nodes.Node, None]:
-        """Internal (non-shared) nodes reachable from a lane's boundary edges.
-
-        :param state: The body state.
-        :param lane_edges: The boundary edges (in this state) belonging to the lane.
-        :param shared: Access nodes shared across lanes (excluded from the walk).
-        :returns: The set of internal nodes that belong only to this lane.
-
-        Walks VALUE edges only -- an ordering memlet fixes order, never lane membership.
-        """
+        """Internal (non-shared) nodes reachable from a lane's boundary edges."""
         seen: dict[nodes.Node, None] = {}
         frontier: list[nodes.Node] = []
         for e in lane_edges:
@@ -647,12 +488,7 @@ class RerollUnrolledLoops(ppl.Pass):
         return seen
 
     def _try_reroll(self, loop: LoopRegion, step: int) -> bool:
-        """Attempt to re-roll one loop; return whether it was rerolled.
-
-        :param loop: The candidate loop region.
-        :param step: The loop's constant step, read once by the caller.
-        :returns: ``True`` if the loop matched and was re-rolled.
-        """
+        """Attempt to re-roll one loop; return whether it was rerolled."""
         loop_var = loop.loop_variable
         states = self._body_states(loop)
         if states is None:
@@ -679,8 +515,7 @@ class RerollUnrolledLoops(ppl.Pass):
         if not all_offsets:
             return False
 
-        # The distinct lane offsets must be equally spaced from 0:
-        # ``{0, g, 2g, ..., (m-1)g}`` -- ``m`` lanes, spacing ``g``.
+        # The distinct lane offsets must be equally spaced from 0: ``{0, g, 2g, ..., (m-1)g}``
         distinct = sorted(all_offsets)
         m = len(distinct)
         if m < 2 or distinct[0] != 0:
@@ -689,11 +524,9 @@ class RerollUnrolledLoops(ppl.Pass):
         if g <= 0 or distinct != [j * g for j in range(m)]:
             return False
 
-        # Position-coverage safety: ``step > m*g`` leaves gaps the re-rolled
-        # step-``g`` loop would wrongly fill; ``step < m*g`` overlaps, so a
-        # position is touched by more than one lane -- safe only when no array is
-        # both read and written (else the re-roll changes a read-modify-write count).
-        # ... and only a step that is a multiple of ``g`` visits the positions the step-``g`` loop does.
+        # Position-coverage safety: ``step > m*g`` leaves gaps the re-rolled step-``g`` loop would wrongly fill; ``step
+        # < m*g`` overlaps, so a position is touched by more than one lane -- safe only when no array is both read and
+        # written (else the re-roll changes a read-modify-write count).
         if step > m * g or step % g != 0:
             return False
         if step < m * g and self._has_read_modify_write(states, edge_offsets):
@@ -723,12 +556,7 @@ class RerollUnrolledLoops(ppl.Pass):
                 return False
             lane_nodes[st] = per_lane_unique
 
-        # Per-lane carried accumulators -- the ``s0 OP= f(i); s1 OP= f(i+g); ...; s = s0 OP s1 ...``
-        # reduction shape. A lane whose private component writes a shared container at a LOOP-
-        # INVARIANT subset leaves a carried value live past the loop; dropping the lane moves its
-        # accumulation into lane 0, so the value only survives when every such accumulator is
-        # folded after the loop by one tree of the same associative op. Without that proof the
-        # re-roll silently rewrites what the lanes computed (``c[0] = s0; c[1] = s1``).
+        # Per-lane carried accumulators -- the ``s0 OP= f(i); s1 OP= f(i+g); ...; s = s0 OP s1 ...`` reduction shape.
         carried: dict[int, dict[str, SDFGState]] = {d: {} for d in distinct}
         for st in states:
             for d in distinct:
@@ -760,8 +588,7 @@ class RerollUnrolledLoops(ppl.Pass):
         if loop_analysis.read_outside(loop.sdfg, loop, set(sym_offset), self._scratch(private)):
             return False
 
-        # Re-roll: drop every lane but offset 0 -- its unique nodes in each state,
-        # the per-lane interstate symbol assignments. Finally, rewrite the loop to step ``g``.
+        # Re-roll: drop every lane but offset 0
         drop_offsets = dict.fromkeys(distinct[1:])  # already sorted -- dict.fromkeys keeps that order
         drop_syms = dict.fromkeys(s for s, o in sym_offset.items() if o in drop_offsets)
         for st in states:
@@ -784,14 +611,7 @@ class RerollUnrolledLoops(ppl.Pass):
         return True
 
     def _cut_nodes(self, state: SDFGState) -> dict[nodes.Node, None]:
-        """AccessNodes of the loop's VISIBLE containers -- where the value walk stops.
-
-        A lane's private values live in transients; everything a lane reads from or stores to the
-        outside world crosses one of these nodes, which is what makes them the component boundary.
-
-        :param state: The body state.
-        :returns: The non-transient AccessNodes of ``state``.
-        """
+        """AccessNodes of the loop's VISIBLE containers -- where the value walk stops."""
         arrays = state.sdfg.arrays
         return dict.fromkeys(
             n
@@ -800,23 +620,14 @@ class RerollUnrolledLoops(ppl.Pass):
         )
 
     def _cut_side_subset(self, edge: MultiConnectorEdge[Memlet], cut_node: nodes.AccessNode) -> Subset | None:
-        """The subset of ``edge`` that indexes ``cut_node``'s container.
-
-        :param edge: A boundary edge of a lane component.
-        :param cut_node: The boundary AccessNode the edge touches.
-        :returns: The memlet subset addressing ``cut_node``'s array, or ``None``.
-        """
+        """The subset of ``edge`` that indexes ``cut_node``'s container."""
         mem = edge.data
         if mem is None or mem.data is None:
             return None
         return mem.subset if mem.data == cut_node.data else mem.other_subset
 
     def _topological_index(self, state: SDFGState) -> dict[int, int]:
-        """Position of every node of ``state`` in a topological order, by node id.
-
-        :param state: The body state.
-        :returns: ``{node_id: position}``, unreachable nodes appended in insertion order.
-        """
+        """Position of every node of ``state`` in a topological order, by node id."""
         try:
             order = list(sdutil.dfs_topological_sort(state))
         except Exception:
@@ -831,19 +642,7 @@ class RerollUnrolledLoops(ppl.Pass):
     def _value_components(
         self, states: list[SDFGState], cut: list[dict[nodes.Node, None]]
     ) -> list[list[tuple[int, nodes.Node]]]:
-        """Partition the body's non-boundary nodes into connected VALUE components.
-
-        Two nodes are in one component when a value flows between them: along a non-empty memlet
-        that stays clear of the boundary, or through two AccessNodes of the same transient (a
-        component crosses a state boundary exactly there, which is how the frontend hands a lane's
-        read-ahead to the state that consumes it). Empty memlets are ordering edges and carry no
-        value, so they never join two components -- in ``s116`` they are precisely what ties one
-        lane's operands to the next lane's, and honouring them would fuse the whole body into one.
-
-        :param states: The body states.
-        :param cut: Per-state boundary AccessNodes, from :meth:`_cut_nodes`.
-        :returns: One list of ``(state index, node)`` pairs per component, deterministically ordered.
-        """
+        """Partition the body's non-boundary nodes into connected VALUE components."""
         parent: dict[tuple[int, int], tuple[int, int]] = {}
 
         def find(key: tuple[int, int]) -> tuple[int, int]:
@@ -880,23 +679,12 @@ class RerollUnrolledLoops(ppl.Pass):
         return list(groups.values())
 
     def _try_reroll_chain(self, loop: LoopRegion, step: int) -> bool:
-        """Re-roll a lane chain whose lanes read past their own position (TSVC s116).
-
-        A lane is a value component keyed by the offset it STORES at; the read-ahead is a boundary edge
-        at a relative offset all lanes share. With ``step == m*g``, a read at ``r > 0`` sees an unstored
-        position in both forms and ``r < 0`` a stored one, provided lanes run in ascending offset order
-        (checked).
-
-        :param loop: The candidate loop region.
-        :param step: The loop's constant step.
-        :returns: ``True`` if the loop matched and was re-rolled.
-        """
+        """Re-roll a lane chain whose lanes read past their own position (TSVC s116)."""
         loop_var = loop.loop_variable
         states = self._body_states(loop)
         if states is None:
             return False
-        # A per-lane interstate symbol names the offset of a lane's READ, not of its store; that
-        # shape (the ``s353`` gather) is ``_try_reroll``'s and this path does not model it.
+        # A per-lane interstate symbol names the offset of a lane's READ, not of its store
         if self._interstate_lane_symbols(loop, loop_var) or not steps_alike(loop, states, {}):
             return False
 
@@ -929,8 +717,7 @@ class RerollUnrolledLoops(ppl.Pass):
             offsets = []
             for si, e, node, is_read in bounds[ci]:
                 off, ok = self._edge_offset(self._cut_side_subset(e, node), loop_var, {})
-                # A loop-invariant READ (a scalar coefficient) is shared by every lane and stays;
-                # a loop-invariant STORE is a carried value the re-roll would fold into one lane.
+                # A loop-invariant READ (a scalar coefficient) is shared by every lane and stays
                 if not ok or (off is None and not is_read):
                     return False
                 offsets.append((is_read, node.data, off, si, e))
@@ -978,19 +765,7 @@ class RerollUnrolledLoops(ppl.Pass):
         return True
 
     def _try_reroll_accumulator_reduction(self, loop: LoopRegion, step: int) -> bool:
-        """Re-roll a hand-unrolled reduction (TSVC s352, s31111) into one step-``g`` lane.
-
-        Lanes fold into one carried scalar, so the lane walk of :meth:`_try_reroll` finds no separable
-        lane. Instead a forward reach from each lane's reads classifies nodes: reached from one offset =
-        private lane work, from several = fold node (a merge of the single commutative op or a
-        transparent spine carrier). Requires ``step == m*g``, exactly one carried scalar output, a
-        commutative-associative op and identical lanes; lane 0 is kept and fold tasklets that lose a
-        term collapse to their surviving input.
-
-        :param loop: The candidate loop region.
-        :param step: The loop's constant step.
-        :returns: ``True`` if it matched and was re-rolled.
-        """
+        """Re-roll a hand-unrolled reduction (TSVC s352, s31111) into one step-``g`` lane."""
         loop_var = loop.loop_variable
         states = self._body_states(loop)
         if states is None or len(states) != 1:
@@ -1021,9 +796,8 @@ class RerollUnrolledLoops(ppl.Pass):
         if step != m * g:
             return False
 
-        # Exactly one carried scalar accumulator: a data name with both a source
-        # (in-degree 0) and a sink (out-degree 0) AccessNode in the state, scalar,
-        # and the loop's only sink -> the reduction has no other output.
+        # Exactly one carried scalar accumulator: a data name with both a source (in-degree 0) and a sink (out-degree 0)
+        # AccessNode in the state, scalar, and the loop's only sink -> the reduction has no other output.
         sinks = [n for n in st.nodes() if isinstance(n, nodes.AccessNode) and st.out_degree(n) == 0]
         sources = dict.fromkeys(n.data for n in st.nodes() if isinstance(n, nodes.AccessNode) and st.in_degree(n) == 0)
         if len(sinks) != 1 or sinks[0].data not in sources:
@@ -1077,14 +851,7 @@ class RerollUnrolledLoops(ppl.Pass):
         if loop_analysis.read_outside(loop.sdfg, loop, set(), self._scratch({0: {st: reached_by}}) - {sinks[0].data}):
             return False
 
-        # Rewrite. Drop the other lanes' read edges (this also unhooks an
-        # edge-only lane, e.g. s31111's bare ``a[i + k]`` feeding the shared fold),
-        # then delete every node reached ONLY from dropped offsets -- the dropped
-        # lanes' private computation (s352's per-lane ``_Mult_`` and its product) --
-        # which is sound because such a node contributes to no surviving lane.
-        # Finally collapse each fold tasklet that lost a term to its one surviving
-        # input. Lane 0's private ops (reached from offset 0) and the carried
-        # accumulator spine are untouched.
+        # Rewrite.
         drop_offsets = dict.fromkeys(distinct[1:])  # already sorted -- dict.fromkeys keeps that order
         for d in distinct[1:]:
             for edge in per_lane_edges[d]:
@@ -1103,11 +870,7 @@ class RerollUnrolledLoops(ppl.Pass):
         return True
 
     def _fold_spine(self, state: SDFGState, sink: nodes.AccessNode, op: str) -> dict[nodes.Node, None] | None:
-        """The nodes from the accumulator's read to ``sink``, or ``None`` if it passes anything but ``op`` folds.
-
-        Dropping lanes moves their terms into later iterations, which keeps the value only if every term reaches the
-        accumulator through ``op`` alone: ``acc = acc * 0.5 + b[i] + b[i + 1]`` would decay per lane.
-        """
+        """The nodes from the accumulator's read to ``sink``, or ``None`` if it passes anything but ``op`` folds."""
         reads = [
             n for n in state.data_nodes() if n.data == sink.data and state.in_degree(n) == 0 and state.out_degree(n) > 0
         ]
@@ -1160,21 +923,7 @@ class RerollUnrolledLoops(ppl.Pass):
         }
 
     def _collapse_merge_tree(self, state: SDFGState, merges: dict[nodes.Node, None]) -> None:
-        """Splice each surviving merge tasklet to passthrough its one live input.
-
-        After the dropped-lane nodes are removed, each merge tasklet in the
-        original reduction tree has lost one of its two input sources (the
-        edge from a now-removed dropped-lane producer). The surviving input
-        (lane 0's product, or another merge that has already been collapsed)
-        flows through. We rewrite consumers of the merge tasklet's output
-        AccessNode to read directly from the live input's source, then delete
-        the merge tasklet and its output AccessNode.
-
-        :param state: The body state being collapsed.
-        :param merges: The set of merge tasklets identified by the classifier;
-                       safe to pass merges already deleted by an upstream pass
-                       (membership is re-checked).
-        """
+        """Splice each surviving merge tasklet to passthrough its one live input."""
         # Process merges in topological order (closer to the leaves first) so a
         # later merge sees its already-collapsed predecessors as direct edges.
         try:
@@ -1182,29 +931,21 @@ class RerollUnrolledLoops(ppl.Pass):
 
             order = [n for n in dfs_topological_sort(state) if n in merges]
         except Exception:
-            # ``merges`` is a set of NODE objects -- hashed by id(), so raw iteration order varies with
-            # allocation (not even PYTHONHASHSEED-stable). Order is load-bearing here (see the comment
-            # above: a later merge must see its collapsed predecessors), so fall back to a stable key.
+            # ``merges`` is a set of NODE objects
             order = sorted(merges, key=state.node_id)
         for m in order:
             if m not in state.nodes():
                 continue
             in_edges = list(state.in_edges(m))
             out_edges = list(state.out_edges(m))
-            # A live merge has exactly one of its 2 inputs still wired (the
-            # other lane's chain was just removed). Anything else is unsafe to
-            # touch heuristically -- leave it (the caller's structural check
-            # already vetted the pattern).
+            # A live merge has exactly one of its 2 inputs still wired (the other lane's chain was just removed).
             if len(in_edges) != 1 or len(out_edges) != 1:
                 continue
             live_in = in_edges[0]
             out_acc = out_edges[0].dst
             if not isinstance(out_acc, nodes.AccessNode):
                 continue
-            # Redirect every consumer of ``out_acc`` to read from ``live_in.src``
-            # with that source's port. Preserve the original consumer-side
-            # connector and memlet (rebased onto the surviving source's data
-            # name when needed).
+            # Redirect every consumer of ``out_acc`` to read from ``live_in.src`` with that source's port.
             for ce in list(state.out_edges(out_acc)):
                 new_memlet = ce.data
                 if (
@@ -1224,13 +965,7 @@ class RerollUnrolledLoops(ppl.Pass):
     def _has_read_modify_write(
         self, states: list[SDFGState], edge_offsets: dict[SDFGState, dict[MultiConnectorEdge[Memlet], int]]
     ) -> bool:
-        """Whether any array is both read and written by the lanes.
-
-        :param states: The body states.
-        :param edge_offsets: ``{state: {edge: offset}}`` for the lane edges.
-        :returns: ``True`` if some array appears both as a read source and a
-                  write destination among the lane boundary edges.
-        """
+        """Whether any array is both read and written by the lanes."""
         reads: dict = {}
         writes: dict = {}
         for st in states:
@@ -1242,16 +977,7 @@ class RerollUnrolledLoops(ppl.Pass):
         return any(a in writes for a in reads)
 
     def _rewrite_step(self, loop: LoopRegion, loop_var: str, g: int, m: int) -> None:
-        """Rewrite a step-``S`` loop to step ``g`` over the flattened range.
-
-        The exclusive bound is ``last_i + m * g`` with ``last_i`` the last visited value, not ``end``:
-        an unaligned tail would otherwise add terms the original never visits (TSVC s352).
-
-        :param loop: The loop region to rewrite.
-        :param loop_var: The loop variable name.
-        :param g: The lane-offset spacing (the new step).
-        :param m: The lane count.
-        """
+        """Rewrite a step-``S`` loop to step ``g`` over the flattened range."""
         loop_end = symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(loop))
         init = symbolic.pystr_to_symbolic(loop_analysis.get_init_assignment(loop))
         step = symbolic.pystr_to_symbolic(loop_analysis.get_loop_stride(loop))

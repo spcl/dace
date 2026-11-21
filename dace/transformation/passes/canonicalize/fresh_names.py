@@ -7,13 +7,7 @@ from dace.sdfg.state import LoopRegion
 
 
 def lowest_free_suffix(sdfg: SDFG, prefixes: tuple[str, ...], with_free_symbols: bool = False) -> int:
-    """Lowest ``N`` such that no ``<prefix><N>`` for any of ``prefixes`` is used in the SDFG tree.
-
-    :param sdfg: The root SDFG; nested SDFGs and kernel bodies, which a rename can reach, are scanned too.
-    :param prefixes: The name prefixes that share one suffix counter.
-    :param with_free_symbols: Also scan each SDFG's free symbols, not only its declared symbols.
-    :return: The first unused suffix.
-    """
+    """Lowest ``N`` such that no ``<prefix><N>`` for any of ``prefixes`` is used in the SDFG tree."""
     used: dict[int, None] = {}
     for sd in (owner for root in (sdfg, *kernel_bodies(sdfg)) for owner in root.all_sdfgs_recursive()):
         names = list(sd.symbols.keys())

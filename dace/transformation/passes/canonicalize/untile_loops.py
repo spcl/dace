@@ -1,74 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Collapse a manually-tiled loop nest back to a single unit-stride loop per axis.
-
-Source kernels often arrive with an unrolled tile already baked into the loop
-structure -- TSVC ``s116`` / ``s353`` / ``s31111`` write::
-
-    for i in range(0, N, 4):           # outer: stride-4 tile loop
-        for ii in range(0, 4):         #   inner: trip == outer stride
-            a[i + ii] = ...
-    # or, equivalently
-    for i in range(0, N, 4):
-        for ii in range(i, i + 4):
-            a[ii] = ...
-
-Both shapes describe a single unit-stride traversal of ``range(0, N)``. The
-hand-written tile suppresses :class:`~dace.transformation.interstate.loop_to_map.LoopToMap`
-because the outer loop has a non-unit stride and the inner trip is small; it
-also blocks ``ShortLoopUnroll`` from collapsing the inner (the inner depends on
-the outer's runtime value).
-
-``UntileLoops`` recognises this two-level pattern and rewrites the outer loop
-to drive a single unit-stride iterator ``_untile_k_<n>`` over ``[0, N)``, after
-which downstream canonicalize passes (``LoopToReduce``, ``LoopToScan``,
-``LoopToMap``) see the body in its natural one-dimensional form.
-
-Pattern
--------
-
-The outer loop must be ``for i in range(0, N, K)`` where ``K`` is a positive
-tile size -- a concrete integer literal ``> 1`` **or** a positive symbol (e.g.
-a block-size parameter). The single body block of the outer must be exactly one
-nested :class:`~dace.sdfg.state.LoopRegion` and nothing else (perfect nest).
-A cascade rung (inner stride ``S > 1``) needs ``S | K``: proven outright when
-both are concrete, otherwise admitted under a recorded divisibility assumption,
-which is what lets a double- or triple-tiled nest with symbolic tiles unwind
-level by level.
-
-The inner loop must be one of the following shapes (both with unit stride):
-
-* **Case A** -- ``for ii in range(0, K)``: the inner trip equals the outer
-  stride. Every memlet inside the inner body must address its arrays only via
-  the combined expression ``i + ii`` (no bare ``i`` or bare ``ii``).
-* **Case B** -- ``for ii in range(i, i + K)``: the inner runs over the absolute
-  tile. Every memlet must address its arrays only via ``ii`` (no bare ``i``).
-
-In both cases the inner index is the *only* affine reference to the outer
-iterator the body is allowed; the rewrite remaps that single reference to the
-new unit iterator. If any memlet uses ``i`` or ``ii`` outside the recognised
-combination, the rewrite refuses.
-
-Rewrite
--------
-
-The outer ``LoopRegion`` is reused: its iterator becomes ``_untile_k_<n>`` and
-its bounds become ``0 <= k < N`` with step ``1``. The inner ``LoopRegion`` is
-spliced out (its body block is moved up under the outer), and an in-body
-``replace_dict`` substitutes the recognised index expression with ``k``:
-
-* **Case A**: ``i`` -> ``k - 0 = k``? No -- ``i + ii`` -> ``k``, then any
-  surviving bare ``ii`` (which we already refused) cannot appear; the rewrite
-  simply removes ``ii`` from the body and binds ``i = k`` on the iteration-entry
-  iedge. The combined ``i + ii`` reference becomes ``k`` after symbol
-  substitution.
-* **Case B**: ``ii`` -> ``k``; ``i`` does not appear in any memlet (per the
-  safety check) so it is dropped.
-
-The original ``i`` / ``ii`` symbols are removed from the SDFG symbol table
-*only* if they had no live readers after the rewrite. (The outer ``i`` may
-still be referenced by interstate-edge assignments that the cascade-up pass
-hoisted; those are left alone.)
-"""
+"""Collapse a manually-tiled loop nest back to a single unit-stride loop per axis."""
 
 import copy
 import dataclasses
@@ -95,14 +26,7 @@ UNTILE_PREFIX = "_untile_k_"
 
 
 def _try_extract_perfect_one_child(cfg: ControlFlowRegion) -> ControlFlowRegion | None:
-    """Return the single non-empty child block of ``cfg`` if it has
-    exactly one, otherwise ``None``.
-
-    Empty :class:`SDFGState` instances are tolerated (canonicalize often
-    leaves them as connective tissue). Any other CFG construct (a
-    non-empty plain state, a ConditionalBlock, etc.) breaks the perfect
-    nest and the function refuses.
-    """
+    """Return the single non-empty child block of ``cfg`` if it has exactly one, otherwise ``None``."""
     candidate: ControlFlowRegion | None = None
     for b in cfg.nodes():
         if isinstance(b, SDFGState):
@@ -118,16 +42,8 @@ def _try_extract_perfect_one_child(cfg: ControlFlowRegion) -> ControlFlowRegion 
 
 
 def _iter_candidate_inners(outer: LoopRegion) -> Iterator[LoopRegion]:
-    """Walk down through perfect 1-child intermediate chains, yielding
-    every descendant :class:`LoopRegion` as a potential tile-pair partner
-    for ``outer``.
-
-    For a 2-D tile shape ``for ti: for tj: for i: for j: body`` the
-    same-axis partner of ``ti`` is ``i``, two scopes deep with ``tj`` in
-    between. The ascent stops at the first non-perfect 1-child boundary
-    (a non-empty plain state, a sibling CFR, etc.), so non-perfect-nest
-    cases are still refused.
-    """
+    """Walk down through perfect 1-child intermediate chains, yielding every descendant :class:`LoopRegion` as a
+    potential tile-pair partner for ``outer``."""
     seen: dict[int, None] = {}
     current: ControlFlowRegion = outer
     while True:
@@ -141,16 +57,9 @@ def _iter_candidate_inners(outer: LoopRegion) -> Iterator[LoopRegion]:
 
 
 def _intermediate_chain_clean(outer: LoopRegion, inner: LoopRegion, outer_var: str) -> bool:
-    """``True`` iff every LoopRegion strictly between ``outer`` and
-    ``inner`` is free of references to ``outer.loop_variable`` in its
-    iteration descriptors, and no edge from ``outer`` down to ``inner``
-    decides or assigns: such an edge runs per tile, and would run per point.
-
-    Multi-dim untile is sound only when the intermediates index on
-    independent axes; same-axis cascades (whose intermediates use
-    ``outer.var`` in their bounds) must be handled level-by-level by
-    fixpoint instead, not by descending past them in one rewrite.
-    """
+    """``True`` iff every LoopRegion strictly between ``outer`` and ``inner`` is free of references to
+    ``outer.loop_variable`` in its iteration descriptors, and no edge from ``outer`` down to ``inner`` decides or
+    assigns: such an edge runs per tile, and would run per point."""
     current = inner.parent_graph
     while True:
         if any(e.data.assignments or not e.data.is_unconditional() for e in current.edges()):
@@ -171,12 +80,7 @@ def _intermediate_chain_clean(outer: LoopRegion, inner: LoopRegion, outer_var: s
 
 
 def tiles_visit_points_in_order(outer: LoopRegion, inner: LoopRegion) -> bool:
-    """Whether the nest from ``outer`` down to ``inner`` computes the same tile by tile as row by row.
-
-    Collapsing a tile with its point loop past a foreign-axis loop interchanges the two, which is safe only when the
-    dependences point one way on every axis and each element's writers differ on at most one loop. Decided for
-    single-element, unit-coefficient accesses, refused otherwise.
-    """
+    """Whether the nest from ``outer`` down to ``inner`` computes the same tile by tile as row by row."""
     tiles, points, region = {outer.loop_variable}, set(), inner.parent_graph
     while region is not outer:
         (points if _tile_size(loop_analysis.get_loop_stride(region)) is None else tiles).add(region.loop_variable)
@@ -241,13 +145,7 @@ def _is_zero(expr: symbolic.SymbolicType) -> bool:
 
 
 def _tile_size(expr: symbolic.SymbolicType) -> tuple[symbolic.SymbolicType, int | None] | None:
-    """Classify an outer-loop stride as a tile size: ``(K_expr, K_const)`` or ``None``.
-
-    ``K_const`` is set for a concrete literal ``> 1``. Refused: literals ``<= 1``, provably
-    non-positive symbolic strides, and compound symbolic expressions (``N // 4``). A bare symbol
-    (``BS``) is accepted since DaCe symbols are nonnegative; symbolic tiles allow only a unit inner
-    stride (see :func:`_match_inner_case`).
-    """
+    """Classify an outer-loop stride as a tile size: ``(K_expr, K_const)`` or ``None``."""
     try:
         s = symbolic.simplify(expr)
     except Exception:
@@ -259,21 +157,14 @@ def _tile_size(expr: symbolic.SymbolicType) -> tuple[symbolic.SymbolicType, int 
         if v <= 1:
             return None
         return (s, v)
-    # Symbolic: accept a bare symbol only (assumed non-negative by DaCe
-    # convention). A compound expression's sign is not proven, so refuse it.
+    # Symbolic: accept a bare symbol only (assumed non-negative by DaCe convention).
     if isinstance(s, sympy.Symbol):
         return (s, None)
     return None
 
 
 def tiles_a_parent_window(enclosing: frozenset[str], start: symbolic.SymbolicType, span: symbolic.SymbolicType) -> bool:
-    """``True`` iff a tile scope walks a fixed-width window opened by an enclosing scope with iterators ``enclosing``.
-
-    The witness is the pair (start depends on an enclosing iterator, width does not): that is the cascade rung
-    ``for iiii in range(iii, iii + T2, T3)``, whose union is the window ``[iii, iii + T2)`` itself. A scope over a
-    global extent (``range(1, LEN - 1 - T, T)``) fails the test and keeps the round-up bound, which is what makes its
-    intended overshoot past the last origin survive.
-    """
+    """``True`` iff a tile scope walks a fixed-width window opened by an enclosing scope with iterators ``enclosing``."""
     if not enclosing or not any(str(s) in enclosing for s in as_basic(start).free_symbols):
         return False
     return not any(str(s) in enclosing for s in as_basic(span).free_symbols)
@@ -298,12 +189,7 @@ def union_stop(
     clamped: bool,
     enclosing: frozenset[str],
 ) -> symbolic.SymbolicType:
-    """Exclusive end of the union of the tiles ``[o, o + K)`` over the origins ``o`` in ``[start, end]`` step ``K``.
-
-    A clamped tile stops at the parent limit, so the union is ``end + 1``. An unclamped one rounds ``end + 1`` up to a
-    tile boundary above ``start``, except for a rung walking a fixed window of an enclosing tile, whose union is the
-    window under a recorded divisibility assumption (the symbolic round-up would stall the cascade).
-    """
+    """Exclusive end of the union of the tiles ``[o, o + K)`` over the origins ``o`` in ``[start, end]`` step ``K``."""
     stop_excl = symbolic.simplify(end + 1)
     if clamped:
         return stop_excl
@@ -343,17 +229,7 @@ def clamp_is_the_parent_limit(
     K_expr: symbolic.SymbolicType,
     outer_limit: symbolic.SymbolicType,
 ) -> bool:
-    """``True`` iff ``end_plus_one`` is ``Min(parent limit, i + K)`` -- the remainder clamp.
-
-    A strip-mined nest whose last tile would overrun writes its inner bound as
-    ``min(i + K, <the parent's own limit>)``, and that clamp is exactly what makes the union of
-    the tiles equal the original range rather than exceed it. Untiling is therefore EXACT here,
-    which is the whole reason the clamp may be accepted.
-
-    The clamp has to be the parent's limit and nothing else. ``min(i + K, something_smaller)``
-    would visit fewer points than the flat loop, so collapsing it would invent iterations; the
-    check refuses anything it cannot match to ``outer_limit`` term for term.
-    """
+    """``True`` iff ``end_plus_one`` is ``Min(parent limit, i + K)`` -- the remainder clamp."""
     if not isinstance(end_plus_one, sympy.Min):
         return False
     tile_reach = symbolic.simplify(outer_sym + K_expr)
@@ -366,10 +242,7 @@ def clamp_is_the_parent_limit(
         rest.append(arg)
     if not saw_tile_reach or not rest:
         return False
-    # The remaining terms are compared TOGETHER, not one by one. A correctly strip-mined cascade
-    # clamps each level to every window enclosing it -- ``min(i3 + W3, i2 + W2, i1 + W1, N - 1)``
-    # -- so no single term equals the parent's limit; their Min does, and that is the parent's
-    # limit spelled out. Term-by-term comparison would refuse exactly the well-formed nest.
+    # The remaining terms are compared TOGETHER, not one by one.
     return _diff_is_zero(sympy.Min(*rest), outer_limit)
 
 
@@ -398,17 +271,8 @@ def classify_inner_range(
     K_const: int | None,
     outer_limit: symbolic.SymbolicType | None = None,
 ) -> tuple[str, symbolic.SymbolicType, bool, bool] | None:
-    """Classify the inner range ``[start, end]`` (inclusive end) step ``stride``:
-    ``(case, inner_stride, needs_div_assumption, clamped)`` or ``None``.
-
-    * ``'A'`` -- inner ``range(0, K, S)`` (body uses ``i + ii``);
-    * ``'B'`` -- inner ``range(i, i + K, S)`` (body uses ``ii``).
-
-    ``S > 1`` (with ``S | K``) is a cascade rung collapsed one level per fixpoint sweep. With a
-    symbolic tile or stride, ``S | K`` cannot be proven, so ``needs_div_assumption`` asks the caller
-    to record it (the source nest requires it anyway). ``clamped`` (remainder clamp present) must be
-    honored: an unclamped tile rounds the collapsed bound up, a clamped one must not.
-    """
+    """Classify the inner range ``[start, end]`` (inclusive end) step ``stride``: ``(case, inner_stride,
+    needs_div_assumption, clamped)`` or ``None``."""
     S_concrete = _is_constant_positive_int(stride)
     needs_div_assumption = False
     if S_concrete is not None:
@@ -425,9 +289,8 @@ def classify_inner_range(
             # under a recorded ``K % S == 0`` assumption.
             needs_div_assumption = True
     else:
-        # Symbolic inner stride: accept only a bare positive symbol (a block-size
-        # parameter -- the inner tile ``T2`` of a ``T1``/``T2`` double tile), never
-        # a compound expression. Always a cascade rung requiring divisibility.
+        # Symbolic inner stride: accept only a bare positive symbol (a block-size parameter -- the inner tile ``T2`` of
+        # a ``T1``/``T2`` double tile), never a compound expression.
         s_stride = symbolic.simplify(stride)
         if not isinstance(s_stride, sympy.Symbol):
             return None
@@ -436,21 +299,13 @@ def classify_inner_range(
     outer_sym = symbolic.pystr_to_symbolic(outer_var)
     s_sym = symbolic.simplify(start)
     e_sym = symbolic.simplify(end)
-    # ``get_loop_end`` returns ``exclusive_upper_bound - 1`` regardless
-    # of step (i.e. for ``range(a, b, S)`` it returns ``b - 1``, NOT the
-    # actual last admitted value ``a + S * floor((b - a - 1) / S)``). We
-    # therefore match against ``K - 1`` rather than ``K - S``. The
-    # ``_diff_is_zero`` helper tolerates symbolic differences (returns
-    # False rather than raising), so the multi-dim descent can probe
-    # non-matching candidates without crashing, and it folds a symbolic
-    # ``K`` (e.g. ``end == K - 1`` against ``K_expr - 1``) to zero.
-    # Case A: start == 0, end == K - 1.
+    # ``get_loop_end`` returns ``exclusive_upper_bound - 1`` regardless of step (i.e. for ``range(a, b, S)`` it returns
+    # ``b - 1``, NOT the actual last admitted value ``a + S * floor((b - a - 1) / S)``).
     if _is_zero(s_sym):
         if _diff_is_zero(e_sym, K_expr - 1):
             return ("A", inner_stride, needs_div_assumption, False)
         return None
-    # Case B: start == i, end == i + K - 1 -- or the same with the remainder clamp,
-    # end == min(<parent limit>, i + K) - 1, which every hand-tiled stencil writes.
+    # Case B: start == i, end == i + K - 1
     if _diff_is_zero(s_sym, outer_sym):
         if _diff_is_zero(e_sym, outer_sym + K_expr - 1):
             return ("B", inner_stride, needs_div_assumption, False)
@@ -460,13 +315,9 @@ def classify_inner_range(
 
 
 def _diff_is_zero(a: symbolic.SymbolicType, b: symbolic.SymbolicType) -> bool:
-    """``simplify(a - b) == 0`` if both sides reduce to the same value,
-    else ``False``. Tolerates symbolic mismatches by catching the
-    ``TypeError`` SymPy raises when an unresolved expression is coerced
-    to ``int``."""
+    """``simplify(a - b) == 0`` if both sides reduce to the same value, else ``False``."""
     try:
-        # Sides reach here from different sources -- a memlet bound, a reparsed loop expression, a
-        # descriptor shape -- so one name arrives as several sympy instances that never cancel.
+        # Sides reach here from different sources
         if isinstance(a, sympy.Basic) and isinstance(b, sympy.Basic):
             a, b = symbolic.equalize_symbols_across(a, b)
         diff = symbolic.simplify(a - b)
@@ -509,18 +360,10 @@ def body_bound_texts(inner: LoopRegion) -> list[str]:
 
 
 def depends_only_on_sum(ex: sympy.Basic, i_sym: sympy.Symbol, ii_sym: sympy.Symbol) -> bool:
-    """``True`` iff ``ex`` reads ``i`` and ``ii`` only through the sum ``i + ii``.
-
-    The case-A rewrite substitutes ``ii -> k - i`` and then ``i -> 0``, which preserves a
-    subexpression's value exactly when that subexpression is a function of ``i + ii``: any such
-    function has equal partials in both. Co-occurrence is NOT sufficient -- ``2*i + ii`` and
-    ``i**2 + ii**2`` both mention the two together yet collapse to ``k`` and ``k**2``. Anything
-    sympy cannot differentiate (``int_floor`` and friends) refuses, so the audit fails closed.
-    """
+    """``True`` iff ``ex`` reads ``i`` and ``ii`` only through the sum ``i + ii``."""
     try:
-        # diff goes through symbol IDENTITY: a loop var minted from its name differentiates to 0
-        # against an expression carrying another instance, which reads as "equal partials" and
-        # lets the rewrite through. Equalize so the partials are taken w.r.t. what ex holds.
+        # diff goes through symbol IDENTITY: a loop var minted from its name differentiates to 0 against an expression
+        # carrying another instance, which reads as "equal partials" and lets the rewrite through.
         ex, i_sym, ii_sym = symbolic.equalize_symbols_across(ex, i_sym, ii_sym)
         return symbolic.simplify(sympy.diff(ex, i_sym) - sympy.diff(ex, ii_sym)) == 0
     except (TypeError, ValueError, AttributeError, NotImplementedError):
@@ -528,14 +371,7 @@ def depends_only_on_sum(ex: sympy.Basic, i_sym: sympy.Symbol, ii_sym: sympy.Symb
 
 
 def _audit_combined_access(inner: LoopRegion, outer_var: str, inner_var: str, case: str) -> bool:
-    """The structural safety check the docstring describes.
-
-    Case A (``ii in range(0, K)``): ``i`` and ``ii`` must enter every memlet only as ``i + ii``.
-
-    Case B (``ii in range(i, i + K)``): ``i`` must NEVER appear in a memlet
-    (only ``ii``). The new iterator ``k`` becomes ``ii`` directly. Code nodes obey
-    :func:`code_node_allows`: a kernel takes an iterator as an argument, not through a memlet.
-    """
+    """The structural safety check the docstring describes."""
     # Interstate edges and conditions take no part in the sum: only memlets and Map ranges do.
     control = {name for e in inner.all_interstate_edges() for name in e.data.free_symbols}
     for region in inner.all_control_flow_regions():
@@ -652,11 +488,7 @@ def match_map_pair(
 
 
 def map_tile_pairs(state: SDFGState) -> list[MapTilePair]:
-    """The Map tile pairs of ``state`` that can collapse together: innermost first, no Map in two pairs.
-
-    A pair nests perfectly: every scope from ``outer`` down to ``inner`` holds only the next Map. GPU Maps are
-    skipped (lowering device parallelism is not a canonicalization), and so are Maps with dynamic ranges.
-    """
+    """The Map tile pairs of ``state`` that can collapse together: innermost first, no Map in two pairs."""
     sdict = state.scope_dict()
     children = state.scope_children()
     depth: dict[nodes.Node, int] = {}
@@ -734,44 +566,8 @@ def eliminate_pinned_maps(sdfg: SDFG, state: SDFGState, entries: set[nodes.MapEn
 @properties.make_properties
 @xf.explicit_cf_compatible
 class UntileLoops(ppl.Pass):
-    """Collapse a manually-tiled multi-level / multi-dim perfect nest of loops to a single
-        loop, and one of Maps to a single Map.
-
-        Recognises:
-
-        * Case A -- ``for i in range(0, N, K): for ii in range(0, K, S): ...``,
-          body addresses arrays via ``i + ii``.
-        * Case B -- ``for i in range(0, N, K): for ii in range(i, i + K, S): ...``,
-          body addresses arrays via ``ii``.
-
-        ``K`` is a concrete positive integer literal (``> 1``) or a positive
-        **symbol**. ``S == 1`` is the classic single-level untile; ``S > 1`` is an
-        intermediate cascade rung that fixpoint then collapses with the next inner,
-        and needs ``S | K`` -- decided exactly when both are concrete, recorded as
-        a tracked assumption when either is symbolic.
-
-        **Multi-dim ascent**: the inner doesn't have to be the immediate child
-        of the outer. The matcher walks down through perfect 1-child
-        intermediate chains, skipping foreign-axis loops whose iteration
-        variables don't appear in the outer's bounds. For an N-D tile shape
-        the same-axis partner sits N levels deep with the other-axis tile
-        loops between.
-
-        **Fixpoint iteration**: each pass collapses one (outer, inner) tile
-        pair; multi-level cascades and multi-axis tiles unwind progressively.
-        Bounded by the total LoopRegion count.
-
-        **Map round    **Maps**: a Map dimension with a tile stride and a Map dimension nested in it that covers
-        one tile (the same cases A and B) collapse in place: the inner dimension widens to the union
-        of the tiles and the outer one is dropped, removing the outer Map once it has none left.
-        Nothing is lowered, so no parallelism is at stake.
-
-    **: a subclass widens what a candidate nest may read (:meth:`audit_candidate`) and rewrites the SDFG
-        before the substitution (:meth:`prepare_untile`); relayout's ``UntileBlockedLoops`` unblocks arrays that way.
-
-        Runs BEFORE :class:`~dace.transformation.passes.parallelization_prep.ShortLoopUnroll`
-        so the small fixed-trip inner loop doesn't get straight-line-unrolled.
-    """
+    """Collapse a manually-tiled multi-level / multi-dim perfect nest of loops to a single loop, and one of Maps to a
+    single Map."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -786,27 +582,16 @@ class UntileLoops(ppl.Pass):
         """One pass over every loop of ``sdfg``, collapsing each loop with its tile partner; returns the count."""
         rewritten = 0
         for sd in sdfg.all_sdfgs_recursive():
-            # INNERMOST FIRST. A cascade is collapsed one rung at a time, and the rung nearest
-            # the body is the one whose partner is unambiguous: an outer tile loop in a
-            # multi-level nest has every deeper loop as a candidate, and matching it against
-            # the wrong rung fixes a pairing the levels below then cannot undo. Working up
-            # from the body, each level meets a nest that has already been flattened beneath
-            # it, so the next pair to collapse is the only pair left.
+            # INNERMOST FIRST.
             for cfg in reversed(list(sd.all_control_flow_regions())):
                 if isinstance(cfg, LoopRegion) and cfg.loop_variable and self.untile_loop(cfg, sd):
                     rewritten += 1
         return rewritten
 
     def untile_fixpoint(self, sdfg: SDFG) -> int:
-        """Collapse tile pairs until none is left, and return how many were collapsed.
-
-        Each sweep collapses one (outer, inner) tile pair per nest; multi-level cascade and
-        multi-dim tiles (where successive sweeps expose the pair that became outermost after the
-        prior collapse) unwind progressively. Once a sweep rewrites nothing we stop.
-        """
+        """Collapse tile pairs until none is left, and return how many were collapsed."""
         total = self.untile_sweep(sdfg)
-        # Every collapse removes a loop, so 1 + the loops left bounds the sweeps still to come. Counted only after
-        # a productive sweep: most SDFGs hold no tile pair and never pay for the count.
+        # Every collapse removes a loop, so 1 + the loops left bounds the sweeps still to come.
         sweeps_left = 1 + count_loops(sdfg) if total else 0
         rewritten = total
         while rewritten and sweeps_left:
@@ -853,47 +638,38 @@ class UntileLoops(ppl.Pass):
         sdfg: SDFG,
         outer_start: symbolic.SymbolicType,
     ) -> dict[str, Any] | None:
-        """What :meth:`prepare_untile` needs to collapse ``candidate`` with its outer tile loop, or ``None`` to refuse.
-        The base pass admits a body that reads only through the combined index and prepares nothing."""
+        """What :meth:`prepare_untile` needs to collapse ``candidate`` with its outer tile loop, or ``None`` to refuse."""
         return {} if _audit_combined_access(candidate, outer_var, candidate.loop_variable, case) else None
 
     def prepare_untile(
         self, sdfg: SDFG, outer_start: symbolic.SymbolicType, K_expr: symbolic.SymbolicType, audit: dict[str, Any]
     ) -> bool:
-        """Rewrite ``sdfg`` before the substitution with what :meth:`audit_candidate` returned; ``False``, with the
-        SDFG untouched, refuses the candidate. The base pass has nothing to prepare."""
+        """Rewrite ``sdfg`` before the substitution with what :meth:`audit_candidate` returned; ``False``, with the SDFG
+        untouched, refuses the candidate."""
         return True
 
     def untile_loop(self, outer: LoopRegion, sdfg: SDFG) -> bool:
         """Collapse ``outer``, a loop over tiles, with the loop over one tile's points inside it; ``False``, with
         ``sdfg`` untouched, when ``outer`` is no such pair."""
-        # The outer must be ``for i in range(0, N, K)`` with a positive tile
-        # ``K`` -- a concrete literal ``> 1`` or a positive symbol.
+        # The outer must be ``for i in range(0, N, K)`` with a positive tile ``K``
         outer_stride = loop_analysis.get_loop_stride(outer)
         if outer_stride is None:
             return False
         tile = _tile_size(outer_stride)
         if tile is None:
             return False  # stride <= 1, or a provably non-positive symbol
-        # Start / end parsed only past the tile-stride gate -- two sympy round trips a
-        # unit-stride loop never needs.
+        # Start / end parsed only past the tile-stride gate -- two sympy round trips a unit-stride loop never needs.
         outer_start = loop_analysis.get_init_assignment(outer)
         outer_end = loop_analysis.get_loop_end(outer)
         if outer_start is None or outer_end is None:
             return False
         K_expr, K_const = tile
-        # ``outer_start`` need not be 0: a tiled stencil walks tile origins over
-        # the interior ``[S, N)`` (e.g. ``for ii in range(1, N-1-K, K)``). The
-        # collapsed loop simply starts at the same ``S`` (set below). Only reject
-        # a start we cannot render symbolically.
+        # ``outer_start`` need not be 0: a tiled stencil walks tile origins over the interior ``[S, N)`` (e.g. ``for ii
+        # in range(1, N-1-K, K)``).
         outer_start_sym = symbolic.simplify(outer_start)
 
-        # Walk down through perfect 1-child intermediate chains and pick
-        # the first descendant LoopRegion whose shape + audit match the
-        # tile-pair contract with ``outer``. For an N-D tile shape
-        # (different axes interleaved) the same-axis partner sits N
-        # levels deep with foreign-axis loops between -- the descent
-        # walks past those.
+        # Walk down through perfect 1-child intermediate chains and pick the first descendant LoopRegion whose shape +
+        # audit match the tile-pair contract with ``outer``.
         case: str | None = None
         inner_stride: symbolic.SymbolicType = None
         needs_div_assumption = False
@@ -917,11 +693,8 @@ class UntileLoops(ppl.Pass):
             )
             if audit is None:
                 continue
-            # Multi-dim sanity: any intermediate LoopRegion between outer
-            # and candidate must not reference outer's iteration variable
-            # in its own bounds. Same-axis cascades (where the
-            # intermediates DO reference outer.var) are handled by
-            # fixpoint level-by-level instead.
+            # Multi-dim sanity: any intermediate LoopRegion between outer and candidate must not reference outer's
+            # iteration variable in its own bounds.
             if candidate is not outer and not _intermediate_chain_clean(outer, candidate, outer.loop_variable):
                 continue
             if candidate.parent_graph is not outer and not tiles_visit_points_in_order(outer, candidate):
@@ -936,10 +709,9 @@ class UntileLoops(ppl.Pass):
         if inner is None or not self.prepare_untile(sdfg, outer_start_sym, K_expr, audited):
             return False
 
-        # A cascade rung whose stride divides the tile only under an unprovable
-        # relation (symbolic tile and/or symbolic stride) is admitted here; record
-        # ``K % S == 0`` so the terminal AssumeSymbolConstraints pass emits a
-        # runtime trap. The source tile nest already requires it.
+        # A cascade rung whose stride divides the tile only under an unprovable relation (symbolic tile and/or symbolic
+        # stride) is admitted here; record ``K % S == 0`` so the terminal AssumeSymbolConstraints pass emits a runtime
+        # trap.
         if needs_div_assumption:
             record_assumption(sdfg, sympy.Eq(sympy.Mod(K_expr, inner_stride), 0))
 
@@ -951,31 +723,19 @@ class UntileLoops(ppl.Pass):
         i_sym = outer.loop_variable
         ii_sym = inner.loop_variable
         if case == "A":
-            # ``i + ii`` -> ``k``. Implementation: substitute ``ii`` with
-            # ``k - i``, then ``i`` with ``0`` -- ``i + ii`` collapses to ``k``.
-            # Because the audit guarantees every appearance of ``i`` co-occurs
-            # with ``ii`` (and vice-versa), the substitution preserves every
-            # other algebraic combination of ``i`` and ``ii``.
+            # ``i + ii`` -> ``k``.
             inner.replace_dict({ii_sym: f"({k_var}) - ({i_sym})"})
             inner.replace_dict({i_sym: "0"})
         else:
             # Case B: ``ii`` -> ``k``; ``i`` doesn't appear in any memlet.
             inner.replace_dict({ii_sym: k_var})
 
-        # Splice the inner's body blocks into the inner's parent CFR
-        # (which may be ``outer`` directly for single-level untile, or a
-        # nested intermediate LoopRegion for multi-dim untile). The
-        # outer LoopRegion is then re-purposed as the collapsed loop by
-        # rewriting its iteration descriptors below.
+        # Splice the inner's body blocks into the inner's parent CFR (which may be ``outer`` directly for single-level
+        # untile, or a nested intermediate LoopRegion for multi-dim untile).
         parent_of_inner: ControlFlowRegion = inner.parent_graph
         inner_was_start = parent_of_inner.start_block is inner
-        # ``inner`` need NOT be the sole/start block of its parent: the parent
-        # LoopRegion may hold connective states with interstate edges FEEDING
-        # ``inner`` and FLOWING OUT of it. A naive detach that only moves
-        # ``inner``'s children and drops those parent edges orphans the
-        # connective states (unreachable-from-start -> dominator ``KeyError``
-        # at codegen). So capture the parent's edges incident to ``inner`` and
-        # ``inner``'s own entry/exit BEFORE mutating, then reconnect the chain.
+        # ``inner`` need NOT be the sole/start block of its parent: the parent LoopRegion may hold connective states
+        # with interstate edges FEEDING ``inner`` and FLOWING OUT of it.
         pred_edges = list(parent_of_inner.in_edges(inner))
         succ_edges = list(parent_of_inner.out_edges(inner))
         try:
@@ -985,12 +745,7 @@ class UntileLoops(ppl.Pass):
         inner_sinks = inner.sink_nodes()
         child_blocks = list(inner.nodes())
         inner_edges = list(inner.edges())
-        # Detach the inner wrapper (drops its incident parent edges too), then
-        # splice its blocks up into the parent. ``add_node`` re-parents each
-        # child (sets ``parent_graph``/``sdfg``, recursing into nested CFRs)
-        # and, when ``is_start_block`` is set, fixes the parent's start pointer
-        # via the reliable add API (a post-hoc ``start_block =`` assignment is
-        # silently dropped when the parent's start is ambiguous).
+        # Detach the inner wrapper (drops its incident parent edges too), then splice its blocks up into the parent.
         parent_of_inner.remove_node(inner)
         for child in child_blocks:
             inner.remove_node(child)
@@ -999,11 +754,8 @@ class UntileLoops(ppl.Pass):
         # Re-attach the inner's own body interstate edges.
         for ie in inner_edges:
             parent_of_inner.add_edge(ie.src, ie.dst, ie.data)
-        # Reconnect the parent chain through the spliced body: predecessors of
-        # the old ``inner`` now flow into its entry block; its exit block(s)
-        # flow to the old successors. Deep-copy the interstate-edge payload so
-        # each new edge owns its condition/assignments (a shared object across
-        # fan-out edges corrupts propagation).
+        # Reconnect the parent chain through the spliced body: predecessors of the old ``inner`` now flow into its entry
+        # block; its exit block(s) flow to the old successors.
         if inner_start_block is not None:
             for pe in pred_edges:
                 parent_of_inner.add_edge(pe.src, inner_start_block, copy.deepcopy(pe.data))
@@ -1011,11 +763,8 @@ class UntileLoops(ppl.Pass):
             for sink in inner_sinks:
                 parent_of_inner.add_edge(sink, se.dst, copy.deepcopy(se.data))
 
-        # Rewrite the outer's iteration descriptors to drive ``k`` over
-        # ``[outer_start, N)`` in steps of ``inner_stride``. Case A collapses
-        # ``i + ii`` (which starts at ``outer_start + 0``); Case B collapses
-        # ``ii`` (which starts at the outer origin ``outer_start``). Either way
-        # the fused iterator begins at ``outer_start``.
+        # Rewrite the outer's iteration descriptors to drive ``k`` over ``[outer_start, N)`` in steps of
+        # ``inner_stride``.
         outer.loop_variable = k_var
         outer.init_statement = dace.properties.CodeBlock(f"{k_var} = {symbolic.symstr(outer_start_sym)}")
         outer.loop_condition = dace.properties.CodeBlock(f"{k_var} < ({symbolic.symstr(N_excl)})")

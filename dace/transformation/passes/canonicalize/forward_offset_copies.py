@@ -1,28 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Read a shifted copy's source at the shifted index instead of keeping the copy (index-remap forwarding).
-
-A stencil written with shifted operands copies its grid once per shift::
-
-    q_i[0:n, :, :] = q[3:n + 3, :, :]        # fv3_dycore: q_i, q_im1, q_j, q_jm1
-    ... = f(q_i[i, j, k], q_im1[i, j, k])
-
-The copy is a full-size transient written once and read at the index it was taken at, so every read of
-``q_i[x]`` is ``q[x + 3]`` as long as nothing writes ``q`` between the copy and the read. Array elimination folds
-such a copy only when every reader shares its state; this pass forwards it across states too, after which the
-transient and the copy are gone.
-
-Contract, per copy edge ``A -> B``:
-
-* ``B`` is a transient array written only by this copy, over its whole extent, with the source range of the same
-  shape (an offset, no reshape), in the storage of ``A`` (a host-device transfer is not an offset); it is not a
-  view, reaches no nested SDFG, and no interstate edge or condition names it;
-* every reader of ``B`` is in a block of the copy's control-flow region (an acyclic one) reachable from it: a state
-  of the region, or one nested in a loop or branch of it, which then stands for the reader as a whole;
-* no block of that region on a path from the copy to a reader writes ``A``, nor does the copy's state or a
-  reader's block;
-* a symbol the offset names keeps its value up to every reader: no block after the copy rebinds it, and no map around
-  a reader shadows it.
-"""
+"""Read a shifted copy's source at the shifted index instead of keeping the copy (index-remap forwarding)."""
 
 from collections import defaultdict
 from typing import Any

@@ -1,37 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Producer->consumer loop distribution: split a loop whose body is a linear
-chain of statements into one loop per ordered statement group, allowing a
-FORWARD flow dependence (an earlier statement writes a container a later one
-reads) to cross a group boundary.
-
-``LoopFission`` distributes only *independent* groups: any container written by
-one block and touched by another forces a merge, so a producer->consumer pair
-(atax ``for i: { tmp[i] = A[i,:]@x ; y += A[i,:]*tmp[i] }`` -- ``tmp`` produced
-then consumed) stays fused. That fusion blocks the downstream contraction lift
-(``LoopToEinsum``), which needs each matvec in its own perfect nest.
-
-This pass adds the forward case. Distribution around a statement partition is
-legal iff no dependence *cycle* spans the split (Allen & Kennedy): keep every
-strongly-connected component of the loop-body dependence graph together and
-emit the resulting loops in the graph's topological order. Because we preserve
-the ORIGINAL block order, every forward (loop-independent or forward
-loop-carried) dependence is already satisfied; the only thing that forms a
-cycle is a BACKWARD loop-carried dependence -- a *later* block writing a
-container an *earlier* block reads or writes (an anti/WAR, output/WAW, or
-flow-back edge from the next iteration). So the merge rule is exactly:
-
-    merge(Bi, Bj) with i < j  iff  writes(Bj) & (reads(Bi) | writes(Bi)) != {}
-
-Everything else (earlier writes, later only reads -- a forward producer; or
-read-only sharing; or no sharing) may split. The producer loop fully
-materializes the shared container before the consumer loop reads it, so the
-split is value-preserving.
-
-The analysis is container-name level and therefore CONSERVATIVE: two blocks
-that write the SAME array at provably-disjoint subsets (e.g. covariance's
-``cov[i,j]`` compute vs ``cov[j,i]`` mirror) are kept together here; splitting
-those needs subset-disjointness reasoning and is out of scope for this pass.
-"""
+"""Producer->consumer loop distribution: split a loop whose body is a linear chain of statements into one loop per
+ordered statement group, allowing a FORWARD flow dependence (an earlier statement writes a container a later one reads)
+to cross a group boundary."""
 
 import functools
 import weakref
@@ -53,13 +23,7 @@ UNALIGNED: frozenset[int] = frozenset()
 
 
 def _interstate_reads(block: ControlFlowBlock) -> list[str]:
-    """Containers ``block`` reads through an interstate edge or a branch condition.
-
-    Such a read never becomes an AccessNode: ``if mask[i]:`` lowers to an assignment
-    ``mask_index = mask[i]`` on the edge into a ConditionalBlock, plus the branch condition on the
-    symbol. A walk over AccessNodes therefore reports the container as UNREAD by this block, and a
-    pass deciding a split on that answer separates the mask from the statements that read it.
-    """
+    """Containers ``block`` reads through an interstate edge or a branch condition."""
     if isinstance(block, SDFGState):
         return []
     arrays = block.sdfg.arrays
@@ -80,16 +44,8 @@ def _interstate_reads(block: ControlFlowBlock) -> list[str]:
 def _rw_subsets(
     block: ControlFlowBlock, loop_var: str | None, expanded: dict[str, Any] | None = None, symbols: bool = True
 ) -> tuple[dict[str, frozenset[int]], dict[str, frozenset[int]]]:
-    """For every container ``block`` writes / reads, the axes ALL of its accesses
-    index at ``loop_var`` itself (:func:`~dace.transformation.passes.loop_fission.per_iter_axes`).
-
-    :param expanded: Containers judged as if expanded by one slot dimension, with that dimension's index.
-    :param symbols: Also report the symbols ``block`` reads; a body nothing in which assigns one has no use for them.
-
-    :returns: ``(writes, reads)`` dicts mapping container name -> those axes, empty when some
-        access is not per-iteration w.r.t. ``loop_var``. A container absent from a dict
-        is not written / read by the block.
-    """
+    """For every container ``block`` writes / reads, the axes ALL of its accesses index at ``loop_var`` itself
+    (:func:`~dace.transformation.passes.loop_fission.per_iter_axes`)."""
     writes: dict[str, frozenset[int]] = {}
     reads: dict[str, frozenset[int]] = {}
 
@@ -112,9 +68,8 @@ def _rw_subsets(
                 narrow(reads, n.data, e.data.get_src_subset(e, st))
             if not stores and not loads:
                 reads.setdefault(n.data, UNALIGNED)
-    # Unaligned: the subset an interstate read uses is not analyzable here, and the forward
-    # producer->consumer split is only legal when BOTH sides are provably per-iteration. Recording
-    # it as unanalyzable keeps such a pair fused.
+    # Unaligned: the subset an interstate read uses is not analyzable here, and the forward producer->consumer split is
+    # only legal when BOTH sides are provably per-iteration.
     for name in _interstate_reads(block):
         reads[name] = UNALIGNED
     # A symbol is never a per-iteration subset: one assigned inside the block (KMP's state ``q``) is written, one
@@ -129,11 +84,7 @@ def _rw_subsets(
 
 
 def charge_body_edges(loop: LoopRegion, rw: dict) -> None:
-    """Charge each body edge's assignments and the names they read to the block the edge enters.
-
-    :func:`assignment_coupled` already keeps the edge's ends in one group; this makes the rest of the body see
-    what the edge reads and writes.
-    """
+    """Charge each body edge's assignments and the names they read to the block the edge enters."""
     for edge in loop.edges():
         writes, reads = rw[edge.dst]
         writes.update(dict.fromkeys(edge.data.assignments, UNALIGNED))
@@ -143,13 +94,7 @@ def charge_body_edges(loop: LoopRegion, rw: dict) -> None:
 def assignment_coupled(
     loop: LoopRegion, order: list[ControlFlowBlock], assigns: dict[ControlFlowBlock, set[str]]
 ) -> dict[ControlFlowBlock, ControlFlowBlock]:
-    """Union-find parents that already join the blocks a body-edge assignment couples.
-
-    A symbol assigned on a body edge exists only in the clone holding that edge, so the edge's ends and every
-    block reading the symbol stay in one group (CSR ``row_ptr_index := row_ptr[i]`` feeding an inner loop).
-
-    :param assigns: What :func:`assigned_in` answers for each block.
-    """
+    """Union-find parents that already join the blocks a body-edge assignment couples."""
     parent: dict[ControlFlowBlock, ControlFlowBlock] = {b: b for b in order}
     if not any(assigns.values()) and not any(edge.data.assignments for edge in loop.edges()):
         return parent
@@ -188,15 +133,9 @@ def _forward_flow_groups(
 ) -> list[list[ControlFlowBlock]] | None:
     """Partition ``loop``'s linear body into ordered groups split only across aligned forward flow.
 
-    ``Bi`` and ``Bj`` (``i < j``) sharing ``X`` merge if ``Bj`` writes ``X`` (backward WAR / WAW /
-    flow), or if ``Bi`` writes and ``Bj`` reads ``X`` without a provably aligned per-iteration index
-    on both sides (scalar accumulators, ``a[i+1]``, offsets like ``b[i-1]``). The aligned case (atax
-    ``tmp[i]``, covariance ``cov[i,j]``) splits. ``None`` if not a linear chain of >= 2 blocks or
-    nothing splits.
-
-    :param allow_assignments: Also split a body whose edges assign symbols, each such edge kept with the blocks
-                              that read them. Only the expansion fallback asks for it: a plain sequential body split
-                              there loses the fusion its pieces get as one loop (CloudSC's ``iphase`` nest).
+    :param allow_assignments: Also split a body whose edges assign symbols, each such edge kept with the blocks that
+        read them. Only the expansion fallback asks for it: a plain sequential body split there loses the fusion its
+        pieces get as one loop (CloudSC's ``iphase`` nest).
     :param expanded: Containers judged as if expanded by one slot dimension (see :func:`_rw_subsets`).
     """
     order = _linear_blocks(loop, allow_assignments=allow_assignments)
@@ -219,8 +158,7 @@ def _forward_flow_groups(
 
     for i, bi in enumerate(order):
         writes_i, reads_i = rw[bi]
-        # writes_i/reads_i are already ordered dicts; dict.fromkeys unions them without
-        # dropping into a hash-order set (the old `set(a) | set(b)` did).
+        # writes_i/reads_i are already ordered dicts
         touched_i = dict.fromkeys([*writes_i, *reads_i])
         for bj in order[i + 1 :]:
             writes_j, reads_j = rw[bj]
@@ -248,11 +186,7 @@ def flow_ordered_groups(
     find: Callable[[ControlFlowBlock], ControlFlowBlock],
     flows: list[tuple[ControlFlowBlock, ControlFlowBlock]],
 ) -> list[list[ControlFlowBlock]]:
-    """The union-find classes of ``order``, each producer's class before its consumers'.
-
-    A class split from the middle of the body can feed a class that starts before it; classes a flow cycle joins
-    merge into one.
-    """
+    """The union-find classes of ``order``, each producer's class before its consumers'."""
     pos = {b: i for i, b in enumerate(order)}
     graph = nx.DiGraph()
     graph.add_nodes_from(find(b) for b in order)
@@ -266,14 +200,7 @@ def flow_ordered_groups(
 
 @transformation.explicit_cf_compatible
 class DistributeProducerConsumerLoop(ppl.Pass):
-    """Distribute a linear-chain loop across forward (producer->consumer) deps.
-
-    The complement of ``LoopFission``: where fission separates only independent
-    groups, this also separates a producer statement from the consumer that
-    reads its output, emitting the producer loop first. Runs in the loops-only
-    window so a coupled ``for i: { produce; consume }`` becomes two perfect
-    nests each liftable on its own.
-    """
+    """Distribute a linear-chain loop across forward (producer->consumer) deps."""
 
     CATEGORY: str = "Canonicalization"
 

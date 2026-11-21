@@ -13,12 +13,7 @@ from dace.transformation import transformation
 
 
 def code_text(block: Any) -> str:
-    """Every code string a CodeBlock-like property can carry, concatenated.
-
-    ``CodeBlock.get_free_symbols`` walks a PYTHON ast and returns an empty set for every other
-    language, so a name used only inside a C++ tasklet is invisible to symbol analysis. This
-    pass reads the raw text instead, which sees it whatever the language.
-    """
+    """Every code string a CodeBlock-like property can carry, concatenated."""
     if block is None:
         return ""
     if isinstance(block, properties.CodeBlock):
@@ -33,13 +28,7 @@ def code_text(block: Any) -> str:
 
 
 def referenced_names(sdfg: SDFG) -> set[str]:
-    """Names that anything in ``sdfg`` itself (not its children) still refers to.
-
-    Structural references (access nodes, memlets) are collected exactly. Everything that can only
-    mention a name as TEXT -- tasklet bodies, interstate conditions and assignments, loop headers --
-    is collected as word tokens, which over-approximates. Over-approximating is the safe direction:
-    a name kept alive by accident costs a descriptor, a name dropped by accident is a miscompile.
-    """
+    """Names that anything in ``sdfg`` itself (not its children) still refers to."""
     used: set[str] = set()
     # ``init_code`` and ``exit_code`` map a location to a CodeBlock: the blocks, not the dict, hold the text.
     text: list = [*sdfg.init_code.values(), *sdfg.exit_code.values()]
@@ -74,14 +63,7 @@ def referenced_names(sdfg: SDFG) -> set[str]:
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class PruneUnreferencedTransients(ppl.Pass):
-    """Remove transient descriptors no node, memlet, symbol or code string names any more.
-
-    Stages late in the recipe delete the last reader of a temporary without deleting its
-    descriptor, and the reclaimers that would collect it (``ArrayElimination``) run before them
-    and skip ``Scalar`` outright. The residue is invisible to codegen but not to a re-run: it is
-    descriptor churn between one canonicalization and the next, and it is dead weight in every
-    serialized SDFG in between.
-    """
+    """Remove transient descriptors no node, memlet, symbol or code string names any more."""
 
     CATEGORY: str = "Canonicalization"
 

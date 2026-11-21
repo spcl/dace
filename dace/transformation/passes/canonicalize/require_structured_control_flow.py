@@ -9,10 +9,7 @@ from dace.transformation import pass_pipeline as ppl
 
 
 class RequireStructuredControlFlow(ppl.Pass):
-    """Raise unless every region of the SDFG branches through ``ConditionalBlock`` and loops through ``LoopRegion``.
-
-    Canonicalization runs ``ControlFlowRaising`` right before this check and supports nothing else.
-    """
+    """Raise unless every region of the SDFG branches through ``ConditionalBlock`` and loops through ``LoopRegion``."""
 
     CATEGORY: str = "Canonicalization"
 

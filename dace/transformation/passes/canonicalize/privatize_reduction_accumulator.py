@@ -15,9 +15,7 @@ from dace.sdfg.narrowing import as_map_entry
 
 def order_after_writeback(state: SDFGState, arr_node: nodes.AccessNode, after_map) -> None:
     """Order every access to ``arr_node``'s container that followed the map behind the in-state writeback into
-    ``arr_node``: the map's WCR wrote the slot before it ended, the writeback copy only runs once the map has. A write
-    happens where its producer runs, so the producers are ordered; an access inside a scope through its outermost
-    entry."""
+    ``arr_node``: the map's WCR wrote the slot before it ended, the writeback copy only runs once the map has."""
     behind, scope = set(state.bfs_nodes(arr_node)), state.scope_dict()
     for n in after_map:
         if not isinstance(n, nodes.AccessNode) or n.data != arr_node.data or n in behind:
@@ -91,13 +89,7 @@ def privatize_reduction_accumulator(
     state: SDFGState, map_exit: nodes.MapExit, wcr_edge: MultiConnectorEdge[mm.Memlet]
 ) -> bool:
     """Rewrite one map's WCR write into an array element as a WCR into a transient scalar, seeded before the map and
-    written back after it.
-
-    :param state: The state containing ``map_exit``.
-    :param map_exit: The MapExit whose WCR out-write should be privatized.
-    :param wcr_edge: An in-edge of ``map_exit`` carrying a WCR into a single array element.
-    :returns: ``True`` if the rewrite landed, ``False`` (the SDFG unchanged) if the edge is not eligible.
-    """
+    written back after it."""
     slot = reduction_slot(state, map_exit, wcr_edge)
     if slot is None:
         return False

@@ -1,25 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Collapse a no-op cast tasklet ``x = cast(y)`` into a plain assignment ``x = y``.
-
-A Fortran kind coercion / numpy ``astype`` lands as a one-input tasklet whose body
-is ``__out = dace.float64(__inp)`` -- the cast spelling ``dace.<typeclass>(...)`` that
-``_datatype_converter`` emits (the Fortran frontend and the sympy printer also produce
-the bare ``float64(...)`` form). Such a cast is pure noise -- it changes nothing --
-exactly when BOTH:
-
-  (a) the argument ``y`` is a data/symbol reference (a ``Name`` or ``Subscript``), NOT a
-      numeric constant literal (``float64(2.0)`` is a *typed constant*, left untouched); and
-  (b) the destination ``x``'s declared dtype already equals the cast's target dtype --
-      the conversion is to the type ``x`` already has.
-
-When both hold the body is rewritten to the plain assignment ``x = y``. That assignment
-is then legitimately trivial and may be folded into a direct copy by
-``TrivialTaskletElimination``. A genuine cast (differing dtypes) fails (b) and is kept,
-so no conversion is ever silently dropped.
-
-The same rewrite applies to a product with the literal one, ``x = 1.0 * y`` / ``x = y * 1``, when ``y`` and ``x``
-share a floating-point dtype, or an integer dtype and the literal is an integer: the product is then exactly ``y``.
-"""
+"""Collapse a no-op cast tasklet ``x = cast(y)`` into a plain assignment ``x = y``."""
 
 import ast
 from typing import Any
@@ -36,17 +16,15 @@ from dace.transformation.passes.analysis import scopes
 
 
 def string_to_typeclass() -> dict[str, dtypes.typeclass]:
-    """Map every scalar dtype's bare spelling (``float64``, ``int32``, ...) back to its
-    typeclass. Built from the registry so it tracks the dtype list -- never hardcoded."""
+    """Map every scalar dtype's bare spelling (``float64``, ``int32``, ...) back to its typeclass."""
     return {tc.to_string(): tc for tc in dtypes.TYPECLASS_TO_STRING}
 
 
 def noop_cast_candidate(
     code: CodeBlock, casts: dict[str, dtypes.typeclass]
 ) -> tuple[str, ast.AST, dtypes.typeclass] | None:
-    """If ``code`` is a single ``x = cast(y)`` with ``y`` a data/symbol reference and
-    ``cast`` a dtype conversion, return ``(target_conn, arg_ast, cast_dtype)``; else
-    ``None``. The dtype-equality checks (a genuine no-op) are applied by the caller."""
+    """If ``code`` is a single ``x = cast(y)`` with ``y`` a data/symbol reference and ``cast`` a dtype conversion,
+    return ``(target_conn, arg_ast, cast_dtype)``; else ``None``."""
     body = code.code
     if len(body) != 1 or not isinstance(body[0], ast.Assign):
         return None
@@ -68,7 +46,7 @@ def noop_cast_candidate(
 
 def identity_product_candidate(code: CodeBlock) -> tuple[str, ast.AST, ast.Constant] | None:
     """``(target_conn, y, literal)`` if ``code`` is a single ``x = 1 * y`` or ``x = y * 1`` with ``y`` a data/symbol
-    reference and the literal numerically one; else ``None``. The dtype checks are applied by the caller."""
+    reference and the literal numerically one; else ``None``."""
     body = code.code
     if len(body) != 1 or not isinstance(body[0], ast.Assign):
         return None
@@ -115,15 +93,8 @@ def destination_dtype(
 def source_dtype(
     state: SDFGState, tasklet: nodes.Tasklet, in_name: str, sdfg: SDFG, resolver: scopes.ScopedSymbolResolver
 ) -> dtypes.typeclass | scopes.UndeterminedDType:
-    """The dtype of the value ``y`` reads: the array behind the matching input connector, or --
-    when ``y`` is a free symbol rather than a connector -- the symbol's dtype.
-
-    A free symbol here is routinely a MAP PARAMETER or a loop iterator, which no declaration table
-    holds, so the scoped table the resolver consults is the only source that answers. An unanswered
-    name comes back as :data:`~dace.transformation.passes.analysis.scopes.UNDETERMINED`, which the
-    caller must detect: a falsy ``None`` invites a default, and a guessed width here would either
-    drop a genuine narrowing cast or keep a genuine no-op.
-    """
+    """The dtype of the value ``y`` reads: the array behind the matching input connector, or -- when ``y`` is a free
+    symbol rather than a connector -- the symbol's dtype."""
     for edge in state.in_edges(tasklet):
         if edge.dst_conn == in_name and edge.data is not None and edge.data.data is not None:
             return resolver.resolve_dtype_or_undetermined(edge.data.data, sdfg, state, tasklet, in_name, edge)
@@ -132,10 +103,9 @@ def source_dtype(
 
 @transformation.explicit_cf_compatible
 class CollapseNoOpCast(ppl.Pass):
-    """Rewrite a no-op cast tasklet ``x = cast(y)`` into the plain assignment ``x = y`` --
-    only when ``y`` is a non-constant data/symbol reference and source, destination and
-    cast-target dtype all coincide (the cast is identity and the store is exact). An exact
-    product with the literal one (module docstring) is rewritten the same way."""
+    """Rewrite a no-op cast tasklet ``x = cast(y)`` into the plain assignment ``x = y`` -- only when ``y`` is a
+    non-constant data/symbol reference and source, destination and cast-target dtype all coincide (the cast is identity
+    and the store is exact)."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -161,15 +131,12 @@ class CollapseNoOpCast(ppl.Pass):
                     target_conn, arg, cast_dtype = candidate
                     dst_dtype = destination_dtype(state, tasklet, target_conn, nsdfg, resolver)
                     src_dtype = source_dtype(state, tasklet, base_name(arg), nsdfg, resolver)
-                    # An undeterminable end of the cast is not a mismatch and not a match: nothing
-                    # is known, so nothing is rewritten. Identity, because UNDETERMINED refuses
-                    # ``bool()`` on purpose.
+                    # An undeterminable end of the cast is not a mismatch and not a match: nothing is known, so nothing
+                    # is rewritten.
                     if src_dtype is scopes.UNDETERMINED or dst_dtype is scopes.UNDETERMINED:
                         continue
-                    # A genuine no-op: the cast is identity (source already the target dtype) AND
-                    # the destination has that same dtype (guard (b)). Then ``cast(y)`` == ``y``
-                    # bit-for-bit and the store is exact -- rewriting drops pure noise. Any
-                    # mismatch is a real conversion and is left as a cast.
+                    # A genuine no-op: the cast is identity (source already the target dtype) AND the destination has
+                    # that same dtype (guard (b)).
                     if src_dtype != cast_dtype or dst_dtype != cast_dtype:
                         continue
                     tasklet.code = CodeBlock(f"{target_conn} = {required(astutils.unparse(arg)).strip()}")

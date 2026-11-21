@@ -1,34 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Re-express a Map whose accesses run BACKWARDS through memory so that they run forwards.
-
-A ``Map`` is unordered by definition, so the direction its parameter sweeps carries no meaning --
-but the direction its *accesses* sweep carries all the performance. A reversed source loop reaches
-codegen as an ascending parameter over descending addresses:
-
-    for i in range(N - 1, -1, -1): a[i] = b[i] + 1.0
-
-    #pragma omp parallel for simd
-    for (auto _loop_it_0 = 0; _loop_it_0 < N; _loop_it_0 += 1)
-        a[((N - _loop_it_0) - 1)] = (b[((N - _loop_it_0) - 1)] + 1.0);
-
-:mod:`~dace.transformation.passes.canonicalize.normalize_negative_stride` produces that binding on
-purpose: it keeps the original ITERATION ORDER so a loop-carried recurrence still behaves. Once
-``LoopToMap`` has proven there is no carried dependence and made a Map of it, the order is free and
-the binding is pure cost -- every thread walks its chunk from high address to low, which defeats
-the hardware prefetcher and, on a streaming kernel, costs about 30% (TSVC ``s1112`` /
-``neg_stride_rev`` at 0.78x against the un-canonicalized form).
-
-The rewrite substitutes ``p -> lo + hi - p`` in the map's SCOPE only, leaving the range alone.
-That is a bijection of ``[lo, hi]`` onto itself for a unit stride, so the same index set is visited
-and only the association between parameter value and address changes. It fires only when every
-access is affine in the parameter and every non-zero coefficient is negative -- a map that reads
-forwards and writes backwards has no good direction and is left alone.
-
-Direction, then order: this runs before
-:mod:`~dace.transformation.passes.minimize_stride_permutation`, which decides which parameter
-belongs innermost by scoring unit coefficients. Orienting first means it scores the coefficients
-the emitted code will actually use.
-"""
+"""Re-express a Map whose accesses run BACKWARDS through memory so that they run forwards."""
 
 from typing import Any
 
@@ -47,16 +18,7 @@ from dace.transformation import transformation as xf
 def access_coefficients(
     state: SDFGState, entry: nodes.MapEntry, param: str, symbols: SymbolResolver | None = None
 ) -> list[int | None] | None:
-    """Sign of ``param``'s coefficient in every data access inside ``entry``'s scope.
-
-    ``None`` when any access uses the parameter non-affinely (a modulo, a call, an indirection):
-    the direction of such an access is not a property this pass can read, so the map is left alone
-    rather than guessed at.
-
-    :param symbols: the resolver to read the facts at ``entry`` from, if the caller asks about several parameters.
-    :returns: ``-1`` per (edge, dimension) the parameter descends in, ``[1]`` as soon as one access ascends, or
-        ``None`` for the whole map if a use before that is non-affine.
-    """
+    """Sign of ``param``'s coefficient in every data access inside ``entry``'s scope."""
     sym = symbolic.pystr_to_symbolic(param)
     # Only a symbolic coefficient needs the facts at ``entry``; a number's sign is its own
     facts = None
@@ -103,17 +65,12 @@ def access_coefficients(
 
 
 def reverse_descending_maps(sdfg: SDFG) -> int | None:
-    """Flip every map parameter whose accesses all descend, in place.
-
-    :param sdfg: the SDFG to rewrite.
-    :returns: the number of parameters flipped, or ``None`` if none were.
-    """
+    """Flip every map parameter whose accesses all descend, in place."""
     flipped = 0
     for g in sdfg.all_sdfgs_recursive():
         for state in g.states():
             for entry in [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]:
-                # The facts at ``entry`` hold around it; a flip rewrites only what lies inside, so one resolver
-                # serves every parameter of the map.
+                # The facts at ``entry`` hold around it
                 symbols = SymbolResolver()
                 for dim, param in enumerate(entry.map.params):
                     begin, end, step = entry.map.range[dim]
@@ -129,11 +86,7 @@ def reverse_descending_maps(sdfg: SDFG) -> int | None:
 
 @xf.explicit_cf_compatible
 class ReverseMapTraversal(ppl.Pass):
-    """Re-express a Map whose data accesses all run backwards so that they run forwards.
-
-    See the module docstring: a Map is unordered, so this changes no result -- only which address
-    a given thread touches first.
-    """
+    """Re-express a Map whose data accesses all run backwards so that they run forwards."""
 
     CATEGORY: str = "Canonicalization"
 

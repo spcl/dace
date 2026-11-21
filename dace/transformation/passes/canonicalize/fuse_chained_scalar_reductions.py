@@ -1,49 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Fuse a chain of consecutive same-accumulator reductions into one.
-
-A loop body that accumulates into the SAME scalar slot more than once per
-iteration -- the TSVC ``s319`` shape::
-
-    sum_val = 0.0
-    for i in range(N):
-        a[i] = c[i] + d[i]
-        sum_val = sum_val + a[i]       # step 1
-        b[i] = c[i] + e[i]
-        sum_val = sum_val + b[i]       # step 2
-
--- reaches the reduction stage as a chained dataflow inside one state::
-
-    acc --> (+ incA) --> tmpA --copy--> acc --> (+ incB) --> tmpB --copy--> acc
-
-The intermediate read-back of ``acc`` between the two ``+`` breaks the
-single-accumulation shape that ``LoopToReduce`` / the WCR-on-scalar lift
-matches, so the loop stays sequential (only the element-wise ``a[i]`` / ``b[i]``
-writes get fissioned into a parallel map; the reduction loop survives).
-
-By associativity of the reduction operator, ``((acc OP incA) OP incB)`` equals
-``acc OP (incA OP incB)`` -- a SINGLE accumulation whose increment is the
-combined ``incA OP incB``. This pass performs that re-association: it collapses
-the chain into one accumulation feeding the terminal ``acc`` node, with the
-increments combined by a small operator tree. The downstream single-accumulation
-lift then parallelizes the loop into a Map + WCR-on-scalar reduction.
-
-Soundness -- the fold is value-preserving (up to the reassociation every
-parallel reduction already performs) when, for the accumulator ``acc`` and the
-chain of steps in one state:
-
-* every step is ``acc[S] = acc[S] OP inc`` with the SAME associative operator
-  ``OP`` (``+`` or ``*``) and the SAME single-element slot ``S`` (a scalar slot,
-  loop-invariant);
-* the steps form a single linear chain: each step reads the ``acc`` node the
-  previous step wrote (no branching / no other writer of ``acc[S]`` in the
-  state);
-* no increment reads ``acc`` (a pure reduction, never a recurrence).
-
-Only ``+`` and ``*`` are folded: they are associative AND commutative, so the
-combined-increment tree is order-independent. ``min`` / ``max`` are associative
-too but arrive as a Call shape handled by ``ArgMaxLift``; this pass leaves them
-untouched.
-"""
+"""Fuse a chain of consecutive same-accumulator reductions into one."""
 
 import ast
 import copy
@@ -82,14 +38,7 @@ def _binop_op(tasklet: nodes.Tasklet) -> type | None:
 def _chase_write_to_accum(
     state: SDFGState, sdfg: SDFG, out_edge: MultiConnectorEdge[Memlet]
 ) -> tuple[nodes.AccessNode, list[nodes.AccessNode], list[nodes.Tasklet]] | None:
-    """From a binop's output edge, follow the staging chain forward to the
-    AccessNode it ultimately writes. The frontend stages an accumulator write as
-    ``binop -> tmp -> copy -> acc``; that copy is a copy TASKLET before
-    ``TrivialTaskletElimination`` and a direct AccessNode->AccessNode memlet copy
-    after it -- both are followed here. Returns ``(final_node,
-    [intermediate_nodes], [copy_tasklets])`` or ``None`` if the chain is not a
-    simple transient-copy staging into an AccessNode.
-    """
+    """From a binop's output edge, follow the staging chain forward to the AccessNode it ultimately writes."""
     intermediates: list = []
     copies: list = []
     node = out_edge.dst
@@ -308,7 +257,6 @@ class FuseChainedScalarReductions(ppl.Pass):
         acc_name = first.acc_name
 
         # 1. Build a combined-increment operator tree over the per-step increment sources.
-        #    inc_0 OP inc_1 OP ... folded left-deep into a fresh transient scalar.
         dtype = sdfg.arrays[acc_name].dtype
         inc_edges = [s.inc_edge for s in chain]
 
@@ -324,10 +272,9 @@ class FuseChainedScalarReductions(ppl.Pass):
         for idx in range(1, len(inc_edges)):
             left_edge = inc_edges[idx - 1] if cur_scalar_node is None else None
             right_edge = inc_edges[idx]
-            # Ordered dicts, not set literals: ``add_tasklet`` turns a set into the connector dict, so the
-            # set's hash order becomes the in_connectors order and codegen emits the connector declarations
-            # in that order -- byte-different C for the same input on every run. ``dict.fromkeys`` is the
-            # declared ``Dict[str, typeclass]`` form and matches what the set branch builds ({k: None}).
+            # Ordered dicts, not set literals: ``add_tasklet`` turns a set into the connector dict, so the set's hash
+            # order becomes the in_connectors order and codegen emits the connector declarations in that order --
+            # byte-different C for the same input on every run.
             fold_t = st.add_tasklet(
                 f"_fuse_red_{idx}",
                 dict.fromkeys(["__in1", "__in2"]),
@@ -363,8 +310,6 @@ class FuseChainedScalarReductions(ppl.Pass):
         )
 
         # 3. Redirect the first step's write path to the terminal accumulator node.
-        #    The first step's write_final node is an intermediate; splice it out and
-        #    point the copy that fed it at the terminal node instead.
         first_write = first.write_final
         term = last.write_final
         if first_write is not term:
@@ -374,11 +319,8 @@ class FuseChainedScalarReductions(ppl.Pass):
             st.add_edge(in_e.src, in_e.src_conn, term, in_e.dst_conn, new_data)
             st.remove_edge(in_e)
 
-        # 4. Delete every downstream chain node (steps 1..k-1): their binop, staging
-        #    copy tasklets + transients, and the intermediate accumulator nodes each
-        #    step wrote (which the next step read). ``remove_node`` drops incident edges,
-        #    so the surviving first-step accumulation feeds ``term`` alone. ``term`` and
-        #    the loop-carried input node (chain[0].acc_read_node) are preserved.
+        # 4. Delete every downstream chain node (steps 1..k-1): their binop, staging copy tasklets + transients, and the
+        # intermediate accumulator nodes each step wrote (which the next step read).
         to_remove: dict = {}
         for s in chain[1:]:
             to_remove[s.binop] = None

@@ -1,35 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Fuse two consecutive loops with identical bodies over adjacent index ranges.
-
-A hand-tiled loop nest arrives split into a *main-body* loop over the largest
-multiple-of-``K`` prefix and a step-1 *remainder* loop over the trailing
-``< K`` elements::
-
-    for i in range(0, (N // K) * K):   # main body (after re-roll: unit stride)
-        acc += a[i]
-    for i in range((N // K) * K, N):   # remainder
-        acc += a[i]
-
-Both loops run the *same* body over *adjacent* index ranges, so together they
-sweep ``range(0, N)``. Left split, a reduction like the one above lifts to two
-separate ``Reduce`` library nodes writing the same accumulator -- a shape whose
-seed does not chain across the two nodes (the second re-seeds the accumulator
-and drops the first's partial sum). Fusing the two loops back into one
-``for i in range(0, N)`` removes the split so a single ``Reduce`` is lifted and
-the result is exact.
-
-Concatenating two adjacent iteration ranges ``[A, B)`` and ``[B, C)`` under the
-*same* stride and the *same* body executes the body for the same index sequence
-in the same order as a single loop over their union, so every loop-carried value
-is identical. That union is ``[A, C)`` only for ``A <= B <= C``; an empty side
-makes it ``[min(A, B), max(B, C))``, which holds in every case and is what the
-fused loop runs when the order is not provable. The match is deliberately
-conservative -- both loops must be
-single-state, unit-stride, directly consecutive (one plain interstate edge
-between them, nothing else), and structurally identical up to their iteration
-variable -- so it fires only on the re-rolled tile/remainder shape and its kin,
-never on unrelated adjacent loops.
-"""
+"""Fuse two consecutive loops with identical bodies over adjacent index ranges."""
 
 import re
 from collections.abc import Callable, Container
@@ -50,9 +20,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.transformation import explicit_cf_compatible
 
-#: Per-SDFG context: data name -> states referencing an AccessNode for it. A merge deletes a
-#: whole body state, which changes this, so it is rebuilt once per sweep rather than cached
-#: across an ``apply`` (see ``apply_pass``); never rebuilt per candidate pair.
+#: Per-SDFG context: data name -> states referencing an AccessNode for it.
 ScratchIndex = dict[str, OrderedSet[SDFGState]]
 
 #: Iterator- and scratch-name-independent key of a body node: ``(kind, payload)``.
@@ -64,40 +32,23 @@ ValueIds = dict[tuple, int]
 #: bodies, so ``a[_loop_it_0]`` and ``a[_loop_it_1]`` compare equal.
 ITER_PLACEHOLDER = "__lv__"
 
-#: Placeholder every body-local scratch transient name is normalised to, so two
-#: bodies differing only in a frontend-generated intermediate name (e.g.
-#: ``s0_plus_a_slice`` vs ``s0_plus_a_slice_0``) compare equal. The carried
-#: accumulator and the read/written arrays -- which are referenced OUTSIDE the
-#: body and so are not body-local -- keep their real names and must match.
+#: Placeholder every body-local scratch transient name is normalised to, so two bodies differing only in a
+#: frontend-generated intermediate name (e.g. ``s0_plus_a_slice`` vs ``s0_plus_a_slice_0``) compare equal.
 SCRATCH_PLACEHOLDER = "__scratch__"
 
 
 def _int_floor_to_sympy(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
-    """Rewrite DaCe ``int_floor(a, b)`` sub-terms as SymPy ``floor(a / b)``.
-
-    ``int_floor`` is opaque to :func:`sympy.simplify`, so a genuine identity
-    such as ``int_floor(N - 11, 11) + 1 == int_floor(N, 11)`` is left unproven.
-    SymPy's ``floor`` knows ``floor(x + k) == floor(x) + k`` for integer ``k``,
-    which is exactly what an adjacency check between a tile bound and a
-    remainder start needs.
-    """
+    """Rewrite DaCe ``int_floor(a, b)`` sub-terms as SymPy ``floor(a / b)``."""
     return expr.replace(
         lambda x: x.func.__name__ == "int_floor" and len(x.args) == 2, lambda x: sympy.floor(x.args[0] / x.args[1])
     )
 
 
 def _symbolically_equal(a: symbolic.SymbolicType, b: symbolic.SymbolicType) -> bool:
-    """Whether two symbolic expressions are provably equal, floor-aware.
-
-    :param a: First expression.
-    :param b: Second expression.
-    :returns: ``True`` iff ``a - b`` simplifies to zero (after rewriting
-              ``int_floor`` to SymPy ``floor``), else ``False``.
-    """
+    """Whether two symbolic expressions are provably equal, floor-aware."""
     try:
-        # The two expressions come from different sources (two memlets, a subset against a reparsed
-        # bound), so a shared name can carry two symbol instances with different dtypes. Subtraction
-        # goes through identity, not name, and would leave ``i - i`` uncancelled.
+        # The two expressions come from different sources (two memlets, a subset against a reparsed bound), so a shared
+        # name can carry two symbol instances with different dtypes.
         pa, pb = symbolic.equalize_symbols_across(symbolic.pystr_to_symbolic(a), symbolic.pystr_to_symbolic(b))
         diff = symbolic.simplify(as_expr(pa) - as_expr(pb))
         if diff == 0:
@@ -116,15 +67,7 @@ def value_keys(
     inputs_of: Container[nodes.Node] | None = None,
 ) -> dict[nodes.Node, int] | None:
     """An interned key per node of ``state``, equal only for nodes computing one value: it folds in the keys of the
-    node's sources, wired by connector, so one set of tasklets and memlets connected differently differs.
-
-    :param node_key: What a node is by itself; ``None`` refuses.
-    :param edge_key: What a memlet reads.
-    :param ids: The interning table, shared by everything compared.
-    :param stored: Per container, the key of its last write; carries values into the next state.
-    :param inputs_of: The nodes whose sources count, all if ``None``; the key of any other is ``node_key`` alone.
-    :returns: The keys, or ``None`` if ``node_key`` refused.
-    """
+    node's sources, wired by connector, so one set of tasklets and memlets connected differently differs."""
     keys: dict[nodes.Node, int] = {}
     for node in sdutil.dfs_topological_sort(state):
         payload = node_key(node)
@@ -189,13 +132,8 @@ class FuseConsecutiveLoops(ppl.Pass):
         return bool(modified & ppl.Modifies.CFG)
 
     def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
-        """Fuse every matching consecutive-loop pair in ``sdfg`` and its nested
-        SDFGs, repeating until no pair matches (a chain of tiles collapses one
-        adjacency per sweep).
-
-        :param sdfg: SDFG to mutate in place.
-        :returns: The number of fusions performed, or ``None`` if none.
-        """
+        """Fuse every matching consecutive-loop pair in ``sdfg`` and its nested SDFGs, repeating until no pair matches
+        (a chain of tiles collapses one adjacency per sweep)."""
         fused = 0
         for sd in sdfg.all_sdfgs_recursive():
             changed = True
@@ -222,13 +160,7 @@ class FuseConsecutiveLoops(ppl.Pass):
         return index
 
     def _fuse_one(self, cfg: ControlFlowRegion, scratch_index: ScratchIndex) -> bool:
-        """Find and fuse one consecutive-loop pair inside ``cfg``.
-
-        :param cfg: The control-flow region to search (one level; loops nested
-                    deeper are reached via ``all_control_flow_regions``).
-        :param scratch_index: Current sweep's data-name -> states map (see ``apply_pass``).
-        :returns: ``True`` if a pair was fused.
-        """
+        """Find and fuse one consecutive-loop pair inside ``cfg``."""
         for first in cfg.nodes():
             if not isinstance(first, LoopRegion):
                 continue
@@ -303,11 +235,8 @@ class FuseConsecutiveLoops(ppl.Pass):
         return sig1 is not None and sig1 == sig2
 
     def _local_scratch(self, loop: LoopRegion, body_state: SDFGState, scratch_index: ScratchIndex) -> dict[str, None]:
-        """Transient data names used ONLY inside ``body_state`` -- i.e. not
-        referenced by any other block of the owning SDFG (not carried across
-        iterations, not read/written outside the loop). These are frontend
-        scratch intermediates whose names are irrelevant to what the body
-        computes and so are normalised away when comparing two bodies."""
+        """Transient data names used ONLY inside ``body_state`` -- i.e. not referenced by any other block of the owning
+        SDFG (not carried across iterations, not read/written outside the loop)."""
         root = loop
         while root.parent_graph is not None:
             root = root.parent_graph
@@ -341,17 +270,7 @@ class FuseConsecutiveLoops(ppl.Pass):
         return None if keys is None else sorted(keys[n] for n in state.sink_nodes())
 
     def _merge(self, cfg: ControlFlowRegion, first: LoopRegion, second: LoopRegion, link: Edge[InterstateEdge]) -> None:
-        """Extend ``first`` over the union range and splice ``second`` out.
-
-        ``first`` keeps its body and iterator; only its exclusive upper bound is
-        widened to ``second``'s. ``second``'s successor edges are re-homed onto
-        ``first`` and ``second`` is removed.
-
-        :param cfg: The region owning both loops.
-        :param first: The surviving loop (its body is kept).
-        :param second: The loop to remove (its body is a duplicate of ``first``).
-        :param link: The ``first -> second`` sequencing edge (removed with ``second``).
-        """
+        """Extend ``first`` over the union range and splice ``second`` out."""
         var = first.loop_variable
         facts = SymbolResolver().facts_at(first.parent_graph)
         start = symbolic.pystr_to_symbolic(loop_analysis.get_init_assignment(first))
@@ -373,34 +292,11 @@ class FuseConsecutiveLoops(ppl.Pass):
 
 __all__ = ["FuseConsecutiveLoops", "GuardedFusionPlan", "plan_guarded_fusion", "commit_guarded_fusion"]
 
-# #
-# Guarded fusion: the same adjacent-range rewrite for loops whose bodies DIFFER.
-# #
-#
-# ``FuseConsecutiveLoops`` above fuses a chain only when the bodies are identical, because then
-# the merge is free -- widen one bound, drop the twin. When the bodies differ the index sequence
-# argument is unchanged (concatenating ``[A, B)`` and ``[B, C)`` under the same stride visits the
-# same indices in the same order), but the merged loop has to pick a body per iteration, so the
-# bodies move into a ``ConditionalBlock`` keyed on the iterator.
-#
-# That rewrite is NOT unconditionally desirable, which is why it is a plan/commit pair rather
-# than part of the pass above: if one sibling is a recurrence and the other is DOALL, fusing them
-# makes the whole range a recurrence and LOSES the parallel half, and nothing downstream splits
-# that back apart. Only a caller that has already proved it wins something -- ``WavefrontSkew``,
-# which needs the merged 2-D space to find a diagonal -- may commit it.
+# # Guarded fusion: the same adjacent-range rewrite for loops whose bodies DIFFER.
 
 
 class GuardedFusionPlan:
-    """Sibling loops that fuse into one guarded loop over the union of their ranges.
-
-    ``guards[k]`` are the constraints (each meant ``>= 0``) that hold inside sibling ``k`` --
-    exactly the branch conditions :func:`commit_guarded_fusion` will emit, so an analysis run
-    against the plan sees the same iteration space as the committed graph.
-
-    ``var`` is the iterator the fused loop uses -- the first sibling's. Siblings normalized
-    apart (``normalize_loops_and_maps`` gives every loop a PRIVATE ``_loop_it_N``) keep their own
-    names in ``loop_vars`` and are renamed onto ``var`` at commit.
-    """
+    """Sibling loops that fuse into one guarded loop over the union of their ranges."""
 
     __slots__ = ("loops", "loop_vars", "var", "lo", "hi", "bounds", "guards")
 
@@ -424,12 +320,7 @@ class GuardedFusionPlan:
 
 
 def plan_guarded_fusion(region: ControlFlowRegion) -> GuardedFusionPlan | None:
-    """The maximal chain of adjacent-range sibling loops in ``region``, or ``None``.
-
-    Refuses unless the chain is everything ``region`` holds (bar empty states): the callers
-    reason about a two-level nest, and a stray computation beside the chain would be swept into
-    a branch it does not belong to. Does not mutate.
-    """
+    """The maximal chain of adjacent-range sibling loops in ``region``, or ``None``."""
     loops = [b for b in region.nodes() if isinstance(b, LoopRegion)]
     if len(loops) < 2:
         return None
@@ -490,12 +381,8 @@ def plan_guarded_fusion(region: ControlFlowRegion) -> GuardedFusionPlan | None:
 
 
 def commit_guarded_fusion(plan: GuardedFusionPlan, region: ControlFlowRegion) -> LoopRegion:
-    """Replace ``plan``'s chain in ``region`` with one loop over the union range whose body is a
-    ``ConditionalBlock`` selecting the original body per iteration. Returns the new loop.
-
-    The branch conditions are the chain's own sub-ranges, tested in order, with the last sibling
-    as the ``else`` -- so the partition is total by construction and no iteration falls through.
-    """
+    """Replace ``plan``'s chain in ``region`` with one loop over the union range whose body is a ``ConditionalBlock``
+    selecting the original body per iteration."""
     var = plan.var
     sdfg = region.sdfg
     # Read before any mutation: if the chain led the region, the fused loop has to inherit that,
