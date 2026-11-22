@@ -63,8 +63,9 @@ from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, SDFGState, memlet_utils, nodes
 from dace.sdfg.replace import replace_properties_dict
-from dace.sdfg.scope import is_devicelevel_gpu
+from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.transformation.dataflow.tasklet_fusion import TaskletFusion
+from dace.transformation.dataflow.trivial_map_elimination import TrivialMapElimination
 from dace.transformation.passes.analysis.analysis import has_wcr_in_edge
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
 from dace.transformation.passes.canonicalize.finalize import blas_addresses
@@ -879,11 +880,27 @@ def accumulate_into_scope_exit(
 
 
 class RealTaskletFusion(TaskletFusion):
-    """:class:`TaskletFusion` over a real or integer intermediate only: a folded complex one leaves a call such as
-    ``exp`` whose argument the C printer can no longer type, so it cannot choose ``cexp`` (fft_1d)."""
+    """:class:`TaskletFusion` over a ``float64`` intermediate only. A narrower one rounds or truncates its value
+    (``float``: an fp32 kernel's ``x * 2.0`` is computed in double, then rounded; ``int`` truncates), so folding it
+    into its reader would change the result; a complex one leaves a call such as ``exp`` whose argument the C printer
+    can no longer type, so it cannot choose ``cexp`` (fft_1d)."""
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
-        if self.data.desc(sdfg).dtype in (dtypes.complex64, dtypes.complex128):
+        if self.data.desc(sdfg).dtype != dtypes.float64:
+            return False
+        return super().can_be_applied(graph, expr_index, sdfg, permissive)
+
+
+class TeamSafeTrivialMapElimination(TrivialMapElimination):
+    """:class:`TrivialMapElimination` that keeps a thread team intact: a team map itself is never removed, and inside
+    a team a one-trip map is removed only in part, since its ``omp for`` is what runs the body on one thread."""
+
+    def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
+        entry = self.map_entry
+        if entry.map.schedule == dtypes.ScheduleType.CPU_Persistent:
+            return False
+        whole = all(begin == end for begin, end, step in entry.map.range)
+        if whole and is_in_scope(sdfg, graph, entry, [dtypes.ScheduleType.CPU_Persistent]):
             return False
         return super().can_be_applied(graph, expr_index, sdfg, permissive)
 
@@ -934,6 +951,8 @@ def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) ->
     # A scalar one tasklet writes and one other reads is an expression an agent reads twice (a declaration and an
     # assignment): fold it into its reader. Same operations in the same order.
     sdfg.apply_transformations_repeated(RealTaskletFusion, validate=False)
+    # A one-trip loop outside a thread team is straight-line code.
+    sdfg.apply_transformations_repeated(TeamSafeTrivialMapElimination, validate=False)
     # Only here, once canonicalization and specialization are over: the kinds and their proofs are CPF facts, and
     # no pass before rendering reads them.
     AnnotateLoopKinds().apply_pass(sdfg, {})
@@ -1944,6 +1963,54 @@ def keep_target_path(code: str, x86: bool) -> str:
     return X86_BLOCK.sub(lambda m: m.group(1) if x86 else m.group(2), code)
 
 
+#: A connector block: ``{``, one generator connector local (``__out``, ``__inp``; declared and assigned, or
+#: initialized), comment and ``#pragma`` lines, one statement that reads it, ``}``. The generator emits it for an
+#: output a write-conflict resolution writes (``*(acc) = *(acc) + (__out)``, under ``#pragma omp atomic update`` when
+#: iterations may collide). Only a ``double`` one: a narrower local rounds or truncates its value (``float``, ``int``),
+#: so folding it in would change the result; widening to ``double`` first or inside the expression gives the same.
+CONNECTOR_BLOCK = re.compile(
+    r"^(?P<indent>[ \t]*)\{\n"
+    r"[ \t]*double (?P<name>__(?:out|inp)\w*)(?:;\n[ \t]*(?P=name) = | = )(?P<value>[^;\n]+);\n"
+    r"(?P<between>(?:[ \t]*(?://[^\n]*|#pragma[^\n]*)\n)*)"
+    r"[ \t]*(?P<use>[^;\n{}#/]+;)\n"
+    r"(?P=indent)\}\n",
+    re.MULTILINE,
+)
+
+
+def one_group(expression: str) -> bool:
+    """Whether ``expression`` is one parenthesized group, ``(a * b)`` but not ``(a) * (b)``."""
+    if not (expression.startswith("(") and expression.endswith(")")):
+        return False
+    depth = 0
+    for position, char in enumerate(expression):
+        depth += {"(": 1, ")": -1}.get(char, 0)
+        if depth == 0 and position < len(expression) - 1:
+            return False
+    return True
+
+
+def collapse_connector_blocks(code: str) -> str:
+    """``code`` with each :data:`CONNECTOR_BLOCK` written as its one statement, the connector replaced by its value:
+    the same expression evaluated once, in the same place, without three lines an agent reads for nothing."""
+
+    def collapse(match: re.Match) -> str:
+        name, value, use = match.group("name"), match.group("value"), match.group("use")
+        word = re.compile(rf"\b{re.escape(name)}\b")
+        if word.search(value) or len(word.findall(use)) != 1:
+            return match.group(0)
+        indent = match.group("indent")
+        between = "".join(f"{indent}{line.strip()}\n" for line in match.group("between").splitlines())
+        assigned = re.fullmatch(rf"([^=]+) = {re.escape(name)};", use)
+        if assigned:
+            return f"{between}{indent}{assigned.group(1)} = {value};\n"
+        grouped = value if one_group(value) else f"({value})"
+        spelled = use.replace(f"({name})", grouped) if f"({name})" in use else word.sub(lambda found: grouped, use)
+        return f"{between}{indent}{spelled}\n"
+
+    return CONNECTOR_BLOCK.sub(collapse, code)
+
+
 def drop_repeated_includes(code: str) -> str:
     """``code`` without an ``#include`` line that repeats an earlier one outside any ``#if`` block: the frame
     includes ``<omp.h>`` again below the preamble's, and a repeat is text an agent reads for nothing."""
@@ -2062,6 +2129,7 @@ def render_unit(
     code = drop_repeated_includes(
         keep_target_path(preamble(body, dialect, frame.environments) + body, renders_for_x86(isa))
     )
+    code = collapse_connector_blocks(code)
     names: tuple[tuple[str, str], ...] = ()
     if llm_friendly:
         entry_names = tuple(signature.order) if signature is not None else tuple(entry_arglist)
