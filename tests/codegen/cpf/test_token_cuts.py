@@ -85,12 +85,13 @@ def test_a_one_trip_loop_outside_a_team_becomes_straight_line_code():
     assert s[0] == 2.0
 
 
-def test_inside_a_team_a_one_trip_loop_keeps_its_worksharing_and_the_team_stays():
+def test_inside_a_team_a_one_trip_loop_becomes_a_single_block_and_the_team_stays():
     sdfg = team_one_trip.to_sdfg(simplify=True)
     sdfg.name = "token_cuts_team_one_trip"
     assert one_trip_maps(sdfg) == 2, "the program must reach CPF with its team and its one-trip map"
     code = render(sdfg, language="c").code
-    assert "#pragma omp parallel" in code and "#pragma omp for" in code, code
+    assert "#pragma omp parallel" in code and "#pragma omp single" in code, code
+    assert "#pragma omp for" not in code and not re.search(r"\w+ < 1;", code), code
     a, s = np.arange(1.0, 5.0), np.zeros(1)
     call_standalone(build_standalone(code, "token_cuts_team_one_trip", language="c"), sdfg, {"a": a, "s": s, "N": 4})
     assert s[0] == 1.0
@@ -163,7 +164,7 @@ if __name__ == "__main__":
     test_single_use_temporaries_fold_into_their_reader_and_compute_the_same()
     test_a_unit_stride_vector_is_indexed_without_an_identity_helper()
     test_a_one_trip_loop_outside_a_team_becomes_straight_line_code()
-    test_inside_a_team_a_one_trip_loop_keeps_its_worksharing_and_the_team_stays()
+    test_inside_a_team_a_one_trip_loop_becomes_a_single_block_and_the_team_stays()
     test_a_connector_block_becomes_its_one_statement()
     test_a_reduction_update_is_one_statement_and_sums_the_same()
     test_a_float_temporary_keeps_its_rounding()

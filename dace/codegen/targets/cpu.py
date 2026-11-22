@@ -4426,6 +4426,8 @@ class CPUCodeGen(TargetCodeGenerator):
         result = callsite_stream
         map_header = ""
         range_private = {}
+        in_persistent = False
+        omp_reductions = []
         held_reductions = []
 
         # Encapsulate map with a C scope
@@ -4456,8 +4458,6 @@ class CPUCodeGen(TargetCodeGenerator):
         #  generator (that CPU inherits from) is implemented
         if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
             # OpenMP header
-            in_persistent = False
-            omp_reductions = []
             if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and emits_tree_reductions(
                 self.experimental_codegen
             ):
@@ -4608,6 +4608,10 @@ class CPUCodeGen(TargetCodeGenerator):
             self._range_private_flags.append(plan["flags"])
             result.write(self._range_private_loop(sdfg, state_dfg, node, plan), cfg, state_id, node)
         else:
+            if self.one_trip_in_team(node, in_persistent, omp_reductions):
+                # A CPF team's one-trip worksharing loop is one thread's block: ``single`` runs it once and keeps the
+                # loop's barrier (or its ``nowait``); the loop line becomes the parameter's binding.
+                map_header = "#pragma omp single" + (" nowait" if node.map.omp_nowait else "")
             result.write(map_header, cfg, state_id, node)
 
         if node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
@@ -4676,6 +4680,9 @@ class CPUCodeGen(TargetCodeGenerator):
                 if symbolic.has_symbolic_power(end):
                     cast = f"({loop_ctypes[i]})" if cpf_lowering.standalone_c() else loop_ctypes[i]
                     bound = f"{cast}({bound})"
+                if self.one_trip_in_team(node, in_persistent, omp_reductions):
+                    result.write("{\nconst %s;\n" % init, cfg, state_id, node)
+                    continue
                 result.write(
                     "for (%s; %s < %s; %s += %s) {\n" % (init, var, bound, var, cpp.sym2cpp(skip)),
                     cfg,
@@ -4687,6 +4694,17 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Emit internal transient array allocation
         self._frame.allocate_arrays_in_scope(sdfg, cfg, node, function_stream, result)
+
+    @staticmethod
+    def one_trip_in_team(node: nodes.MapEntry, in_persistent: bool, omp_reductions: list) -> bool:
+        """Whether a CPF unit renders this worksharing map as ``#pragma omp single``: one dimension of one trip, inside
+        a team, with no reduction clause to carry."""
+        if not (cpf_lowering.standalone() and in_persistent and not omp_reductions):
+            return False
+        if node.map.schedule != dtypes.ScheduleType.CPU_Multicore or len(node.map.range) != 1:
+            return False
+        begin, end, step = node.map.range[0]
+        return symbolic.simplify(end - begin) == 0
 
     def _generate_MapExit(
         self,
