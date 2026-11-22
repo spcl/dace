@@ -440,8 +440,22 @@ class CommNode(nodes.LibraryNode):
     #: communicator (its rank, its size, its handle) set it false.
     side_effects = True
 
+    #: A communication reads a slice of an array in place: its expansion takes the offset and the count from the
+    #: memlet, and a derived datatype or a packed copy where the slice is not contiguous, so no View stands in front.
+    operand_subsets = "squeeze"
+
     def has_side_effects(self, sdfg) -> bool:
         return self.side_effects
+
+    def operand_dims(
+        self, connector: str, subset: subsets.Subset, array: data.Data, operand: data.Data
+    ) -> list[int] | None:
+        # A one-element slice (``a[0:1]``) squeezes to no dimension, and is still one element in place
+        dims = super().operand_dims(connector, subset, array, operand)
+        if dims is not None or not isinstance(subset, subsets.Range):
+            return dims
+        one = symbolic.equal(subset.num_elements(), 1) is True and symbolic.equal(operand.total_size, 1) is True
+        return [] if one else None
 
 
 @properties.make_properties
