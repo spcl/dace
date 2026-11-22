@@ -2,6 +2,7 @@
 """A CPF unit carries no text an agent reads for nothing: a scalar one tasklet writes and one other reads is folded
 into its reader, and a 1-D unit-stride array is indexed directly instead of through an identity ``<array>_idx``."""
 
+import math
 import re
 
 import numpy as np
@@ -160,6 +161,34 @@ def test_a_float_temporary_keeps_its_rounding():
     assert re.search(r"^\s*float \w+;$", code, re.MULTILINE), code
 
 
+@dace.program
+def gather_exp(a: dace.float64[N], idx: dace.int64[N], b: dace.float64[N]):
+    for i in dace.map[0:N]:
+        tmp = dace.define_local_scalar(dace.float64)
+        with dace.tasklet:
+            arr << a[:]
+            j << idx[i]
+            t >> tmp
+            t = -arr[j]
+        with dace.tasklet:
+            u << tmp
+            out >> b[i]
+            out = math.exp(u)
+
+
+def test_an_indirect_read_is_not_folded_into_a_maths_call():
+    """The C printer cannot type ``exp(-__arr[j])``: it would not know to spell ``exp`` (lavamd, ls3df_scf)."""
+    sdfg = gather_exp.to_sdfg(simplify=True)
+    sdfg.name = "token_cuts_gather_exp"
+    code = render(sdfg, language="c").code
+    rng = np.random.default_rng(7)
+    a, idx, b = rng.random(9), rng.integers(0, 9, 9), np.zeros(9)
+    call_standalone(
+        build_standalone(code, "token_cuts_gather_exp", language="c"), sdfg, {"a": a, "idx": idx, "b": b, "N": 9}
+    )
+    np.testing.assert_allclose(b, np.exp(-a[idx]))
+
+
 if __name__ == "__main__":
     test_single_use_temporaries_fold_into_their_reader_and_compute_the_same()
     test_a_unit_stride_vector_is_indexed_without_an_identity_helper()
@@ -168,3 +197,4 @@ if __name__ == "__main__":
     test_a_connector_block_becomes_its_one_statement()
     test_a_reduction_update_is_one_statement_and_sums_the_same()
     test_a_float_temporary_keeps_its_rounding()
+    test_an_indirect_read_is_not_folded_into_a_maths_call()

@@ -888,6 +888,12 @@ class RealTaskletFusion(TaskletFusion):
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         if self.data.desc(sdfg).dtype != dtypes.float64:
             return False
+        # The C printer cannot type a subscript of a pointer connector, so a folded indirect read inside a call
+        # such as ``exp(__arr[i])`` leaves no type to pick the C function by (lavamd, ls3df_scf); the guard reads the memlets, since connector types are not inferred yet.
+        for tasklet in (self.t1, self.t2):
+            for edge in graph.in_edges(tasklet):
+                if not edge.data.is_empty() and edge.data.subset.num_elements() != 1:
+                    return False
         return super().can_be_applied(graph, expr_index, sdfg, permissive)
 
 
