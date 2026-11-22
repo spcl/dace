@@ -657,9 +657,17 @@ INLINE_DEFINITIONS: dict[str, str] = {
     "// buffer needs no initialization and none between calls. Values outside [0, capacity) are\n"
     "// skipped: the guarded scatter never writes those slots, so they can neither collide nor\n"
     "// mask a collision.\n"
+    "#ifdef _OPENMP\n"
+    "#include <omp.h>\n"
+    "#endif\n"
     "template <typename T, typename TagT>\n"
     "static inline long long detect_collision(const T *idx, long long n, TagT *owner, long long capacity,\n"
     "                                         bool parallel) {\n"
+    "#ifdef _OPENMP\n"
+    "    if (parallel && omp_get_max_threads() == 1) return 1;  // one thread: in order is correct, skip the check\n"
+    "#else\n"
+    "    if (parallel) return 1;\n"
+    "#endif\n"
     "    long long c = 0;\n"
     "    #pragma omp parallel for if (parallel : parallel)\n"
     "    for (long long i = 0; i < n; ++i) {\n"
@@ -678,6 +686,11 @@ INLINE_DEFINITIONS: dict[str, str] = {
     "// path instead of parallelizing a scatter nothing proved conflict-free.\n"
     "template <typename T>\n"
     "static inline long long detect_collision(const T *idx, long long n, bool parallel) {\n"
+    "#ifdef _OPENMP\n"
+    "    if (parallel && omp_get_max_threads() == 1) return 1;  // one thread: in order is correct, skip the check\n"
+    "#else\n"
+    "    if (parallel) return 1;\n"
+    "#endif\n"
     "    long long mx = 0;\n"
     "    #pragma omp parallel for simd if (parallel : parallel) reduction(max : mx)\n"
     "    for (long long i = 0; i < n; ++i) {\n"
@@ -987,12 +1000,18 @@ COMPLEX_REDUCE_COMBINERS: dict[str, tuple[str, str, int]] = {
 }
 
 
-def reduce_body(operation: str, ctype: str, parallel: bool, c_dialect: bool, complex_initial: str = "") -> list[str]:
+def reduce_body(
+    operation: str, ctype: str, parallel: bool, c_dialect: bool, complex_initial: str = "", simd: bool = False
+) -> list[str]:
     """The body of one ``dace::reduce`` entry: fold ``count`` inputs ``stride`` apart into ``seed``, under an OpenMP
     reduction unless it is the ``seq`` entry the expansion calls from inside a parallel scope. ``complex_initial``
-    spells the identity of a complex accumulator, which then reduces through a block-scope declared combiner."""
+    spells the identity of a complex accumulator, which then reduces through a block-scope declared combiner.
+
+    ``simd`` adds the ``simd`` modifier (the ``seq`` entry gets ``omp simd`` alone) and a unit-stride copy of the loop.
+    A reduction clause lets the compiler reassociate the fold; without it a strict-FP build keeps the source's order
+    and runs the sum scalar, slower than a spelling with split accumulators (E5: 2.6x on ``sum`` at one thread)."""
     clause, cpp_step, c_step = REDUCE_OPERATIONS[operation]
-    step = (c_step if c_dialect else cpp_step).format(a="acc", x="in[i * stride]", T=ctype)
+    step = c_step if c_dialect else cpp_step
     declare: list[str] = []
     if complex_initial:
         clause, combine, identity = COMPLEX_REDUCE_COMBINERS[operation]
@@ -1000,9 +1019,26 @@ def reduce_body(operation: str, ctype: str, parallel: bool, c_dialect: bool, com
             "    #pragma omp declare reduction(%s : %s : omp_out %s omp_in) initializer(omp_priv = %s)"
             % (clause, ctype, combine, complex_initial.format(identity=identity))
         ]
-    pragma = ["    #pragma omp parallel for reduction(%s:acc)" % clause] if parallel else []
-    loop = "    for (long i = 0; i < count; ++i) acc = %s;" % step
-    return [*declare, "    %s acc = seed;" % ctype, *pragma, loop, "    return acc;"]
+    modifier = "parallel for simd" if parallel and simd else "parallel for" if parallel else "simd" if simd else ""
+    pragma = ["    #pragma omp %s reduction(%s:acc)" % (modifier, clause)] if modifier else []
+
+    def loop(element: str, indent: str = "    ") -> list[str]:
+        return [indent + line for line in pragma] + [
+            indent + "    for (long i = 0; i < count; ++i) acc = %s;" % step.format(a="acc", x=element, T=ctype)
+        ]
+
+    if not simd:
+        return [*declare, "    %s acc = seed;" % ctype, *loop("in[i * stride]", ""), "    return acc;"]
+    return [
+        *declare,
+        "    %s acc = seed;" % ctype,
+        "    if (stride == 1) {",
+        *loop("in[i]"),
+        "    } else {",
+        *loop("in[i * stride]"),
+        "    }",
+        "    return acc;",
+    ]
 
 
 def reduce_name(operation: str, parallel: bool) -> str:
@@ -3170,6 +3206,20 @@ def c_scan_definition(name: str, kind: str, operation: str, source: str, target:
     )
 
 
+#: The duplicate check's first lines: a guard (``parallel`` true) whose team has one thread runs its scatter in
+#: order either way, which is correct for any indices, so it reports a collision, the never-unsafe answer, and takes
+#: the sequential path without the check's two passes over the indices (E5 ``scatter``: 3.5x at one thread). A
+#: nested caller (``parallel`` false) still gets the exact answer.
+COLLISION_SERIAL_EXIT = (
+    "#ifdef _OPENMP",
+    "    if (parallel && omp_get_max_threads() == 1) return 1;",
+    "#else",
+    "    if (parallel) return 1;",
+    "#endif",
+)
+OPENMP_HEADER = ("#ifdef _OPENMP", "#include <omp.h>", "#endif")
+
+
 def c_detect_collision_definition(name: str, index: str, tag: str) -> str:
     """The scatter guard's duplicate check as a C function, typed for its index and tag arrays.
 
@@ -3183,8 +3233,10 @@ def c_detect_collision_definition(name: str, index: str, tag: str) -> str:
             "// Tagged-write + verify: pass 1 writes owner[idx[i]] = i, pass 2 ORs owner[idx[i]] != i. A slot",
             "// only one writer won reads back a different i. Indices outside [0, capacity) are skipped: the",
             "// guarded scatter never writes those slots.",
+            *OPENMP_HEADER,
             "static inline long long %s(const %s *idx, long long n, %s *owner, long long capacity, bool parallel) {"
             % (name, C_SCALAR_SPELLINGS[index], C_SCALAR_SPELLINGS[tag]),
+            *COLLISION_SERIAL_EXIT,
             "    long long c = 0;",
             "    #pragma omp parallel for if (parallel : parallel)",
             "    for (long long i = 0; i < n; ++i) {",
@@ -3206,7 +3258,7 @@ def c_detect_collision_sized_definition(name: str, index: str, tagged: str) -> s
     """The duplicate check sizing its own ``int64_t`` tag buffer from ``max(idx)``.
 
     A failed allocation reports a collision, the answer that is never unsafe: the guard then takes its
-    sequential path.
+    sequential path (as does a scatter that cannot run in parallel, :data:`COLLISION_SERIAL_EXIT`).
 
     :param name: the instantiation's name.
     :param index: the index array's dace element type.
@@ -3215,8 +3267,10 @@ def c_detect_collision_sized_definition(name: str, index: str, tagged: str) -> s
     """
     return "\n".join(
         (
+            *OPENMP_HEADER,
             "static inline long long %s(const %s *idx, long long n, bool parallel) {"
             % (name, C_SCALAR_SPELLINGS[index]),
+            *COLLISION_SERIAL_EXIT,
             "    long long mx = 0;",
             "    #pragma omp parallel for simd if (parallel : parallel) reduction(max : mx)",
             "    for (long long i = 0; i < n; ++i) {",
@@ -3448,6 +3502,7 @@ def c_reduce_definition(name: str, operation: str, parallel: bool, source: str, 
         parallel and (declared or not is_complex),
         c_dialect=True,
         complex_initial="{identity}" if declared else "",
+        simd=not is_complex,
     )
     return "\n".join(
         (

@@ -164,6 +164,23 @@ def test_a_complex_sum_reduces_through_the_combiner_it_declares(language):
     assert np.allclose(out, [a.sum()], rtol=1e-12)
 
 
+def test_a_c_reduction_is_vectorizable_and_keeps_its_value():
+    """CPF's C reduce helper carries ``simd`` and a unit-stride loop: without them a strict-FP compiler keeps the
+    source's order and runs the sum scalar, 2.6x slower than a raw spelling with split accumulators (E5 sum at one
+    thread). The reduction clause is what lets it reassociate."""
+    sdfg = full_sum.to_sdfg(simplify=True)
+    sdfg.name = "cpf_reduce_simd_sum_c"
+    a = (np.random.default_rng(5).random(1000) * 1000).astype(np.int32)
+    out = np.zeros(1, dtype=np.int32)
+    rendering = cpf.render(sdfg, language="c")
+    call_standalone(
+        build_standalone(rendering.code, sdfg.name, language="c"), rendering.sdfg, {"a": a, "out": out, "N": a.size}
+    )
+    assert "#pragma omp parallel for simd reduction(+:acc)" in rendering.code, rendering.code
+    assert "if (stride == 1) {" in rendering.code, rendering.code
+    assert np.array_equal(out, np.array([a.sum()], dtype=np.int32))
+
+
 if __name__ == "__main__":
     for lang in ("c", "c++"):
         test_a_full_reduction_is_one_openmp_reduction_loop(
@@ -181,3 +198,4 @@ if __name__ == "__main__":
         )
         test_a_complex_sum_reduces_through_the_combiner_it_declares(lang)
     test_a_c_form_using_bool_builds_before_c23()
+    test_a_c_reduction_is_vectorizable_and_keeps_its_value()

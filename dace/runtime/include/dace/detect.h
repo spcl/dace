@@ -45,6 +45,13 @@ inline long long find_first_chunk(long long span, bool parallel) {
  */
 template <typename T, typename TagT>
 inline long long detect_collision(const T* idx, long long n, TagT* owner, long long capacity, bool parallel = true) {
+  // A guard (parallel) whose team has one thread runs its scatter in order either way, correct for any indices:
+  // report a collision (never unsafe) and skip the two passes. A nested caller (parallel false) gets the exact answer.
+#ifdef _OPENMP
+  if (parallel && omp_get_max_threads() == 1) return 1;
+#else
+  if (parallel) return 1;
+#endif
 #pragma omp parallel for if (parallel : parallel)
   for (long long i = 0; i < n; ++i) {
     const long long v = static_cast<long long>(idx[i]);
@@ -63,6 +70,11 @@ inline long long detect_collision(const T* idx, long long n, TagT* owner, long l
 // allocation, so prefer the overload above when the scattered array's domain is known.
 template <typename T>
 inline long long detect_collision(const T* idx, long long n, bool parallel = true) {
+#ifdef _OPENMP
+  if (parallel && omp_get_max_threads() == 1) return 1;
+#else
+  if (parallel) return 1;
+#endif
   long long mx = 0;
 #pragma omp parallel for simd if (parallel : parallel) reduction(max : mx)
   for (long long i = 0; i < n; ++i) {

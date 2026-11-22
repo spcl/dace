@@ -1090,11 +1090,13 @@ def typed_site(names, dialect):
     return cpf_lowering.NativeSite(names, "probe") if dialect is Dialect.STANDALONE_C else None
 
 
-def duplicate_check_unit(arity, dialect):
-    """A standalone unit whose ``probe`` runs the duplicate check over a caller-supplied index."""
-    body = cpf_lowering.rewrite_native_code(
-        DETECT_COLLISION_STATEMENTS[arity], dialect, typed_site(DETECT_COLLISION_NAMES, dialect)
-    )
+def duplicate_check_unit(arity, dialect, threads=None):
+    """A standalone unit whose ``probe`` runs the duplicate check over a caller-supplied index; with ``threads``, as a
+    scatter guard does (``parallel`` true) under a team of that many threads."""
+    statement = DETECT_COLLISION_STATEMENTS[arity]
+    if threads is not None:
+        statement = "omp_set_num_threads(%d);\n%s" % (threads, statement.replace("false);", "true);"))
+    body = cpf_lowering.rewrite_native_code(statement, dialect, typed_site(DETECT_COLLISION_NAMES, dialect))
     used = cpf_lowering.helpers_used(body, dialect) | ({"detect_collision"} if dialect is Dialect.STANDALONE else set())
     signature = "const int64_t * _idx_in, long long n, int64_t * _owner_out, long long cap, int64_t * _out"
     return textwrap.dedent("""
@@ -1134,6 +1136,34 @@ def test_the_duplicate_check_answers_one_exactly_when_an_index_repeats(arity, di
         ctypes.c_void_p(out.ctypes.data),
     )
     assert out[0] == expected, f"{arity} check over {index} answered {out[0]}, not {expected}"
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=DIALECT_IDS)
+@pytest.mark.parametrize("arity", sorted(DETECT_COLLISION_STATEMENTS))
+@pytest.mark.parametrize("threads,expected", [(1, 1), (2, 0)], ids=["one-thread", "two-threads"])
+def test_a_guard_with_one_thread_takes_the_sequential_path_without_checking(arity, dialect, threads, expected):
+    """One thread runs the guarded scatter in order either way, which is correct for any indices: the check answers
+    1 without its two passes (E5 scatter: 3.5x slower than the raw loop at one thread). With more threads it answers
+    exactly: these distinct indices may run in parallel."""
+    code = duplicate_check_unit(arity, dialect, threads=threads)
+    code = "#include <omp.h>\n" + code
+    library = build_standalone(
+        code, name="cpf_detect_guard_%s_%s_%d" % (arity, dialect.value, threads), language=LANGUAGE[dialect]
+    )
+    idx = np.array([3, 1, 0, 2], dtype=np.int64)
+    owner = np.zeros(len(idx), dtype=np.int64)
+    out = np.zeros(1, dtype=np.int64)
+    function = library.probe
+    function.argtypes = [ctypes.c_void_p, ctypes.c_longlong, ctypes.c_void_p, ctypes.c_longlong, ctypes.c_void_p]
+    function.restype = None
+    function(
+        ctypes.c_void_p(idx.ctypes.data),
+        len(idx),
+        ctypes.c_void_p(owner.ctypes.data),
+        len(owner),
+        ctypes.c_void_p(out.ctypes.data),
+    )
+    assert out[0] == expected
 
 
 #: The two lines ``ExpandIntegerSortPure`` writes, for the same reason the statements above are
