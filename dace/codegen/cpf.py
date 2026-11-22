@@ -64,6 +64,7 @@ from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, SDFGState, memlet_utils, nodes
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.scope import is_devicelevel_gpu
+from dace.transformation.dataflow.tasklet_fusion import TaskletFusion
 from dace.transformation.passes.analysis.analysis import has_wcr_in_edge
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
 from dace.transformation.passes.canonicalize.finalize import blas_addresses
@@ -877,6 +878,16 @@ def accumulate_into_scope_exit(
     state.remove_edge(edge)
 
 
+class RealTaskletFusion(TaskletFusion):
+    """:class:`TaskletFusion` over a real or integer intermediate only: a folded complex one leaves a call such as
+    ``exp`` whose argument the C printer can no longer type, so it cannot choose ``cexp`` (fft_1d)."""
+
+    def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
+        if self.data.desc(sdfg).dtype in (dtypes.complex64, dtypes.complex128):
+            return False
+        return super().can_be_applied(graph, expr_index, sdfg, permissive)
+
+
 def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) -> tuple[str, ...]:
     """Make ``sdfg`` renderable as one host translation unit, in place.
 
@@ -920,6 +931,9 @@ def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) ->
     # scalar connector the promotion has to see (gramschmidt, durbin, trmm, addusxx_g).
     PromoteScalarOutputsToArrays().apply_pass(sdfg, {})
     refuse_by_value_returns(sdfg)
+    # A scalar one tasklet writes and one other reads is an expression an agent reads twice (a declaration and an
+    # assignment): fold it into its reader. Same operations in the same order.
+    sdfg.apply_transformations_repeated(RealTaskletFusion, validate=False)
     # Only here, once canonicalization and specialization are over: the kinds and their proofs are CPF facts, and
     # no pass before rendering reads them.
     AnnotateLoopKinds().apply_pass(sdfg, {})
@@ -1439,14 +1453,12 @@ def preamble(
 
 #: What the rendering already did and what is left, ahead of the per-loop verdicts it explains.
 CONTRACT_LINES = [
-    "// Every loop comment names the loop's class first, then the reason.",
-    "//   parallel means proven: no iteration writes an element another iteration reads or writes. A reduction",
-    "//     or scan line says how the iterations combine instead; it needs a reduction clause, per-thread",
-    "//     copies, or the scan's two passes.",
-    "//   sequential means keep the order: the comment names the dependence (with an example) or why it is kept.",
-    "//   unknown means not proven either way; it runs in order. Its comment says what failed and what would",
-    "//     make it parallel; parallelize it only if no iteration touches an element another one writes.",
-    "// Each proof covers one loop as written: fusing or reordering loops needs its own dependence check.",
+    "// Each loop comment gives the loop's class, then the reason.",
+    "//   parallel: proven; no iteration writes an element another one reads or writes. A reduction or scan",
+    "//     line names how iterations combine (a reduction clause, per-thread copies, or the scan's two passes).",
+    "//   sequential: keep the order; names the dependence (with an example) or why the order is kept.",
+    "//   unknown: not proven; runs in order; names what failed and what would make it parallel.",
+    "// A proof covers one loop as written: fusing or reordering loops needs its own dependence check.",
 ]
 
 #: What a finished rendering must not contain, and what each one means. CPF's own gate, checked on

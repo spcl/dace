@@ -270,10 +270,9 @@ def _merge_sets(a: set[Any] | None, b: set[Any] | None):
 
 
 def _merge_debuginfo(a: dace.DebugInfo | None, b: dace.DebugInfo | None):
-    if a is None and b is not None:
-        return b
-    if b is None and a is not None:
-        return a
+    if a is None or b is None:
+        # Either side alone, or neither: two tasklets without debug info fuse into one without it.
+        return b if a is None else a
 
     if a.filename != b.filename:
         # TODO: Support multiple files in debuginfo

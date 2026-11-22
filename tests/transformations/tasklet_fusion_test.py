@@ -318,6 +318,24 @@ def test_transient_in_different_state():
     assert not applied
 
 
+def test_tasklets_without_debuginfo_fuse():
+    """Two tasklets that carry no debug info (a CPF expansion's) fused into ``None.filename`` (heat_3d, 11-22)."""
+
+    @dace.program
+    def no_debuginfo_tf(A: datatype[5, 5]):
+        B = A + 1
+        return B * 2
+
+    sdfg = no_debuginfo_tf.to_sdfg(simplify=True)
+    sdfg.apply_transformations(MapFusionVertical)
+    for node, parent in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.Tasklet):
+            node.debuginfo = None
+    assert sdfg.apply_transformations(TaskletFusion) == 1
+    A = np.ones((5, 5), dtype=np_datatype)
+    assert np.allclose(sdfg(A=A), 2 * (A + 1))
+
+
 if __name__ == "__main__":
     test_basic()
     test_same_name()
@@ -329,3 +347,4 @@ if __name__ == "__main__":
     test_none_connector()
     test_intermediate_transients()
     test_transient_in_different_state()
+    test_tasklets_without_debuginfo_fuse()

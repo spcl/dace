@@ -81,7 +81,8 @@ def test_elementwise_map_is_rendered_parallel():
     sdfg, code = render(scale_add, "cpf_axpy")
     assert 'extern "C" void cpf_axpy(' in code, "CPF must export the SDFG under its own name"
     assert "#pragma omp parallel for" in code, "a data-parallel map must render as an OpenMP loop"
-    assert "x_idx(" in code, "array accesses go through the generated <array>_idx helper"
+    # A 1-D unit-stride array is indexed directly: its <array>_idx helper would be the identity.
+    assert "x_idx(" not in code and re.search(r"\bx\[", code), code
 
     n = 128
     x = np.random.rand(n)

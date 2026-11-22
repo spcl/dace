@@ -141,9 +141,8 @@ def test_entry_point_has_no_language_linkage():
     assert 'extern "C"' not in code, 'extern "C" does not exist in C'
     assert re.search(r"^void mprc_axpy\(", code, re.MULTILINE), "CPF must export the SDFG under its own name"
     assert "#pragma omp parallel for" in code, "a data-parallel map must render as an OpenMP loop"
-    assert re.search(r"^static inline int64_t x_idx\(", code, re.MULTILINE), (
-        "C has no constexpr function, so the index helper is a plain static inline one"
-    )
+    # C has no constexpr function; this unit's 1-D arrays are indexed directly (an identity helper is not emitted).
+    assert "constexpr" not in code and "x_idx(" not in code, code
 
     n = 128
     x = np.random.rand(n)
@@ -804,7 +803,7 @@ def test_find_first_becomes_a_function_over_the_names_its_predicate_reads_in_c(i
     rendering = render_sdfg(sdfg, language="c")
     code = rendering.code
     assert "[&]" not in code, "a C++ lambda survived into the C rendering"
-    call = re.search(r"out\[out_idx\(0\)\] = (cpf_find_first_\w+)\(\(0\), \(N\), (?:true|false), a\);", code)
+    call = re.search(r"out\[0\] = (cpf_find_first_\w+)\(\(0\), \(N\), (?:true|false), a\);", code)
     assert call is not None, f"the search did not become a call to its own C function:\n{code}"
     assert (
         "static inline long long %s(long long cpf_ff_begin, long long cpf_ff_end, bool cpf_ff_parallel, "

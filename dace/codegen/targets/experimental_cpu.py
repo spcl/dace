@@ -250,6 +250,9 @@ def format_index_access(
     indices at ``kept`` (all of them when ``None``)."""
     passed = indices if kept is None else [indices[position] for position in kept]
     call_args = [sym2cpp(symbolic.pystr_to_symbolic(ix)) for ix in passed] + list(extra)
+    if not fnname:
+        # The identity helper (a CPF unit's 1-D, unit-stride, zero-offset array) is not emitted: index directly.
+        return "%s[%s]" % (ptrname, call_args[0])
     return "%s[%s(%s)]" % (ptrname, fnname, ", ".join(call_args))
 
 
@@ -1164,6 +1167,11 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         extra = sorted((free - set(placeholders)), key=lambda s: str(s))
         extra_names = [str(s) for s in extra]
 
+        identity = ndim == 1 and not extra and as_basic(flat_offset(placeholders, desc)) == placeholders[0]
+        if cpf_lowering.standalone() and identity:
+            # ``a_idx(i0) { return i0; }`` is text an agent reads at every access for nothing.
+            self._index_kept[""] = (0,)
+            return "", []
         base = re.sub(r"\W", "_", data_name)
         sig = (ndim, tuple(str(s) for s in desc.strides), tuple(str(o) for o in desc.offset))
         key = (base, sig)
