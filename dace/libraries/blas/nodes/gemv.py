@@ -358,9 +358,11 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
         if zero_extent_may_occur(contracted):
             beta_value = "__beta" if dtype in (dace.complex64, dace.complex128) else beta
             stride_y = symbolic.symstr(strides_y[0])
+            # beta == 0: BLAS never reads y, and 0 * (uninitialized NaN) stays NaN (E6 cholesky, 11-22).
+            y_value = "0" if symbolic.equal_valued(0, node.beta) else f"({beta_value}) * _y[__i * ({stride_y})]"
             code += f"""if (({symbolic.symstr(contracted)}) <= 0) {{
                 for (long long __i = 0; __i < ({symbolic.symstr(y_len)}); ++__i) {{
-                    _y[__i * ({stride_y})] = ({beta_value}) * _y[__i * ({stride_y})];
+                    _y[__i * ({stride_y})] = {y_value};
                 }}
             }} else {{
                 {call}

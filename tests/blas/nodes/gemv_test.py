@@ -134,6 +134,15 @@ def test_blas_gemv_empty_contraction_writes_the_output():
     assert np.all(y == 0.0), f"empty contraction left y unwritten: {y}"
 
 
+def test_blas_gemv_empty_contraction_never_reads_y():
+    """With ``beta == 0`` the guard must write zeros, not ``0 * y``: fresh storage holding NaN stayed NaN (CPF
+    cholesky, column 0, under E6's reversed run)."""
+    csdfg = blas_gemv_graph(dace.symbol("m"), dace.symbol("n")).compile()
+    y = np.full(6, np.nan)
+    csdfg(A=np.zeros((0, 6)), x=np.zeros(0), y=y, m=0, n=6)
+    assert np.all(y == 0.0), f"empty contraction read y: {y}"
+
+
 def test_blas_gemv_nonempty_contraction_still_computes_the_product():
     """The guard must not shadow the real call."""
     rng = np.random.default_rng(0)
@@ -218,4 +227,5 @@ if __name__ == "__main__":
         args.target, args.N, args.M, args.alpha, args.transposed, args.vectorize, args.tile_size_x, args.tile_size_y
     )
     test_column_major_non_square_keeps_the_blas_extents()
+    test_blas_gemv_empty_contraction_never_reads_y()
     test_pure_float_zero_beta_never_reads_y()
