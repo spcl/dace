@@ -124,16 +124,52 @@ def test_derived_short_names_are_new_to_the_unit():
     assert "arr0_size" in identifiers(result.code)
 
 
-@pytest.mark.parametrize(
-    "item",
-    [
-        "static int helper_fn(int c) {\n#if 1\n  if (c) {\n#else\n  if (!c) {\n#endif\n    return 1; }\n  return 0;\n}\n",
-        "__attribute__((destructor)) static void release_buffer(void) {}\n",
-        "static __attribute__((constructor)) void init_buffer(void) {}\n",
-        "typedef int staticky;\nstaticky exported_global;\n",
-    ],
-)
+STATIC_ITEMS = [
+    "static int helper_fn(int c) {\n#if 1\n  if (c) {\n#else\n  if (!c) {\n#endif\n    return 1; }\n  return 0;\n}\n",
+    "__attribute__((destructor)) static void release_buffer(void) {}\n",
+    "static __attribute__((constructor)) void init_buffer(void) {}\n",
+    "typedef int staticky;\nstaticky exported_global;\n",
+]
+
+
+@pytest.mark.parametrize("item", STATIC_ITEMS)
 def test_only_plain_unreferenced_static_definitions_are_dropped(item: str):
     code = item + "void entry_kernel(void) {}\n"
     assert drop_unused(code) == code
     assert drop_unused("static int unused_helper(void) { return 1; }\n" + code).lstrip("\n") == code
+
+
+@dace.program
+def thread_team(a: dace.float64[N], out: dace.float64[N]):
+    for tid in dace.map[0:1] @ dace.ScheduleType.CPU_Persistent:
+        for i in dace.map[0:N] @ dace.ScheduleType.CPU_Multicore:
+            out[i] = a[i] * 2.0 + tid
+
+
+@pytest.mark.parametrize("llm_friendly", [False, True])
+def test_no_include_line_repeats(llm_friendly: bool):
+    """A persistent map reading its thread id included ``<omp.h>`` again below the preamble's (heat_3d, 11-22)."""
+    code = render(thread_team.to_sdfg(simplify=True), language="c", llm_friendly=llm_friendly).code
+    includes = [line.strip() for line in code.splitlines() if line.strip().startswith("#include")]
+    assert len(includes) == len(set(includes)), includes
+
+
+def test_repeated_includes_go_only_outside_conditional_blocks():
+    from dace.codegen.cpf import drop_repeated_includes
+
+    code = "#include <a.h>\n#include <a.h>\n#ifdef X\n#include <a.h>\n#endif\nint x;\n"
+    assert drop_repeated_includes(code) == "#include <a.h>\n#ifdef X\n#include <a.h>\n#endif\nint x;\n"
+
+
+if __name__ == "__main__":
+    test_the_llm_friendly_unit_computes_the_same_values_in_fewer_characters()
+    test_generated_names_shorten_while_the_entry_and_its_exports_keep_theirs()
+    test_a_device_dialect_is_refused()
+    test_preprocessor_lines_strings_and_pastes_are_never_respelled_but_pragmas_are()
+    test_names_a_directive_mentions_or_the_unit_exports_are_kept()
+    test_derived_short_names_are_new_to_the_unit()
+    for static_item in STATIC_ITEMS:
+        test_only_plain_unreferenced_static_definitions_are_dropped(static_item)
+    test_no_include_line_repeats(False)
+    test_no_include_line_repeats(True)
+    test_repeated_includes_go_only_outside_conditional_blocks()

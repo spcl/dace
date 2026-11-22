@@ -1932,6 +1932,26 @@ def keep_target_path(code: str, x86: bool) -> str:
     return X86_BLOCK.sub(lambda m: m.group(1) if x86 else m.group(2), code)
 
 
+def drop_repeated_includes(code: str) -> str:
+    """``code`` without an ``#include`` line that repeats an earlier one outside any ``#if`` block: the frame
+    includes ``<omp.h>`` again below the preamble's, and a repeat is text an agent reads for nothing."""
+    seen: set[str] = set()
+    depth = 0
+    kept = []
+    for line in code.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("#if"):
+            depth += 1
+        elif stripped.startswith("#endif"):
+            depth -= 1
+        elif depth == 0 and stripped.startswith("#include"):
+            if stripped in seen:
+                continue
+            seen.add(stripped)
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def render_unit(
     sdfg: SDFG,
     validate: bool,
@@ -2027,7 +2047,9 @@ def render_unit(
                 # Last of all: a pure layout change, so every pass above still sees the generator's text.
                 body = compact_blocks(body)
                 device_body = compact_blocks(device_body) if device_body else ""
-    code = keep_target_path(preamble(body, dialect, frame.environments) + body, renders_for_x86(isa))
+    code = drop_repeated_includes(
+        keep_target_path(preamble(body, dialect, frame.environments) + body, renders_for_x86(isa))
+    )
     names: tuple[tuple[str, str], ...] = ()
     if llm_friendly:
         entry_names = tuple(signature.order) if signature is not None else tuple(entry_arglist)
