@@ -16,7 +16,7 @@ the copies asynchronous and place the waits at the start of ``CONSUME`` (see ``I
 
 The main loop produces before it consumes, so the copies of a tile are in flight while the block computes on an older
 one. ``PRODUCE`` of iteration ``n`` overwrites the slot ``CONSUME`` of iteration ``n-1`` reads. When threads share the
-buffer (``GPU_Shared``), a block-wide :class:`~dace.libraries.standard.nodes.barrier.Barrier` at the start of the
+buffer (``GPU_Shared``), a block-wide :class:`~dace.libraries.standard.nodes.sync.Sync` at the start of the
 main loop's ``PRODUCE`` therefore orders those reads before the overwrite. The copies stay as they are here, so a
 synchronous copy keeps computing exactly what the loop did.
 """
@@ -29,7 +29,7 @@ import sympy
 
 import dace
 from dace import SDFG, InterstateEdge, dtypes, properties, subsets, symbolic
-from dace.libraries.standard.nodes.barrier import Barrier, SyncScope
+from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.scope import is_in_scope
@@ -208,7 +208,7 @@ def lower_loop(loop: LoopRegion, depth: int, names: set[str] | None = None) -> t
         main=loop,
         prologue=prologue,
         epilogue=epilogue,
-        produce_regions=[(prologue_body, prologue_sym), (produce, sympy.Mod(index + ahead, depth))],
+        produce_regions=[(prologue_body, prologue_sym), (produce, symbolic.CMod(index + ahead, depth))],
         consume_regions=[(consume, index), (epilogue_body, index)],
         staged=staged,
         war_barrier=war_barrier,
@@ -233,7 +233,7 @@ def _add_war_barrier(produce: ControlFlowRegion) -> SDFGState:
     """Put a state with a block barrier at the start of ``produce``."""
     old_start = produce.start_block
     state = produce.add_state(f"{produce.label}_slot_barrier", is_start_block=True)
-    state.add_node(Barrier(f"{produce.label}_slot_barrier", SyncScope.BLOCK))
+    state.add_node(Sync(f"{produce.label}_slot_barrier", scope=SyncScope.BLOCK))
     produce.add_edge(state, old_start, InterstateEdge())
     return state
 

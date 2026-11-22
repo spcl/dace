@@ -7,8 +7,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.standard.nodes.barrier import Barrier, SyncScope
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
+from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation.passes.multiple_buffering import LowerMultipleBuffering
 
@@ -247,7 +247,7 @@ def test_slot_reuse_barrier(storage: dace.StorageType):
     sdfg = tiled_add(f"mb_war_{storage.name}", 3)
     sdfg.arrays["buf"].storage = storage
     (lowered,) = LowerMultipleBuffering().apply_pass(sdfg, {})
-    barriers = [(n, s) for n, s in sdfg.all_nodes_recursive() if isinstance(n, Barrier)]
+    barriers = [(n, s) for n, s in sdfg.all_nodes_recursive() if isinstance(n, Sync)]
     if storage != dace.StorageType.GPU_Shared:
         assert lowered.war_barrier is None and not barriers
         return
@@ -271,7 +271,7 @@ def test_lowered_loop_results():
     assert prologue_body.parent_graph is lowered.prologue and epilogue_body.parent_graph is lowered.epilogue
     assert produce.parent_graph is lowered.main and consume.parent_graph is lowered.main
     assert str(prologue_slot) == lowered.prologue.loop_variable
-    assert str(main_slot) == "Mod(int_floor(t, 4) + 2, 3)"
+    assert str(main_slot) == "CMod(int_floor(t, 4) + 2, 3)"
     assert str(main_index) == str(epilogue_index) == "int_floor(t, 4)"
 
 

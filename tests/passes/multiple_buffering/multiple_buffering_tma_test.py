@@ -203,8 +203,8 @@ def check_async_pipeline(cuda: str, depth: int, label: str, per_stage: int, rank
     barrier teardown, with no other block barrier."""
     issue, wait = f"dace::cuda::tma_load_async_leader<{rank}>", "dace::cuda::mbarrier_wait_parity"
     assert f"__shared__ __align__(128) uint64_t {label}_full_bar[{depth}];" in cuda
-    assert cuda.count(f"dace::cuda::mbarrier_init_array(_tma_bar_out, {depth}, {per_stage});") == 1
-    assert cuda.count(f"dace::cuda::mbarrier_inval_array(_tma_bar_out, {depth});") == 1
+    assert cuda.count(f"dace::cuda::mbarrier_init_array({label}_full_bar, {depth}, {per_stage});") == 1
+    assert cuda.count(f"dace::cuda::mbarrier_inval_array({label}_full_bar, {depth});") == 1
     assert cuda.count(issue) == 2 * per_stage  # prologue and main loop
     assert cuda.count(wait) == 2  # main loop and epilogue
     assert "dace::cuda::tma_load<" not in cuda and "tma_barrier_init" not in cuda

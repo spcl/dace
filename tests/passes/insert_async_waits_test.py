@@ -9,9 +9,9 @@ import contextlib
 import pytest
 
 import dace
-from dace.libraries.standard.nodes.barrier import Barrier
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.libraries.standard.nodes.memory_engine_wait import BARRIER_INPUT_NAME, TOKEN_INPUT_NAME, MemoryEngineWait
+from dace.libraries.standard.nodes.sync import Sync
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.insert_async_waits import InsertAsyncWaits
 from dace.transformation.passes.multiple_buffering import LowerMultipleBuffering
@@ -113,14 +113,14 @@ def test_parity_mode(depth: int):
         assert not copy_node.sync and copy_node.asynchronous
         assert not [e for e in state.out_edges(copy_node) if e.src_conn == "_tma_token"]
         slots.append(str(_edge(state, copy_node, "_tma_bar").data.subset))
-    assert sorted(slots) == sorted([lowered.prologue.loop_variable, f"Mod(int_floor(t, 32) + {depth - 1}, {depth})"])
+    assert sorted(slots) == sorted([lowered.prologue.loop_variable, f"CMod(int_floor(t, 32) + {depth - 1}, {depth})"])
 
     # The main loop and the epilogue wait for the tile they read, before reading it
     waits = _nodes(sdfg, MemoryEngineWait)
     assert len(waits) == 2
     for wait, state in waits:
-        assert str(wait.parity) == f"Mod(int_floor(int_floor(t, 32), {depth}), 2)"
-        assert str(_edge(state, wait, BARRIER_INPUT_NAME).data.subset) == f"Mod(int_floor(t, 32), {depth})"
+        assert str(wait.parity) == f"CMod(int_floor(int_floor(t, 32), {depth}), 2)"
+        assert str(_edge(state, wait, BARRIER_INPUT_NAME).data.subset) == f"CMod(int_floor(t, 32), {depth})"
         (buf,) = [n for n in state.data_nodes() if n.data == "buf"]
         assert state.edges_between(wait, buf)
         assert state.parent_graph in {region for region, _ in lowered.consume_regions}
@@ -131,7 +131,7 @@ def test_parity_mode(depth: int):
     (init_tasklet,) = [n for n in init.nodes() if isinstance(n, dace.nodes.Tasklet)]
     assert f"mbarrier_init_array(_tma_bar_out, {depth}, 1)" in init_tasklet.code.as_string
     (teardown,) = parent.successors(lowered.epilogue)
-    assert any(isinstance(n, Barrier) for n in teardown.nodes())
+    assert any(isinstance(n, Sync) for n in teardown.nodes())
     assert any(
         isinstance(n, dace.nodes.Tasklet) and "mbarrier_inval_array" in n.code.as_string for n in teardown.nodes()
     )

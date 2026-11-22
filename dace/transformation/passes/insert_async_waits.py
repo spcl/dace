@@ -35,11 +35,8 @@ the copy, since its readers are in another region. A loop without any such load 
 import warnings
 from typing import Any
 
-import sympy
-
 from dace import SDFG, Memlet, SDFGState, dtypes, properties, subsets, symbolic
 from dace.libraries.standard.environments.memory_engine import MemoryEngine
-from dace.libraries.standard.nodes.barrier import Barrier, SyncScope
 from dace.libraries.standard.nodes.copy.common import (
     MEMORY_ENGINE_BARRIER_INPUT_NAME,
     MEMORY_ENGINE_BARRIER_OUTPUT_NAME,
@@ -54,6 +51,7 @@ from dace.libraries.standard.nodes.copy.common import (
 from dace.libraries.standard.nodes.copy.expansions.memory_engine_bulk import add_memory_engine_barrier
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.libraries.standard.nodes.memory_engine_wait import BARRIER_INPUT_NAME, TOKEN_INPUT_NAME, MemoryEngineWait
+from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
@@ -221,14 +219,14 @@ def _insert_parity_waits(loop: LoweredLoop) -> int:
         if not isinstance(state, SDFGState):
             state = region.add_state_before(state, f"{region.label}_wait", is_start_block=True)
         reads = [node for node in state.data_nodes() if node.data in staged and state.in_degree(node) == 0]
-        wait = MemoryEngineWait(f"{region.label}_wait", parity=sympy.Mod(symbolic.int_floor(index, depth), 2))
+        wait = MemoryEngineWait(f"{region.label}_wait", parity=symbolic.CMod(symbolic.int_floor(index, depth), 2))
         state.add_node(wait)
         state.add_edge(
             state.add_access(bar),
             None,
             wait,
             BARRIER_INPUT_NAME,
-            Memlet(data=bar, subset=_subset(sympy.Mod(index, depth))),
+            Memlet(data=bar, subset=_subset(symbolic.CMod(index, depth))),
         )
         for node in reads:
             state.add_nedge(wait, node, Memlet())
@@ -251,7 +249,7 @@ def _insert_parity_waits(loop: LoweredLoop) -> int:
     )
 
     teardown = parent.add_state_after(loop.epilogue, f"{loop.label}_barrier_teardown")
-    barrier = Barrier(f"{loop.label}_barrier_teardown", SyncScope.BLOCK)
+    barrier = Sync(f"{loop.label}_barrier_teardown", scope=SyncScope.BLOCK)
     teardown.add_node(barrier)
     tasklet = teardown.add_tasklet(
         f"{loop.label}_barrier_inval",
