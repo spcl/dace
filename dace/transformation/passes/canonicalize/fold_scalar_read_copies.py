@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Fold the frontend's scalar copies into direct tasklet accesses: reads (``A[i] -> A_index -> tasklet``) and results
-(``tasklet -> result -> A[i]``, the copy ``TrivialTaskletElimination`` leaves of an assign tasklet)."""
+(``tasklet -> result -> A[i]``, the copy ``TrivialTaskletElimination`` leaves of an assign tasklet), and the result of
+a library call the next state copies into ``A[i]`` (the frontend's write-back of an argument ``req[0]``)."""
 
 from collections.abc import Iterator
 from typing import Any
@@ -133,6 +134,24 @@ def fold(state: SDFGState, copy: Any, read: Memlet) -> None:
     state.remove_node(scalar)
 
 
+def element_copy(sdfg: SDFG, state: SDFGState, scalar: nodes.AccessNode) -> Any | None:
+    """The one edge out of ``scalar``, if it copies the scalar into one element of an array of its type."""
+    if state.out_degree(scalar) != 1:
+        return None
+    target = state.out_edges(scalar)[0]
+    if not isinstance(target.dst, nodes.AccessNode) or target.data.wcr is not None or target.data.is_empty():
+        return None
+    array = sdfg.arrays[target.dst.data]
+    if isinstance(array, (data.Scalar, data.Stream)) or array.dtype != sdfg.arrays[scalar.data].dtype:
+        return None
+    if isinstance(array, data.View) and not view_keeps_a_data_binding(state, target.dst, target):
+        return None
+    subset = write_subset(target)
+    if subset is None or symbolic.equal(subset.num_elements(), 1) is not True:
+        return None
+    return target
+
+
 def foldable_write(sdfg: SDFG, state: SDFGState, produce: Any, counts: dict[str, int]) -> Any | None:
     """The copy edge out of the result scalar ``produce`` fills, if the scalar may be folded away."""
     scalar = produce.dst
@@ -141,18 +160,8 @@ def foldable_write(sdfg: SDFG, state: SDFGState, produce: Any, counts: dict[str,
         return None
     if not isinstance(produce.src, nodes.Tasklet) or state.in_degree(scalar) != 1 or produce.data.wcr is not None:
         return None
-    if state.out_degree(scalar) != 1:
-        return None
-    target = state.out_edges(scalar)[0]
-    if not isinstance(target.dst, nodes.AccessNode) or target.data.wcr is not None or target.data.is_empty():
-        return None
-    array = sdfg.arrays[target.dst.data]
-    if isinstance(array, (data.Scalar, data.Stream)) or array.dtype != desc.dtype:
-        return None
-    if isinstance(array, data.View) and not view_keeps_a_data_binding(state, target.dst, target):
-        return None
-    subset = write_subset(target)
-    if subset is None or symbolic.equal(subset.num_elements(), 1) is not True:
+    target = element_copy(sdfg, state, scalar)
+    if target is None:
         return None
     before = reachable(state, produce.src, forward=False)
     after = reachable(state, target.dst)
@@ -179,6 +188,66 @@ def fold_write(state: SDFGState, produce: Any, target: Any) -> None:
         Memlet(data=target.dst.data, subset=write_subset(target)),
     )
     state.remove_node(produce.dst)
+
+
+def next_state(state: SDFGState) -> SDFGState | None:
+    """The state ``state`` always passes to, with nothing assigned between, when it is that state's only entry."""
+    graph = state.parent_graph
+    leaving = graph.out_edges(state)
+    if len(leaving) != 1 or not leaving[0].data.is_unconditional() or leaving[0].data.assignments:
+        return None
+    following = leaving[0].dst
+    if not isinstance(following, SDFGState) or graph.in_degree(following) != 1:
+        return None
+    return following
+
+
+def foldable_call_result(
+    sdfg: SDFG, state: SDFGState, produce: Any, counts: dict[str, int]
+) -> tuple[SDFGState, Any] | None:
+    """The next state and its copy of the result scalar a library node's ``produce`` fills (the frontend's write-back
+    of a call argument ``req[0]``), if the node may write that array element itself: the node reads the element in
+    place (``LibraryNode.operand_dims``), and no access of the array lies between the call and the copy."""
+    scalar = produce.dst
+    desc = sdfg.arrays[scalar.data]
+    if not (isinstance(desc, data.Scalar) and desc.transient and counts.get(scalar.data) == 2):
+        return None
+    call = produce.src
+    if not isinstance(call, nodes.LibraryNode) or produce.data.wcr is not None:
+        return None
+    if state.in_degree(scalar) != 1 or state.out_degree(scalar) != 0:
+        return None
+    following = next_state(state)
+    if following is None:
+        return None
+    copies = [node for node in following.data_nodes() if node.data == scalar.data]
+    if len(copies) != 1 or following.in_degree(copies[0]) != 0:
+        return None
+    target = element_copy(sdfg, following, copies[0])
+    if target is None:
+        return None
+    name = target.dst.data
+    if call.operand_dims(produce.src_conn, write_subset(target), sdfg.arrays[name], desc) is None:
+        return None
+    after = reachable(following, target.dst)
+    if any(node.data == name for node in state.data_nodes()):
+        return None
+    if any(node.data == name and node is not target.dst and node not in after for node in following.data_nodes()):
+        return None
+    return following, target
+
+
+def fold_call_result(state: SDFGState, produce: Any, following: SDFGState, target: Any) -> None:
+    """Let the library node write the array element itself; drop the result scalar and its copy."""
+    element = state.add_access(target.dst.data)
+    state.add_edge(
+        produce.src, produce.src_conn, element, None, Memlet(data=target.dst.data, subset=write_subset(target))
+    )
+    state.remove_node(produce.dst)
+    written = target.dst
+    following.remove_node(target.src)
+    if following.degree(written) == 0:
+        following.remove_node(written)
 
 
 def control_flow_reads(sdfg: SDFG) -> set[str]:
@@ -247,6 +316,12 @@ class FoldScalarReadCopies(ppl.Pass):
                     target = foldable_write(owner, state, copy, counts)
                     if target is not None:
                         fold_write(state, copy, target)
+                        counts[copy.dst.data] = 0
+                        folded += 1
+                        continue
+                    found = foldable_call_result(owner, state, copy, counts)
+                    if found is not None:
+                        fold_call_result(state, copy, *found)
                         counts[copy.dst.data] = 0
                         folded += 1
         return folded or None
