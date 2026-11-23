@@ -181,6 +181,54 @@ def test_a_kernel_calls_the_cpf_helpers_without_relaxed_constexpr(tmp_path: path
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize("dialect", ["STANDALONE_CUDA", "STANDALONE_HIP"])
+def test_a_device_unit_spells_std_min_and_max_as_the_host_device_helpers(dialect: str):
+    """A min-accumulation lowered into a device function wrote ``std::min``, a constexpr host function nvcc refuses
+    in a kernel without ``--expt-relaxed-constexpr`` (NestForge #93, bellman_ford). The device unit calls
+    ``cpf_min``/``cpf_max`` instead, and their definitions follow the call; other ``std::`` names stay."""
+    from dace import cpf_lowering
+
+    spelled = cpf_lowering.device_spell_out(
+        "acc = std::min(acc, out); top = std::max<double>(top, v); p = std::min_element(b, e); q = std::minmax(a, b);",
+        cpf_lowering.Dialect[dialect],
+    )
+
+    assert spelled == (
+        "acc = cpf_min(acc, out); top = cpf_max<double>(top, v); p = std::min_element(b, e); q = std::minmax(a, b);"
+    )
+    with cpf_lowering.dialect_scope(cpf_lowering.Dialect[dialect]):
+        assert {"cpf_min", "cpf_max"} <= set(cpf_lowering.helpers_used(spelled, cpf_lowering.Dialect[dialect]))
+
+
+def test_a_kernel_accumulating_with_the_spelled_min_builds_without_relaxed_constexpr(tmp_path: pathlib.Path):
+    """The spelled call compiles in a ``__device__`` function under the judge's flags."""
+    nvcc = shutil.which("nvcc")
+    if nvcc is None:
+        pytest.skip("nvcc is not on PATH")
+    from dace import cpf_lowering
+
+    with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE_CUDA):
+        helpers = cpf_lowering.definitions_for({"cpf_min", "cpf_max"})
+    body = cpf_lowering.device_spell_out(
+        "__device__ void relax(double *acc, double out) { *acc = std::min(*acc, out); }\n"
+        "__global__ void k(double *d, const double *w, int n) {\n"
+        "    int i = blockIdx.x * blockDim.x + threadIdx.x;\n"
+        "    if (i < n) relax(&d[i], std::max(w[i], 0.0));\n"
+        "}\n",
+        cpf_lowering.Dialect.STANDALONE_CUDA,
+    )
+    source = tmp_path / "relax.cu"
+    source.write_text("#include <type_traits>\n" + "\n".join(helpers) + "\n" + body)
+
+    result = subprocess.run(
+        [nvcc, *CUDA_BUILD_FLAGS, "-arch=sm_80", "-c", str(source), "-o", str(tmp_path / "relax.o")],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize("label,program", PROGRAMS, ids=PROGRAM_IDS)
 def test_an_offloaded_kernel_renders_as_cuda_units_with_the_host_entry_prototype(label: str, program: DaceProgram):
     name = f"cpf_cuda_{label}"

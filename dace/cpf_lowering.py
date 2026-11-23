@@ -1680,6 +1680,11 @@ HIP_SPELLINGS: dict[str, str] = {
     "DACE_CUB_MIN_OP": "::gpucub::Min()",
     "DACE_CUB_MAX_OP": "::gpucub::Max()",
     "DACE_CUB_MUL_OP": "cpf_cub_multiplies()",
+    # std::min / std::max are constexpr host functions: nvcc refuses them in a kernel without
+    # --expt-relaxed-constexpr, which a judge does not pass (NestForge #93, bellman_ford's min-accumulation).
+    # The cpf helpers are __host__ __device__ in a device unit and take the same arguments.
+    "std::min": "cpf_min",
+    "std::max": "cpf_max",
     **GPU_ALIASES,
 }
 
