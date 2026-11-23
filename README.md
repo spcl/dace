@@ -1,5 +1,4 @@
 [![General Tests](https://github.com/spcl/dace/actions/workflows/general-ci.yml/badge.svg)](https://github.com/spcl/dace/actions/workflows/general-ci.yml)
-[![GPU Tests](https://github.com/spcl/dace/actions/workflows/gpu-ci.yml/badge.svg)](https://github.com/spcl/dace/actions/workflows/gpu-ci.yml)
 [![Documentation Status](https://readthedocs.org/projects/spcldace/badge/?version=latest)](https://spcldace.readthedocs.io/en/latest/?badge=latest)
 [![PyPI version](https://badge.fury.io/py/dace.svg)](https://badge.fury.io/py/dace)
 [![codecov](https://codecov.io/gh/spcl/dace/branch/main/graph/badge.svg)](https://codecov.io/gh/spcl/dace)
