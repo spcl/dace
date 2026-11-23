@@ -111,6 +111,37 @@ def test_a_strided_column_goes_round_a_ring_without_a_view():
     assert np.array_equal(b, expected)
 
 
+@pytest.mark.mpi
+def test_a_halo_of_grid_rows_needs_no_view():
+    """A row slice ``p[1:2, :]`` comes as a View of shape ``(1, N)``: its unit dimension holds no element, so the
+    exchange reads and writes the rows of ``p`` in place."""
+    from mpi4py import MPI
+
+    comm = MPI.COMM_WORLD
+    rank, size = comm.Get_rank(), comm.Get_size()
+
+    @dace.program
+    def rows(p: dace.float64[ROWS + 2, N], up: dace.int32, down: dace.int32):
+        req = dace.define_local([4], dtype=MPI.Request)
+        MPI.COMM_WORLD.Isend(p[1:2, :], up, 0, req[0])
+        MPI.COMM_WORLD.Irecv(p[ROWS + 1 : ROWS + 2, :], down, 0, req[1])
+        MPI.COMM_WORLD.Isend(p[ROWS : ROWS + 1, :], down, 1, req[2])
+        MPI.COMM_WORLD.Irecv(p[0:1, :], up, 1, req[3])
+        MPI.Request.Waitall(req)
+
+    func = canonical(rows, comm)
+    up, down = (rank - 1) % size, (rank + 1) % size
+
+    def grid(r: int) -> np.ndarray:
+        return 10.0 * r + np.arange((ROWS + 2) * LENGTH, dtype=np.float64).reshape(ROWS + 2, LENGTH)
+
+    p = grid(rank)
+    func(p=p, up=np.int32(up), down=np.int32(down), N=LENGTH)
+    expected = grid(rank)
+    expected[0], expected[ROWS + 1] = grid(up)[ROWS], grid(down)[1]
+    assert np.array_equal(p, expected)
+
+
 def request_copies(sdfg: dace.SDFG) -> list[str]:
     """The containers a communication writes its request into that are not the program's request array ``req``."""
     return [

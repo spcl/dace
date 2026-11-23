@@ -450,12 +450,22 @@ class CommNode(nodes.LibraryNode):
     def operand_dims(
         self, connector: str, subset: subsets.Subset, array: data.Data, operand: data.Data
     ) -> list[int] | None:
-        # A one-element slice (``a[0:1]``) squeezes to no dimension, and is still one element in place
         dims = super().operand_dims(connector, subset, array, operand)
         if dims is not None or not isinstance(subset, subsets.Range):
             return dims
-        one = symbolic.equal(subset.num_elements(), 1) is True and symbolic.equal(operand.total_size, 1) is True
-        return [] if one else None
+        # A unit dimension of the View (``p[0:1, :]`` is ``(1, N)``, ``a[0:1]`` is ``(1,)``) holds no element more:
+        # the communication reads the slice in place where it matches the View without them
+        size = subset.size()
+        dims = [i for i, n in enumerate(size) if symbolic.equal(n, 1) is not True]
+        kept = [k for k, n in enumerate(operand.shape) if symbolic.equal(n, 1) is not True]
+        if len(dims) != len(kept):
+            return None
+        for i, k in zip(dims, kept):
+            if symbolic.equal(size[i], operand.shape[k]) is not True:
+                return None
+            if symbolic.equal(array.strides[i] * subset.ranges[i][2], operand.strides[k]) is not True:
+                return None
+        return dims
 
 
 @properties.make_properties
