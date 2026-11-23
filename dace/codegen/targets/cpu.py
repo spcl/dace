@@ -927,6 +927,8 @@ class CPUCodeGen(TargetCodeGenerator):
         # the OMP runtime privatizes-by-value rather than by-pointer).
         self._omp_reduction_scope_stack = []
         self._range_private_maps = {}
+        # Team one-trip maps rendered as thread 0's block -> whether the loop they replace had ``nowait``
+        self.thread_zero_blocks: dict = {}
         self._range_private_count = 0
         #: Per range-privatized scope: ``{data name: flag variable or None}``, the flag naming whether a thread
         #: updates the shared rows atomically instead (None: it never does).
@@ -4609,9 +4611,11 @@ class CPUCodeGen(TargetCodeGenerator):
             result.write(self._range_private_loop(sdfg, state_dfg, node, plan), cfg, state_id, node)
         else:
             if self.one_trip_in_team(node, in_persistent, omp_reductions):
-                # A CPF team's one-trip worksharing loop is one thread's block: ``single`` runs it once and keeps the
-                # loop's barrier (or its ``nowait``); the loop line becomes the parameter's binding.
-                map_header = "#pragma omp single" + (" nowait" if node.map.omp_nowait else "")
+                # A CPF team's one-trip worksharing loop is thread 0's block: a static ``omp for`` gives its one
+                # iteration to thread 0 (``single`` would give it to any thread, and the body may read the thread
+                # id); the exit keeps the loop's barrier unless it had ``nowait``.
+                map_header = "if (omp_get_thread_num() == 0)"
+                self.thread_zero_blocks[node.map] = node.map.omp_nowait
             result.write(map_header, cfg, state_id, node)
 
         if node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
@@ -4743,6 +4747,8 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             for _ in map_node.map.range:
                 result.write("}", cfg, state_id, node)
+        if self.thread_zero_blocks.pop(map_node.map, True) is False:
+            result.write("#pragma omp barrier", cfg, state_id, node)
         range_private = self._range_private_maps.pop(map_node.map, None)
         if range_private:
             self._range_private_flags.pop()
