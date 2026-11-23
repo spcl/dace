@@ -32,6 +32,26 @@ from dace.sdfg.state import (
 from dace.subsets import Range, union
 
 
+def staying_descriptor_symbols(sdfg: SDFG, states: list[SDFGState], moved: Collection[str]) -> OrderedSet[str]:
+    """The symbols the descriptors left outside ``states`` mention: those of ``sdfg`` not in ``moved`` and those of
+    the SDFGs not nested in ``states``."""
+    inner = {
+        id(nested)
+        for state in states
+        for node in state.nodes()
+        if isinstance(node, nodes.NestedSDFG)
+        for nested in node.sdfg.all_sdfgs_recursive()
+    }
+    found: OrderedSet[str] = OrderedSet()
+    for nested in sdfg.all_sdfgs_recursive():
+        if id(nested) in inner:
+            continue
+        for name, desc in nested.arrays.items():
+            if nested is not sdfg or name not in moved:
+                found.update(str(s) for s in desc.free_symbols)
+    return found
+
+
 def nest_sdfg_subgraph(
     sdfg: SDFG, subgraph: SubgraphView, start: ControlFlowBlock | None = None, keep_outside: Collection[str] = ()
 ) -> SDFGState:
@@ -175,7 +195,9 @@ def nest_sdfg_subgraph(
         write_set = OrderedSet(sorted(n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient))
 
         # Find defined subgraph symbols
-        use_sites, descriptor_symbols = loop_analysis.symbol_use_sites(sdfg)  # indexed once for all queries
+        use_sites, all_descriptor_symbols = loop_analysis.symbol_use_sites(sdfg)  # indexed once for all queries
+        # A descriptor that moves into the nest is evaluated there, not where the parent reads exit values
+        descriptor_symbols = staying_descriptor_symbols(sdfg, states, unique_set)
         inside_sites: set[int] = {id(b) for b in all_blocks}
         inside_sites.update(id(e) for e in is_edges)
         # Read before anything assigns them, so the value comes from this SDFG's caller.
@@ -184,6 +206,7 @@ def nest_sdfg_subgraph(
         defined_symbols = set()
         strictly_defined_symbols = set()
         internal_symbols: set[str] = set()
+        unobserved_symbols: OrderedSet[str] = OrderedSet()
         for e in is_edges:
             defined_symbols.update(set(e.data.assignments.keys()))
             for k, v in e.data.assignments.items():
@@ -197,9 +220,11 @@ def nest_sdfg_subgraph(
                 # ``sdfg.symbols`` does not answer where the value comes from -- the Python frontend
                 # declares its indirection indices there too. Mapping a symbol the subgraph owns makes
                 # it free at the PARENT boundary, surfacing as a required root-SDFG argument.
-                if k not in incoming_symbols and not loop_analysis.symbol_used_outside(
-                    k, inside_sites, use_sites, descriptor_symbols
-                ):
+                observed = loop_analysis.symbol_used_outside(k, inside_sites, use_sites, descriptor_symbols)
+                if not observed:
+                    # A value the parent had before is no reason to hand the new one back: nothing reads it there
+                    unobserved_symbols.add(k)
+                if k not in incoming_symbols and not observed:
                     internal_symbols.add(k)
                     strictly_defined_symbols.add(k)
                 elif k not in sdfg.symbols:
@@ -327,6 +352,7 @@ def nest_sdfg_subgraph(
             types.update({k: v for k, v in e.data.new_symbols(nsdfg, types).items() if k not in types})
         # Nothing outside reads these, so the scalar and the extra state would be dead weight.
         ndefined_symbols -= internal_symbols
+        ndefined_symbols.difference_update(unobserved_symbols)
         # Export a counter only if something outside the loop observes it. Exporting unconditionally
         # costs a ``symbolic_output`` state, and that state is a second component -- which defeated
         # MapFission's single-component termination guard and let it renest forever (TSVC s1119).

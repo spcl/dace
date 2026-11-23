@@ -132,7 +132,7 @@ from dace.sdfg.state import (
 )
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import small_count
+from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import small_count, without_sequential_note
 from dace.transformation.passes.loop_fission import LoopFission, _block_rw, _independent_block_groups
 
 #: The schedule whose maps become ``#pragma omp for`` once a ``CPU_Persistent`` scope encloses them.
@@ -582,6 +582,7 @@ def share_out_bulk_statements(sdfg: SDFG, loop: LoopRegion) -> None:
                 entry.map.schedule = WORKSHARED if block.entry_node(entry) is None else dtypes.ScheduleType.Sequential
         for node in [n for n in top_level_nodes(block) if sequential_leaf_map(n, block)]:
             node.map.schedule = WORKSHARED
+            node.specialization_hint = without_sequential_note(node.specialization_hint)
         for entry in [n for n in top_level_nodes(block) if isinstance(n, nodes.MapEntry)]:
             if entry.map.schedule == WORKSHARED:
                 for node in block.scope_subgraph(entry).nodes():
@@ -810,6 +811,12 @@ def outline(loop: LoopRegion, sdfg: SDFG, keep_outside: set[str]) -> None:
         del nsdfg.symbol_mapping[name]
         if name not in assigned_inside and name in nsdfg.sdfg.symbols:
             nsdfg.sdfg.remove_symbol(name)
+    # Every thread runs the nest: one of them writes the exit values the parent reads after the loop
+    for block in nsdfg.sdfg.nodes():
+        if isinstance(block, SDFGState):
+            for node in top_level_nodes(block):
+                if isinstance(node, nodes.Tasklet):
+                    xfh.wrap_code_node_in_unit_map(block, node, WORKSHARED, "_single")
     team, _ = xfh.wrap_code_node_in_unit_map(state, nsdfg, dtypes.ScheduleType.CPU_Persistent, "_team")
     if work is not None:
         team.map.omp_team_work = work

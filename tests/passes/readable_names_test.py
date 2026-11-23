@@ -88,3 +88,30 @@ def test_an_iterator_read_after_its_loop_keeps_one_name():
     after.add_edge(export, "out", after.add_write("last"), None, dace.Memlet("last[0]"))
     ReadableNames().apply_pass(sdfg, {})
     assert export.code.as_string.strip() == f"out = {loop.loop_variable}"
+
+
+def test_a_map_parameter_named_like_its_enclosing_loop_counter_is_renamed():
+    """vexx_k: a map over ``i`` inside the ``for i`` loop rendered as ``for (int64_t i ...)`` inside ``for (i ...)``,
+    shadowing the counter the rest of the loop body reads."""
+    from dace.sdfg.state import LoopRegion
+
+    sdfg = dace.SDFG("shadowed_counter")
+    sdfg.add_array("a", ["N", "M"], dace.float64)
+    loop = LoopRegion("rows", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    body.add_mapped_tasklet("w", {"i": "0:M"}, {}, "y = 1.0", {"y": dace.Memlet("a[0, i]")}, external_edges=True)
+    ReadableNames().apply_pass(sdfg, {})
+    (entry,) = [n for n in body.nodes() if isinstance(n, dace.nodes.MapEntry)]
+    assert loop.loop_variable == "i" and entry.map.params[0] != "i", entry.map.params
+    (edge,) = [e for e in body.edges() if isinstance(e.dst, dace.nodes.MapExit)]
+    assert str(edge.data.subset) == f"0, {entry.map.params[0]}", edge.data.subset
+
+
+if __name__ == "__main__":
+    for stem in ("cpf_tmp", "omp_buf", "dace_acc", "__x"):
+        test_a_reserved_stem_gets_a_free_name(stem)
+    test_a_transient_with_a_reserved_stem_is_renamed_and_computes_the_same()
+    test_a_renamed_symbol_reaches_the_cpp_code_of_a_library_expansion()
+    test_an_iterator_read_after_its_loop_keeps_one_name()
+    test_a_map_parameter_named_like_its_enclosing_loop_counter_is_renamed()

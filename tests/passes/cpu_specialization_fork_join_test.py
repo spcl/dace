@@ -146,7 +146,7 @@ def test_a_data_segment_map_in_a_sequential_loop_goes_sequential(in_loop):
     if in_loop:
         assert entry.map.schedule == dtypes.ScheduleType.Sequential
         assert (
-            "no pragma on CPU (running it in parallel is legal): its range b:e - 1 is read from data inside a sequential loop"
+            "no thread pragma on CPU (running it in parallel is legal): its range b:e - 1 is read from data inside a sequential loop"
             in entry.specialization_hint
         )
     else:

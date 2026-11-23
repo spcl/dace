@@ -260,7 +260,8 @@ class FunctionRenamer:
 
     def record(self, scope: nodes.MapEntry | LoopRegion, visible: dict[str, str], own: dict[str, str]) -> None:
         self.scopes.append((scope, {**visible, **own}))
-        for old, new in own.items():
+        # A plain name renamed for shadowing an enclosing counter means that counter elsewhere: scoped only.
+        for old, new in ((old, new) for old, new in own.items() if is_generated(old)):
             self.iterations[old] = new if self.iterations.get(old, new) == new else None
 
     def walk(
@@ -327,7 +328,8 @@ class FunctionRenamer:
             declared = entry.new_symbols(self.sdfg, state, entry_table)
             own: dict[str, str] = {}
             for param in entry.map.params:
-                if is_generated(param):
+                # A parameter named like an enclosing loop's counter shadows it in the rendering.
+                if is_generated(param) or param in names:
                     avoid = self.taken | self.outer_symbols | OrderedSet(names) | OrderedSet(own.values())
                     own[param] = iteration_name(len(names), avoid, param)
                 names.append(own.get(param, param))

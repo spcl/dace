@@ -8,6 +8,7 @@ from typing import Final, NoReturn
 from dace import data, dtypes, properties
 from dace.dtypes import typeclass
 from dace.memlet import Memlet
+from dace.ordered import OrderedSet
 from dace.sdfg import graph as dgraph
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG, InterstateEdge
@@ -125,6 +126,17 @@ class AllocationScopes(ppl.Pass):
         }
 
 
+def map_parameters_around(scope: dict[nodes.Node, nodes.EntryNode | None], node: nodes.Node) -> OrderedSet[str]:
+    """The parameters of the maps enclosing ``node``."""
+    names: OrderedSet[str] = OrderedSet()
+    parent = scope[node]
+    while parent is not None:
+        if isinstance(parent, nodes.MapEntry):
+            names.update(parent.map.params)
+        parent = scope[parent]
+    return names
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class AccessInstances(ppl.Pass):
@@ -181,7 +193,12 @@ class AccessInstances(ppl.Pass):
                 for node in state.nodes():
                     if not isinstance(node, nodes.CodeNode):
                         continue
-                    for used in node.free_symbols & standin_names:
+                    named = sorted(node.free_symbols & standin_names)
+                    if named:
+                        # A name an enclosing map binds is that map's parameter there, not the container.
+                        bound = map_parameters_around(state.scope_dict(), node)
+                        named = [name for name in named if name not in bound]
+                    for used in named:
                         instances[used].append((state, nodes.AccessNode(used)))
                         code_uses[used].append((state, node))
 

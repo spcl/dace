@@ -68,7 +68,7 @@ SEQUENTIAL_UNDER_A_MAP = (dtypes.ScheduleType.Default, dtypes.ScheduleType.Seque
 
 #: The line a map made sequential here adds under its ``parallel`` class line, so the rendered loop -- which loses
 #: its pragma -- says why. Each rule fills in its own reason.
-SEQUENTIAL_ON_CPU = "no pragma on CPU (running it in parallel is legal): {reason}"
+SEQUENTIAL_ON_CPU = "no thread pragma on CPU (running it in parallel is legal): {reason}"
 NESTED_REASON = "it is inside a parallel loop"
 SMALL_REASON = "only {count} iterations"
 ONE_TRIP_REASON = "at most one iteration"
@@ -94,6 +94,12 @@ def note_sequential(entry: nodes.MapEntry, reason: str) -> None:
 
     entry.map.schedule = dtypes.ScheduleType.Sequential
     entry.specialization_hint = f"{entry.specialization_hint or PARALLEL}\n{SEQUENTIAL_ON_CPU.format(reason=reason)}"
+
+
+def without_sequential_note(hint: str | None) -> str | None:
+    """``hint`` without the :data:`SEQUENTIAL_ON_CPU` line, for a map a later pass shares out after all."""
+    prefix = SEQUENTIAL_ON_CPU.split("{")[0]
+    return "\n".join(line for line in (hint or "").splitlines() if not line.startswith(prefix)) or None
 
 
 def data_derived(sdfg: SDFG, names: set[str], seen: set[tuple[int, str]] | None = None) -> bool:

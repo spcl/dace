@@ -35,6 +35,16 @@ PARALLEL = "parallel -- independent: no iteration writes an element another iter
 #: they reduce, and the operator and the accumulator are the evidence.
 REDUCTION = "parallel -- reduction: {reductions}; the other accesses are independent"
 
+#: Appended to a parallel loop's class line: loop-local containers the rendering declares once, outside the loop,
+#: which every iteration writes before it reads them, so a parallel version needs a copy per iteration.
+PRIVATE = "; private per iteration: {names}"
+
+#: A ``CPU_Persistent`` map: one ``#pragma omp parallel`` region, not a loop over independent iterations.
+TEAM = (
+    "parallel -- thread team: every thread runs the code inside, in order; only the omp for loops in it split "
+    "their iterations"
+)
+
 #: The operator a reduction line names, by ``dtypes.ReductionType``; any other type is named by its member name.
 REDUCTION_SYMBOLS = {
     dtypes.ReductionType.Sum: "+",
@@ -88,13 +98,13 @@ SEQUENTIAL_PINNED = (
 
 #: The untiled skew: a sequential diagonal over a parallel front; ``alt`` names the other correct shape.
 WAVEFRONT_DIAGONAL = (
-    "sequential -- wavefront step: each step reads what the previous step wrote; alt: the unskewed nest"
+    "sequential -- wavefront step: each step reads what the previous step wrote, skewed {skew}; alt: the unskewed nest"
 )
-WAVEFRONT_FRONT = "parallel -- one wavefront step: its points do not depend on each other"
+WAVEFRONT_FRONT = "parallel -- one wavefront step: its points do not depend on each other, skewed {skew}"
 
 #: The tiled skew: a sequential tile diagonal over a parallel tile column over a sequential interior.
 WAVEFRONT_TILE_DIAGONAL = (
-    "sequential -- wavefront of tiles {tile}: each step reads what the previous step wrote; "
+    "sequential -- wavefront of tiles {tile}: each step reads what the previous step wrote, skewed {skew}; "
     "alt: the element wavefront or the unskewed nest"
 )
 WAVEFRONT_TILE_COLUMN = "parallel -- the tiles {tile} of one wavefront step do not depend on each other"
@@ -685,11 +695,25 @@ def rewritten_in_iteration(read: Site, sites: list[Site]) -> bool:
 
 
 def site_text(site: Site) -> str:
-    """``A[k, 0:k]``: the site's index, a copied range written as the range rather than its iterator."""
-    ranges = {
-        name: f"{begin}:{end + 1}" for name, begin, end, step in site.iters if name.startswith("__copy") and step == 1
-    }
-    return f"{site.access.array}[{', '.join(ranges.get(str(e), str(e)) for e in site.access.index)}]"
+    """``A[k, 0:k]``: the site's index, each iterator inside the carrying loop written as its range, since the
+    rendering may rename it."""
+    return f"{site.access.array}[{', '.join(index_text(e, site.iters[1:]) for e in site.access.index)}]"
+
+
+def index_text(expr: sympy.Expr, inner: tuple[smt_dependence.IterRange, ...]) -> str:
+    """``expr`` with the one unit-step iterator of ``inner`` it adds, as a range: ``j + 1`` -> ``1:N + 1``."""
+    found = [(name, begin, end) for name, begin, end, step in inner if step == 1 and name in free_names(expr)]
+    if len(found) != 1:
+        return str(expr)
+    name, begin, end = found[0]
+    var = next(s for s in expr.free_symbols if str(s) == name)
+    if sympy.diff(expr, var) != 1:
+        return str(expr)
+    return f"{expr.subs(var, begin)}:{expr.subs(var, end) + 1}"
+
+
+def free_names(obj: sympy.Basic | Subset) -> OrderedSet[str]:
+    return OrderedSet(str(s) for s in obj.free_symbols)
 
 
 def conflict_label(first: Site, second: Site, witness: dict[str, int], carrier: str) -> str:
@@ -706,7 +730,7 @@ def loop_hint(loop: LoopRegion, session: Any = None) -> str:
     """The hint text naming what kind of loop ``loop`` is; ``session`` as :func:`refusal_reason`."""
     reason = refusal_reason(loop, session)
     if reason is None:
-        return SEQUENTIAL_PINNED if loop.pinned_sequential else PARALLEL
+        return SEQUENTIAL_PINNED if loop.pinned_sequential else parallel_loop_hint(loop)
     if reason == NO_COUNTER:
         return WHILE_LOOP
     if isinstance(reason, str):
@@ -722,6 +746,89 @@ def loop_hint(loop: LoopRegion, session: Any = None) -> str:
         text = SEQUENTIAL_PROVEN_OVER_DOALL if over_doall_nest(loop) else SEQUENTIAL_PROVEN
         return text.format(reason=proven_reason(access))
     return UNKNOWN.format(reason=unproven_reason(reason))
+
+
+def parallel_loop_hint(loop: LoopRegion) -> str:
+    """``PARALLEL`` for a loop ``LoopToMap`` accepts, or ``REDUCTION`` when its body accumulates through a WCR write
+    two iterations may share; either names the loop-local containers each iteration writes."""
+    states = list(loop.states())
+    private = loop_private(loop, states)
+    # A symbol the body assigns moves per iteration too, but no one shows it moves injectively.
+    assigned = [name for edge in loop.all_interstate_edges() for name in edge.data.assignments]
+    reductions = OrderedSet(
+        reduction_text(wcr, name)
+        for name, wcr, subset in wcr_writes(states)
+        if name not in private and not distinct_per_iteration(subset, [loop.loop_variable], assigned)
+    )
+    first = REDUCTION.format(reductions=" and ".join(sorted(reductions))) if reductions else PARALLEL
+    return first + PRIVATE.format(names=", ".join(private)) if private else first
+
+
+def distinct_per_iteration(subset: Subset | None, params: list[str], varying: list[str] | None = None) -> bool:
+    """Whether two iterations over ``params`` always write different elements of ``subset``: each parameter indexes
+    a dimension of its own, ``c * p + offset`` with a constant ``c != 0`` and no other parameter or ``varying`` name."""
+    if subset is None:
+        return False
+    points = [as_basic(begin) for begin, end, step in subset.ndrange() if begin == end]
+    moving = [*params, *(varying or [])]
+    return all(any(own_axis(point, param, moving) for point in points) for param in params)
+
+
+def own_axis(point: sympy.Expr, param: str, moving: list[str]) -> bool:
+    """Whether ``point`` is ``c * param + offset``, ``c`` a nonzero constant and ``offset`` free of ``moving``."""
+    named = [s for s in point.free_symbols if str(s) in moving]
+    if len(named) != 1 or str(named[0]) != param:
+        return False
+    slope = sympy.diff(point, named[0])
+    return slope.is_number and slope != 0
+
+
+def reduction_text(wcr: str, name: str) -> str:
+    """``+ into s``."""
+    kind = detect_reduction_type(wcr)
+    return f"{REDUCTION_SYMBOLS.get(kind, kind.name.lower())} into {name}"
+
+
+def wcr_writes(states: list[SDFGState]) -> list[tuple[str, str, Subset]]:
+    """``(container, wcr, subset)`` of every accumulating write in ``states``; a nested SDFG's as the memlet that
+    leaves it."""
+    found = []
+    for state in states:
+        found.extend(
+            (edge.dst.data, edge.data.wcr, edge.data.get_dst_subset(edge, state))
+            for edge in state.edges()
+            if isinstance(edge.dst, nodes.AccessNode) and not edge.data.is_empty() and edge.data.wcr is not None
+        )
+        for node in state.nodes():
+            if not isinstance(node, nodes.NestedSDFG):
+                continue
+            inner = {name: wcr for name, wcr, subset in wcr_writes(list(node.sdfg.states()))}
+            for edge in state.out_edges(node):
+                if edge.src_conn in inner and not edge.data.is_empty():
+                    outer = state.memlet_path(edge)[-1]
+                    found.append((outer.data.data, inner[edge.src_conn], outer.data.get_dst_subset(outer, state)))
+    return found
+
+
+def loop_private(loop: LoopRegion, states: list[SDFGState]) -> list[str]:
+    """The transients only ``loop`` accesses that an iteration writes outside every map, at an element the counter does
+    not move: one buffer the rendering declares before the loop, which ``LoopToMap`` would privatize."""
+    sdfg = loop.sdfg
+    inside = OrderedSet(states)
+    outside = OrderedSet(n.data for state in sdfg.states() if state not in inside for n in state.data_nodes())
+    found: OrderedSet[str] = OrderedSet()
+    for state in states:
+        for node in state.data_nodes():
+            desc = sdfg.arrays[node.data]
+            if not desc.transient or isinstance(desc, data.View) or node.data in outside:
+                continue
+            if state.entry_node(node) is not None:
+                continue
+            writes = [e for e in state.in_edges(node) if not e.data.is_empty()]
+            subsets = [e.data.get_dst_subset(e, state) for e in writes]
+            if writes and not all(s is not None and loop.loop_variable in free_names(s) for s in subsets):
+                found.add(node.data)
+    return sorted(found)
 
 
 def over_doall_nest(loop: LoopRegion) -> bool:
@@ -763,21 +870,48 @@ GUARD_HEAD = re.compile(r"^if (.*):\s*$", re.MULTILINE)
 
 
 def entry_traps(sdfg: SDFG) -> list[tuple[str, set[str]]]:
-    """``(predicate, names)`` for every abort guard in ``sdfg``: what the program assumes, and the symbols it names."""
+    """``(predicate, names)`` for every abort guard in ``sdfg``'s own states: what the program assumes, and the symbols
+    it names."""
     from dace.sdfg import tasklet_utils
 
-    traps = []
-    for node, _ in sdfg.all_nodes_recursive():
-        if not tasklet_utils.is_abort_guard(node):
+    guards = [node for state in sdfg.states() for node in state.nodes() if tasklet_utils.is_abort_guard(node)]
+    return [trap for trap in map(guard_trap, guards) if trap is not None]
+
+
+def guard_trap(node: nodes.Tasklet) -> tuple[str, set[str]] | None:
+    """The ``(predicate, names)`` an abort guard tasklet assumes, or ``None`` if its code is not ``if <violation>:``."""
+    head = GUARD_HEAD.search(node.code.as_string)
+    if head is None:
+        return None
+    violation = head.group(1).strip()
+    held = violation[len("not ") :].strip() if violation.startswith("not ") else f"not ({violation})"
+    names = {s.name for s in as_basic(symbolic.pystr_to_symbolic(held)).free_symbols}
+    return str(symbolic.pystr_to_symbolic(held)), names
+
+
+def function_traps(sdfg: SDFG, inherited: list[tuple[str, set[str]]], out: dict[int, list]) -> None:
+    """Fill ``out`` (by ``id``) with the traps every function under ``sdfg`` may rest on, in its own names: a caller's
+    trap passes into a nested SDFG through its symbol mapping, and is dropped there if a symbol has no inner name."""
+    # A symbol the function's code never uses is not one of its parameters in the rendering either.
+    used = OrderedSet(str(name) for name in sdfg.used_symbols(all_symbols=False)) if inherited else OrderedSet()
+    traps = [(held, names) for held, names in inherited if names <= used] + entry_traps(sdfg)
+    out[id(sdfg)] = traps
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                function_traps(node.sdfg, translated_traps(traps, node.symbol_mapping), out)
+
+
+def translated_traps(traps: list[tuple[str, set[str]]], mapping: dict[str, Any]) -> list[tuple[str, set[str]]]:
+    """``traps`` in the names of the nested SDFG ``mapping`` binds: a symbol the caller passes bare is renamed."""
+    inner = {str(value): name for name, value in mapping.items() if str(value).isidentifier()}
+    found = []
+    for held, names in traps:
+        if not names <= inner.keys():
             continue
-        head = GUARD_HEAD.search(node.code.as_string)
-        if head is None:
-            continue
-        violation = head.group(1).strip()
-        held = violation[len("not ") :].strip() if violation.startswith("not ") else f"not ({violation})"
-        names = {s.name for s in as_basic(symbolic.pystr_to_symbolic(held)).free_symbols}
-        traps.append((str(symbolic.pystr_to_symbolic(held)), names))
-    return traps
+        renamed = re.sub(r"\b\w+\b", lambda m: inner[m.group(0)] if m.group(0) in names else m.group(0), held)
+        found.append((renamed, {inner[name] for name in names}))
+    return found
 
 
 def map_names(state: SDFGState, entry: nodes.MapEntry) -> set[str]:
@@ -790,20 +924,25 @@ def map_names(state: SDFGState, entry: nodes.MapEntry) -> set[str]:
 
 
 def map_reductions(state: SDFGState, entry: nodes.MapEntry) -> list[str]:
-    """``+ into s`` for every container the map accumulates into through a WCR edge leaving its exit, in name order."""
+    """``+ into s`` for every container the map accumulates into through a WCR edge leaving its exit, in name order;
+    not where every innermost write provably lands on a different element per iteration."""
     found: OrderedSet[str] = OrderedSet()
+    params = list(entry.map.params)
     for edge in state.out_edges(state.exit_node(entry)):
         if edge.data.is_empty() or edge.data.wcr is None:
             continue
-        kind = detect_reduction_type(edge.data.wcr)
-        symbol = REDUCTION_SYMBOLS.get(kind, kind.name.lower())
-        found.add(f"{symbol} into {edge.data.data}")
+        leaves = state.memlet_tree(edge).leaves()
+        subsets = [leaf.data.get_dst_subset(leaf, state) or leaf.data.subset for leaf in leaves]
+        if not all(distinct_per_iteration(subset, params) for subset in subsets):
+            found.add(reduction_text(edge.data.wcr, edge.data.data))
     return sorted(found)
 
 
 def parallel_hint(state: SDFGState, entry: nodes.MapEntry, traps: list[tuple[str, set[str]]]) -> str:
     """``PARALLEL``, or ``REDUCTION`` for a map that accumulates, naming the entry traps whose symbols the map's
     element accesses use."""
+    if entry.map.schedule == dtypes.ScheduleType.CPU_Persistent:
+        return TEAM
     first = PARALLEL
     reductions = map_reductions(state, entry)
     if reductions:
@@ -863,7 +1002,8 @@ class AnnotateLoopKinds(ppl.Pass):
         from dace.transformation.passes.parallelization.parallelize_loops import ProbeSession
 
         labelled = 0
-        traps = entry_traps(sdfg)
+        traps: dict[int, list] = {}
+        function_traps(sdfg, [], traps)
         # Labelling changes only the hints, which no probe reads
         session = ProbeSession()
         for node, parent_graph in list(sdfg.all_nodes_recursive()):
@@ -879,7 +1019,7 @@ class AnnotateLoopKinds(ppl.Pass):
             # A note another pass left (an anti-dependence it broke) says what it did, not what the loop is: the
             # verdict goes first, so every loop still opens with its class.
             kind = (
-                parallel_hint(parent_graph, node, traps)
+                parallel_hint(parent_graph, node, traps.get(id(parent_graph.sdfg), []))
                 if isinstance(node, nodes.MapEntry)
                 else loop_hint(node, session)
             )

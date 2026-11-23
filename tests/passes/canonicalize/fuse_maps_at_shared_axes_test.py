@@ -62,6 +62,17 @@ def per_particle_then_taps(x: dace.float64[N], out: dace.float64[4, N]):
 
 
 @dace.program
+def two_per_particle_then_taps(x: dace.float64[N], out: dace.float64[4, N]):
+    w = np.empty(N, dtype=np.float64)
+    v = np.empty(N, dtype=np.float64)
+    for p in dace.map[0:N]:
+        w[p] = x[p] * 2.0
+        v[p] = x[p] + 1.0
+    for t, p in dace.map[0:4, 0:N]:
+        out[t, p] = w[p] + v[p] + t
+
+
+@dace.program
 def outer_axis_of_equal_rank(A: dace.float64[N, 8], C: dace.float64[8], B: dace.float64[N, 8]):
     T = np.empty((N, 8), dtype=np.float64)
     for i, k in dace.map[0:N, 0:8]:
@@ -216,6 +227,19 @@ def test_a_reduction_every_iteration_contributes_to_keeps_the_producer():
     assert np.allclose(b, 2.0 * a.sum())
 
 
+def test_a_fusion_hint_names_no_map_or_intermediate_and_is_said_once_per_pair():
+    """nbody: one producer handing a consumer nine intermediates stacked nine hint lines naming DaCe map labels and
+    ``__tmp`` names the rendering never shows. One line per map, in the loop's own names."""
+    sdfg = two_per_particle_then_taps.to_sdfg(simplify=True)
+    FuseMapsAtSharedAxes().apply_pass(sdfg, {})
+    entries = top_level_entries(sdfg)
+    labels = [e.map.label for e in entries]
+    for entry in entries:
+        lines = [line for line in (entry.specialization_hint or "").splitlines() if line.startswith("fusion:")]
+        assert len(lines) == 1, lines
+        assert not any(label in lines[0] for label in labels) and " w " not in lines[0] and " v " not in lines[0], lines
+
+
 if __name__ == "__main__":
     test_a_producer_over_more_axes_fuses_as_an_inner_map()
     test_the_fused_map_drops_a_thread_block_sized_for_the_split_axes()
@@ -226,3 +250,4 @@ if __name__ == "__main__":
     test_an_existing_hint_keeps_its_line_and_the_fusion_note_follows()
     test_maps_of_equal_rank_sharing_only_an_outer_axis_stay_apart_without_a_hint()
     test_a_reduction_every_iteration_contributes_to_keeps_the_producer()
+    test_a_fusion_hint_names_no_map_or_intermediate_and_is_said_once_per_pair()

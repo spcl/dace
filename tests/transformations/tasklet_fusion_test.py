@@ -4,6 +4,8 @@ import pytest
 
 import dace
 from dace import dtypes
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.dataflow import MapFusionVertical, TaskletFusion
 from dace.transformation.optimizer import Optimizer
 
@@ -358,6 +360,38 @@ def test_a_write_to_an_argument_is_not_folded():
     assert T[0] == 9.0 and U[0] == 10.0
 
 
+def test_a_scalar_a_branch_condition_reads_is_not_folded():
+    """``c_den = 1.0 + den`` and then ``if abs(1.0 + den) < eps``: folding ``den`` into the tasklet computing ``c_den``
+    left the branch condition reading an undeclared ``den`` (srad, 11-23)."""
+    sdfg = dace.SDFG("scalar_read_by_branch")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
+    sdfg.add_scalar("den", dace.float64, transient=True)
+    state = sdfg.add_state("compute", is_start_block=True)
+    half = state.add_tasklet("half", {"a"}, {"d"}, "d = a * 0.5")
+    shift = state.add_tasklet("shift", {"d"}, {"c"}, "c = 1.0 + d")
+    middle = state.add_access("den")
+    state.add_edge(state.add_read("A"), None, half, "a", dace.Memlet("A[0]"))
+    state.add_edge(half, "d", middle, None, dace.Memlet("den[0]"))
+    state.add_edge(middle, None, shift, "d", dace.Memlet("den[0]"))
+    state.add_edge(shift, "c", state.add_write("C"), None, dace.Memlet("C[0]"))
+    branch = ConditionalBlock("guard")
+    sdfg.add_node(branch)
+    sdfg.add_edge(state, branch, dace.InterstateEdge())
+    body = ControlFlowRegion("small", sdfg=sdfg)
+    branch.add_branch(CodeBlock("(1.0 + den) < 2.0"), body)
+    clamp = body.add_state("clamp", is_start_block=True)
+    write = clamp.add_tasklet("clamp", {}, {"c"}, "c = 2.0")
+    clamp.add_edge(write, "c", clamp.add_write("C"), None, dace.Memlet("C[0]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(TaskletFusion) == 0
+    for a, expected in ((1.0, 2.0), (4.0, 3.0)):
+        A, C = np.full(1, a), np.zeros(1)
+        sdfg(A=A, C=C)
+        assert C[0] == expected
+
+
 if __name__ == "__main__":
     test_basic()
     test_same_name()
@@ -371,3 +405,4 @@ if __name__ == "__main__":
     test_transient_in_different_state()
     test_tasklets_without_debuginfo_fuse()
     test_a_write_to_an_argument_is_not_folded()
+    test_a_scalar_a_branch_condition_reads_is_not_folded()

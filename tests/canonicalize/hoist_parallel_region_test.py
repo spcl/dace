@@ -352,6 +352,32 @@ def test_top_level_sequential_map_in_the_loop_is_shared_out():
     assert np.allclose(a, 1.0) and np.allclose(b, 2.0)
 
 
+def test_a_map_the_team_shares_out_drops_its_no_thread_pragma_note():
+    """cloudsc_sedimentation: a map the cost model left without a thread pragma became an ``omp for`` in the team,
+    and its comment still said no pragma."""
+    from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import (
+        SEQUENTIAL_ON_CPU,
+        note_sequential,
+    )
+
+    sdfg = dace.SDFG("sequential_note_shared_out")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [N], dace.float64)
+    outer = loop_region(sdfg, "outer", "N")
+    mapped_state(outer, "par", "a", "1.0", ["0:N"])
+    seq = mapped_state(outer, "seq", "b", "2.0", ["0:N"], schedule=dtypes.ScheduleType.Sequential)
+    outer.add_edge(outer.nodes()[0], outer.nodes()[1], dace.InterstateEdge())
+    (entry,) = [n for n in seq.nodes() if isinstance(n, nd.MapEntry)]
+    note_sequential(entry, "only 3 iterations")
+    sdfg.validate()
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    (shared,) = [
+        n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry) and n.map.label == "seq_map"
+    ]
+    assert shared.map.schedule == dtypes.ScheduleType.CPU_Multicore
+    assert SEQUENTIAL_ON_CPU.split("{")[0] not in (shared.specialization_hint or ""), shared.specialization_hint
+
+
 def test_sequential_map_around_a_parallel_map_is_refused():
     """A ``Sequential`` map with a parallel map inside is a loop nest of its own, not a statement to share
     out: the team would run its inner region P times over."""
@@ -1508,6 +1534,7 @@ def test_strip_mine_declines_an_extent_the_loop_assigns():
 
 
 if __name__ == "__main__":
+    test_a_map_the_team_shares_out_drops_its_no_thread_pragma_note()
     for kernel_name in HOISTED_KERNELS:
         test_one_team_replaces_the_per_trip_region(kernel_name)
     for kernel_name in TSVC_KERNELS:

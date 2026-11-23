@@ -32,17 +32,19 @@ from dace.codegen.targets.experimental_cpu import map_hint
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.nodes.scan import PARALLEL_SCAN_HINT, SEQUENTIAL_SCAN_HINT, Scan, ScanOp
 from dace.properties import CodeBlock
-from dace.sdfg import nodes
+from dace.sdfg import nodes, tasklet_utils
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     CONFLICT_MEANING,
     EARLY_EXIT,
     MAP_DIMENSIONS,
     PARALLEL,
+    PRIVATE,
     PROVEN_PREFIX,
     REDUCTION,
     SEQUENTIAL_PINNED,
     SEQUENTIAL_PROVEN,
+    TEAM,
     WAVEFRONT_FRONT,
     WHILE_LOOP,
     AnnotateLoopKinds,
@@ -882,6 +884,187 @@ def test_a_map_resting_on_no_trap_assumes_nothing():
     assert "// " + PARALLEL.splitlines()[0] in rendered
 
 
+def accumulating_loop_sdfg(name: str) -> dace.SDFG:
+    """vexx_k's shape: each ``i`` writes the scalar ``s``, then a map over ``j`` adds into ``tmp[j]`` through WCR."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [K], dace.float64)
+    sdfg.add_array("tmp", [K], dace.float64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    loop = LoopRegion("rows", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    scale = body.add_tasklet("scale", {"x"}, {"y"}, "y = 2.0 * x")
+    s = body.add_access("s")
+    body.add_edge(body.add_read("a"), None, scale, "x", dace.Memlet("a[i]"))
+    body.add_edge(scale, "y", s, None, dace.Memlet("s[0]"))
+    body.add_mapped_tasklet(
+        "acc",
+        {"j": "0:K"},
+        {"u": dace.Memlet("s[0]"), "v": dace.Memlet("b[j]")},
+        "w = u * v",
+        {"w": dace.Memlet("tmp[j]", wcr="lambda p, q: p + q")},
+        input_nodes={"s": s},
+        external_edges=True,
+    )
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_loop_whose_iterations_accumulate_into_one_element_is_a_reduction_with_its_private_scalar():
+    """vexx_k: every ``i`` adds into the same ``tmp[j]`` and writes the function-scope scalar ``s``. "independent"
+    tells an agent a plain ``omp parallel for`` is safe; it races on both."""
+    sdfg = accumulating_loop_sdfg("cpf_kind_loop_reduction")
+    AnnotateLoopKinds().apply_pass(sdfg, {})
+    (loop,) = loops_of(sdfg)
+    assert loop.specialization_hint == REDUCTION.format(reductions="+ into tmp") + PRIVATE.format(names="s")
+
+
+def test_a_map_whose_wcr_writes_distinct_elements_is_independent():
+    """vexx_k's inner map writes ``tmp[j]``, one element per ``j``: the WCR is for the enclosing loop, the map's own
+    iterations do not reduce."""
+    sdfg = accumulating_loop_sdfg("cpf_kind_map_distinct_wcr")
+    AnnotateLoopKinds().apply_pass(sdfg, {})
+    (entry,) = map_entries(sdfg)
+    assert entry.specialization_hint == PARALLEL
+
+
+def test_a_map_whose_wcr_index_mixes_two_parameters_stays_a_reduction():
+    """vexx_k's ``hpsi[j, i*npwx + k]``: ``i`` and ``k`` share one index, so two iterations can meet when ``k``
+    runs past ``npwx``; only an index of its own per parameter proves the elements distinct."""
+    sdfg = dace.SDFG("cpf_kind_map_mixed_wcr")
+    sdfg.add_array("a", [N, K], dace.float64)
+    sdfg.add_array("out", [N * K], dace.float64)
+    state = sdfg.add_state()
+    state.add_mapped_tasklet(
+        "acc",
+        {"i": "0:N", "k": "0:K"},
+        {"x": dace.Memlet("a[i, k]")},
+        "y = x",
+        {"y": dace.Memlet("out[i * N + k]", wcr="lambda p, q: p + q")},
+        external_edges=True,
+    )
+    (entry,) = map_entries(sdfg)
+    assert parallel_hint(state, entry, []) == REDUCTION.format(reductions="+ into out")
+
+
+def lifted_buffer_sdfg(name: str) -> dace.SDFG:
+    """A loop calling a nested SDFG whose persistent ``buf`` each iteration fills and reads."""
+    inner = dace.SDFG("inner")
+    inner.add_symbol("row", dace.int64)
+    inner.add_array("A", [N, K], dace.float64)
+    inner.add_array("B", [N, K], dace.float64)
+    inner.add_array("buf", [K], dace.float64, transient=True, lifetime=dace.AllocationLifetime.Persistent)
+    fill = inner.add_state("fill", is_start_block=True)
+    fill.add_mapped_tasklet(
+        "w",
+        {"k": "0:K"},
+        {"x": dace.Memlet("A[row, k]")},
+        "y = 2.0 * x",
+        {"y": dace.Memlet("buf[k]")},
+        external_edges=True,
+    )
+    use = inner.add_state_after(fill)
+    use.add_mapped_tasklet(
+        "r",
+        {"k": "0:K"},
+        {"x": dace.Memlet("buf[k]")},
+        "y = x + 1.0",
+        {"y": dace.Memlet("B[row, k]")},
+        external_edges=True,
+    )
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("x", [N, K], dace.float64)
+    sdfg.add_array("y", [N, K], dace.float64)
+    loop = LoopRegion("rows", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    call = body.add_nested_sdfg(inner, {"A"}, {"B"}, {"N": "N", "K": "K", "row": "i"})
+    body.add_edge(body.add_read("x"), None, call, "A", dace.Memlet("x[0:N, 0:K]"))
+    body.add_edge(call, "B", body.add_write("y"), None, dace.Memlet("y[0:N, 0:K]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_loop_whose_buffer_the_rendering_lifts_names_it_private():
+    """The rendering lifts a nested function's persistent buffer before the loop, where every iteration shares it:
+    the loop is labelled after the lift, and says the buffer needs a copy per iteration."""
+    rendered = comment_lines(render(lifted_buffer_sdfg("cpf_kind_lifted")).code)
+    assert "// " + PARALLEL + PRIVATE.format(names="buf") in rendered, rendered
+
+
+def trapped_sdfg(name: str, inner_symbol: str, outer_value: str) -> dace.SDFG:
+    """An entry trap ``nkb > 0`` and a nested SDFG whose map reads ``d[<inner_symbol>]``, bound to ``outer_value``."""
+    inner = dace.SDFG("inner_trap")
+    inner.add_symbol(inner_symbol, dace.int64)
+    inner.add_array("c", [K], dace.float64)
+    inner.add_array("d", [K], dace.float64)
+    inner.add_state().add_mapped_tasklet(
+        "w",
+        {"j": "0:K"},
+        {"x": dace.Memlet(f"d[{inner_symbol}]")},
+        "y = x",
+        {"y": dace.Memlet("c[j]")},
+        external_edges=True,
+    )
+    sdfg = dace.SDFG(name)
+    sdfg.add_symbol("nkb", dace.int64)
+    sdfg.add_array("c", [K], dace.float64)
+    sdfg.add_array("d", [K], dace.float64)
+    guard = sdfg.add_state("guard", is_start_block=True)
+    tasklet_utils.add_abort_guard(guard, "check", "nkb <= 0")
+    state = sdfg.add_state_after(guard)
+    call = state.add_nested_sdfg(inner, {"d"}, {"c"}, {inner_symbol: outer_value, "K": "K"})
+    state.add_edge(state.add_read("d"), None, call, "d", dace.Memlet("d[0:K]"))
+    state.add_edge(call, "c", state.add_write("c"), None, dace.Memlet("c[0:K]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_an_entry_trap_reaches_a_nested_function_in_its_own_names():
+    """vexx_k: "independent only if nkb > 0" inside a function that has no ``nkb``. A trap enters a nested SDFG
+    through its symbol mapping, renamed, and is dropped where the inner name means something else."""
+    for inner_symbol, outer_value, expected in (("n", "nkb", "n > 0"), ("nkb", "K", None)):
+        sdfg = trapped_sdfg(f"cpf_kind_trap_{inner_symbol}", inner_symbol, outer_value)
+        AnnotateLoopKinds().apply_pass(sdfg, {})
+        (hint,) = [n.specialization_hint for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
+        if expected is None:
+            assert hint == PARALLEL, hint
+        else:
+            assert hint.endswith(f"; independent only if {expected} (the program aborts at entry otherwise)"), hint
+
+
+def test_a_solver_example_writes_an_inner_iterator_as_its_range():
+    """fdtd: the example named ``ey[j, __i1]``, an inner map's parameter the rendering renamed; the range it covers
+    does not depend on the name."""
+
+    @dace.program
+    def ping(a: dace.float64[N], b: dace.float64[N]):
+        for t in range(K):
+            for i in dace.map[0:N]:
+                a[i] = b[i] + 1.0
+            for i in dace.map[1:N]:
+                b[i] = a[i - 1]
+
+    (loop,) = loops_of(ping.to_sdfg(simplify=True))
+    found = witnessed_carrying_access(loop)
+    assert found is not None and re.match(r"(RAW|WAR|WAW) on [ab]\[\d+:N( - 1)?\] ", found), found
+
+
+def test_a_wavefront_names_its_skew_on_the_diagonal_and_the_front():
+    rendered = comment_lines(named(skewed_sdfg("cpf_kind_wavefront_skew", tile=0)))
+    lines = [line for line in rendered if "wavefront step" in line]
+    assert len(lines) >= 2 and all("skewed (t = " in line for line in lines), rendered
+
+
+def test_a_thread_team_is_not_labelled_a_loop_of_independent_iterations():
+    """A ``CPU_Persistent`` map is one ``#pragma omp parallel`` around a sequential time loop, not a loop."""
+    state = dace.SDFG("cpf_kind_team").add_state()
+    entry, team_exit = state.add_map("team", {"t": "0:1"})
+    entry.map.schedule = dace.ScheduleType.CPU_Persistent
+    assert parallel_hint(state, entry, []) == TEAM
+
+
 def kinds_and_proofs(name: str) -> tuple[str, str]:
     """One canonicalized graph -- a parallel axis, a carried one, an open one -- rendered with ``hints='kinds'`` and
     with ``hints='proofs'``."""
@@ -1062,3 +1245,11 @@ if __name__ == "__main__":
     test_the_kinds_rendering_names_the_loops_the_proofs_rendering_classes()
     test_the_two_variants_render_the_same_code()
     test_an_unknown_hint_detail_is_refused()
+    test_a_loop_whose_iterations_accumulate_into_one_element_is_a_reduction_with_its_private_scalar()
+    test_a_map_whose_wcr_writes_distinct_elements_is_independent()
+    test_a_map_whose_wcr_index_mixes_two_parameters_stays_a_reduction()
+    test_a_loop_whose_buffer_the_rendering_lifts_names_it_private()
+    test_an_entry_trap_reaches_a_nested_function_in_its_own_names()
+    test_a_solver_example_writes_an_inner_iterator_as_its_range()
+    test_a_wavefront_names_its_skew_on_the_diagonal_and_the_front()
+    test_a_thread_team_is_not_labelled_a_loop_of_independent_iterations()

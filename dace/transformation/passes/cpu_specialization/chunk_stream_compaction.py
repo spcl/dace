@@ -208,6 +208,17 @@ def in_scope(state: SDFGState, phases: tuple[Phase, ...]) -> dict[str, Any]:
     return found
 
 
+def read_symbols(inner: SDFG, scope: dict[str, Any]) -> dict[str, str]:
+    """The identity mapping of the ``scope`` symbols ``inner`` reads; it stops declaring the others. A mapped symbol
+    the block never reads is a use of it at the parent, which keeps a loop's last value of it alive past the loop."""
+    read = dict.fromkeys(str(name) for name in inner.used_symbols(all_symbols=False))
+    read.update(dict.fromkeys(str(name) for desc in inner.arrays.values() for name in desc.free_symbols))
+    for name in scope:
+        if name not in read:
+            inner.remove_symbol(name)
+    return {name: name for name in scope if name in read}
+
+
 @properties.make_properties
 class ChunkStreamCompaction(ppl.Pass):
     """Rewrite each lifted three-phase compaction into the chunked count / offsets / write shape.
@@ -368,7 +379,7 @@ class ChunkStreamCompaction(ppl.Pass):
 
         entry, exit_node = state.add_map("compaction_count", {"block": f"0:{sym2cpp(blocks)}"}, schedule=self.schedule)
         nested = state.add_nested_sdfg(
-            inner, set(outer_reads), {counts}, symbol_mapping={s: s for s in scope} | {"block": "block"}
+            inner, set(outer_reads), {counts}, symbol_mapping=read_symbols(inner, scope) | {"block": "block"}
         )
         for name, access in outer_reads.items():
             state.add_memlet_path(
@@ -460,7 +471,7 @@ class ChunkStreamCompaction(ppl.Pass):
             inner,
             set(outer_reads) | {starts},
             set(outer_writes),
-            symbol_mapping={s: s for s in scope} | {"block": "block"},
+            symbol_mapping=read_symbols(inner, scope) | {"block": "block"},
         )
         for name, access in outer_reads.items():
             state.add_memlet_path(

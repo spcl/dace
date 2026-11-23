@@ -108,6 +108,13 @@ class TaskletFusion(pm.SingleStateTransformation):
         access_node_count += sum(1 for e in sdfg.edges() if data.data in e.data.free_symbols)
         if access_node_count > 1:
             return False
+        # A read in control flow (a branch condition, a nested region's interstate edge) has no access node (srad).
+        if any(data.data in e.data.free_symbols for e in sdfg.all_interstate_edges()):
+            return False
+        if any(
+            data.data in r.used_symbols(all_symbols=True, with_contents=False) for r in sdfg.all_control_flow_regions()
+        ):
+            return False
 
         # Try to parse the code to check that there is not more than one assignment.
         try:

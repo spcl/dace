@@ -4596,7 +4596,7 @@ class CPUCodeGen(TargetCodeGenerator):
         for _, _, _skip in node.map.range:
             if (_skip > 0) != True:
                 result.write(
-                    f'assert(({cpp.sym2cpp(_skip)}) > 0 && "Map {node.map.label} requires a positive step");\n',
+                    f'assert(({cpp.sym2cpp(_skip)}) > 0 && "a map requires a positive step");\n',
                     cfg,
                     state_id,
                     node,

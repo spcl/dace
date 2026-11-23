@@ -959,11 +959,11 @@ def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) ->
     sdfg.apply_transformations_repeated(RealTaskletFusion, validate=False)
     # A one-trip loop outside a thread team is straight-line code.
     sdfg.apply_transformations_repeated(TeamSafeTrivialMapElimination, validate=False)
-    # Only here, once canonicalization and specialization are over: the kinds and their proofs are CPF facts, and
-    # no pass before rendering reads them.
-    AnnotateLoopKinds().apply_pass(sdfg, {})
     # Before the demotion: a buffer every call shares must reach the entry first.
     lift_persistent_transients(sdfg)
+    # Only here, once canonicalization and specialization are over: the kinds and their proofs are CPF facts, and
+    # no pass before rendering reads them. After the lift, which can make a loop's iterations share a buffer.
+    AnnotateLoopKinds().apply_pass(sdfg, {})
     # Last change to the graph, after every pass that matches a name and before the persistent set is named.
     ReadableNames().apply_pass(sdfg, {})
     persistent = tuple(

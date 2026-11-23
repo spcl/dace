@@ -60,6 +60,54 @@ def test_a_guard_whose_symbol_the_arm_assigns_stays():
     assert decide_known_guards(sdfg) == 0
 
 
+@dace.program
+def scalar_guard_with_elif(a: dace.int64[1], b: dace.float64[16], n: dace.int64):
+    s = a[0]
+    if s == 0:
+        for i in range(16):
+            b[i] = 1.0
+        if s == 0:
+            b[0] = 5.0
+        elif n == 3:
+            b[1] = 7.0
+    else:
+        if s == 0:
+            b[0] = 5.0
+        elif n == 3:
+            b[1] = 7.0
+
+
+def test_a_scalar_guard_with_elif_is_decided_in_both_arms():
+    """qe_cegterg retested a one-element container (``if (arr19 == 0) { ... if (arr19 == 0) break; else if (i == 40)
+    break; }``): the retest is decided by its first branch, and a false one leaves the ``elif`` (render review 11-23)."""
+    sdfg = scalar_guard_with_elif.to_sdfg(simplify=False)
+    assert decide_known_guards(sdfg) == 2
+    sdfg.validate()
+    for a, n, expected in ((0, 3, {0: 5.0}), (1, 3, {1: 7.0}), (1, 2, {})):
+        b = np.zeros(16)
+        sdfg(a=np.array([a]), b=b, n=n)
+        want = np.full(16, 1.0) if a == 0 else np.zeros(16)
+        for index, value in expected.items():
+            want[index] = value
+        assert np.all(b == want)
+
+
+@dace.program
+def written_scalar_guard(a: dace.int64[1], b: dace.float64[16]):
+    s = a[0]
+    if s == 0:
+        s = 1
+        if s == 0:
+            b[0] = 5.0
+
+
+def test_a_scalar_guard_the_arm_writes_stays():
+    sdfg = written_scalar_guard.to_sdfg(simplify=False)
+    assert decide_known_guards(sdfg) == 0
+
+
 if __name__ == "__main__":
     test_a_retested_guard_is_decided_in_both_arms()
     test_a_guard_whose_symbol_the_arm_assigns_stays()
+    test_a_scalar_guard_with_elif_is_decided_in_both_arms()
+    test_a_scalar_guard_the_arm_writes_stays()

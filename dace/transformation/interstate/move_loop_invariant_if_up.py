@@ -444,6 +444,15 @@ def assigns_any(region: ControlFlowRegion, names: frozenset[str]) -> bool:
     return False
 
 
+def writes_any(region: ControlFlowRegion, names: frozenset[str]) -> bool:
+    """Whether a state of ``region`` writes a container named in ``names``; a nested SDFG's or a library node's output
+    reaches an access node of the state that holds it, so an access node with an in-edge is every write."""
+    for state in region.all_states():
+        if any(isinstance(n, nodes.AccessNode) and n.data in names and state.in_degree(n) > 0 for n in state.nodes()):
+            return True
+    return False
+
+
 def decide_known_guards_in(region: ControlFlowRegion, cond: str, value: bool, names: frozenset[str]) -> int:
     """Splice out every single-branch guard in ``region`` whose condition is ``cond`` (or its negation), known to be
     ``value`` there because nothing in ``region`` assigns its symbols ``names``; nested SDFGs that pass ``names``
@@ -456,7 +465,6 @@ def decide_known_guards_in(region: ControlFlowRegion, cond: str, value: bool, na
                 for cfg in region.all_control_flow_regions(recursive=False)
                 for block in cfg.nodes()
                 if isinstance(block, ConditionalBlock)
-                and len(block.branches) == 1
                 and block.branches[0][0] is not None
                 and (
                     symbolic.guards_equal(block.branches[0][0].as_string, cond)
@@ -468,7 +476,14 @@ def decide_known_guards_in(region: ControlFlowRegion, cond: str, value: bool, na
         if found is None:
             break
         cfg, block = found
-        splice_guard(cfg, block, take=value == symbolic.guards_equal(block.branches[0][0].as_string, cond))
+        take = value == symbolic.guards_equal(block.branches[0][0].as_string, cond)
+        if not take and len(block.branches) > 1:
+            # A decided-false first branch of ``if c: A elif d: B``: the guard becomes ``if d: B`` (``B`` for an else).
+            block.remove_branch(block.branches[0][1])
+            if block.branches[0][0] is None:
+                splice_guard(cfg, block, take=True)
+        else:
+            splice_guard(cfg, block, take=take)
         decided += 1
     for state in [b for b in region.all_control_flow_blocks() if isinstance(b, SDFGState)]:
         for node in state.nodes():
@@ -490,11 +505,12 @@ def decide_known_guards(sdfg: SDFG) -> int:
             if not arms or arms[0][0] is None or len(arms) > 2 or (len(arms) == 2 and arms[1][0] is not None):
                 continue
             names = frozenset(str(name) for name in arms[0][0].get_free_symbols())
-            # A container's value can change inside the arm; only a symbol nothing in the arm assigns is known.
-            if not names or names & sd.arrays.keys():
+            data = frozenset(n for n in names if n in sd.arrays)
+            # A container's value is known in the arm only while it is one element nothing in the arm writes.
+            if not names or any(sd.arrays[n].total_size != 1 for n in data):
                 continue
             for arm, value in zip([branch[1] for branch in arms], (True, False)):
-                if not assigns_any(arm, names):
+                if not assigns_any(arm, names) and not writes_any(arm, data):
                     decided += decide_known_guards_in(arm, arms[0][0].as_string, value, names)
     return decided
 

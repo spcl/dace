@@ -92,11 +92,18 @@ def note_inner_axis_pair(
     producer: nodes.MapEntry, node: nodes.AccessNode, consumer: nodes.MapEntry, axes: list[str]
 ) -> None:
     """Hint, on both maps, the fusion a loop-order change would allow: canon keeps the consumer's order (user ruling)."""
+    # No map label or intermediate name: the rendering shows neither, and the text is then the same for every
+    # intermediate of the pair, so it is recorded once.
     order = ", ".join(axes + [p for p in consumer.map.params if p not in axes])
-    shared = ", ".join(axes)
-    alt = f"alt: reorder {consumer.map.label} to ({order}), fuse, {node.data} per iteration"
-    record_hint(consumer, f"fusion: shares ({shared}) with {producer.map.label} at an inner axis; {alt}")
-    record_hint(producer, f"fusion: shares ({shared}) with {consumer.map.label} at an inner axis of it; {alt}")
+    own = ", ".join(producer.map.params)
+    alt = "fuse, the intermediate per iteration"
+    record_hint(
+        consumer,
+        f"fusion: shares ({', '.join(axes)}) with an earlier loop at an inner axis; alt: reorder to ({order}), {alt}",
+    )
+    record_hint(
+        producer, f"fusion: shares ({own}) with a later loop at an inner axis of it; alt: reorder that loop, {alt}"
+    )
 
 
 @properties.make_properties
