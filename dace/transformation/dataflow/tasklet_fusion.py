@@ -96,8 +96,9 @@ class TaskletFusion(pm.SingleStateTransformation):
         if t1.language != t2.language:
             return False
 
-        # The AccessNode between the Tasklets must be a scalar.
-        if data.desc(sdfg).total_size != 1:
+        # The AccessNode between the Tasklets must be a scalar, and a transient: a write to an argument (a nested
+        # SDFG's output) is read outside the SDFG, so it cannot be folded away.
+        if data.desc(sdfg).total_size != 1 or not data.desc(sdfg).transient:
             return False
 
         # Neither the first Tasklet nor the AccessNode may be used anywhere else.

@@ -336,6 +336,28 @@ def test_tasklets_without_debuginfo_fuse():
     assert np.allclose(sdfg(A=A), 2 * (A + 1))
 
 
+def test_a_write_to_an_argument_is_not_folded():
+    """A one-element argument one tasklet writes and another reads is read after the SDFG too (the output of a nested
+    SDFG a fused map body writes, fuse_diamond, 11-23): folding the two tasklets would drop the write."""
+    sdfg = dace.SDFG("argument_between_tasklets")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("T", [1], dace.float64)
+    sdfg.add_array("U", [1], dace.float64)
+    state = sdfg.add_state()
+    square = state.add_tasklet("square", {"a"}, {"t"}, "t = a * a")
+    shift = state.add_tasklet("shift", {"t"}, {"u"}, "u = t + 1.0")
+    middle = state.add_access("T")
+    state.add_edge(state.add_read("A"), None, square, "a", dace.Memlet("A[0]"))
+    state.add_edge(square, "t", middle, None, dace.Memlet("T[0]"))
+    state.add_edge(middle, None, shift, "t", dace.Memlet("T[0]"))
+    state.add_edge(shift, "u", state.add_write("U"), None, dace.Memlet("U[0]"))
+
+    assert sdfg.apply_transformations(TaskletFusion) == 0
+    A, T, U = np.full(1, 3.0), np.zeros(1), np.zeros(1)
+    sdfg(A=A, T=T, U=U)
+    assert T[0] == 9.0 and U[0] == 10.0
+
+
 if __name__ == "__main__":
     test_basic()
     test_same_name()
@@ -348,3 +370,4 @@ if __name__ == "__main__":
     test_intermediate_transients()
     test_transient_in_different_state()
     test_tasklets_without_debuginfo_fuse()
+    test_a_write_to_an_argument_is_not_folded()
