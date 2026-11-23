@@ -78,6 +78,28 @@ def forwarded_host_args() -> list[str]:
     return [flag for flag in compiler_family.cpu_args().split() if flag not in HOST_FLAGS_NOT_FORWARDED]
 
 
+def nvcc_host_flags(host_args: list[str]) -> list[str]:
+    """``host_args`` as nvcc flags: each one wrapped in ``-Xcompiler``, except a forced include (``-include
+    FILE``), which becomes nvcc's own ``--pre-include=FILE``.
+
+    nvcc runs the host compiler twice, first to preprocess the ``.cu`` and then on the preprocessed
+    ``.cudafe1.cpp``, and hands both runs every ``-Xcompiler`` flag. A wrapped ``-include`` therefore
+    lands a second time in a file whose include guards are gone (``conflicting declaration 'typedef
+    struct __fsid_t __fsid_t'`` from glibc), while ``--pre-include`` reaches the preprocessing run only.
+    """
+    flags: list[str] = []
+    include_next = False
+    for flag in host_args:
+        if include_next:
+            flags.append(f"--pre-include={flag}")
+            include_next = False
+        elif flag == "-include":
+            include_next = True
+        else:
+            flags.append(f"-Xcompiler={flag}")
+    return flags
+
+
 def prod(iterable):
     return functools.reduce(sympy.Mul, iterable, 1)
 
@@ -3350,9 +3372,7 @@ def gpu_cmake_options() -> list[str]:
 
         # One ``-Xcompiler`` per flag, since nvcc splits the comma-separated form on commas.
         # CMake hands nvcc nothing from CMAKE_CXX_FLAGS, so this is the only route.
-        flags = " ".join(
-            [Config.get("compiler", "cuda", "args")] + [f"-Xcompiler={flag}" for flag in forwarded_host_args()]
-        )
+        flags = " ".join([Config.get("compiler", "cuda", "args")] + nvcc_host_flags(forwarded_host_args()))
         options.append(f'-DCMAKE_CUDA_FLAGS="{flags}"')
 
     if backend == "hip":
