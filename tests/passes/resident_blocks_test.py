@@ -4,6 +4,7 @@
 import pytest
 
 import dace
+import dace.codegen.common
 from dace.transformation.passes.gpu_specialization import resident_blocks as rb
 from dace.transformation.passes.gpu_specialization.resident_blocks import DeviceLimits, device_limits
 
@@ -43,6 +44,22 @@ def test_without_a_visible_device_or_a_configured_one_compiling_fails(monkeypatc
     with dace.config.set_temporary("compiler", "cuda", "device_multiprocessors", value=0):
         with pytest.raises(RuntimeError, match="device_multiprocessors"):
             device_limits()
+
+
+class LoadedRuntime:
+    """A GPU runtime the process loaded for ``backend``."""
+
+    def __init__(self, backend: str) -> None:
+        self.backend = backend
+        self.library = object()  # no ``*DeviceGetAttribute``: reaching it raises AttributeError
+
+
+def test_a_runtime_of_another_backend_reports_no_device(monkeypatch):
+    """The runtime is cached per process: a HIP render on a CUDA machine found the cudart loaded earlier and asked it for
+    ``hipDeviceGetAttribute`` (``AttributeError: libcudart.so.12: undefined symbol``)."""
+    monkeypatch.setattr(dace.codegen.common, "get_gpu_backend", lambda: "hip")
+    monkeypatch.setattr(dace.codegen.common, "get_gpu_runtime", lambda: LoadedRuntime("cuda"))
+    assert rb.query_device() is None
 
 
 @pytest.mark.gpu

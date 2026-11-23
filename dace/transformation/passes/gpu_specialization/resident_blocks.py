@@ -42,6 +42,10 @@ def query_device() -> DeviceLimits | None:
         runtime = get_gpu_runtime()
     except (RuntimeError, OSError):
         return None
+    # The runtime is cached per process: a HIP render on a CUDA machine asks the cudart loaded earlier for HIP's
+    # ``hipDeviceGetAttribute``. No visible GPU of the target's backend, so no limits.
+    if runtime.backend != backend:
+        return None
     get = getattr(runtime.library, f"{backend}DeviceGetAttribute")
     values = []
     for attribute in ATTRIBUTES[backend]:

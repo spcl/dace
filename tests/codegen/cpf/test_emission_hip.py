@@ -399,6 +399,7 @@ def build_units(rendering: Rendering, tmp_path, name: str) -> None:
 
 @pytest.mark.gpu
 def test_a_device_product_scan_unit_builds_with_hipcc(tmp_path):
+    require_gpu_backend("hip")  # before rendering: the render sizes grids by the visible HIP device
     """The functor is what ``gpucub::DeviceScan`` instantiates, so the units have to build and link."""
     build_units(cpf.render(device_scan_sdfg("cpf_hip_product_build", ScanOp.PRODUCT), language="hip"), tmp_path, "unit")
 
@@ -490,6 +491,7 @@ def test_a_vendor_library_is_not_offered_a_bfloat16_operand():
 
 @pytest.mark.gpu
 def test_a_bfloat16_kernel_builds_with_hipcc(tmp_path):
+    require_gpu_backend("hip")  # before rendering: the render sizes grids by the visible HIP device
     build_units(render_gpu(bf16_axpy_and_sum, "cpf_hip_bf16_build"), tmp_path, "unit")
 
 
@@ -594,6 +596,7 @@ def test_a_contraction_reaches_hipblas_on_a_host_with_hiptensor(monkeypatch):
     ],
 )
 def test_the_units_build_with_hipcc(program, name, tmp_path):
+    require_gpu_backend("hip")  # before rendering: the render sizes grids by the visible HIP device
     build_units(render_gpu(program, name), tmp_path, name)
 
 
@@ -729,4 +732,5 @@ def test_a_bfloat16_unit_carries_the_overloads_its_abs_and_integer_arithmetic_ne
 
 @pytest.mark.gpu
 def test_a_bfloat16_unit_with_abs_and_integer_arithmetic_builds_with_hipcc(tmp_path):
+    require_gpu_backend("hip")  # before rendering: the render sizes grids by the visible HIP device
     build_units(render_gpu(bf16_abs_scale_sign, "cpf_hip_bf16_build"), tmp_path, "cpf_hip_bf16_build")
