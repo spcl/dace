@@ -768,6 +768,16 @@ def test_single_element_scratch_a_nested_sdfg_reads_stays_an_array():
     assert _run(sdfg, 3.0) == 7.0
 
 
+def test_a_heap_length_one_array_becomes_a_stack_scalar():
+    """A ``CPU_Heap`` transient must not become a heap scalar: that is a new/delete per allocation (warpx_field_gather)."""
+    sdfg = _single_element_scratch_sdfg(nested=False)
+    sdfg.arrays["tmp"].storage = dace.StorageType.CPU_Heap
+    ConvertLengthOneArraysToScalars(single_element=True).apply_pass(sdfg, {})
+    assert isinstance(sdfg.arrays["tmp"], dd.Scalar)
+    assert sdfg.arrays["tmp"].storage == dace.StorageType.Default
+    assert _run(sdfg, 3.0) == 7.0
+
+
 if __name__ == "__main__":
     test_default_scalarizes_transient_length_one_array()
     test_default_skips_signature_arrays()
@@ -810,3 +820,4 @@ if __name__ == "__main__":
     test_a_rewritten_symbol_mapping_stays_symbolic()
     test_single_element_scratch_becomes_a_scalar()
     test_single_element_scratch_a_nested_sdfg_reads_stays_an_array()
+    test_a_heap_length_one_array_becomes_a_stack_scalar()

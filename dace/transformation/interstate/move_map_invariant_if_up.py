@@ -939,11 +939,14 @@ def hoist_invariant_guards(sdfg: SDFG, require_full_hoist: bool) -> None:
     :param require_full_hoist: Hoist a guard only if it leaves every enclosing scope (GPU: a guard stalled between
                                two maps splits the kernel).
     """
-    from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
+    from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp, decide_known_guards
     from dace.transformation.passes.canonicalize.pipeline import maximal_fusion
 
-    MoveLoopInvariantIfUp(require_full_hoist=require_full_hoist).apply_pass(sdfg, {})
-    if not MoveMapInvariantIfUp(require_full_hoist=require_full_hoist).apply_pass(sdfg, {}):
+    hoisted = MoveLoopInvariantIfUp(require_full_hoist=require_full_hoist).apply_pass(sdfg, {})
+    hoisted_out_of_maps = MoveMapInvariantIfUp(require_full_hoist=require_full_hoist).apply_pass(sdfg, {})
+    # Each unswitched copy knows its guard's value: inner guards testing it again are decided.
+    decided = decide_known_guards(sdfg) if hoisted or hoisted_out_of_maps else 0
+    if not hoisted_out_of_maps and not decided:
         return
     # Two maps under the same guard come out as two ``if c`` blocks: canonicalization's own maximal fusion merges the
     # guards, inlines the bodies and fuses the maps.

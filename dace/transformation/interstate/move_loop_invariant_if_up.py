@@ -434,6 +434,71 @@ def drop_empty_states(region: ControlFlowRegion) -> None:
         pass
 
 
+def assigns_any(region: ControlFlowRegion, names: frozenset[str]) -> bool:
+    """Whether ``region`` or a region nested in it, nested SDFGs included, assigns one of ``names`` or loops over it."""
+    for cfg in region.all_control_flow_regions(recursive=True):
+        if isinstance(cfg, LoopRegion) and cfg.loop_variable in names:
+            return True
+        if any(names & e.data.assignments.keys() for e in cfg.edges()):
+            return True
+    return False
+
+
+def decide_known_guards_in(region: ControlFlowRegion, cond: str, value: bool, names: frozenset[str]) -> int:
+    """Splice out every single-branch guard in ``region`` whose condition is ``cond`` (or its negation), known to be
+    ``value`` there because nothing in ``region`` assigns its symbols ``names``; nested SDFGs that pass ``names``
+    through unchanged included. :returns: How many guards were decided."""
+    decided = 0
+    while True:
+        found = next(
+            (
+                (cfg, block)
+                for cfg in region.all_control_flow_regions(recursive=False)
+                for block in cfg.nodes()
+                if isinstance(block, ConditionalBlock)
+                and len(block.branches) == 1
+                and block.branches[0][0] is not None
+                and (
+                    symbolic.guards_equal(block.branches[0][0].as_string, cond)
+                    or symbolic.guards_opposite(cond, block.branches[0][0].as_string)
+                )
+            ),
+            None,
+        )
+        if found is None:
+            break
+        cfg, block = found
+        splice_guard(cfg, block, take=value == symbolic.guards_equal(block.branches[0][0].as_string, cond))
+        decided += 1
+    for state in [b for b in region.all_control_flow_blocks() if isinstance(b, SDFGState)]:
+        for node in state.nodes():
+            if not isinstance(node, nodes.NestedSDFG) or names & node.sdfg.arrays.keys():
+                continue
+            if all(str(node.symbol_mapping.get(name)) == name for name in names):
+                decided += decide_known_guards_in(node.sdfg, cond, value, names)
+    return decided
+
+
+def decide_known_guards(sdfg: SDFG) -> int:
+    """Inside each arm of ``if c: A [else: B]``, decide the guards that test ``c`` again: an unswitched copy keeps
+    the inner guards the hoist did not match (icon_velocity_tendencies kept ``if (lextra_diffu)`` deep in the else
+    copy, a loop that never ran). :returns: How many guards were decided."""
+    decided = 0
+    for sd in list(sdfg.all_sdfgs_recursive()):
+        for cb in [r for r in sd.all_control_flow_regions(recursive=False) if isinstance(r, ConditionalBlock)]:
+            arms = cb.branches
+            if not arms or arms[0][0] is None or len(arms) > 2 or (len(arms) == 2 and arms[1][0] is not None):
+                continue
+            names = frozenset(str(name) for name in arms[0][0].get_free_symbols())
+            # A container's value can change inside the arm; only a symbol nothing in the arm assigns is known.
+            if not names or names & sd.arrays.keys():
+                continue
+            for arm, value in zip([branch[1] for branch in arms], (True, False)):
+                if not assigns_any(arm, names):
+                    decided += decide_known_guards_in(arm, arms[0][0].as_string, value, names)
+    return decided
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class MoveLoopInvariantIfUp(ppl.Pass):

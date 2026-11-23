@@ -49,6 +49,7 @@ from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import E
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.canonicalize.expand_fill_copy import ExpandFillCopy
 from dace.transformation.passes.canonicalize.expand_index_remaps import ExpandIndexRemaps
+from dace.transformation.passes.canonicalize.fill_through_copies import FillThroughCopies
 from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
 from dace.transformation.passes.canonicalize.forward_offset_copies import ForwardOffsetCopies
 from dace.transformation.passes.canonicalize.forward_store_to_load import ForwardStoreToLoad
@@ -934,6 +935,8 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     s += rail(label)
     # A memset the control flow after it overwrites unread (velocity's zeta_value, swept level by level) goes before
     # fusion, so its state does not stand between the maps; the finish runs it again for the fills lifted after.
+    # A copy of a fill is a fill of its own (warpx's i_old = np.copy(i_new) after i_new = np.zeros(n)), dead or not.
+    s += [(label, FillThroughCopies())]
     s += [(label, DeadFillElimination())]
     # The fills and copies left are maps from here on, so fusion joins them with their producers and consumers
     s += [(label, ExpandFillCopy())]

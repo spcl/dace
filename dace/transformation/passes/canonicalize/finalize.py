@@ -352,7 +352,8 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     HoistLoopRangeCalls().apply_pass(sdfg, {})
     # Before the length-one conversion and storage inference, so a per-iteration transient lands on one element.
     ShrinkMapLocalTransients().apply_pass(sdfg, {})
-    ConvertLengthOneArraysToScalars(recursive=True).apply_pass(sdfg, {})
+    # single_element: ShrinkMapLocalTransients leaves (1, ..., 1) boxes, which are scalars as much as a (1,) array.
+    ConvertLengthOneArraysToScalars(recursive=True, single_element=True).apply_pass(sdfg, {})
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
     move_small_arrays_to_stack(sdfg)
     made_persistent = make_transients_persistent(sdfg, device)
@@ -443,7 +444,8 @@ def force_map_scoped_registers(sdfg: SDFG, in_map: bool = False) -> int:
                 pinned += force_map_scoped_registers(node.sdfg, in_map or outermost_map(state, node) is not None)
     for name, desc in sdfg.arrays.items():
         if not (
-            type(desc) is dt.Array
+            # A Scalar too: storage inference puts a scope-lifetime one in a loop on the heap.
+            type(desc) in (dt.Array, dt.Scalar)
             and desc.transient
             and desc.lifetime == dtypes.AllocationLifetime.Scope
             and (
@@ -500,7 +502,7 @@ def force_loop_scoped_registers(sdfg: SDFG, sdfgs: list[SDFG] | None = None) -> 
         assigned = {lhs for edge in sd.all_interstate_edges() for lhs in edge.data.assignments}
         for name, desc in sd.arrays.items():
             if not (
-                type(desc) is dt.Array
+                type(desc) in (dt.Array, dt.Scalar)
                 and desc.transient
                 and desc.lifetime == dtypes.AllocationLifetime.Scope
                 and (

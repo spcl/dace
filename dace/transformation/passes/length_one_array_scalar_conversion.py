@@ -547,7 +547,8 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                 sdfg.add_scalar(
                     arr_name,
                     dtype=arr.dtype,
-                    storage=arr.storage,
+                    # A heap scalar is a new/delete per allocation scope; storage inference puts a Default one on the stack.
+                    storage=dtypes.StorageType.Default if arr.storage == dtypes.StorageType.CPU_Heap else arr.storage,
                     transient=True,
                     lifetime=arr.lifetime,
                     debuginfo=arr.debuginfo,
