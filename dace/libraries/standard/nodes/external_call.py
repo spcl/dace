@@ -157,13 +157,38 @@ def derive_signature(node: "ExternalCall", state: dace.SDFGState) -> str:
     return ", ".join(params_and_args(node, state)[0])
 
 
-def parameter_count(signature: str) -> int:
-    depth, count = 0, 1 if signature.strip() else 0
-    for ch in signature:
+def parameters(signature: str) -> list[str]:
+    """The parameters of a C parameter list, split at its top-level commas."""
+    if not signature.strip():
+        return []
+    depth, start, found = 0, 0, []
+    for at, ch in enumerate(signature):
         depth += ch in "(<"
         depth -= ch in ")>"
-        count += ch == "," and depth == 0
-    return count
+        if ch == "," and depth == 0:
+            found.append(signature[start:at].strip())
+            start = at + 1
+    return found + [signature[start:].strip()]
+
+
+def parameter_count(signature: str) -> int:
+    return len(parameters(signature))
+
+
+def declared_call_args(signature: str, call_args: list[str], site: CallSite) -> list[str]:
+    """``call_args`` passed as ``signature`` declares each parameter. A built library keeps the ABI it was compiled
+    with while the parent's descriptors may change afterwards (a read-only Scalar the library takes by value becomes
+    a length-one Array before a GPU copy), so a by-value parameter takes the element's value and a pointer parameter
+    a Scalar's address, whichever form the parent now has."""
+    declared: list[str] = []
+    for param, call_arg in zip(parameters(signature), call_args, strict=True):
+        by_value = "*" not in param
+        if by_value and call_arg.startswith("&"):
+            call_arg = call_arg[1:]
+        elif not by_value and call_arg in site.scalars:
+            call_arg = f"&{call_arg}"
+        declared.append(call_arg)
+    return declared
 
 
 def link_environment(lib_path: str, link_flags: Sequence[str]) -> type:
@@ -228,6 +253,8 @@ class ExpandExternCall(ExpandTransformation):
                 f"ExternalCall {node.name!r}: signature ({signature}) has {parameter_count(signature)} "
                 f"parameters, abi_order {len(call_args)}"
             )
+        site = call_site(node, parent_state)
+        call_args = declared_call_args(signature, call_args, site)
         # ``extern "C"`` is a C++ construct; a CPF C unit already has C's linkage.
         linkage = "" if cpf_lowering.standalone_c() else 'extern "C" '
         call = f"{node.symbol}({', '.join(call_args)});"
@@ -240,7 +267,6 @@ class ExpandExternCall(ExpandTransformation):
                 f"DACE_GPU_CHECK({backend}DeviceSynchronize());"
             )
         # a container the call takes by pointer is a pointer connector, so no one-element memlet reads it by value
-        site = call_site(node, parent_state)
         pointers = {
             conn: dtypes.pointer(desc.dtype)
             for conn, desc in site.descriptors.items()

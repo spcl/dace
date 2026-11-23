@@ -225,6 +225,24 @@ def test_a_read_only_scalar_crosses_the_call_by_value(tmp_path):
     assert np.array_equal(b, a * 0.5 + 1.0)
 
 
+def test_a_by_value_parameter_whose_scalar_became_a_one_element_array_still_gets_the_value(tmp_path):
+    # the library is built while alpha is a Scalar; a later pass turns it into a length-1 Array
+    sdfg, (call,) = outlined(scale_by, "extcall_scalar_became_array")
+    call.lib_path = shared_library(
+        tmp_path,
+        f"void {call.symbol}(const double* a, double alpha, double* b, int64_t N) {{"
+        " for (int64_t i = 0; i < N; ++i) b[i] = alpha * a[i] + 1.0; }",
+    )
+    call.implementation = "ExternCall"
+    sdfg.arrays["alpha"] = dace.data.Array(dace.float64, (1,))
+    a = np.random.default_rng(4).random(SIZE)
+    b = np.zeros(SIZE)
+
+    sdfg(a=a, alpha=np.array([0.5]), b=b, N=SIZE)
+
+    assert np.array_equal(b, a * 0.5 + 1.0)
+
+
 def extern_call_tasklet(call: external_call.ExternalCall, sdfg: dace.SDFG) -> nodes.Tasklet:
     """``call`` expanded with ExternCall (a library path is only named, never linked here), as its tasklet."""
     call.lib_path, call.implementation = "libnot_linked.a", "ExternCall"
