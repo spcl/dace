@@ -15,7 +15,7 @@ import sympy
 import dace
 from dace import dtypes
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes import BreakAntiDependence
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import AssumeSymbolConstraints
@@ -367,6 +367,43 @@ def test_chunk_rewrite_is_idempotent():
     assert sdfg.hash_sdfg() == before
 
 
+INC = dace.symbol("INC")
+
+
+@dace.program
+def strided_shift(a: dace.float64[N], b: dace.float64[N]):
+    for i in range(0, N - 1, INC):
+        a[i] = a[i + INC] + b[i]
+
+
+def test_a_symbolic_stride_is_chunked_under_unit_stride_and_snapshotted_otherwise():
+    """s175 steps by ``inc``: ``if (INC == 1)`` runs the chunked seam form, ``else`` the snapshot form, bit-exact."""
+    sdfg = _canonical(strided_shift)
+    assert ChunkAntiDependence().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    (guarded,) = [
+        b
+        for b in sdfg.all_control_flow_blocks()
+        if isinstance(b, ConditionalBlock) and b.label.endswith("_unit_stride")
+    ]
+    assert [c.as_string.strip("() ") for c, region in guarded.branches if c is not None] == ["INC == 1"]
+    assert _seam_buffer(sdfg) is not None, "the unit-stride arm holds the per-chunk seam"
+    assert len(_snapshot_copies(sdfg)) == 1, "the strided arm keeps its whole-window snapshot"
+    for n, inc in ((40, 1), (1000, 1), (41, 2), (1001, 5)):
+        rng = np.random.default_rng(n + inc)
+        a, b = rng.standard_normal(n), rng.standard_normal(n)
+        want = a.copy()
+        for i in range(0, n - 1, inc):
+            want[i] = want[i + inc] + b[i]
+        got = a.copy()
+        with contextlib.redirect_stdout(open(os.devnull, "w")):
+            sdfg(a=got, b=b.copy(), N=n, INC=inc)
+        assert np.array_equal(got, want), (n, inc)
+    before = sdfg.hash_sdfg()
+    assert ChunkAntiDependence().apply_pass(sdfg, {}) is None, "the strided arm is never versioned again"
+    assert sdfg.hash_sdfg() == before
+
+
 if __name__ == "__main__":
     test_the_in_chunk_sweep_is_a_loop_and_not_a_map()
     test_the_rendered_sweep_says_it_is_sequential_on_purpose()
@@ -381,6 +418,7 @@ if __name__ == "__main__":
     test_chunk_rewrite_never_matches_a_gpu_scheduled_map()
     test_a_wider_read_ahead_offset_chunks_with_a_row_of_seam_cells(_shift_two, 2)
     test_chunk_rewrite_is_idempotent()
+    test_a_symbolic_stride_is_chunked_under_unit_stride_and_snapshotted_otherwise()
 
 
 @pytest.mark.parametrize("prog,offset", [(_shift, 1), (_shift_two, 2), (_shift_sym, 3)])

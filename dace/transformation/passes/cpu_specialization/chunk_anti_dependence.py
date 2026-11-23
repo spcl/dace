@@ -41,7 +41,8 @@ the first ``D`` cells of the next one, so the seam holds a ROW of ``D`` cells pe
 gathered by one parallel map, and the chunk size is at least ``D`` so a full chunk's row
 never reaches past its neighbour. ``D`` may be a symbol: ``BreakAntiDependence`` snapshots a
 symbolic read-ahead only behind its ``D >= 0`` entry trap, and ``D = 0`` leaves every seam row
-empty. Restricted to a 1-D array under unit stride. Pure data movement either way -- no arithmetic is reassociated, so the result is
+empty. Restricted to a 1-D array under unit stride; a map stepping by one free symbol ``s`` (``s175``) is
+versioned ``if (s == 1)`` chunked ``else`` snapshot (:meth:`ChunkAntiDependence.unit_stride_version`). Pure data movement either way -- no arithmetic is reassociated, so the result is
 bit-identical.
 """
 
@@ -54,8 +55,11 @@ from dace import Memlet, data, dtypes, properties, subsets, symbolic
 from dace.optionals import required
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.narrowing import as_basic, as_expr, as_map_entry
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import ConditionalBlock, SDFGState
 from dace.transformation import pass_pipeline as ppl
+
+#: The label suffix of the conditional that versions a symbolic-stride map on unit stride.
+UNIT_STRIDE_SUFFIX = "_unit_stride"
 
 #: Schedules that lower through the CPU path. A GPU-scheduled map never matches.
 _CPU_SCHEDULES = (
@@ -526,12 +530,62 @@ class ChunkAntiDependence(ppl.Pass):
         # Nothing reads the whole-window snapshot any more; ``remove_data`` validates that.
         sdfg.remove_data(snap)
 
+    def unit_stride_version(self, state: SDFGState, sdfg: SDFG) -> SDFGState | None:
+        """Version ``state`` on ``s == 1`` when its snapshot map steps by one free symbol ``s``; the guarded copy.
+
+        A symbolic step (``s175``: ``for i in range(0, N - 1, inc): a[i] = a[i + inc] + b[i]``) keeps the map off the
+        unit-stride pattern, so the whole-window snapshot stays. Under ``s == 1`` the copy is that pattern: ``if (s ==
+        1)`` runs it chunked, the ``else`` arm runs the snapshot form as it was. The copy gets its own snapshot
+        container, since the two arms are two programs.
+        """
+        from dace.transformation.passes.loop_specialization import label_arms, version_block
+
+        owner = state.parent_graph.parent_graph
+        if isinstance(owner, ConditionalBlock) and owner.label.endswith(UNIT_STRIDE_SUFFIX):
+            return None  # already the strided arm of an earlier run
+        for me in state.nodes():
+            if not isinstance(me, nodes.MapEntry) or state.entry_node(me) is not None or len(me.map.range) != 1:
+                continue
+            step = as_basic(me.map.range[0][2])
+            if not isinstance(step, sympy.Symbol) or str(step) in me.map.params or str(step) not in sdfg.symbols:
+                continue
+            local = [
+                name
+                for name in dict.fromkeys(n.data for n in state.data_nodes())
+                if sdfg.arrays[name].transient
+                and not any(
+                    isinstance(n, nodes.AccessNode) and n.data == name and parent is not state
+                    for n, parent in sdfg.all_nodes_recursive()
+                )
+            ]
+            clone = copy.deepcopy(state)
+            # Lookups only (its SDFG, for the replacement and the match); ``version_block`` places it
+            clone.parent_graph, clone.sdfg = state.parent_graph, sdfg
+            repl = {str(step): "1"}
+            for name in local:
+                repl[name] = sdfg.add_datadesc(name + "_unit", copy.deepcopy(sdfg.arrays[name]), find_new_name=True)
+            clone.replace_dict(repl)
+            if self._match(clone, sdfg) is None:
+                for name in local:
+                    sdfg.remove_data(repl[name], validate=False)
+                continue
+            guard = f"{step} == 1"
+            unit, strided = version_block(
+                state, f"{state.label}{UNIT_STRIDE_SUFFIX}", (guard, clone, "unit_stride"), (None, state, "strided")
+            )[1:]
+            label_arms(unit, strided, guard)
+            return clone
+        return None
+
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Rewrite every CPU snapshot-broken read-ahead map; returns how many, or ``None``."""
         applied = 0
         for sd in sdfg.all_sdfgs_recursive():
             for state in list(sd.states()):
                 match = self._match(state, sd)
+                if match is None:
+                    state = self.unit_stride_version(state, sd)
+                    match = None if state is None else self._match(state, sd)
                 if match is None:
                     continue
                 self._rewrite(state, sd, match)
