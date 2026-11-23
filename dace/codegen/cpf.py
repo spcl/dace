@@ -1769,8 +1769,9 @@ def compile_check_compiler(dialect: cpf_lowering.Dialect) -> str | None:
 
 def vendor_include_flags(environments: Iterable[str]) -> tuple[str, ...]:
     """``-I`` flags for the headers of the vendor libraries among ``environments``, where the environment finds
-    them off the default search path (a spack or conda OpenBLAS, FFTW3). Only for :func:`compile_check`: the
-    rendered unit names system headers, and the machine that builds it provides the library."""
+    them off the default search path (a spack or conda OpenBLAS, FFTW3): what :func:`compile_check` checks the units
+    with, and :attr:`Rendering.includes`. The rendered unit names system headers; these flags tell the compiler of
+    this machine where they are."""
     flags: list[str] = []
     for env in cpf_lowering.vendor_environments(environments):
         includes = getattr(env, "cmake_includes", None)
@@ -1888,6 +1889,10 @@ class Rendering(NamedTuple):
     #: Under ``llm_friendly``, short name -> the generated name it stands for (:mod:`dace.codegen.cpf_compact`);
     #: empty otherwise.
     names: tuple[tuple[str, str], ...] = ()
+    #: The ``-I`` flags of the vendor libraries the units call whose headers sit off the default search path (a
+    #: spack, module or conda OpenBLAS, FFTW3; :func:`vendor_include_flags`): what the caller compiles the units
+    #: with. Empty when every header the units name is a system header.
+    includes: tuple[str, ...] = ()
 
 
 def render(
@@ -2155,15 +2160,18 @@ def render_unit(
                 sve=uses_sve(prepared),
             )
     arguments = tuple(signature.order) if signature is not None else tuple(entry_arglist)
+    families = cpf_lowering.vendor_families(code + device_code)
     return Rendering(
         code,
         prepared,
         arguments,
         device_code,
         link_libraries(frame, dialect, code + device_code),
-        cpf_lowering.vendor_families(code + device_code),
+        families,
         workspace_bytes,
         names,
+        # only for a library the units call: a node that fell back to loops still names its environment
+        vendor_include_flags(set(frame.environments) | device_environments) if families else (),
     )
 
 

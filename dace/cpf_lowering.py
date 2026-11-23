@@ -4143,8 +4143,15 @@ __attribute__((constructor)) static void cpf_defer_openblas_threads(void) {
 def openblas_link(code: str) -> tuple[str, ...]:
     """OpenBLAS, after the separate LAPACKE of a distro that packages it apart (Debian, Ubuntu: liblapacke); an OpenBLAS
     that bundles LAPACKE has no such library."""
+    # Deferred: the environment module imports dace, which imports this module.
+    from dace.libraries.blas.environments.openblas import OpenBLAS
+
+    search = tuple(flag for path in OpenBLAS.library_dirs() for flag in (f"-L{path}", f"-Wl,-rpath,{path}"))
     calls_lapacke = re.search(r"\bLAPACKE_\w+\s*\(", code) is not None
-    return ("-llapacke", "-lopenblas") if calls_lapacke and ctypes.util.find_library("lapacke") else ("-lopenblas",)
+    libraries = (
+        ("-llapacke", "-lopenblas") if calls_lapacke and ctypes.util.find_library("lapacke") else ("-lopenblas",)
+    )
+    return search + libraries
 
 
 def fftw3_link(code: str) -> tuple[str, ...]:

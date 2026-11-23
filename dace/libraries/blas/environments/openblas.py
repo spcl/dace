@@ -305,6 +305,15 @@ class OpenBLAS:
         return [inc] if inc else []
 
     @staticmethod
+    def library_dirs() -> list[str]:
+        """The directory of a standalone OpenBLAS the linker does not search by default (spack, conda, module), for
+        a build that links it by name (CPF's ``-lopenblas``); none where FindBLAS locates it."""
+        if OpenBLAS._mode() != "direct_link":
+            return []
+        lib, _ = _standalone_libopenblas()
+        return [os.path.dirname(lib)] if lib and os.path.isabs(lib) else []
+
+    @staticmethod
     def cmake_libraries():
         # Driven by _mode() like the other four, so is_installed() cannot report an OpenBLAS
         # the mode has already rejected.

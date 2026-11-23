@@ -151,6 +151,27 @@ def test_the_openblas_unit_keeps_a_pthreads_build_off_the_openmp_team():
     assert "dace_openblas.h" not in code and "dace_blas.h" not in code
 
 
+def test_the_rendering_names_the_include_directory_of_an_openblas_off_the_default_paths(monkeypatch, tmp_path):
+    """A spack or module OpenBLAS keeps ``cblas.h`` off the default search path; whoever compiles the unit needs
+    its ``-I``, which the rendering carries (:attr:`~dace.codegen.cpf.Rendering.includes`). A kernel NestForge
+    built did not compile on such a machine (``cblas.h: No such file or directory``)."""
+    include = tmp_path / "include"
+    monkeypatch.setattr(OpenBLAS, "cmake_includes", staticmethod(lambda: [str(include)]))
+
+    rendering = render(vendor_gemm.to_sdfg(simplify=True), language="c++", check_compiles=False)
+
+    assert "cblas_dgemm" in rendering.code
+    assert rendering.includes == (f"-I{include}",)
+
+
+def test_a_unit_calling_no_vendor_library_needs_no_include_directory(monkeypatch, tmp_path):
+    """The int64 GEMV falls back to loops but its node still names OpenBLAS's environment: no ``-I`` for it."""
+    monkeypatch.setattr(OpenBLAS, "cmake_includes", staticmethod(lambda: [str(tmp_path / "include")]))
+    with pytest.warns(UserWarning, match="Falling back to pure expansion"):
+        rendering = render(integer_gemv.to_sdfg(simplify=True), language="c++", check_compiles=False)
+    assert rendering.includes == ()
+
+
 @pytest.mark.parametrize("language", ["c++", "c"])
 def test_a_product_that_falls_back_to_the_pure_expansion_names_no_vendor_library(language):
     """CBLAS has no int64 GEMV, so the expansion falls back to loops; the node still names OpenBLAS as its
@@ -211,4 +232,18 @@ def test_a_unit_that_calls_lapacke_links_the_lapacke_this_machine_packages_apart
     assert (
         "-llapacke" in cpf_lowering.openblas_link("LAPACKE_dpotrf(LAPACK_COL_MAJOR, 'L', n, a, n);")
     ) is packaged_apart
-    assert cpf_lowering.openblas_link("cblas_ddot(n, x, 1, y, 1);") == ("-lopenblas",)
+    search = tuple(flag for path in OpenBLAS.library_dirs() for flag in (f"-L{path}", f"-Wl,-rpath,{path}"))
+    assert cpf_lowering.openblas_link("cblas_ddot(n, x, 1, y, 1);") == (*search, "-lopenblas")
+
+
+def test_a_standalone_openblas_off_the_linker_path_links_from_its_own_directory(monkeypatch, tmp_path):
+    """A module or spack OpenBLAS: ``-lopenblas`` alone fails (``cannot find -lopenblas``) and the loaded unit would
+    not find the library either, so the link line names its directory for both."""
+    libdir = str(tmp_path / "lib")
+    monkeypatch.setattr(OpenBLAS, "library_dirs", staticmethod(lambda: [libdir]))
+
+    assert cpf_lowering.openblas_link("cblas_ddot(n, x, 1, y, 1);") == (
+        f"-L{libdir}",
+        f"-Wl,-rpath,{libdir}",
+        "-lopenblas",
+    )
