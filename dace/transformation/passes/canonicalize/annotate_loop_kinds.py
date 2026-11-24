@@ -1293,13 +1293,13 @@ def nested_outputs(state: SDFGState, entry: nodes.MapEntry) -> list[NestedOutput
 
 def writes_through(state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> list[Subset | None]:
     """The subsets the nested SDFG at the source of ``edge`` writes through it, in the caller's indices and through
-    any deeper nested SDFG; ``None`` for a write whose elements are not known there (a view of part of the container,
-    whose indices start elsewhere, or a dynamic write)."""
+    any deeper nested SDFG; ``None`` for a dynamic write whose elements are not known there. Through a view of part of
+    the container the inner indices start elsewhere, so the memlet of ``edge`` bounds the writes instead."""
     node = edge.src
     outer, inner = state.sdfg.arrays[edge.data.data], node.sdfg.arrays[edge.src_conn]
     whole = str(edge.data.subset) == str(Range.from_array(outer))
     if not whole or len(inner.shape) != len(outer.shape) or list(inner.offset) != list(outer.offset):
-        return [None]
+        return [required(edge.data.subset)]
     found: list[Subset | None] = []
     for inner_state in node.sdfg.states():
         for access in inner_state.data_nodes():

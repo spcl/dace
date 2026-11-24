@@ -4,9 +4,11 @@
 Each test renders a few-line program and checks the comment string of the loop the finding is about."""
 
 import dace
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from tests.codegen.cpf.test_specialization_hints import named
 
 N = dace.symbol("N")
+M = dace.symbol("M")
 T = dace.symbol("T")
 
 
@@ -84,8 +86,42 @@ def test_a_read_of_what_earlier_iterations_write_is_named_as_such():
     assert "no iteration reads an element another iteration writes" not in first, first
 
 
+def any_per_row_code() -> str:
+    @dace.program
+    def any_per_row(a: dace.float64[N, M], flag: dace.int32[N], unset: dace.int32[N]):
+        for i in range(N):
+            flag[i] = 0
+            unset[i] = 1
+            for j in range(M):
+                if a[i, j] > 0:
+                    flag[i] = 1
+                    unset[i] = 0
+
+    sdfg = any_per_row.to_sdfg(simplify=True)
+    sdfg.name = "cpf_comment_any_per_row"
+    canonicalize(sdfg, validate=True, validate_all=False, target="cpu")
+    return named(sdfg)
+
+
+def test_only_the_loop_that_shares_the_accumulator_is_a_reduction():
+    """logical_any_per_row: the ``i`` loop writes ``flag[i]`` and ``unset[i]``, one element per iteration; only the
+    inner ``j`` loop reduces into them."""
+    outer, inner = class_lines(any_per_row_code())
+    assert outer.startswith("// parallel -- independent: "), outer
+    assert inner == "// parallel -- reduction: && into unset and || into flag; the other accesses are independent", (
+        inner
+    )
+
+
+def test_the_header_lists_every_reduction_of_a_loop():
+    header = [line for line in any_per_row_code().splitlines() if line.startswith("//     reductions into")]
+    assert header == ["//     reductions into unset (&&), flag (||)"], header
+
+
 if __name__ == "__main__":
     test_a_sequential_loop_over_an_indirect_access_offers_no_wavefront()
     test_an_unproven_loop_over_a_few_iterations_is_unknown_not_sequential()
     test_a_conditional_write_to_a_fixed_element_says_every_iteration_writes_it()
     test_a_read_of_what_earlier_iterations_write_is_named_as_such()
+    test_only_the_loop_that_shares_the_accumulator_is_a_reduction()
+    test_the_header_lists_every_reduction_of_a_loop()

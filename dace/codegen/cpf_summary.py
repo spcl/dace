@@ -29,7 +29,8 @@ WHILE_HEAD = re.compile(r"^\s*(?:while|do)\b")
 CALL_HEAD = re.compile(r"^\s*(?:[\w:<>*]+\s+)*(\w+)\s*\(")
 FUNCTION_HEAD = re.compile(r"^[A-Za-z_][\w\s:<>*,&]*?\b(\w+)\s*\([^;]*$")
 NESTED_LOOPS = re.compile(r"the (\d+) nested loops over .* are all parallel")
-REDUCTION = re.compile(rf"^{Reason.REDUCTION.value}: (\S+) into (\w+)")
+#: One ``<op> into <target>`` of a reduction comment, which lists one per accumulator.
+FOLD = re.compile(r"(\S+) into (\w+)")
 PRIVATE = re.compile(r"private per iteration: ([\w, ]+)")
 EXAMPLE = re.compile(r" \(example[^)]*\)")
 #: Lines codegen puts between a loop's comment and its head: an accumulator load, the bounds of a range read from
@@ -301,16 +302,20 @@ def summary_lines(loops: list[Loop]) -> list[str]:
     without a program loop (its loops are a lowering's, such as a find-first or argmax helper) has nothing open: just
     the closing line and ``cpf: proven: all``."""
     parallel = [loop for loop in loops if loop.kind is LoopClass.PARALLEL]
-    reductions = [REDUCTION.match(loop.reason) for loop in parallel]
+    folds = OrderedSet(
+        f"{target} ({op})"
+        for loop in parallel
+        if reason_of(loop.reason) is Reason.REDUCTION
+        for op, target in FOLD.findall(loop.reason.split(";")[0])
+    )
     scans = [loop.name for loop in parallel if reason_of(loop.reason) is Reason.SCAN]
     private = [m.group(1) for loop in loops for m in [PRIVATE.search(loop.reason)] if m]
     lines = ["// Summary of the loop comments below."] if loops else []
     if parallel:
         names = ", ".join(dict.fromkeys(loop.name for loop in parallel))
         lines.append(f"//   parallel: {names}")
-    if any(reductions):
-        folds = ", ".join(dict.fromkeys(f"{m.group(2)} ({m.group(1)})" for m in reductions if m))
-        lines.append(f"//     reductions into {folds}")
+    if folds:
+        lines.append(f"//     reductions into {', '.join(folds)}")
     if scans:
         lines.append(f"//     scans: {', '.join(dict.fromkeys(scans))}")
     if private:
