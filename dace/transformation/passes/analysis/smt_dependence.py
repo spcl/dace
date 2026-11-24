@@ -726,6 +726,10 @@ def classify_read_write_pair(
 #: One iterator an access sits under: ``(name, start, end, step)``, bounds inclusive and in iteration order.
 IterRange = tuple[str, Any, Any, Any]
 
+#: The branch conditions an access runs under, all of which hold: ``(condition, holds)``, where ``holds`` is
+#: ``False`` for an earlier branch's condition that must fail.
+Guard = tuple[tuple[sp.Basic, bool], ...]
+
 
 def is_plain_index(expr: sp.Basic) -> bool:
     """Whether ``expr`` is integer arithmetic over symbols: no array read, no opaque function."""
@@ -767,7 +771,8 @@ def find_conflict_witness(
     outer: tuple[IterRange, ...] = (),
     shape: tuple[sp.Basic | None, ...] = (),
     fixed: set[str] = frozenset(),
-    kills: tuple[tuple[tuple[sp.Basic, ...], tuple[IterRange, ...], bool], ...] = (),
+    kills: tuple[tuple[tuple[sp.Basic, ...], tuple[IterRange, ...], bool, Guard], ...] = (),
+    guards: tuple[Guard, Guard] = ((), ()),
 ) -> dict[str, int] | None:
     """Values under which ``first``, at an earlier iteration of the carrying loop, and ``second``, at a later one,
     touch the same element; ``None`` when there are none, the solver gives up, or something cannot be encoded.
@@ -782,8 +787,10 @@ def find_conflict_witness(
     program never changes while the carrying loop runs but whose value nobody knows (a column index a caller
     passes in): one may appear only if, for EVERY value of it under which the loops run with both accesses inside
     ``shape``, some iterations conflict (:func:`conflicts_for_every`), so the witness rests on no chosen value of it. ``kills`` are the writes ``(index, iters,
-    same)`` of the array in one iteration: none of them, at the later iteration, may store the element ``second``
+    same, guard)`` of the array in one iteration: none of them, at the later iteration, may store the element ``second``
     reads, except the very instance of the read's own statement when ``same`` (it writes after it reads).
+    ``guards`` are the branch conditions ``first`` and ``second`` run under, each at its own iteration; an array they
+    read is input the witness may choose, and its chosen elements are part of the witness (``flag[1]``).
     """
     exprs = [sp.sympify(e) for e in first + second]
     exprs += [sp.sympify(b) for _, start, end, _ in outer + first_iters + second_iters for b in (start, end)]
@@ -792,25 +799,35 @@ def find_conflict_witness(
     exprs += [sp.sympify(b) for it in kill_iters for b in it[1:3]]
     iterators = {it[0] for it in outer + first_iters + second_iters + kill_iters}
     allowed = iterators | sizes | set(fixed)
+    conditions = [sp.sympify(term[0]) for guard in (*guards, *(kill[3] for kill in kills)) for term in guard]
     if not _HAS_Z3 or len(first) != len(second) or not admissible(exprs, allowed):
         return None
-    params = sorted({s.name for e in exprs for s in e.free_symbols} - iterators - sizes)
+    if any({s.name for s in e.free_symbols} - allowed for e in conditions):
+        return None
+    params = sorted({s.name for e in exprs + conditions for s in e.free_symbols} - iterators - sizes)
     sym_cache: dict[str, Any] = {}
+    arr_cache: dict[str, Any] = {}
     sides = [encode_side("__a", first, first_iters, sym_cache), encode_side("__b", second, second_iters, sym_cache)]
     shared = encode_side("", (), outer, sym_cache)
-    if None in sides or shared is None:
+    held = [
+        encode_guard("__a", guards[0], first_iters, sym_cache, arr_cache),
+        encode_guard("__b", guards[1], second_iters, sym_cache, arr_cache),
+    ]
+    if None in sides or shared is None or None in held:
         return None
     carrier, _, _, step = first_iters[0]
     earlier, later = required(z3).Int(carrier + "__a"), required(z3).Int(carrier + "__b")
+    # Two ordered iterations belong to the domain: a parameter value under which the loop runs once orders nothing
     domain = [*shared[0], *sides[0][0], *sides[1][0]]
-    conflict = [*(a == b for a, b in zip(sides[0][1], sides[1][1]))]
-    conflict.append(earlier < later if int(symbolic.evaluate(step, {})) > 0 else earlier > later)
-    for number, (index, iters, same) in enumerate(kills):
+    domain.append(earlier < later if int(symbolic.evaluate(step, {})) > 0 else earlier > later)
+    conflict = [*(a == b for a, b in zip(sides[0][1], sides[1][1])), *held[0], *held[1]]
+    for number, (index, iters, same, guard) in enumerate(kills):
         suffix = f"__k{number}"
         side = encode_side(suffix, index, iters, sym_cache)
-        if side is None or len(index) != len(second):
+        runs = encode_guard(suffix, guard, iters, sym_cache, arr_cache)
+        if side is None or runs is None or len(index) != len(second):
             return None
-        hit = [*side[0], *(a == b for a, b in zip(side[1], sides[1][1]))]
+        hit = [*side[0], *runs, *(a == b for a, b in zip(side[1], sides[1][1]))]
         if same:
             hit.append(
                 required(z3).Or(*(required(z3).Int(it[0] + suffix) != required(z3).Int(it[0] + "__b") for it in iters))
@@ -840,17 +857,61 @@ def find_conflict_witness(
         return None
     shown = [name for name, *_ in outer] + [carrier + "__a", carrier + "__b"]
     shown += sorted({s.name for e in exprs for s in e.free_symbols} & sizes)
-    return {name: model.eval(required(z3).Int(name), model_completion=True).as_long() for name in shown}
+    # A parameter that bounds a loop decides which iterations exist, so the example names the value it rests on
+    bounds = [sp.sympify(b) for it in outer + first_iters + second_iters for b in it[1:3]]
+    shown += sorted({s.name for e in bounds for s in e.free_symbols} & set(params))
+    witness = {name: model.eval(required(z3).Int(name), model_completion=True).as_long() for name in shown}
+    for suffix, guard, iters in (("__a", guards[0], first_iters), ("__b", guards[1], second_iters)):
+        for term in guard:
+            for element in sorted(local_names(term[0], iters, suffix).atoms(symbolic.Subscript), key=str):
+                index = [
+                    model.eval(_sympy_to_z3(i, sym_cache, arr_cache), model_completion=True) for i in element.args[1:]
+                ]
+                value = model.eval(_sympy_to_z3(element, sym_cache, arr_cache), model_completion=True)
+                witness[f"{element.args[0]}[{', '.join(str(i) for i in index)}]"] = value.as_long()
+    return witness
+
+
+def local_names(expr: sp.Basic, iters: tuple[IterRange, ...], suffix: str) -> sp.Basic:
+    """``expr`` with every iterator of ``iters`` renamed to its copy ``name + suffix``."""
+    names = {it[0] for it in iters}
+    expr = sp.sympify(expr)
+    return expr.xreplace({s: sp.Symbol(s.name + suffix) for s in expr.free_symbols if s.name in names})
+
+
+def encode_guard(
+    suffix: str, guard: Guard, iters: tuple[IterRange, ...], sym_cache: dict[str, Any], arr_cache: dict[str, Any]
+) -> list[Any] | None:
+    """z3 terms for ``guard`` at the iteration named by ``suffix``, else None when a condition cannot be encoded. A
+    condition that is a number holds when it is not zero, as in C."""
+    terms = []
+    for expr, holds in guard:
+        expr = local_names(expr, iters, suffix)
+        if expr in (sp.true, sp.false):
+            term = required(z3).BoolVal(bool(expr))
+        elif isinstance(expr, (sp.logic.boolalg.Boolean, sp.Rel)) or str(expr.func) in ("AND", "OR", "NOT"):
+            term = _bool_to_z3(expr, sym_cache, arr_cache)
+            term = None if term is True else term
+        else:
+            value = _sympy_to_z3(expr, sym_cache, arr_cache)
+            term = None if value is None or not required(z3).is_int(value) else value != 0
+        if term is None:
+            return None
+        terms.append(term if holds else required(z3).Not(term))
+    return terms
 
 
 def conflicts_for_every(
     domain: list[Any], conflict: list[Any], model: Any, params: list[str], sizes: set[str], rlimit: int
 ) -> bool:
     """Whether, with the sizes of ``model``, every value of ``params`` under which the loops run in bounds
-    (``domain`` holds for some iterations) also has iterations that ``conflict``."""
+    (``domain`` holds for some pair of iterations, the carrying loop running at least twice) also has iterations that
+    ``conflict``."""
     z3m = required(z3)
-    names = {str(v) for v in z3m.z3util.get_vars(z3m.And(*domain, *conflict))}
-    iters = [z3m.Int(name) for name in sorted(names - set(params) - sizes)]
+    variables = {str(v): v for v in z3m.z3util.get_vars(z3m.And(*domain, *conflict))}
+    names = set(variables)
+    # Iterators and the input arrays a branch condition reads: chosen per value of the parameters
+    iters = [variables[name] for name in sorted(names - set(params) - sizes)]
     solver = bounded_solver(rlimit)
     for name in sorted(names & sizes):
         solver.add(z3m.Int(name) == model.eval(z3m.Int(name), model_completion=True))
