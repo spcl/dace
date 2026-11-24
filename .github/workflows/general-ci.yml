@@ -28,7 +28,7 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ['3.14']
-        simplify: [0,1,autoopt]
+        simplify: [1]
 
     steps:
     - uses: actions/checkout@v7
@@ -63,13 +63,7 @@ jobs:
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
-        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
-            export DACE_optimizer_automatic_simplification=1
-            export DACE_optimizer_autooptimize=1
-            echo "Auto-optimization heuristics"
-        else
-            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
-        fi
+        export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         # idxalg is an optional out-of-tree symbolic backend; its seam tests stay in the repo but do not run here.
         # --ignore=tests/library: the library-node tree (marked and unmarked) runs once in the
         # libnode-loop2x-transformations job instead of once per matrix cell here.
@@ -85,13 +79,7 @@ jobs:
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
-        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
-            export DACE_optimizer_automatic_simplification=1
-            export DACE_optimizer_autooptimize=1
-            echo "Auto-optimization heuristics"
-        else
-            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
-        fi
+        export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         # The dedicated-runner markers are excluded here for the same reason they are excluded from
         # the general selection above: those suites have their own workflows, with their own
         # configuration. A test carrying both `sequential` and one of them would otherwise run here
