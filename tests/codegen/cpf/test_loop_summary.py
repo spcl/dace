@@ -366,10 +366,15 @@ def class_lines(code: str) -> list[tuple[str, str]]:
     for n, line in enumerate(lines):
         if cpf_summary.ANY_LOOP_HEAD.match(line):
             k = n - 1
-            while k >= 0 and cpf_summary.holds_label(lines[k].strip()) and not cpf_summary.CLASS_LINE.match(lines[k]):
+            while k >= 0 and cpf_summary.holds_label(lines[k].strip()) and not classed(lines[k]):
                 k -= 1
-            found.append((lines[k].strip() if k >= 0 and cpf_summary.CLASS_LINE.match(lines[k]) else "", line.strip()))
+            found.append((lines[k].strip() if k >= 0 and classed(lines[k]) else "", line.strip()))
     return found
+
+
+def classed(line: str) -> bool:
+    """Whether ``line`` is a loop's class comment or a library loop's."""
+    return bool(cpf_summary.CLASS_LINE.match(line) or cpf_summary.LIBRARY_LINE.match(line))
 
 
 def test_every_loop_gets_a_comment_naming_its_role():
@@ -470,7 +475,7 @@ static inline void cpf_helper(double *a, long n) {
 """
     lines = cpf_summary.comment_every_loop(code).splitlines()
     barrier = next(n for n, line in enumerate(lines) if "#pragma omp barrier" in line)
-    assert cpf_summary.CLASS_LINE.match(lines[barrier + 1]), lines
+    assert classed(lines[barrier + 1]), lines
     assert cpf_summary.ANY_LOOP_HEAD.match(lines[barrier + 2]), lines
 
 
