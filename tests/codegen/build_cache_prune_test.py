@@ -29,12 +29,13 @@ def test_budget_honours_env_override(tmp_path, monkeypatch):
     assert build_cache.budget(str(tmp_path)) == 7 * 1024**2
 
 
-def test_budget_is_a_fraction_of_the_filesystem(tmp_path, monkeypatch):
-    """With no override the budget tracks the backing filesystem, so /dev/shm on a small machine
-    gets a small cache rather than the same constant a large node would get."""
+def test_budget_is_a_capped_fraction_of_the_filesystem(tmp_path, monkeypatch):
+    """With no override the budget tracks the backing filesystem, so /dev/shm on a small machine gets a small cache
+    rather than the same constant a large node would get, and a large node at most ``MAX_BUDGET``."""
     monkeypatch.delenv("DACE_BUILD_CACHE_MAX_MB", raising=False)
     stat = os.statvfs(str(tmp_path))
-    assert build_cache.budget(str(tmp_path)) == int(stat.f_blocks * stat.f_frsize * build_cache.CACHE_FRACTION)
+    fraction = int(stat.f_blocks * stat.f_frsize * build_cache.CACHE_FRACTION)
+    assert build_cache.budget(str(tmp_path)) == min(fraction, build_cache.MAX_BUDGET)
 
 
 def test_prune_evicts_until_under_budget(tmp_path, monkeypatch):
