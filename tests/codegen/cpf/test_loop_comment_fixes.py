@@ -78,6 +78,19 @@ def test_a_conditional_write_to_a_fixed_element_says_every_iteration_writes_it()
     assert "index array" not in first, first
 
 
+def test_a_scatter_through_an_index_array_still_asks_for_no_repeated_values():
+    """``b[idx[i]]`` moves with ``i`` through the index array: the same-elements reason is for a fixed write only."""
+
+    @dace.program
+    def scatter(a: dace.float64[N], idx: dace.int64[N], b: dace.float64[N]):
+        for i in range(N):
+            b[idx[i]] = a[i] * 2.0
+
+    first = class_lines(rendered(scatter, "cpf_comment_scatter"))[0]
+    assert "(an index array without repeated values)" in first, first
+    assert "same elements" not in first, first
+
+
 def test_a_read_of_what_earlier_iterations_write_is_named_as_such():
     """cholesky's ``i`` loop: row ``i`` reads ``A[j, j]``, which an earlier iteration wrote."""
 
@@ -341,6 +354,7 @@ if __name__ == "__main__":
     test_a_sequential_loop_over_an_indirect_access_offers_no_wavefront()
     test_an_unproven_loop_over_a_few_iterations_is_unknown_not_sequential()
     test_a_conditional_write_to_a_fixed_element_says_every_iteration_writes_it()
+    test_a_scatter_through_an_index_array_still_asks_for_no_repeated_values()
     test_a_read_of_what_earlier_iterations_write_is_named_as_such()
     test_only_the_loop_that_shares_the_accumulator_is_a_reduction()
     test_the_header_lists_every_reduction_of_a_loop()
