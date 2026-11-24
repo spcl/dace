@@ -1,18 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """The machine-global build cache must stay bounded.
 
-A PCH entry is ~110 MB. Without eviction a long-lived session that keeps producing fresh
-signatures -- a corpus sweep, a flag search -- fills its filesystem. These pin that :func:`~dace.codegen.build_cache.prune`
+Its default root is ``/dev/shm``, i.e. RAM, and a PCH entry is ~110 MB. Without eviction a
+long-lived session that keeps producing fresh signatures -- a corpus sweep, a flag search --
+fills it and the machine runs out of memory. These pin that :func:`~dace.codegen.build_cache.prune`
 bounds it and evicts by LAST USE, not by creation order.
 """
 
 import os
-import tempfile
-from unittest import mock
 
 import pytest
 
-from dace.codegen import build_cache, compiler
+from dace.codegen import build_cache
 
 
 def make_entry(root, name, kilobytes, atime):
@@ -31,8 +30,8 @@ def test_budget_honours_env_override(tmp_path, monkeypatch):
 
 
 def test_budget_is_a_fraction_of_the_filesystem(tmp_path, monkeypatch):
-    """With no override the budget tracks the backing filesystem, so a small disk gets a small cache
-    rather than the same constant a large node would get."""
+    """With no override the budget tracks the backing filesystem, so /dev/shm on a small machine
+    gets a small cache rather than the same constant a large node would get."""
     monkeypatch.delenv("DACE_BUILD_CACHE_MAX_MB", raising=False)
     stat = os.statvfs(str(tmp_path))
     assert build_cache.budget(str(tmp_path)) == int(stat.f_blocks * stat.f_frsize * build_cache.CACHE_FRACTION)
@@ -98,17 +97,6 @@ def test_prune_on_missing_root_is_silent(tmp_path):
     root = os.path.join(str(tmp_path), "never-created")
     build_cache.prune(root)
     assert not os.path.exists(root)
-
-
-def test_the_default_cache_root_is_on_disk_not_in_ram():
-    """Without ``DACE_BUILD_CACHE_DIR`` both cache roots sit in the user cache folder: ``/dev/shm`` and a tmpfs
-    ``/tmp`` are RAM the builds themselves need."""
-    with tempfile.TemporaryDirectory() as home:
-        with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": home}):
-            os.environ.pop("DACE_BUILD_CACHE_DIR", None)
-            expected = os.path.join(home, "dace", "build_cache")
-            assert build_cache.cache_root("pch") == os.path.join(expected, "pch")
-            assert compiler.build_cache_root() == expected
 
 
 if __name__ == "__main__":

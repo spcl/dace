@@ -14,12 +14,12 @@ SDFG pays neither cost. Both caches are advisory: a stale or mismatched PCH is i
 compiler, and a stale configure seed is simply re-derived by CMake, so a cache miss or a bad
 entry can only cost speed, never correctness.
 
-The cache lives on disk in the user cache directory (``$XDG_CACHE_HOME/dace/build_cache``, else
-``~/.cache/dace/build_cache``), never in RAM: ``/dev/shm`` and a tmpfs ``/tmp`` share the machine's memory with the
-builds. Where ``$HOME`` is a slow network file system (HPC nodes), point ``DACE_BUILD_CACHE_DIR`` at a fast local
-folder.
+The cache lives in RAM (``/dev/shm``) by default. On HPC nodes the user cache dir is usually
+NFS-backed ``$HOME``, and re-reading a ~100 MB PCH over NFS for every translation unit costs more
+than the PCH saves. Override the root with ``DACE_BUILD_CACHE_DIR``.
 """
 
+import getpass
 import hashlib
 import os
 import re
@@ -31,20 +31,25 @@ import shutil
 PCH_HEADER = "dace/dace.h"
 
 
-def default_root() -> str:
-    """The per-user cache folder on disk: ``$XDG_CACHE_HOME/dace/build_cache``, else ``~/.cache/dace/build_cache``."""
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
-    return os.path.join(base, "dace", "build_cache")
-
-
 def cache_root(kind: str) -> str:
-    """Root directory for one cache ``kind``: ``DACE_BUILD_CACHE_DIR`` when set, else :func:`default_root`."""
-    return os.path.join(os.environ.get("DACE_BUILD_CACHE_DIR") or default_root(), kind)
+    """Root directory for one cache ``kind``, RAM-backed when possible.
+
+    Per-user, because ``/dev/shm`` is shared by everyone on the node and the entries are written
+    with the creating user's ownership.
+    """
+    root = os.environ.get("DACE_BUILD_CACHE_DIR")
+    if not root:
+        if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK):
+            root = os.path.join("/dev/shm", f"dace_build_cache_{getpass.getuser()}")
+        else:
+            root = os.path.expanduser("~/.cache/dace/build_cache")
+    return os.path.join(root, kind)
 
 
 #: Share of the backing filesystem one cache kind may occupy before its least-recently-used
-#: entries are evicted. A fraction rather than a constant because the backing filesystem's size varies
-#: by machine: the same constant that is negligible on a large node would swallow a laptop. Override the resulting budget with ``DACE_BUILD_CACHE_MAX_MB``.
+#: entries are evicted. A fraction rather than a constant because the default root is ``/dev/shm``,
+#: whose size tracks the node's RAM: the same constant that is negligible on a 512 GB node would
+#: swallow a laptop. Override the resulting budget with ``DACE_BUILD_CACHE_MAX_MB``.
 CACHE_FRACTION = 0.25
 
 #: Budget when the filesystem cannot be measured. Two PCH entries' worth -- small enough that an

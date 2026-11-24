@@ -232,17 +232,22 @@ CACHES_SUPPORTED = os.name != "nt"
 
 #: Last-resort cache location inside the build folder. Prefixed so it cannot collide with the
 #: per-SDFG folders next to it, which are named after the SDFG.
+BUILD_CACHE_FOLDER = "__dace_build_cache"
 
 
 def build_cache_root() -> str:
     """Directory holding the machine-global build caches, shared by every SDFG.
 
-    All advisory: a miss costs speed, never correctness. On disk, never in RAM (``/dev/shm`` or a tmpfs ``/tmp``):
-    ``DACE_BUILD_CACHE_DIR/dace_build_cache_<user>`` when set, else :func:`build_cache.default_root`.
+    All advisory: a miss costs speed, never correctness. RAM-backed when possible, since on HPC
+    nodes the temp directory is often a shared file system where re-reading a large precompiled
+    header costs more than it saves.
     """
     root = os.environ.get("DACE_BUILD_CACHE_DIR")
     if not root:
-        return build_cache.default_root()
+        usable = (c for c in ("/dev/shm", tempfile.gettempdir()) if os.path.isdir(c) and os.access(c, os.W_OK))
+        root = next(usable, None)
+        if root is None:
+            return os.path.join(Config.get("default_build_folder"), BUILD_CACHE_FOLDER)
     return os.path.join(root, f"dace_build_cache_{getpass.getuser()}")
 
 
