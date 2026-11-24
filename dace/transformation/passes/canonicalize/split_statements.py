@@ -6,7 +6,7 @@ from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from types import ModuleType
-from typing import Any
+from typing import Any, NamedTuple
 
 import sympy
 
@@ -687,20 +687,210 @@ def splittable_loop_states(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) 
         return None
     if states_touch_view(states, sdfg.arrays):
         return None
+    return states if clonable_counter(loop, sdfg, index) else None
+
+
+def clonable_counter(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> bool:
+    """Whether every clone of ``loop`` sweeps the same iterations: bounds from symbols alone, and a counter nothing
+    outside reads."""
     if not loop.loop_variable or not loop.init_statement:
-        return None
+        return False
     if any(s in sdfg.arrays for s in loop.loop_condition.get_free_symbols()):
-        return None
+        return False
     init = loop_analysis.get_init_assignment(loop)
     if init is None or loop.loop_variable in symbolic.free_symbols_and_functions(init):
-        return None
+        return False
     # The outlining exports a counter read outside as an output every clone would have to write.
+    return not used_outside(loop.loop_variable, loop, sdfg, index)
+
+
+def used_outside(name: str, loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> bool:
     use_sites, descriptor_symbols = index.use_sites()
-    if loop_analysis.counter_used_outside_loop(
-        loop.loop_variable, loop, sdfg, use_sites, descriptor_symbols, index.rebinding_loops()
-    ):
+    return loop_analysis.counter_used_outside_loop(
+        name, loop, sdfg, use_sites, descriptor_symbols, index.rebinding_loops()
+    )
+
+
+class Access(NamedTuple):
+    """One access of a guarded body: the site it happens at (body order), its container and subset."""
+
+    site: int
+    data: str
+    subset: subsets.Subset | None
+
+
+class GuardedBody(NamedTuple):
+    """What :func:`guarded_body` reads off a loop body of states and guarded branches."""
+
+    #: per output, its stores
+    stores: dict[str, list[Access]]
+    #: per output, the reads its stores' dataflow makes
+    cone_reads: dict[str, list[Access]]
+    #: reads of conditions and interstate edges, which every clone repeats
+    control_reads: list[Access]
+
+
+def chain_sites(region: ControlFlowRegion) -> list[tuple[Any, ControlFlowRegion]] | None:
+    """``(site, region)`` for the blocks and interstate edges of ``region`` in execution order, descending into every
+    branch; ``None`` unless every region is a chain of unconditional edges holding only states and conditional
+    blocks."""
+    from dace.sdfg import utils as sdutil
+
+    if any(len(region.out_edges(b)) > 1 for b in region.nodes()):
         return None
-    return states
+    if any(not e.data.is_unconditional() for e in region.edges()):
+        return None
+    sites: list[tuple[Any, ControlFlowRegion]] = []
+    for block in sdutil.dfs_topological_sort(region, [region.start_block]):
+        if isinstance(block, SDFGState):
+            sites.append((block, region))
+        elif isinstance(block, ConditionalBlock):
+            sites.append((block, region))
+            for branch in block.sub_regions():
+                inner = chain_sites(branch)
+                if inner is None:
+                    return None
+                sites.extend(inner)
+        else:
+            return None
+        sites.extend((e, region) for e in region.out_edges(block))
+    return sites
+
+
+def within(region: Any, outer: ControlFlowRegion) -> bool:
+    while region is not None and region is not outer:
+        region = region.parent_graph
+    return region is outer
+
+
+def branch_conditions(block: ConditionalBlock) -> list[properties.CodeBlock]:
+    return [cond for cond, branch in block.branches if cond is not None]
+
+
+def site_reads(site: Any, arrays: dict[str, dt.Data]) -> list[Memlet]:
+    """The container reads of an interstate edge or of a conditional block's conditions."""
+    from dace.sdfg.sdfg import memlets_in_ast
+
+    if isinstance(site, ConditionalBlock):
+        return [
+            m for cond in branch_conditions(site) for m in memlets_in_ast(cond.code[0], arrays, include_scalars=True)
+        ]
+    return site.data.get_read_memlets(arrays, include_scalars=True)
+
+
+def cone_reads(state: SDFGState, store: nodes.AccessNode, site: int, local: dict[str, None]) -> list[Access] | None:
+    """The reads feeding ``store`` within ``state``; ``None`` when a loop-local temporary on the way is read before
+    this state writes it (it would carry a value between iterations)."""
+    found = []
+    seen = {store}
+    stack = [e.src for e in producer_edges(state, store)]
+    while stack:
+        node = stack.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        if isinstance(node, nodes.AccessNode):
+            if node.data in local:
+                if not producer_edges(state, node):
+                    return None
+            else:
+                found.extend(
+                    Access(site, node.data, e.data.get_src_subset(e, state)) for e in value_edges(state.out_edges(node))
+                )
+        stack.extend(e.src for e in producer_edges(state, node))
+    return found
+
+
+def guarded_body(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> GuardedBody | None:
+    """The accesses of a loop body that holds a guarded branch, when each clone can recompute what its statement
+    needs: states and conditional blocks only, plain dataflow, symbols each iteration assigns before it reads them
+    and nothing after the loop reads; ``None`` otherwise."""
+    sites = chain_sites(loop)
+    if sites is None or not any(isinstance(site, ConditionalBlock) for site, region in sites):
+        return None
+    states = [site for site, region in sites if isinstance(site, SDFGState)]
+    body_nodes = [n for state in states for n in state.nodes()]
+    if any(isinstance(n, nodes.NestedSDFG) or is_opaque_code(n, sdfg) for n in body_nodes):
+        return None
+    if states_touch_view(states, sdfg.arrays) or not clonable_counter(loop, sdfg, index):
+        return None
+    local = index.local_transients(loop)
+    assigned = loop_assigned(loop)
+    body = GuardedBody({}, {}, [])
+    # symbol -> (site, region) of its one assignment
+    assigned_at: dict[str, tuple[int, ControlFlowRegion]] = {}
+    for position, (site, region) in enumerate(sites):
+        if isinstance(site, SDFGState):
+            read_names = {str(sym) for sym in site.free_symbols}
+        elif isinstance(site, ConditionalBlock):
+            read_names = {str(sym) for cond in branch_conditions(site) for sym in cond.get_free_symbols()}
+        else:
+            read_names = set(site.data.read_symbols())
+        # A symbol read where its iteration's assignment may not have run holds an earlier iteration's value
+        if any(name not in assigned_at or not within(region, assigned_at[name][1]) for name in read_names & assigned):
+            return None
+        if isinstance(site, SDFGState):
+            for node in site.data_nodes():
+                stores = producer_edges(site, node)
+                if not stores or node.data in local:
+                    continue
+                if any(e.data.wcr is not None for e in stores):
+                    return None
+                body.stores.setdefault(node.data, []).extend(
+                    Access(position, node.data, e.data.get_dst_subset(e, site)) for e in stores
+                )
+                reads = cone_reads(site, node, position, local)
+                if reads is None:
+                    return None
+                body.cone_reads.setdefault(node.data, []).extend(reads)
+            continue
+        reads = site_reads(site, sdfg.arrays)
+        if any(m.data in local for m in reads):
+            return None
+        body.control_reads.extend(Access(position, m.data, m.subset) for m in reads)
+        if not isinstance(site, ConditionalBlock):
+            for name in site.data.assignments:
+                if name in assigned_at or used_outside(name, loop, sdfg, index):
+                    return None
+                assigned_at[name] = (position, region)
+    return body
+
+
+def loop_assigned(loop: LoopRegion) -> set[str]:
+    return {name for e in loop.all_interstate_edges() for name in e.data.assignments}
+
+
+def guarded_groups(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> list[dict[str, None]] | None:
+    """One group per output of a loop body with a guarded branch, in an order the clones may run one after the other,
+    or ``None``. A clone repeats every guard and every symbol assignment, which is what expands a scalar temporary
+    per statement; an output another clone reads must be read at the one element it stores, in the same iteration,
+    either before every store of it (that clone runs first) or after every store (that clone runs after)."""
+    body = guarded_body(loop, sdfg, index)
+    if body is None or len(body.stores) < 2:
+        return None
+    outputs = sorted(body.stores, key=lambda name: min(a.site for a in body.stores[name]))
+    after: list[dict[int, None]] = [{} for name in outputs]
+    for writer, name in enumerate(outputs):
+        stores = body.stores[name]
+        for reader, other in enumerate(outputs):
+            if reader == writer:
+                continue
+            reads = [a for a in body.control_reads + body.cone_reads[other] if a.data == name]
+            if not reads:
+                continue
+            if not iteration_distinct([a.subset for a in stores], loop.loop_variable):
+                return None
+            if any({access_offset(r.subset, w.subset) for w in stores} != {0} for r in reads):
+                return None
+            first, last = min(a.site for a in stores), max(a.site for a in stores)
+            if all(r.site < first for r in reads):
+                after[reader][writer] = None
+            elif all(r.site > last for r in reads):
+                after[writer][reader] = None
+            else:
+                return None
+    order = topological_group_order(after)
+    return None if order is None else [{outputs[i]: None} for i in order]
 
 
 def body_reads_and_writes(states: list[SDFGState], local: Any) -> tuple[dict[str, None], dict[str, None]] | None:
@@ -980,7 +1170,8 @@ class SplitStatements(ppl.Pass):
         """``(groups, ordered)`` for the loop, or ``None`` to refuse -- computed WITHOUT touching it."""
         states = splittable_loop_states(loop, sdfg, index)
         if states is None:
-            return None
+            guarded = guarded_groups(loop, sdfg, index)
+            return None if guarded is None else (guarded, True)
         local = index.local_transients(loop)
         accesses = body_reads_and_writes(states, local)
         if accesses is None:
