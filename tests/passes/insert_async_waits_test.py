@@ -20,7 +20,10 @@ from tests.passes.multiple_buffering.multiple_buffering_tma_test import tma_tile
 
 @contextlib.contextmanager
 def hopper():
-    with dace.config.set_temporary("compiler", "cuda", "cuda_arch", value="90"):
+    with (
+        dace.config.set_temporary("compiler", "cuda", "backend", value="cuda"),
+        dace.config.set_temporary("compiler", "cuda", "cuda_arch", value="90"),
+    ):
         yield
 
 

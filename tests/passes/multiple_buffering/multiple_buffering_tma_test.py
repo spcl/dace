@@ -38,7 +38,10 @@ ASYNCHRONOUS = [True, False]
 @contextlib.contextmanager
 def hopper(implementation: str = "legacy"):
     """Accept the TMA expansion without a Hopper GPU and select the CUDA backend."""
-    with dace.config.set_temporary("compiler", "cuda", "cuda_arch", value="90"):
+    with (
+        dace.config.set_temporary("compiler", "cuda", "backend", value="cuda"),
+        dace.config.set_temporary("compiler", "cuda", "cuda_arch", value="90"),
+    ):
         with dace.config.set_temporary("compiler", "cuda", "implementation", value=implementation):
             yield
 

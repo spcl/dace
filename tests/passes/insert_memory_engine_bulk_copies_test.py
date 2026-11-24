@@ -74,7 +74,9 @@ def _assert_libnode_implementation(sdfg, none=False):
 def _insert(sdfg):
     """Run ``InsertMemoryEngineBulkCopies`` (and the passes it depends on); return its result."""
     # A pipeline that changed nothing returns ``None`` instead of its results
-    results = ppl.Pipeline([InsertMemoryEngineBulkCopies()]).apply_pass(sdfg, {})
+    # The pass targets the CUDA backend; pin it so a HIP-only machine does not auto-select HIP and refuse
+    with dace.config.set_temporary("compiler", "cuda", "backend", value="cuda"):
+        results = ppl.Pipeline([InsertMemoryEngineBulkCopies()]).apply_pass(sdfg, {})
     return (results or {}).get("InsertMemoryEngineBulkCopies")
 
 
@@ -113,7 +115,8 @@ def test_insert_kernel_copy(load):
     assert _count_copy_nodes(sdfg) == 1
     _assert_libnode_implementation(sdfg)
     sdfg.validate()
-    sdfg.expand_library_nodes()
+    with dace.config.set_temporary("compiler", "cuda", "backend", value="cuda"):
+        sdfg.expand_library_nodes()
     sdfg.validate()
 
 
@@ -239,7 +242,8 @@ def test_insert_multiple_copies_same_kernel():
     assert _insert(sdfg) == 2
     _assert_no_other_subset(sdfg)
     _assert_libnode_implementation(sdfg)
-    sdfg.expand_library_nodes()
+    with dace.config.set_temporary("compiler", "cuda", "backend", value="cuda"):
+        sdfg.expand_library_nodes()
     sdfg.validate()
 
 
@@ -485,7 +489,10 @@ def _tasklet_labels(sdfg):
 def test_preprocess_pipeline_inserts_memory_engine_copies(kernel):
     """With ``memory_engine_copies``, the experimental GPU preprocessing selects and expands the memory engine."""
     sdfg, _, is_load = _tma_kernel_without_implementation(kernel)
-    with dace.config.set_temporary("compiler", "cuda", "cuda_arch", value="90"):
+    with (
+        dace.config.set_temporary("compiler", "cuda", "backend", value="cuda"),
+        dace.config.set_temporary("compiler", "cuda", "cuda_arch", value="90"),
+    ):
         GPUCodegenPreprocessPipeline(memory_engine_copies=True).apply_pass(sdfg, {})
     assert _count_copy_nodes(sdfg) == 0
     labels = _tasklet_labels(sdfg)
@@ -497,7 +504,10 @@ def test_preprocess_pipeline_inserts_memory_engine_copies(kernel):
 def test_preprocess_pipeline_memory_engine_copies_disabled():
     """By default (``compiler.cuda.memory_engine_copies`` is off) the memory engine is not selected."""
     sdfg, _, _ = _tma_kernel_without_implementation("transpose")
-    with dace.config.set_temporary("compiler", "cuda", "cuda_arch", value="90"):
+    with (
+        dace.config.set_temporary("compiler", "cuda", "backend", value="cuda"),
+        dace.config.set_temporary("compiler", "cuda", "cuda_arch", value="90"),
+    ):
         GPUCodegenPreprocessPipeline().apply_pass(sdfg, {})
     assert not any(label.startswith("tma_copy_tma") for label in _tasklet_labels(sdfg))
 
@@ -509,6 +519,7 @@ def test_codegen_selects_memory_engine_copies(kernel):
     for enabled in (True, False):
         sdfg, _, _ = _tma_kernel_without_implementation(kernel)
         with (
+            dace.config.set_temporary("compiler", "cuda", "backend", value="cuda"),
             dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"),
             dace.config.set_temporary("compiler", "cuda", "memory_engine_copies", value=enabled),
         ):
