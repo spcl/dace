@@ -760,7 +760,9 @@ def write_refusal(
         # race another iteration's write.
         dst_subset = in_closed_form(e.data.get_dst_subset(e, state) if exact is None else exact, closed_forms)
         ranges = None if ctx is None else ctx.invariants.check_range
-        if not (dst_subset and _check_range(dst_subset, a, itersym, b, step, end - start, ranges)):
+        # A container a caller vouched for (``contract_arrays``: a solver proof that no two iterations store alike) is not refused
+        vouched = lift is not None and dn.data in lift.contract_arrays
+        if not vouched and not (dst_subset and _check_range(dst_subset, a, itersym, b, step, end - start, ranges)):
             return (
                 Refusal.DYNAMIC_WRITE,
                 f"dynamic write to {dn.data} is not indexed by the iteration variable - dst_subset={dst_subset}",
