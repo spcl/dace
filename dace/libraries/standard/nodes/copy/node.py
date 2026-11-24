@@ -5,7 +5,11 @@ from typing import TYPE_CHECKING
 
 from dace import dtypes, library, nodes, properties
 from dace.libraries.standard.helper import CPU_RESIDENT_STORAGES, CURRENT_STREAM_NAME
-from dace.libraries.standard.nodes.copy.common import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
+from dace.libraries.standard.nodes.copy.common import (
+    INPUT_CONNECTOR_NAME,
+    MEMORY_ENGINE_BARRIER_INPUT_NAME,
+    OUTPUT_CONNECTOR_NAME,
+)
 
 if TYPE_CHECKING:
     pass
@@ -19,7 +23,10 @@ class CopyLibraryNode(nodes.LibraryNode):
     ``MemcpyCUDA1D``/``2D`` (``cudaMemcpyAsync``/``cudaMemcpy2DAsync``), ``MemcpyCUDANDStrided``
     (Sequential map of ``cudaMemcpyAsync``), ``SharedMemoryCollective`` (block-collective
     ``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D`` or ``dace::CopyND`` fallback +
-    optional ``__syncthreads()`` barriers controlled by ``sync``).
+    optional ``__syncthreads()`` barriers controlled by ``sync``), ``MemoryEngineBulk``
+    (block-collective TMA copy between ``GPU_Global`` and ``GPU_Shared`` on compute capability
+    9.0+, leading ``__syncthreads()`` controlled by ``sync``, loads are asynchronous when
+    ``asynchronous`` is set and ``InsertAsyncWaits`` placed their wait).
 
     Does NOT accept dynamic (Scalar) input connectors -- subset expressions must use symbols
     already in scope at construction time, so the auto selector reasons purely from static
@@ -40,9 +47,18 @@ class CopyLibraryNode(nodes.LibraryNode):
         desc="Emit __syncthreads() barriers around the SharedMemoryCollective copy (default True).",
     )
 
-    def __init__(self, name, *args, sync=True, **kwargs):
+    asynchronous = properties.Property(
+        dtype=bool,
+        default=True,
+        category="Scheduling",
+        desc="Let a MemoryEngineBulk load only issue the copy; ``InsertAsyncWaits`` places the wait before the "
+        "first reader. Stores and other implementations ignore it, and so does a load whose wait was not placed.",
+    )
+
+    def __init__(self, name, *args, sync=True, asynchronous=True, **kwargs):
         super().__init__(name, *args, inputs={INPUT_CONNECTOR_NAME}, outputs={OUTPUT_CONNECTOR_NAME}, **kwargs)
         self.sync = sync
+        self.asynchronous = asynchronous
 
     def src_storage(self, state) -> dtypes.StorageType:
         """Storage of the array feeding ``_cpy_in``, or ``Default`` if unwired.
@@ -92,7 +108,8 @@ class CopyLibraryNode(nodes.LibraryNode):
         out_subset = oe.data.subset
         out_name = oe.src_conn
 
-        reserved = {INPUT_CONNECTOR_NAME, CURRENT_STREAM_NAME}
+        # The mbarrier of an asynchronous memory engine copy is wired by ``InsertAsyncWaits``
+        reserved = {INPUT_CONNECTOR_NAME, CURRENT_STREAM_NAME, MEMORY_ENGINE_BARRIER_INPUT_NAME}
         extra = [ie.dst_conn for ie in state.in_edges(self) if ie.dst_conn not in reserved and not ie.data.is_empty()]
         if extra:
             raise ValueError(

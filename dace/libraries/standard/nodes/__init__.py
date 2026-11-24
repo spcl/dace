@@ -7,6 +7,7 @@ from .cshift import CShift, ShiftDirection
 from .fill import FillLibraryNode
 from .gearbox import Gearbox
 from .mask_reduction import AllNode, AnyNode, CountLibraryNode
+from .memory_engine_wait import MemoryEngineWait
 from .merge_node import MergeLibraryNode
 from .norm2 import Norm2
 from .reduce import Reduce

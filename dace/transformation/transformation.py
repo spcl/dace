@@ -769,6 +769,9 @@ class ExpandTransformation(PatternTransformation):
         expansion.instrument = node.instrument
 
         expansion.environments = copy.copy({a.full_class_path() for a in type(self).environments})
+        # A node without edges (e.g., a standalone barrier) would otherwise only be added by the edges moved below
+        if expansion not in state.nodes():
+            state.add_node(expansion)
         sdutil.change_edge_dest(state, node, expansion)
         sdutil.change_edge_src(state, node, expansion)
         state.remove_node(node)

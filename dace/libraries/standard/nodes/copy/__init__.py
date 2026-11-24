@@ -9,6 +9,7 @@ from dace.libraries.standard.nodes.copy.expansions import (
     ExpandMemcpyCUDA1D,
     ExpandMemcpyCUDA2D,
     ExpandMemcpyCUDANDStrided,
+    ExpandMemoryEngineBulk,
     ExpandSharedMemoryCollective,
     ExpandTasklet,
 )
