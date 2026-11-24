@@ -9,10 +9,11 @@ SDFG of ``nproma``/``nlev`` maps -- Which maps those are is named by the caller,
 import itertools
 
 import dace.transformation.passes.offloading.offloading_helpers as helpers
-from dace import symbolic
+from dace import dtypes, symbolic
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver, is_written
+from dace.transformation.passes.cpu_specialization.demote_level_maps import holds_maps
 from dace.transformation.passes.offloading.taskloop import is_computation, sdfg_only_launches
 
 #: What a caller may pass as ``host_maps``:
@@ -83,13 +84,19 @@ def is_host_map(
 
     A map the caller NAMED is a host map whatever the structure looks like -- a caller who names a
     map has looked at the kernel and these rules have not -- except where the lowering could not be
-    emitted at all (:func:`body_extents_depend_on_entry`).
+    emitted at all (:func:`body_extents_depend_on_entry`). A map a pass made ``Sequential`` before the
+    offload, around maps, is named the same way: a host loop, the maps inside it the kernels (ICON's
+    ``jb`` over its small number of blocks).
 
     ``auto`` adds the only other reason a map is kept on the host: a scope that launches work
     rather than doing any of its own. ``callback_names`` is ``sdfg``'s
     :func:`~dace.transformation.passes.offloading.offloading_helpers.callback_symbol_names`.
     """
-    named = entry in pinned_entries or entry.map.label in pinned_labels
+    named = (
+        entry in pinned_entries
+        or entry.map.label in pinned_labels
+        or (entry.map.schedule == dtypes.ScheduleType.Sequential and holds_maps(state, entry))
+    )
     if named or auto:
         if body_extents_depend_on_entry(entry, scope_children):
             return False

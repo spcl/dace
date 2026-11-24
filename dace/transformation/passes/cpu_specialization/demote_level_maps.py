@@ -24,7 +24,8 @@ one (:func:`plane_is_more_contiguous`), so the offload launches the plane maps, 
 once per level.
 """
 
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Iterable
 from typing import NamedTuple
 
 from dace import SDFG, dtypes, symbolic
@@ -274,6 +275,78 @@ def demote_uncoalesced_level_maps(sdfg: SDFG) -> int:
     :returns: how many maps were demoted.
     """
     return demote_level_maps(sdfg, plane_is_more_contiguous, relift_planeless=True)
+
+
+#: ICON's block counts and block-index tables (``p_patch_nblks_c``, ``p_patch_cells_end_block``): small by default.
+SMALL_BY_DEFAULT = re.compile(r"(^|_)nblks(_|$)|_(start|end)_block$")
+
+
+def small_names(sdfg: SDFG, declared: Iterable[str] = ()) -> set[str]:
+    """``declared`` (symbols and containers whose values are small), the ``SMALL`` symbols of ``sdfg``, the names
+    :data:`SMALL_BY_DEFAULT` matches, and every symbol whose every interstate assignment reads only such names, the
+    indices of an element read aside: ``i_endblk = end_block[k]`` is small when ``end_block`` is."""
+    known = sdfg.symbols.keys() | sdfg.arrays.keys()
+    small = set(declared) | set(sdfg.facts().small) | {name for name in known if SMALL_BY_DEFAULT.search(name)}
+    values: dict[str, list[str]] = {}
+    for edge in sdfg.all_interstate_edges():
+        for name, value in edge.data.assignments.items():
+            values.setdefault(name, []).append(value)
+    changed = bool(small)
+    while changed:
+        changed = False
+        for name, assigned in values.items():
+            if name not in small and all(read_names(value, known) <= small for value in assigned):
+                small.add(name)
+                changed = True
+    return small
+
+
+def read_names(value: str, known: set[str]) -> set[str]:
+    """The symbols and containers ``value`` reads, the subscripts of its element reads left out."""
+    while True:
+        stripped = re.sub(r"\[[^\[\]]*\]", "", value)
+        if stripped == value:
+            break
+        value = stripped
+    return set(re.findall(r"[A-Za-z_]\w*", value)) & known
+
+
+#: Why a map over a small extent runs sequentially on the host, for a CPF reader.
+SMALL_EXTENT_HINT = (
+    "parallel -- generated as sequential: small dimension ({names}), so the maps inside run as the GPU kernels"
+)
+
+
+def holds_maps(state: SDFGState, entry: nodes.MapEntry) -> bool:
+    """Whether a map is in the scope of ``entry``, nested SDFGs included."""
+    for node in state.scope_subgraph(entry, include_entry=False, include_exit=False).nodes():
+        if isinstance(node, nodes.MapEntry):
+            return True
+        if isinstance(node, nodes.NestedSDFG) and any(
+            isinstance(inner, nodes.MapEntry) for inner, parent in node.sdfg.all_nodes_recursive()
+        ):
+            return True
+    return False
+
+
+def small_maps(sdfg: SDFG, small: set[str]) -> list[nodes.MapEntry]:
+    """The top-level maps of ``sdfg``'s own states that hold maps and whose every extent names only ``small`` symbols
+    (``jb`` over the blocks), each given the reason it will run sequentially: a GPU offload keeps them on the host and
+    launches the maps inside them, not a kernel of a few threads that walks whole columns. A small map with no map
+    inside stays the kernel: its blocks are all the parallelism there is."""
+    found = []
+    for state in sdfg.states():
+        for entry in state.scope_children()[None]:
+            if not isinstance(entry, nodes.MapEntry) or not holds_maps(state, entry):
+                continue
+            extents = [
+                {str(s) for s in symbolic.pystr_to_symbolic(size).free_symbols} for size in entry.map.range.size()
+            ]
+            if all(names and names <= small for names in extents):
+                names = sorted(set().union(*extents))
+                entry.specialization_hint = SMALL_EXTENT_HINT.format(names=", ".join(names))
+                found.append(entry)
+    return found
 
 
 def demote_level_maps(sdfg: SDFG, pays: Callable[[str, list[Plane]], bool], relift_planeless: bool = False) -> int:
