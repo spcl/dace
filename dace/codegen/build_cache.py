@@ -52,6 +52,10 @@ def cache_root(kind: str) -> str:
 #: swallow a laptop. Override the resulting budget with ``DACE_BUILD_CACHE_MAX_MB``.
 CACHE_FRACTION = 0.25
 
+#: Most bytes one cache kind occupies without an override, about twenty PCH entries: a quarter of a 512 GB
+#: node's ``/dev/shm`` would hold 128 GB of RAM per kind.
+MAX_BUDGET = 2 * 1024**3
+
 #: Budget when the filesystem cannot be measured. Two PCH entries' worth -- small enough that an
 #: unmeasurable root can never be the thing that fills a disk.
 FALLBACK_BUDGET = 256 * 1024**2
@@ -89,7 +93,7 @@ def budget(root: str) -> int:
             pass
     try:
         stat = os.statvfs(root)
-        return int(stat.f_blocks * stat.f_frsize * CACHE_FRACTION)
+        return min(int(stat.f_blocks * stat.f_frsize * CACHE_FRACTION), MAX_BUDGET)
     except OSError:
         return FALLBACK_BUDGET
 
