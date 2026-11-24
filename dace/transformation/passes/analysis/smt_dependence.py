@@ -922,7 +922,12 @@ def find_conflict_witness(
                 conflict += held_range
     quantified = sorted(set(computed) & reads.keys())
     # What the caller knows of the parameters' values: a loop runs only under them
-    domain += facts.symbol_axioms(set(params)) if facts is not None and params else []
+    # Only relations among symbols: one that names an array element would make the array another unknown of the query
+    for axiom in facts.symbol_axioms(set(params)) if facts is not None and params else ():
+        named: dict[str, list[Any]] = {}
+        selects(axiom, named)
+        if not named:
+            domain.append(axiom)
     solver = bounded_solver(rlimit)
     domain += in_bounds
     solver.add(*domain, *conflict, *(required(z3).Int(name) >= 1 for name in sorted(sizes)))
