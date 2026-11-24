@@ -27,8 +27,9 @@ import pytest
 
 import dace
 from dace import cpf_lowering
-from dace.codegen.cpf import CONTRACT_LINES, render
+from dace.codegen.cpf import CONTRACT_KINDS, CONTRACT_LINES, render
 from dace.codegen.targets.experimental_cpu import map_hint
+from dace.cpf_lowering import LoopClass
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.nodes.scan import PARALLEL_SCAN_HINT, SEQUENTIAL_SCAN_HINT, Scan, ScanOp
 from dace.properties import CodeBlock
@@ -89,7 +90,7 @@ def test_the_rendering_states_which_verdicts_are_settled_and_which_are_open():
     """Proven verdicts need no more reasoning, so the head of the unit says so once, before any loop."""
     lines = render(scaling_sdfg("cpf_contract")).code.splitlines()
     # A unit of parallel loops explains the parallel class only: no line for a class it does not use
-    assert lines[1:5] == [CONTRACT_LINES[0], *CONTRACT_LINES[1:3], CONTRACT_LINES[-1]], lines[:8]
+    assert lines[1:6] == [CONTRACT_LINES[0], *CONTRACT_KINDS[LoopClass.PARALLEL], CONTRACT_LINES[-1]], lines[:8]
 
 
 def test_a_map_hint_is_rendered_one_comment_line_per_line():

@@ -10,7 +10,7 @@ import re
 import dace
 from dace import cpf_lowering
 from dace.codegen import cpf_summary
-from dace.codegen.cpf import CONTRACT_LINES, render
+from dace.codegen.cpf import CONTRACT_KINDS, render
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
 from tests.codegen.cpf.test_specialization_hints import carried_sdfg, named, scaling_sdfg
 
@@ -184,7 +184,11 @@ def test_the_proven_line_keeps_the_format_the_bench_parses():
 def test_the_legend_explains_only_the_classes_the_unit_uses():
     """s2233: the header explained ``unknown`` loops in a unit that has none."""
     code = named(carried_sdfg("cpf_audit_legend"))
-    assert CONTRACT_LINES[3] in code and CONTRACT_LINES[4] not in code, code
+    sequential, unknown = (
+        CONTRACT_KINDS[cpf_lowering.LoopClass.SEQUENTIAL][0],
+        CONTRACT_KINDS[cpf_lowering.LoopClass.UNKNOWN][0],
+    )
+    assert sequential in code and unknown not in code, code
 
 
 def test_only_unknown_loops_are_open():
