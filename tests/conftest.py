@@ -399,5 +399,9 @@ def described_gpu_target(request):
         return
     from dace.config import set_temporary  # Imported late: collection must not depend on importing dace.
 
-    with set_temporary("compiler", "cuda", "device_multiprocessors", value=304):
+    # Pin the CUDA backend too: on an AMD host the auto backend is HIP, and generation-only tests expect CUDA code
+    with (
+        set_temporary("compiler", "cuda", "device_multiprocessors", value=304),
+        set_temporary("compiler", "cuda", "backend", value="cuda"),
+    ):
         yield
