@@ -845,6 +845,10 @@ class NormalizeWCR(ppl.Pass):
             if inner is None:
                 continue
             priv_desc = self.partial_descriptor(inner)
+            # The copy-back writes the whole partial into the edge's subset: a whole-array connector written through a
+            # one-element edge (CloudSC's ``tendency_loc_t[jk, jl]`` under a jm map) would overflow the target.
+            if symbolic.equal(priv_desc.total_size, e.data.subset.num_elements()) is not True:
+                continue
             if isinstance(src, nodes.NestedSDFG) and self.folds_into_multi_element_connector(src, src_conn, priv_desc):
                 continue
             # A partial sized by a symbol this SDFG does not define (a triangular ``i + 1`` extent) would leak it.

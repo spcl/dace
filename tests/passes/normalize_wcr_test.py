@@ -857,6 +857,52 @@ def test_a_sum_folded_in_both_branches_starts_from_its_identity():
     assert np.allclose(out[0], np.where(b > 0.5, b, 2.0 * b).sum())
 
 
+def whole_array_connector_one_element_edge() -> dace.SDFG:
+    """CloudSC's clv shape: a map over ``s, i, j`` calls a nested SDFG whose ``T`` connector is the whole ``(N, M)``
+    array, but which writes one element ``T[i, j]``; the outer edge names that element with a WCR."""
+    N, M, S = (dace.symbol(name) for name in "NMS")
+    inner = dace.SDFG("accumulate_one_element")
+    inner.add_array("a", [S, N, M], dace.float64)
+    inner.add_array("T", [N, M], dace.float64)
+    inner.add_symbol("s", dace.int64)
+    inner.add_symbol("i", dace.int64)
+    inner.add_symbol("j", dace.int64)
+    # Under a branch, as CloudSC's ``if iphase(jm) == 1``: the accumulation check reads only top-level states
+    guard = ConditionalBlock("guard")
+    inner.add_node(guard, is_start_block=True)
+    taken = ControlFlowRegion("taken", sdfg=inner)
+    guard.add_branch(CodeBlock("s >= 0"), taken)
+    body = taken.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("add", {"x"}, {"y"}, "y = x")
+    body.add_edge(body.add_read("a"), None, tasklet, "x", dace.Memlet("a[s, i, j]"))
+    # A plain write inside, the accumulation on the outer edge only: CloudSC's body once branch normalization gated it
+    body.add_edge(tasklet, "y", body.add_write("T"), None, dace.Memlet("T[i, j]"))
+
+    sdfg = dace.SDFG("whole_array_connector_one_element_edge")
+    sdfg.add_array("A", [S, N, M], dace.float64)
+    sdfg.add_array("T", [N, M], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("over_s_i_j", {"s": "0:S", "i": "0:N", "j": "0:M"})
+    call = state.add_nested_sdfg(
+        inner, {"a": None}, {"T": None}, {"s": "s", "i": "i", "j": "j", "N": "N", "M": "M", "S": "S"}
+    )
+    state.add_memlet_path(state.add_read("A"), entry, call, dst_conn="a", memlet=dace.Memlet("A[0:S, 0:N, 0:M]"))
+    state.add_memlet_path(
+        call, exit_node, state.add_write("T"), src_conn="T", memlet=dace.Memlet("T[i, j]", wcr="lambda p, q: p + q")
+    )
+    return sdfg
+
+
+def test_a_whole_array_connector_written_through_one_element_keeps_its_wcr():
+    """The partial would mirror the whole ``(N, M)`` connector and copy all of it into the one element the edge names,
+    writing past the end of ``T`` (CloudSC's heap overflow under the vectorizer, AddressSanitizer: heap-buffer-overflow in
+    ``copy__wcr_priv_loop_body_tendency_loc_t_to_tendency_loc_t``). The pass leaves the edge alone."""
+    sdfg = whole_array_connector_one_element_edge()
+    NormalizeWCR().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert not any(name.startswith("_wcr_priv_") for name in sdfg.arrays), list(sdfg.arrays)
+
+
 if __name__ == "__main__":
     import sys
 
@@ -870,3 +916,4 @@ if __name__ == "__main__":
     test_a_read_write_element_shared_by_an_outer_map_keeps_its_wcr()
     test_a_seed_keeps_the_value_a_caller_wrote_into_its_transient()
     test_a_sum_folded_in_both_branches_starts_from_its_identity()
+    test_a_whole_array_connector_written_through_one_element_keeps_its_wcr()
