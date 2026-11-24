@@ -35,6 +35,7 @@ What CPF refuses, it refuses loudly -- see :func:`prepare`, and the standalone p
 kernel would still compile and still produce numbers, just not the SDFG's.
 """
 
+import ast
 import contextlib
 import copy
 import dataclasses
@@ -50,7 +51,7 @@ from typing import NamedTuple
 
 from dace import cpf_lowering, dtypes, subsets, symbolic, tile_functions
 from dace import data as dt
-from dace.codegen import codegen, cpf_compact
+from dace.codegen import codegen, cpf_compact, cpf_summary
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config, set_temporary
 from dace.libraries.blas.nodes.gemm import Gemm
@@ -61,9 +62,13 @@ from dace.library import get_environment
 from dace.memlet import Memlet
 from dace.optionals import required
 from dace.ordered import OrderedSet
+from dace.properties import CodeBlock
 from dace.sdfg import SDFG, SDFGState, memlet_utils, nodes
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation.dataflow.fuse_identical_connectors import FuseIdenticalConnectors
+from dace.transformation.dataflow.prune_connectors import PruneConnectors
 from dace.transformation.dataflow.tasklet_fusion import TaskletFusion
 from dace.transformation.dataflow.trivial_map_elimination import TrivialMapElimination
 from dace.transformation.passes.analysis.analysis import has_wcr_in_edge
@@ -72,6 +77,7 @@ from dace.transformation.passes.canonicalize.finalize import blas_addresses
 from dace.transformation.passes.readable_names import ReadableNames
 from dace.transformation.passes.scalar_fission import AccessIndex, MustDefinition, SubsetAccesses, edge_subset
 from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
+from dace.transformation.passes.scatter_conflict_guard import names_are_free_symbols
 
 #: The storage types CPF can render, as an ALLOWLIST. Ordinary host memory, plain locals and Arm SVE
 #: registers (``arm_sve.h`` is a system header of every aarch64 compiler), and nothing else:
@@ -205,7 +211,12 @@ LIBRARY_NODE_DESCRIPTIONS: dict[str, str] = {
     "MemoryEngineWait": "memory engine wait: every thread waits on an mbarrier until the TMA copies it tracks are done",
     "Sync": "sync: barrier among the threads of a warp, block or grid, or a host wait for a stream or the device",
     "Scatter": "MPI_Scatter: distribute from the root to every rank",
-    "ScatterConflictCheck": "scatter conflict check: detect indices written more than once",
+    "ScatterConflictCheck": (
+        "scatter conflict check: detect indices written more than once.\n"
+        "The check reads the index array twice and writes and reads one tag per element,\n"
+        "which costs more than a scatter that only copies. When the inputs guarantee unique\n"
+        "indices, the parallel branch alone is correct and the check can be removed."
+    ),
     "Send": "MPI_Send: blocking send",
     "Sort": "sort: stable ascending sort (or argsort) of every row along an axis, NaN last",
     "Solve": "solve the linear system A @ X = B",
@@ -883,7 +894,8 @@ class RealTaskletFusion(TaskletFusion):
     """:class:`TaskletFusion` over a ``float64`` intermediate only. A narrower one rounds or truncates its value
     (``float``: an fp32 kernel's ``x * 2.0`` is computed in double, then rounded; ``int`` truncates), so folding it
     into its reader would change the result; a complex one leaves a call such as ``exp`` whose argument the C printer
-    can no longer type, so it cannot choose ``cexp`` (fft_1d)."""
+    can no longer type, so it cannot choose ``cexp`` (fft_1d). A narrower producer stored into the ``float64`` is
+    folded under a ``double`` cast, the conversion the store did."""
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         if self.data.desc(sdfg).dtype != dtypes.float64:
@@ -895,6 +907,50 @@ class RealTaskletFusion(TaskletFusion):
                 if not edge.data.is_empty() and edge.data.subset.num_elements() != 1:
                     return False
         return super().can_be_applied(graph, expr_index, sdfg, permissive)
+
+    def apply(self, graph: SDFGState, sdfg: SDFG) -> None:
+        # The store into the float64 scalar converted the producer's value: an int64 ``n`` folded into ``t1 / t2``
+        # divides as integers. Keep that conversion as a cast unless the expression is already double.
+        t1 = self.t1
+        doubles = OrderedSet(
+            e.dst_conn
+            for e in graph.in_edges(t1)
+            if not e.data.is_empty() and sdfg.arrays[e.data.data].dtype == dtypes.float64
+        )
+        if t1.language == dtypes.Language.Python:
+            target, value = t1.code.code[0].targets[0], t1.code.code[0].value
+            if not is_double_expression(value, doubles):
+                t1.code = CodeBlock(f"{ast.unparse(target)} = dace.float64({ast.unparse(value)})")
+        else:
+            lhs, rhs = t1.code.as_string.strip().rstrip(";").split("=", 1)
+            t1.code = CodeBlock(f"{lhs.strip()} = (double)({rhs.strip()});", dtypes.Language.CPP)
+        super().apply(graph, sdfg)
+
+
+#: C math functions that return ``double`` for a ``double`` argument.
+DOUBLE_MATH_FUNCTIONS = ("exp", "log", "log2", "log10", "sqrt", "sin", "cos", "tan", "tanh", "sinh", "cosh", "pow")
+
+
+def is_double_expression(node: ast.AST, doubles: OrderedSet[str]) -> bool:
+    """Whether C evaluates ``node`` in ``double``, given the names in ``doubles`` are ``double``."""
+    if isinstance(node, ast.Name):
+        return node.id in doubles
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, float)
+    if isinstance(node, ast.UnaryOp):
+        return isinstance(node.op, (ast.USub, ast.UAdd)) and is_double_expression(node.operand, doubles)
+    if isinstance(node, ast.BinOp):
+        return isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div)) and (
+            is_double_expression(node.left, doubles) or is_double_expression(node.right, doubles)
+        )
+    if isinstance(node, ast.Call):
+        name = ast.unparse(node.func)
+        if name in ("dace.float64", "float64"):
+            return True
+        return name.rsplit(".", 1)[-1] in DOUBLE_MATH_FUNCTIONS and any(
+            is_double_expression(arg, doubles) for arg in node.args
+        )
+    return False
 
 
 class TeamSafeTrivialMapElimination(TrivialMapElimination):
@@ -909,6 +965,73 @@ class TeamSafeTrivialMapElimination(TrivialMapElimination):
         if whole and is_in_scope(sdfg, graph, entry, [dtypes.ScheduleType.CPU_Persistent]):
             return False
         return super().can_be_applied(graph, expr_index, sdfg, permissive)
+
+
+class EliminateTrivialMaps(ppl.Pass):
+    """:class:`TeamSafeTrivialMapElimination` on every map of the SDFG and its nested SDFGs, in one sweep per state.
+
+    ``apply_transformations_repeated`` matches the whole SDFG again after each application, so its cost grows with the
+    square of the maps (CloudSC: over 1,100 applications). A sweep visits each map once, in program order. The sweeps
+    repeat until one applies nothing: removing a top-level map inlines the nested SDFGs it frees, whose maps the next
+    sweep sees."""
+
+    CATEGORY: str = "Simplification"
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Scopes | ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Memlets
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return bool(modified & (ppl.Modifies.Scopes | ppl.Modifies.Nodes))
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict) -> int | None:
+        """Eliminate every trivial map the transformation accepts.
+
+        :param sdfg: the outermost SDFG, modified in place.
+        :param pipeline_results: unused.
+        :returns: how many maps were changed or removed, or ``None`` if none were."""
+        total = 0
+        while True:
+            applied = sum(sweep_trivial_maps(owner) for owner in list(sdfg.all_sdfgs_recursive()) if live(sdfg, owner))
+            if applied == 0:
+                return total or None
+            total += applied
+
+
+def live(top: SDFG, owner: SDFG) -> bool:
+    """Whether ``owner`` is still ``top`` or nested in it: an earlier elimination may have inlined it."""
+    while owner is not top:
+        nest, parent = owner.parent_nsdfg_node, owner.parent
+        if nest is None or parent is None or nest not in parent.nodes():
+            return False
+        owner = parent.sdfg
+    return True
+
+
+def sweep_trivial_maps(owner: SDFG) -> int:
+    """One sweep of :class:`TeamSafeTrivialMapElimination` over the maps of ``owner``'s own states, each map once."""
+    applied = 0
+    for state in list(owner.states()):
+        if state.parent_graph is None or state not in state.parent_graph.nodes():
+            continue  # an inlined nest replaced it; the next sweep sees what took its place
+        for entry in [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]:
+            if entry not in state.nodes():
+                continue  # removed with an enclosing map's scope
+            xform = TeamSafeTrivialMapElimination()
+            xform.setup_match(
+                owner,
+                state.parent_graph.cfg_id,
+                state.block_id,
+                {TrivialMapElimination.map_entry: state.node_id(entry)},
+                0,
+            )
+            if not xform.can_be_applied(state, 0, owner):
+                continue
+            with symbolic.serialization_symbol_dtypes(owner.symbols, inherit=True):
+                xform.apply(state, owner)
+            applied += 1
+            if state.parent_graph is None or state not in state.parent_graph.nodes():
+                break
+    return applied
 
 
 def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) -> tuple[str, ...]:
@@ -958,12 +1081,15 @@ def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) ->
     # assignment): fold it into its reader. Same operations in the same order.
     sdfg.apply_transformations_repeated(RealTaskletFusion, validate=False)
     # A one-trip loop outside a thread team is straight-line code.
-    sdfg.apply_transformations_repeated(TeamSafeTrivialMapElimination, validate=False)
+    EliminateTrivialMaps().apply_pass(sdfg, {})
     # Before the demotion: a buffer every call shares must reach the entry first.
     lift_persistent_transients(sdfg)
     # Only here, once canonicalization and specialization are over: the kinds and their proofs are CPF facts, and
     # no pass before rendering reads them. After the lift, which can make a loop's iterations share a buffer.
     AnnotateLoopKinds().apply_pass(sdfg, {})
+    # After the proofs, which must see each subset as precise as it is: a helper takes each array once (two
+    # pointers to one array alias). Merging renames connectors only, so no loop kind changes.
+    sdfg.apply_transformations_repeated([PruneConnectors, FuseIdenticalConnectors], validate=False)
     # Last change to the graph, after every pass that matches a name and before the persistent set is named.
     ReadableNames().apply_pass(sdfg, {})
     persistent = tuple(
@@ -987,7 +1113,8 @@ def lift_persistent_transients(sdfg: SDFG) -> int:
     share and read the rest uninitialized (bfs's ``frontier``); under a parallel map over tiles each tile
     allocated full-size buffers it used one tile of (cloudsc: 29 per tile). At the entry the buffer is one
     allocation again (:func:`plan_workspace`, :func:`dace.cpf_lowering.persistent_static`). A buffer whose
-    extent names a symbol the enclosing scopes define per iteration stays where it is.
+    extent names a symbol the caller sets (a map parameter, a loop iterator, an interstate assignment) stays where
+    it is: at the caller's entry that symbol has no value yet.
 
     :param sdfg: the SDFG to rewrite in place.
     :returns: how many buffers were lifted, counting each level of a climb.
@@ -1007,7 +1134,6 @@ def lift_persistent_transients(sdfg: SDFG) -> int:
         while scope is not None:
             scopes.append(scope)
             scope = state.entry_node(scope)
-        per_iteration = {param for entry in scopes for param in entry.map.params}
         symrepl = {
             symbolic.symbol(name): symbolic.pystr_to_symbolic(value)
             for name, value in node.symbol_mapping.items()
@@ -1025,7 +1151,9 @@ def lift_persistent_transients(sdfg: SDFG) -> int:
             outer_desc = copy.deepcopy(desc)
             if symrepl:
                 replace_properties_dict(outer_desc, {}, symrepl)
-            if {str(s) for s in outer_desc.free_symbols} & per_iteration:
+            # At the caller's entry the extent's symbols must hold their value: none a map, a loop or an
+            # interstate edge of the caller sets.
+            if not names_are_free_symbols(outer, {str(s) for s in outer_desc.free_symbols}):
                 continue
             accesses = [(st, n) for st in inner.states() for n in st.data_nodes() if n.data == name]
             read = MustDefinition(DefiniteWrites(name, inner.facts()), AccessIndex(inner)).exposed(inner)
@@ -1431,9 +1559,9 @@ def preamble(
     if OPENMP_CALL.search(code) and "<omp.h>" not in headers:
         headers = headers + ("<omp.h>",)
     vendors = cpf_lowering.vendor_libraries(environments, code, dialect)
-    lines = ["// Rendered by DaCe CPF (canonical parallel form): self-contained, no DaCe runtime."]
+    lines = [RENDERED_BY]
     if cpf_lowering.hint_detail() is cpf_lowering.HintDetail.PROOFS:
-        lines += CONTRACT_LINES
+        lines += contract_lines(code)
     lines += [f"#include {header}" for header in headers]
     vendor_headers = [
         header
@@ -1476,6 +1604,9 @@ def preamble(
     return "\n".join(lines)
 
 
+#: The first line of every unit.
+RENDERED_BY = "// Rendered by DaCe CPF (canonical parallel form): self-contained, no DaCe runtime."
+
 #: What the rendering already did and what is left, ahead of the per-loop verdicts it explains.
 CONTRACT_LINES = [
     "// Each loop comment gives the loop's class, then the reason.",
@@ -1485,6 +1616,21 @@ CONTRACT_LINES = [
     "//   unknown: not proven; runs in order; names what failed and what would make it parallel.",
     "// A proof covers one loop as written: fusing or reordering loops needs its own dependence check.",
 ]
+
+#: The lines of :data:`CONTRACT_LINES` that explain each class, by class; the first and the last explain all.
+CONTRACT_KINDS = {"parallel": CONTRACT_LINES[1:3], "sequential": CONTRACT_LINES[3:4], "unknown": CONTRACT_LINES[4:5]}
+
+
+def contract_lines(code: str) -> list[str]:
+    """:data:`CONTRACT_LINES` for the classes ``code``'s loop comments use: a legend line for a class no loop has
+    would explain nothing in the unit; none at all without a classed comment."""
+    used = OrderedSet(found.group(1) for found in re.finditer(r"// (parallel|sequential|unknown) -- ", code))
+    if not used:
+        return []
+    return [CONTRACT_LINES[0], *(line for kind in CONTRACT_KINDS if kind in used for line in CONTRACT_KINDS[kind])] + [
+        CONTRACT_LINES[-1]
+    ]
+
 
 #: What a finished rendering must not contain, and what each one means. CPF's own gate, checked on
 #: the emitted text before it is handed back: every one of these is a construct that BUILDS inside
@@ -1974,69 +2120,210 @@ def keep_target_path(code: str, x86: bool) -> str:
     return X86_BLOCK.sub(lambda m: m.group(1) if x86 else m.group(2), code)
 
 
-#: A connector block: ``{``, one generator connector local (``__out``, ``__inp``; declared and assigned, or
-#: initialized), comment and ``#pragma`` lines, one statement that reads it, ``}``. The generator emits it for an
-#: output a write-conflict resolution writes (``*(acc) = *(acc) + (__out)``, under ``#pragma omp atomic update`` when
-#: iterations may collide). Only a ``double`` one: a narrower local rounds or truncates its value (``float``, ``int``),
-#: so folding it in would change the result; widening to ``double`` first or inside the expression gives the same.
-CONNECTOR_BLOCK = re.compile(
-    r"^(?P<indent>[ \t]*)\{\n"
-    r"[ \t]*double (?P<name>__(?:out|inp)\w*)(?:;\n[ \t]*(?P=name) = | = )(?P<value>[^;\n]+);\n"
-    r"(?P<between>(?:[ \t]*(?://[^\n]*|#pragma[^\n]*)\n)*)"
-    r"[ \t]*(?P<use>[^;\n{}#/]+;)\n"
-    r"(?P=indent)\}\n",
-    re.MULTILINE,
+#: A generator connector local of a tasklet block (``__in1``, ``__inp``, ``__out``, the pointer view ``__arr``):
+#: ``T __in1 = v;`` or ``T __out;``, and the assignment ``__out = v;``.
+CONNECTOR_DECL = re.compile(
+    r"(?P<type>(?:const )?[A-Za-z_][\w:<>, ]*?(?:\*+ ?(?:restrict |__restrict__ )?)?) ?"
+    r"(?P<name>__(?:in|out|arr)\w*|_(?:in|out)_\w+)(?: = (?P<value>.+))?;"
 )
+CONNECTOR_SET = re.compile(r"(?P<name>__(?:in|out|arr)\w*|_(?:in|out)_\w+) = (?P<value>.+);")
+#: A literal or one access to a container (``x``, ``x[e]``, ``*(x)``, ``*(&x)``, ``*(x + e)``).
+FLOAT_LITERAL = re.compile(r"\d+\.\d*(?:[eE][-+]?\d+)?")
+INT_LITERAL = re.compile(r"\d+")
+ACCESS = re.compile(r"\*\(&?(?P<pointer>\w+)(?: \+ .+)?\)|(?P<name>\w+)(?P<index>\[.+\])?")
+
+
+def closing_bracket(text: str, start: int) -> int | None:
+    """The position of the bracket closing the one at ``start`` of ``text``, ``(`` and ``[`` alike."""
+    depth = 0
+    for position in range(start, len(text)):
+        depth += {"(": 1, "[": 1, ")": -1, "]": -1}.get(text[position], 0)
+        if depth == 0:
+            return position
+    return None
 
 
 def one_group(expression: str) -> bool:
     """Whether ``expression`` is one parenthesized group, ``(a * b)`` but not ``(a) * (b)``."""
-    if not (expression.startswith("(") and expression.endswith(")")):
+    return expression.startswith("(") and closing_bracket(expression, 0) == len(expression) - 1
+
+
+def grouped(expression: str) -> str:
+    """``expression`` as one operand: parenthesized unless it already is one group or one word."""
+    return expression if one_group(expression) or re.fullmatch(r"\w+", expression) else f"({expression})"
+
+
+def known_type(expression: str, types: dict[str, str]) -> str | None:
+    """The C type of ``expression`` when it is a literal or one access to a container of ``types``, else ``None``."""
+    if FLOAT_LITERAL.fullmatch(expression):
+        return "double"
+    if INT_LITERAL.fullmatch(expression):
+        return "int"
+    access = ACCESS.fullmatch(expression)
+    if access is None:
+        return None
+    if access["pointer"] is not None:
+        return types.get(access["pointer"]) if closing_bracket(expression, 1) == len(expression) - 1 else None
+    if access["index"] is not None and closing_bracket(expression, len(access["name"])) != len(expression) - 1:
+        return None
+    return types.get(access["name"])
+
+
+def index_view(line: str, name: str, base: str, offset: str) -> str | None:
+    """``line`` with each ``name[e]`` of the view ``name = &base[offset]`` written ``base[offset + (e)]``, or
+    ``None`` when ``line`` uses ``name`` other than indexed."""
+    pieces: list[str] = []
+    position = 0
+    for found in re.finditer(rf"\b{name}\b", line):
+        closed = closing_bracket(line, found.end()) if line[found.end() : found.end() + 1] == "[" else None
+        if found.start() < position or closed is None:
+            return None
+        index = line[found.end() + 1 : closed]
+        index = offset if index == "0" else index if offset == "0" else f"{offset} + {grouped(index)}"
+        pieces += [line[position : found.start()], f"{base}[{index}]"]
+        position = closed + 1
+    return "".join(pieces) + line[position:]
+
+
+def substituted(line: str, name: str, ctype: str, value: str, types: dict[str, str]) -> str | None:
+    """``line`` with the connector local ``ctype name = value`` replaced by ``value``, or ``None`` when that could
+    change a result: the local converts ``value`` to its type, so the two must have one type, or the line must
+    store the local into a destination of that type (a ``double`` one may also accumulate it)."""
+    base = " ".join(re.sub(r"\bconst\b|\brestrict\b|\b__restrict__\b|\*", " ", ctype).split())
+    if "*" in ctype:
+        view = re.fullmatch(r"&(\w+)\[(.+)\]|(\w+)(?: \+ (.+))?", value)
+        if view is None or (view[1] is not None and closing_bracket(value, len(view[1]) + 1) != len(value) - 1):
+            return None
+        array, offset = (view[1], view[2]) if view[1] is not None else (view[3], view[4] or "0")
+        return index_view(line, name, array, offset) if types.get(array) == base else None
+    value_type = known_type(value, types)
+    word = re.compile(rf"\b{name}\b")
+    # Only a literal or a plain read may be repeated: anything else is evaluated once.
+    if len(word.findall(line)) != 1 and value_type is None:
+        return None
+    if value_type != base:
+        statement = line.strip()
+        stored = re.fullmatch(rf"(.+?) = {name};", statement)
+        updated = re.fullmatch(
+            rf"(.+?) = (?:\1 (?P<op>[-+*&|^]|&&|\|\|) \({name}\)|cpf_m(?:ax|in)_float64\(\1, {name}\));", statement
+        )
+        # A logical update reads only whether the value is zero, which no conversion changes.
+        integral = base != "double" and (
+            INT_LITERAL.fullmatch(value) is not None or (updated is not None and updated["op"] in ("&&", "||"))
+        )
+        if stored is not None:
+            if known_type(stored[1], types) != base:
+                return None
+        elif updated is None or known_type(updated[1], types) != base or not (base == "double" or integral):
+            return None
+    stored = re.fullmatch(rf"(\s*.+? = ){name};", line)
+    if stored is not None:
+        return f"{stored[1]}{value};"
+    operand = value if value_type is not None else grouped(value)
+    # A group of the local alone (not a call's or a cast's parentheses) takes the value's own.
+    line = re.sub(rf"(?<![\w)\]])\({name}\)", lambda found: operand, line)
+    return word.sub(lambda found: operand, line)
+
+
+def fold_local(lines: list[str], live: list[int], declared: int, types: dict[str, str], dead: OrderedSet[int]) -> bool:
+    """Fold the connector local declared on line ``declared`` into its one using line of the block ``live``."""
+    decl = CONNECTOR_DECL.fullmatch(lines[declared].strip())
+    if decl is None:
         return False
-    depth = 0
-    for position, char in enumerate(expression):
-        depth += {"(": 1, ")": -1}.get(char, 0)
-        if depth == 0 and position < len(expression) - 1:
+    name, value = decl["name"], decl["value"]
+    word = re.compile(rf"\b{name}\b")
+    mentions = [n for n in live if n != declared and word.search(lines[n])]
+    sets = [n for n in mentions if CONNECTOR_SET.fullmatch(lines[n].strip()) and lines[n].strip().startswith(name)]
+    if (value is None and len(sets) != 1) or (value is not None and sets):
+        return False
+    source = declared if value is not None else sets[0]
+    value = value if value is not None else CONNECTOR_SET.fullmatch(lines[source].strip())["value"]
+    uses = [n for n in mentions if n not in sets]
+    # A local nothing reads, of a value without a call, computes nothing.
+    if not uses and not re.search(r"\w\s*\(", value):
+        dead.update((declared, source))
+        return True
+    if len(uses) != 1 or uses[0] < source or word.search(value):
+        return False
+    use = uses[0]
+    read = OrderedSet(re.findall(r"\b\w+\b", value))
+    for n in live:
+        if not source < n < use:
+            continue
+        text = lines[n].strip()
+        local = CONNECTOR_DECL.fullmatch(text) or CONNECTOR_SET.fullmatch(text)
+        # Only comments, directives and other connector locals the value does not read stand between.
+        if not (text.startswith(("//", "#")) or (local is not None and local["name"] not in read)):
             return False
+        # An atomic update must not read its own target in the folded value.
+        target = re.match(r"[*(&\s]*(\w+)", lines[use])
+        if "omp atomic" in text and target is not None and target[1] in read:
+            return False
+    folded = substituted(lines[use], name, decl["type"], value, types)
+    if folded is None:
+        return False
+    lines[use] = folded
+    dead.update((declared, source))
     return True
 
 
-def collapse_connector_blocks(code: str) -> str:
-    """``code`` with each :data:`CONNECTOR_BLOCK` written as its one statement, the connector replaced by its value:
-    the same expression evaluated once, in the same place, without three lines an agent reads for nothing."""
+def collapse_connector_blocks(code: str, types: dict[str, str]) -> str:
+    """``code`` with each connector local of a tasklet block (:data:`CONNECTOR_DECL`) replaced by its value in the
+    one line that uses it, where :func:`substituted` finds that computes the same, and a block left declaring
+    nothing written without its braces: the same expressions in the same order, without lines an agent reads for
+    nothing.
 
-    def collapse(match: re.Match) -> str:
-        name, value, use = match.group("name"), match.group("value"), match.group("use")
-        word = re.compile(rf"\b{re.escape(name)}\b")
-        if word.search(value) or len(word.findall(use)) != 1:
-            return match.group(0)
-        indent = match.group("indent")
-        between = "".join(f"{indent}{line.strip()}\n" for line in match.group("between").splitlines())
-        assigned = re.fullmatch(rf"([^=]+) = {re.escape(name)};", use)
-        if assigned:
-            return f"{between}{indent}{assigned.group(1)} = {value};\n"
-        grouped = value if one_group(value) else f"({value})"
-        spelled = use.replace(f"({name})", grouped) if f"({name})" in use else word.sub(lambda found: grouped, use)
-        return f"{between}{indent}{spelled}\n"
+    :param types: the C type of each container and accumulator the block names, as the generator spells it.
+    """
+    lines = code.split("\n")
+    depth, pairs = brace_structure(lines)
+    dead: OrderedSet[int] = OrderedSet()
+    dedent: OrderedSet[int] = OrderedSet()
+    for opened, closed in pairs.items():
+        inner = list(range(opened + 1, closed))
+        flat = all(depth[n] == depth[opened] + 1 and not re.search(r"[{}]", lines[n]) for n in inner)
+        if not flat or not any(CONNECTOR_DECL.fullmatch(lines[n].strip()) for n in inner):
+            continue
+        changed = True
+        while changed:
+            live = [n for n in inner if n not in dead]
+            changed = any(fold_local(lines, live, n, types, dead) for n in live)
+        own = [lines[n].strip() for n in inner if n not in dead]
+        before = code_line(lines, opened - 1, -1)
+        if declares_nothing(own) and not before.startswith("#") and not before.endswith(")"):
+            dead.update((opened, closed))
+            dedent.update(inner)
+    return "\n".join(
+        line[4:] if n in dedent and line.startswith("    ") else line for n, line in enumerate(lines) if n not in dead
+    )
 
-    return CONNECTOR_BLOCK.sub(collapse, code)
+
+#: Headers a repeat of which does nothing, under any ``#if``: the include guard of ``<omp.h>`` is part of every
+#: implementation. A header like ``<assert.h>`` means something new on each inclusion, so only these qualify.
+IDEMPOTENT_INCLUDES = frozenset({"#include <omp.h>"})
 
 
 def drop_repeated_includes(code: str) -> str:
-    """``code`` without an ``#include`` line that repeats an earlier one outside any ``#if`` block: the frame
-    includes ``<omp.h>`` again below the preamble's, and a repeat is text an agent reads for nothing."""
+    """``code`` without an ``#include`` line that repeats one made earlier outside any ``#if`` block: the frame
+    includes ``<omp.h>`` again below the preamble's, and a repeat is text an agent reads for nothing. Inside an
+    ``#if`` block only a repeat of :data:`IDEMPOTENT_INCLUDES` goes (with the block, when that leaves it empty); a
+    header first included inside an ``#if`` block is conditional, so a later one is kept."""
     seen: set[str] = set()
     depth = 0
-    kept = []
+    kept: list[str] = []
     for line in code.split("\n"):
         stripped = line.strip()
         if stripped.startswith("#if"):
             depth += 1
         elif stripped.startswith("#endif"):
             depth -= 1
-        elif depth == 0 and stripped.startswith("#include"):
-            if stripped in seen:
+            # The block opened on the line kept last holds nothing now
+            if kept and kept[-1].strip().startswith("#if"):
+                kept.pop()
                 continue
+        elif stripped.startswith("#include") and stripped in seen and (depth == 0 or stripped in IDEMPOTENT_INCLUDES):
+            continue
+        elif depth == 0 and stripped.startswith("#include"):
             seen.add(stripped)
         kept.append(line)
     return "\n".join(kept)
@@ -2140,12 +2427,18 @@ def render_unit(
     code = drop_repeated_includes(
         keep_target_path(preamble(body, dialect, frame.environments) + body, renders_for_x86(isa))
     )
-    code = collapse_connector_blocks(code)
     names: tuple[tuple[str, str], ...] = ()
     if llm_friendly:
         entry_names = tuple(signature.order) if signature is not None else tuple(entry_arglist)
         compacted = cpf_compact.compact(code, prepared, {prepared.name, sdfg.name, *entry_names})
         code, names = compacted.code, tuple(sorted(compacted.names.items()))
+    if cpf_lowering.hint_detail() is cpf_lowering.HintDetail.PROOFS:
+        code = cpf_summary.with_summary(
+            cpf_summary.drop_missing_fusion_names(
+                cpf_summary.drop_inner_reductions(cpf_summary.drop_inner_privates(code))
+            ),
+            (CONTRACT_LINES[-1], RENDERED_BY),
+        )
     # The device unit repeats the frame's state struct, whose vendor handles and plans need their declarations.
     device_environments = (set(device.environments) | set(frame.environments)) if device is not None else set()
     device_code = preamble(device_body, dialect, device_environments) + device_body if device_body else ""

@@ -180,10 +180,6 @@ def test_a_band_stays_a_loop_and_mirrors_only_the_band():
     assert np.array_equal(X, want)
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
-
 def cuda_launch_dimensions(sdfg: dace.SDFG) -> list[str]:
     """The ``dim3(...)`` grid and block arguments of every kernel launch the CUDA unit emits."""
     dims: list[str] = []
@@ -286,3 +282,44 @@ def test_the_tiled_cuda_kernel_mirrors_every_size(source_upper, m):
     sdfg(X=got, M=m)
     assert np.allclose(got, _mirror(X, source_upper))
     assert np.allclose(got, got.T)
+
+
+def test_the_bounding_box_skips_rows_with_no_column():
+    """Rows ``M - 2`` and ``M - 1`` of ``for j in range(i + 2, M)`` are empty; clamped into the box, row ``M - 2``
+    copied ``X[M - 2, M - 1]`` onto ``X[M - 1, M - 2]``, an element the nest never writes."""
+    sdfg = dace.SDFG("sym_bbox_offset2")
+    sdfg.add_array("X", [M, M], dace.float64)
+    st = sdfg.add_state()
+    node = Symmetrize("sym", row_lo="0", row_hi="M", col_offset=2, col_hi="M", source_upper=True)
+    st.add_node(node)
+    st.add_edge(st.add_read("X"), None, node, "_in", dace.Memlet("X[0:M, 0:M]"))
+    st.add_edge(node, "_out", st.add_write("X"), None, dace.Memlet("X[0:M, 0:M]"))
+    node.implementation = "bounding_box"
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+
+    m = 9
+    X = np.random.default_rng(4).standard_normal((m, m))
+    want = X.copy()
+    for i in range(m):
+        for j in range(i + 2, m):
+            want[j, i] = want[i, j]
+    got = X.copy()
+    sdfg(X=got, M=m)
+    assert np.array_equal(got, want)
+
+
+if __name__ == "__main__":
+    test_node_expands_and_runs()
+    test_a_bound_only_the_nest_names_stays_declared()
+    test_lifts_and_parallelizes(symmetrize_upper, True)
+    test_lifts_and_parallelizes(symmetrize_lower, False)
+    test_cross_array_copy_not_lifted()
+    test_a_band_stays_a_loop_and_mirrors_only_the_band()
+    test_the_triangular_column_map_never_reaches_a_launch_dimension()
+    test_the_bounding_box_expansion_walks_a_rectangle_and_computes_the_same_mirror(True)
+    test_the_bounding_box_expansion_walks_a_rectangle_and_computes_the_same_mirror(False)
+    for upper in (True, False):
+        for size in (9, 32, 33, 64, 100):
+            test_the_tiled_cuda_kernel_mirrors_every_size(upper, size)
+    test_the_bounding_box_skips_rows_with_no_column()

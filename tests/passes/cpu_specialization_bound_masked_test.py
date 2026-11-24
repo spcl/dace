@@ -167,6 +167,47 @@ def test_fill_that_is_no_polynomial_is_no_index():
     assert index_polynomial(ast.parse("int64_t(i) // 2", mode="eval").body, "i") is None
 
 
+def slot_indexed_sum_sdfg():
+    """``out[slot] += (1.0 if slot < cnt[0] else 0.0) * x[0]``: every slot, masked or not, owns its element."""
+    sdfg = dace.SDFG("bound_masked_slot_indexed")
+    sdfg.add_array("cnt", [1], dace.int32)
+    sdfg.add_array("x", [1], dace.float64)
+    sdfg.add_array("out", [M], dace.float64)
+    sdfg.add_scalar("valid", dace.bool_, transient=True)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("slots", {"slot": "0:M"}, schedule=dace.ScheduleType.Sequential)
+    mask = state.add_tasklet("mask", {"c": None}, {"o": None}, "o = slot < c")
+    weigh = state.add_tasklet("weigh", {"v": None, "xi": None}, {"o": None}, "o = (1.0 if v else 0.0) * xi")
+    valid = state.add_access("valid")
+    state.add_memlet_path(state.add_read("cnt"), entry, mask, dst_conn="c", memlet=dace.Memlet("cnt[0]"))
+    state.add_memlet_path(state.add_read("x"), entry, weigh, dst_conn="xi", memlet=dace.Memlet("x[0]"))
+    state.add_edge(mask, "o", valid, None, dace.Memlet("valid[0]"))
+    state.add_edge(valid, None, weigh, "v", dace.Memlet("valid[0]"))
+    state.add_memlet_path(
+        weigh,
+        exit_node,
+        state.add_write("out"),
+        src_conn="o",
+        memlet=dace.Memlet("out[slot]", wcr="lambda a, b: a + b"),
+    )
+    sdfg.validate()
+    return sdfg
+
+
+def test_masked_sum_into_a_slot_indexed_element_refuses():
+    sdfg = slot_indexed_sum_sdfg()
+    assert BoundMaskedMaps().apply_pass(sdfg, {}) is None
+    assert not bounded(sdfg)
+    # As in the absorbed test: GCC must not fold ``0.0 * inf`` away under -fno-signed-zeros
+    args = dace.Config.get("compiler", "cpu", "args").replace("-fno-signed-zeros", "")
+    with dace.config.set_temporary("compiler", "cpu", "args", value=args):
+        compiled = sdfg.compile()
+    out = np.zeros(4)
+    compiled(cnt=np.array([1], dtype=np.int32), x=np.array([np.inf]), out=out, M=4)
+    # Slot 0 adds inf; each masked slot adds 0.0 * inf, NaN, to its own element
+    np.testing.assert_array_equal(out, [np.inf, np.nan, np.nan, np.nan])
+
+
 if __name__ == "__main__":
     test_absorbed_keeps_one_masked_slot()
     test_exact_zero_keeps_one_masked_slot()
@@ -175,3 +216,4 @@ if __name__ == "__main__":
     test_two_masks_bound_the_map_once()
     test_absorbed_test_picks_no_branch()
     test_fill_that_is_no_polynomial_is_no_index()
+    test_masked_sum_into_a_slot_indexed_element_refuses()

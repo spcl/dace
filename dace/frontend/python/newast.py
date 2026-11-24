@@ -1277,6 +1277,11 @@ def transient_python_renames(
     return renames
 
 
+def subscript_texts(node: ast.expr) -> set[str]:
+    """The source text of every subscript in ``node``."""
+    return {ast.unparse(n) for n in ast.walk(node) if isinstance(n, ast.Subscript)}
+
+
 class ProgramVisitor(ExtNodeVisitor):
     """A visitor that traverses a data-centric Python program AST and
     constructs an SDFG.
@@ -1351,6 +1356,8 @@ class ProgramVisitor(ExtNodeVisitor):
         map_symbols = map_symbols or set()
         self.map_symbols = set()
         self.map_symbols.update(map_symbols)
+        #: The inclusive ``(begin, end)`` of each enclosing map parameter, to prove a subscript in bounds.
+        self.index_ranges: dict[str, tuple[Any, Any]] = {}
 
         # Entry point to the program
         # self.program = None
@@ -1872,7 +1879,9 @@ class ProgramVisitor(ExtNodeVisitor):
             raise DaceSyntaxError(self, node, f"All arguments in primitive {node.name} must be annotated")
         return result
 
-    def _parse_subprogram(self, name, node, is_tasklet=False, extra_symbols=None, extra_map_symbols=None):
+    def parse_subprogram(
+        self, name, node, is_tasklet=False, extra_symbols=None, extra_map_symbols=None, extra_ranges=None
+    ):
         extra_symbols = extra_symbols or {}
         extra_map_symbols = extra_map_symbols or set()
         map_symbols = self.map_symbols.union(extra_map_symbols)
@@ -1895,6 +1904,7 @@ class ProgramVisitor(ExtNodeVisitor):
             annotated_types=self.annotated_types,
             closure=self.closure,
         )
+        pv.index_ranges = {**self.index_ranges, **(extra_ranges or {})}
         # A container reaching a subprogram is the caller's, so it is not the subprogram's to allocate.
         # A view has nothing to view in there, so it stands for the container it addresses.
         for aname, desc in pv.sdfg.arrays.items():
@@ -2032,7 +2042,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if dec.endswith("scope"):  # @dace.mapscope or @dace.consumescope
                 # TODO: Now that we return the nested for-loop symbols,
                 # can we use them for something here?
-                sdfg, inputs, outputs, _ = self._parse_subprogram(
+                sdfg, inputs, outputs, loop_symbols = self.parse_subprogram(
                     node.name,
                     node,
                     extra_symbols=self._symbols_from_params(params, map_inputs),
@@ -2042,7 +2052,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 name = f"{entry.label}_body"
                 # TODO: Now that we return the nested for-loop symbols,
                 # can we use them for something here?
-                sdfg, inputs, outputs, _ = self._parse_subprogram(
+                sdfg, inputs, outputs, loop_symbols = self.parse_subprogram(
                     name,
                     node,
                     True,
@@ -2837,11 +2847,14 @@ class ProgramVisitor(ExtNodeVisitor):
                 schedule=schedule,
             )
             # body = SDFG('MapBody')
-            body, inputs, outputs, symbols = self._parse_subprogram(
+            body, inputs, outputs, symbols = self.parse_subprogram(
                 self.name,
                 node,
                 extra_symbols=self._symbols_from_params(params, map_inputs),
                 extra_map_symbols=self._symbols_from_params(params, map_inputs),
+                extra_ranges={
+                    name: subsets.Range.from_string(rng)[0][:2] for name, rng in params if isinstance(rng, str)
+                },
             )
             nsdfg_node = state.add_nested_sdfg(body, inputs.keys(), outputs.keys(), debuginfo=self.current_lineinfo)
             self._add_nested_symbols(nsdfg_node)
@@ -2932,14 +2945,27 @@ class ProgramVisitor(ExtNodeVisitor):
             }
             self.inputs.update({k: (self.cfg_target, Memlet.from_array(k, v), []) for k, v in used_data_descs.items()})
 
-            _, first_subblock, _, _ = self._recursive_visit(
-                node.body,
-                loop_region.label,
-                node.lineno,
-                extra_symbols=extra_syms,
-                parent=loop_region,
-                unconnected_last_block=False,
-            )
+            # The counter's inclusive range proves a subscript by it in bounds (see :meth:`in_bounds`), as a map
+            #  parameter's does
+            enclosing_range = self.index_ranges.get(sym_name)
+            if variable is None and (step > 0) == True:
+                self.index_ranges[sym_name] = (start, stop - 1)
+            elif variable is None and (step < 0) == True:
+                self.index_ranges[sym_name] = (stop + 1, start)
+            try:
+                body_first, first_subblock, body_last, body_returns = self._recursive_visit(
+                    node.body,
+                    loop_region.label,
+                    node.lineno,
+                    extra_symbols=extra_syms,
+                    parent=loop_region,
+                    unconnected_last_block=False,
+                )
+            finally:
+                if enclosing_range is None:
+                    self.index_ranges.pop(sym_name, None)
+                else:
+                    self.index_ranges[sym_name] = enclosing_range
             loop_region.start_block = loop_region.node_id(first_subblock)
             self._connect_break_blocks(loop_region)
             if variable is None:
@@ -6179,11 +6205,68 @@ class ProgramVisitor(ExtNodeVisitor):
         return self._visit_op(node, node.left, node.right)
 
     def visit_BoolOp(self, node: ast.BoolOp):
+        # A subscript an earlier operand already read faults there first, so only new subscripts can need the guard
+        read = subscript_texts(node.values[0])
+        for value in node.values[1:]:
+            if self.may_fault(value, read):
+                return self.short_circuit(node)
+            read |= subscript_texts(value)
         last = node.values[0]
         # Syntax of BoolOp is a list of values, we parse left to right
         for i in range(1, len(node.values)):
             last = self._visit_op(node, last, node.values[i])
         return last
+
+    def may_fault(self, node: ast.expr, read: set[str]) -> bool:
+        """Whether evaluating ``node`` may read out of bounds: it subscripts an array at an index not provably inside
+        the array, and no earlier operand read (``read``, as source text) the same element. Only such an operand
+        needs the guard of :meth:`short_circuit`."""
+        return any(
+            isinstance(n, ast.Subscript) and ast.unparse(n) not in read and not self.in_bounds(n)
+            for n in ast.walk(node)
+        )
+
+    def in_bounds(self, node: ast.Subscript) -> bool:
+        """Whether every index of ``node`` is a constant or an enclosing map parameter inside its array's extent."""
+        if not isinstance(node.value, ast.Name):
+            return False
+        name = {**self.scope_vars, **self.variables}.get(node.value.id, node.value.id)
+        desc = {**self.scope_arrays, **self.sdfg.arrays}.get(name)
+        indices = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+        if desc is None or len(indices) != len(desc.shape):
+            return False
+        for index, extent in zip(indices, desc.shape):
+            if isinstance(index, ast.Constant) and isinstance(index.value, int):
+                begin = end = index.value
+            elif isinstance(index, ast.Name) and index.id in self.index_ranges:
+                begin, end = self.index_ranges[index.id]
+            else:
+                return False
+            facts = symbolic.Facts.none()
+            begin, end, extent = (sympy.sympify(value) for value in (begin, end, extent))
+            if not (
+                symbolic.provably_le(sympy.Integer(0), begin, facts) and symbolic.provably_le(end, extent - 1, facts)
+            ):
+                return False
+        return True
+
+    def short_circuit(self, node: ast.BoolOp) -> str:
+        """``a and b`` as ``t = a; if t: t = b`` (``or``: ``if not t``): an operand that reads data, such as
+        ``a[i]`` in ``i < n and a[i] != 0``, is read only when the operands before it leave the result open."""
+        flag, flag_descriptor = self.sdfg.add_scalar(
+            f"__bool_{node.lineno}", dtypes.bool_, transient=True, find_new_name=True
+        )
+        self.variables[flag] = flag
+        statements: list[ast.stmt] = [ast.Assign(targets=[ast.Name(id=flag, ctx=ast.Store())], value=node.values[0])]
+        for value in node.values[1:]:
+            test = ast.Name(id=flag, ctx=ast.Load())
+            if isinstance(node.op, ast.Or):
+                test = ast.UnaryOp(op=ast.Not(), operand=test)
+            assign = ast.Assign(targets=[ast.Name(id=flag, ctx=ast.Store())], value=value)
+            statements.append(ast.If(test=test, body=[assign], orelse=[]))
+        for statement in statements:
+            self.visit(ast.fix_missing_locations(ast.copy_location(statement, node)))
+        return flag
 
     def evaluated_operand(self, node: ast.AST):
         """The single value ``node`` evaluates to, raising on a tuple as the operand paths do."""
@@ -6202,7 +6285,7 @@ class ProgramVisitor(ExtNodeVisitor):
         the VALUES are handed to :meth:`_visit_op`, which takes either (``visit_BoolOp`` already
         does this with its accumulator).
 
-        The links are not short-circuited, exactly as ``and``/``or`` are not: an operand is a value
+        The links are not short-circuited (``and``/``or`` are, see :meth:`short_circuit`): an operand is a value
         in a dataflow graph, so evaluating one the chain would have skipped costs a read, never a
         side effect.
         """

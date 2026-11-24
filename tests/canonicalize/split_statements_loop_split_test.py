@@ -485,6 +485,37 @@ def test_three_groups_are_ordered_by_topological_sort():
     assert_matches_fused(sdfg, fused)
 
 
+@pytest.mark.parametrize("reversed_by", ["subscript", "stride"])
+def test_flow_dependence_through_reversed_iteration_runs_writer_first(reversed_by):
+    """``a[w(i)] = x[i] + 1; b[i] = a[w(i) + 1] * 2`` where ``w`` falls as the loop runs.
+
+    The read sits one element ABOVE the store, yet the previous iteration wrote it: by ``a[N - i]``
+    or by a loop stepping ``i`` down. Ordering by the element offset alone runs ``b`` first and
+    reads stale ``a``.
+    """
+    sdfg = dace.SDFG(f"flat_reversed_{reversed_by}")
+    for nm in ("a", "b", "x"):
+        sdfg.add_array(nm, [N], dace.float64)
+    if reversed_by == "subscript":
+        loop, store, load = LoopRegion("loop", "i < N", "i", "i = 2", "i = i + 1"), "a[N - i]", "a[N - i + 1]"
+    else:
+        loop, store, load = LoopRegion("loop", "i >= 1", "i", "i = N - 2", "i = i - 1"), "a[i]", "a[i + 1]"
+    sdfg.add_node(loop, is_start_block=True)
+    st = loop.add_state("body", is_start_block=True)
+    t_a = st.add_tasklet("_Add_", {"xx"}, {"out"}, "out = xx + 1.0")
+    st.add_edge(st.add_read("x"), None, t_a, "xx", dace.Memlet("x[i]"))
+    st.add_edge(t_a, "out", st.add_write("a"), None, dace.Memlet(store))
+    t_b = st.add_tasklet("_Mult_", {"aa"}, {"out"}, "out = aa * 2.0")
+    st.add_edge(st.add_read("a"), None, t_b, "aa", dace.Memlet(load))
+    st.add_edge(t_b, "out", st.add_write("b"), None, dace.Memlet("b[i]"))
+
+    fused = copy.deepcopy(sdfg)
+    if _split(sdfg):
+        assert [_written(sdfg, l) for l in _loops(sdfg)] == [["a"], ["b"]], "the writer of a must run first"
+    sdfg.validate()
+    assert_matches_fused(sdfg, fused)
+
+
 def test_elementwise_rmw_is_not_a_recurrence():
     """``a[i] = a[i] + x[i]`` beside ``e[i] = e[i-1] * y[i]`` -- only ``e`` carries.
 

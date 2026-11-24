@@ -91,19 +91,40 @@ def record_hint(entry: nodes.MapEntry, hint: str) -> None:
 def note_inner_axis_pair(
     producer: nodes.MapEntry, node: nodes.AccessNode, consumer: nodes.MapEntry, axes: list[str]
 ) -> None:
-    """Hint, on both maps, the fusion a loop-order change would allow: canon keeps the consumer's order (user ruling)."""
-    # No map label or intermediate name: the rendering shows neither, and the text is then the same for every
-    # intermediate of the pair, so it is recorded once.
+    """Hint, on both maps, the fusion a loop-order change would allow: canon keeps the consumer's order (user ruling).
+    Each note names the intermediates, which ``ReadableNames`` renames with the rest of the hint, and the loop on the
+    other side by what it does with them: a map has no name of its own in the rendering, and the other map's
+    parameters are renamed in its scope only. One note per map: a second intermediate of the pair joins the first."""
     order = ", ".join(axes + [p for p in consumer.map.params if p not in axes])
     own = ", ".join(producer.map.params)
-    alt = "fuse, the intermediate per iteration"
-    record_hint(
+    record_pair_note(
         consumer,
-        f"fusion: shares ({', '.join(axes)}) with an earlier loop at an inner axis; alt: reorder to ({order}), {alt}",
+        f"fusion: shares ({', '.join(axes)}) with the earlier loop that writes ",
+        f", at an inner axis; alt: reorder this loop to ({order}), fuse the two, and keep {{data}} per iteration",
+        node.data,
     )
-    record_hint(
-        producer, f"fusion: shares ({own}) with a later loop at an inner axis of it; alt: reorder that loop, {alt}"
+    record_pair_note(
+        producer,
+        f"fusion: shares ({own}) with the later loop that reads ",
+        ", at an inner axis of it; alt: reorder that loop to put them outermost, fuse the two, and keep {data} per "
+        "iteration",
+        node.data,
     )
+
+
+def record_pair_note(entry: nodes.MapEntry, lead: str, tail: str, data: str) -> None:
+    """Record ``lead + names + tail`` on ``entry``, ``{data}`` in ``tail`` the names too; a note with the same
+    ``lead`` already there gains ``data`` among its names."""
+    lines = (entry.specialization_hint or "").splitlines()
+    for number, line in enumerate(lines):
+        if line.startswith(lead):
+            names = line[len(lead) :].split(", at an inner axis")[0].split(" and ")
+            if data not in names:
+                joined = " and ".join([*names, data])
+                lines[number] = lead + joined + tail.replace("{data}", joined)
+            entry.specialization_hint = "\n".join(lines)
+            return
+    record_hint(entry, lead + data + tail.replace("{data}", data))
 
 
 @properties.make_properties

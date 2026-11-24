@@ -15,12 +15,26 @@ Only the readable-codegen preprocessing block runs this pass (see ``dace.codegen
 so the legacy generator is unaffected.
 """
 
+import re
+
 from dace import data as dt
 from dace.sdfg.sdfg import SDFG
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.pass_pipeline import Modifies
 
 RETURN_NAMESPACE = "__return"
+
+
+def rename_in_hints(sdfg: SDFG, old: str, new: str) -> None:
+    """Rename ``old`` to ``new`` in the loop and map labels of ``sdfg``: a label written before the rename would name
+    a container the rendered function does not have. Only a name before ``[``, ``;``, ``,``, ``:``, ``)``, `` and``
+    or the end is replaced, so a one-letter name never hits an English word."""
+    pattern = re.compile(rf"\b{re.escape(old)}\b(?=[\[;,:)]| and |$)")
+    blocks = [block for block in sdfg.all_control_flow_blocks(recursive=True) if block.sdfg is sdfg]
+    holders = [*blocks, *(node for state in sdfg.states() for node in state.nodes())]
+    for holder in holders:
+        if holder.specialization_hint:
+            holder.specialization_hint = pattern.sub(new, holder.specialization_hint)
 
 
 class CanonicalizeNestedIndexNames(ppl.Pass):
@@ -64,6 +78,7 @@ class CanonicalizeNestedIndexNames(ppl.Pass):
     def _rename_in_nested(self, sub: SDFG, old: str, new: str) -> None:
         # Rename the descriptor + every internal occurrence (memlets, access nodes).
         sub.replace_dict({old: new})
+        rename_in_hints(sub, old, new)
         # Fix the owning NestedSDFG node's connector + incident edges (by DaCe convention the outer-side
         # connector name equals the inner data name it binds).
         node = sub.parent_nsdfg_node

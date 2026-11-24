@@ -16,7 +16,12 @@ from dace.libraries.lapack import block as lapack_block
 from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock
 from dace.libraries.linalg.nodes.solve import restride
 from dace.libraries.linalg.nodes.transpose import Transpose
-from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES, call_scratch_lifetime, scratch_storage
+from dace.libraries.standard.helper import (
+    GPU_RESIDENT_STORAGES,
+    add_info_status,
+    call_scratch_lifetime,
+    scratch_storage,
+)
 from dace.transformation.transformation import ExpandTransformation
 
 #: The vendor GPU solvers. The branches below are about whether the factorization runs ON THE
@@ -61,9 +66,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     ain_arr = sdfg.add_array("_a", inp_shape, dtype=dtype, strides=inp_desc.strides)
     bout_arr = sdfg.add_array("_b", out_shape, dtype=dtype, strides=out_desc.strides)
     lifetime = call_scratch_lifetime(node, parent_state, parent_sdfg, *inp_shape)
-    info_arr = sdfg.add_array(
-        "_info", [1], dtype=dace.int32, transient=True, storage=scratch_storage(storage, lifetime), lifetime=lifetime
-    )
+    info_arr = add_info_status(sdfg, storage, lifetime, implementation)
     if implementation in GPU_SOLVERS:
         info_host_arr = sdfg.add_array(
             "_info_host",

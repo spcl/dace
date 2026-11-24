@@ -3,7 +3,7 @@ import functools
 from collections.abc import Iterator
 
 import dace
-from dace import config, data, dtypes
+from dace import config, cpf_lowering, data, dtypes
 from dace.codegen import exceptions as exc
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.instrumentation import InstrumentationProvider
@@ -223,6 +223,34 @@ def inline_host_nested_sdfgs(sdfg: SDFG, validate: bool = True) -> None:
             node.no_inline = False
 
 
+def share_root_constants(sdfg: SDFG) -> None:
+    """A host nested SDFG reads a root constant of the same name and value directly, as the root's own code does: the
+    argument that carried it becomes the nested SDFG's copy of that constant, which the unit declares once at file
+    scope (:func:`dace.codegen.targets.cpu.file_scope_constants`)."""
+    from dace.codegen.targets.cpu import same_constant
+    from dace.sdfg.scope import is_devicelevel_gpu
+
+    for nested in sdfg.all_sdfgs_recursive():
+        node, state = nested.parent_nsdfg_node, nested.parent
+        if node is None or is_devicelevel_gpu(state.sdfg, state, node):
+            continue
+        for edge in list(state.in_edges(node)):
+            name = edge.dst_conn
+            inner = nested.arrays.get(name)
+            if edge.data.data != name or inner is None or inner.transient or name in node.out_connectors:
+                continue
+            # The caller's own ``name`` is the root constant: the root itself, or a nest this sweep shared it with
+            shared, outer = sdfg.constants_prop.get(name), state.sdfg.constants_prop.get(name)
+            if shared is None or outer is None or not same_constant(outer, shared):
+                continue
+            if not same_constant((inner, shared[1]), shared):
+                continue
+            state.remove_memlet_path(edge)
+            node.remove_in_connector(name)
+            inner.transient = True
+            nested.constants_prop[name] = shared
+
+
 def apply_node_pattern_repeated(sdfg: SDFG, xform: "dace.transformation.transformation.PatternTransformation") -> None:
     """``sdfg.apply_transformations_repeated(xform)`` for a single-node pattern, without validation.
 
@@ -305,6 +333,11 @@ def lower_implicit_copies(sdfg: SDFG) -> None:
     from dace.codegen.python.dialects.cuda_tile_cpp import expand_outside_tile_kernels
 
     expand_outside_tile_kernels(sdfg, predicate=lambda n: isinstance(n, CopyLibraryNode))
+    if cpf_lowering.standalone():
+        from dace.transformation.dataflow.fuse_identical_connectors import FuseIdenticalConnectors
+
+        # A self-copy (q[5, :] -> q[0, :]) expands into a nest binding q twice; CPF renders one argument.
+        sdfg.apply_transformations_repeated([FuseIdenticalConnectors], validate=False)
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
@@ -520,6 +553,8 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
 
         # Unvalidated sweeps: the ``validate`` closing this branch checks the inlined SDFG once.
         inline_host_nested_sdfgs(sdfg, validate=False)
+        if cpf_lowering.standalone():
+            share_root_constants(sdfg)
         # A map whose body was one nested SDFG is a leaf now: its accumulation sits at its own exit
         if config.Config.get_bool("compiler", "cpu", "simd_maps"):
             MarkSIMDMaps().apply_pass(sdfg, {})

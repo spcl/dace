@@ -8,14 +8,33 @@ from typing import Any, NamedTuple
 import sympy
 
 from dace import SDFG, InterstateEdge, Memlet, symbolic
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg import tasklet_utils as tutil
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
 
-#: What a lifted segment loop is, for a CPF reader.
-SEGMENT_HINT = "parallel -- segment-confined: {var} touches only {pointer}[{var}] .. {pointer}[{var} + 1]"
+#: What a lifted segment loop is, for a CPF reader: what the proof covers (accesses to the arrays the loop writes; reads
+#: of the others are free) and the data facts the trapping checks before the loop rest on.
+SEGMENT_HINT = (
+    "parallel -- segment-confined: iteration {var} accesses the arrays the loop writes only at [{var}] or inside "
+    "[{pointer}[{var}], {pointer}[{var} + 1]), and the checks before the loop abort unless {checked}"
+)
+
+
+def segment_hint(var: str, proof: "Proof") -> str:
+    """:data:`SEGMENT_HINT` for ``proof``, naming every data fact its entry guard checks."""
+    checked = [f"{pointer} is nondecreasing" for pointer in sorted(OrderedSet([proof.pointer, *proof.secondary]))]
+    checked += [
+        f"{array}[{rows}[{var}] .. {rows}[{var} + 1]] lies inside the segment"
+        for array, rows in sorted(proof.index_facts)
+    ]
+    checked += [
+        f"the {array} entries of each member's {rows} row lie inside the segment"
+        for array, rows in sorted(proof.csr_facts)
+    ]
+    return SEGMENT_HINT.format(var=var, pointer=proof.pointer, checked=", ".join(checked))
 
 
 def load(text: str) -> tuple[str, str] | None:
@@ -420,15 +439,15 @@ class SegmentLoop:
             and constant_written(edge.src) == 0
         ]
 
-    def clears_precede_resets(self, counter: str, flag: str) -> bool:
-        """Every increment of ``counter`` follows a reset of it, with no clear of ``flag`` in between, in the
+    def clears_precede_resets(self, counter: str, flag: str | None) -> bool:
+        """Every increment of ``counter`` follows a reset of it, with no clear of ``flag`` (if any) in between, in the
         sequential order of the nearest region that holds both."""
         resets = [
             e
             for e in self.loop.all_interstate_edges()
             if counter in e.data.assignments and e.data.assignments[counter].strip() in ("0", "(0)")
         ]
-        clears = self.flag_clears(flag)
+        clears = self.flag_clears(flag) if flag is not None else []
         for increment in self.increments(counter):
             region, reset = nearest_reset(increment.src, resets)
             if region is None:
@@ -448,7 +467,8 @@ class SegmentLoop:
         return True
 
     def one_per_trip(self, counter: str, ranges, bounded: set[str]) -> bool:
-        """All increments of ``counter`` sit, once per trip, in one loop over ``0 .. n`` for a bounded ``n``."""
+        """All increments of ``counter`` sit, once per trip, in one loop over ``0 .. n`` for a bounded ``n``, after a
+        reset of ``counter`` in this iteration: a count carried in from an earlier iteration has no such bound."""
         increments = self.increments(counter)
         if not increments:
             return False
@@ -462,7 +482,9 @@ class SegmentLoop:
         if kind is None or kind.kind != "worklist" or kind.source not in bounded:
             return False
         # One increment per trip: no increment inside a loop nested in this one, and no path through two of them.
-        return len(increments) == 1 and innermost_loop(increments[0].src) is loop
+        if len(increments) != 1 or innermost_loop(increments[0].src) is not loop:
+            return False
+        return self.clears_precede_resets(counter, None)
 
 
 def constant_written(tasklet: nodes.Tasklet) -> int | None:
@@ -645,11 +667,16 @@ class SegmentConfinedLoops(ppl.Pass):
             proof = SegmentLoop(sdfg, region).prove()
             if proof is None:
                 continue
-            var, pointer = region.loop_variable, proof.pointer
+            var = region.loop_variable
             add_entry_guard(sdfg, region, proof)
+            before = OrderedSet(
+                id(node) for node, parent in sdfg.all_nodes_recursive() if isinstance(node, nodes.MapEntry)
+            )
             if ParallelizeLoops(propagate=False).parallelize_loop(sdfg, region, proven=True):
+                # The map this lift made, and only it; a note an earlier pass left on it stays below the class.
                 for node, parent in sdfg.all_nodes_recursive():
-                    if isinstance(node, nodes.MapEntry) and var in node.map.params:
-                        node.specialization_hint = SEGMENT_HINT.format(var=var, pointer=pointer)
+                    if isinstance(node, nodes.MapEntry) and id(node) not in before and var in node.map.params:
+                        hint = segment_hint(var, proof)
+                        node.specialization_hint = "\n".join(h for h in (hint, node.specialization_hint) if h)
                 lifted += 1
         return lifted or None

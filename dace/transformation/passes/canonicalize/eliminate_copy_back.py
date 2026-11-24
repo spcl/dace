@@ -69,12 +69,19 @@ def restate_connector(
     described.transient = False
     declare(node, parent, (str(sym) for sym in described.free_symbols))
     node.sdfg.arrays[connector] = described
-    for graph in node.sdfg.all_sdfgs_recursive():
-        for state in graph.states():
-            for edge in state.edges():
-                if edge.data.data == connector and isinstance(edge.data.subset, subsets.Range):
-                    edge.data.subset = lifted(edge.data.subset, subset, found)
-                    declare(node, parent, edge.data.subset.free_symbols)
+    # Only this level: ``restatable`` refused a deeper SDFG fed by ``connector``, so a deeper array of that name is
+    # another container.
+    for state in node.sdfg.states():
+        for edge in state.edges():
+            named = edge.data.data == connector
+            touches = any(isinstance(end, nodes.AccessNode) and end.data == connector for end in (edge.src, edge.dst))
+            if named and isinstance(edge.data.subset, subsets.Range):
+                edge.data.subset = lifted(edge.data.subset, subset, found)
+                declare(node, parent, edge.data.subset.free_symbols)
+            # A copy naming the other container indexes ``connector`` through ``other_subset``.
+            if touches and not named and isinstance(edge.data.other_subset, subsets.Range):
+                edge.data.other_subset = lifted(edge.data.other_subset, subset, found)
+                declare(node, parent, edge.data.other_subset.free_symbols)
 
 
 def declare(node: nodes.NestedSDFG, parent: SDFG, names) -> None:
@@ -173,6 +180,20 @@ def in_place(state: SDFGState, found: CopyBack) -> bool:
     return not any(isinstance(n, nodes.AccessNode) and n.data == target.data for n in inner.nodes())
 
 
+def restatable(state: SDFGState, found: CopyBack) -> bool:
+    """Whether a nested writer's connector can be restated as the target: a deeper nested SDFG fed by the connector
+    keeps the transient's descriptor, which then no longer matches, so that fold is refused."""
+    (value,) = [e for e in state.in_edges(found.transient) if not e.data.is_empty()]
+    for edge in state.in_edges(found.map_exit):
+        if edge.dst_conn != "IN_" + value.src_conn[4:] or not isinstance(edge.src, nodes.NestedSDFG):
+            continue
+        for inner in edge.src.sdfg.states():
+            for use in inner.edges():
+                if use.data.data == edge.src_conn and nodes.NestedSDFG in (type(use.src), type(use.dst)):
+                    return False
+    return True
+
+
 def eliminate(state: SDFGState, sdfg: SDFG, found: CopyBack, uses: Counter[str]) -> None:
     target, copy = found.copy.dst, found.copy
     subset = copy.data.get_dst_subset(copy, state)
@@ -218,7 +239,12 @@ class EliminateCopyBack(ppl.Pass):
                     if transient not in state.nodes():
                         continue
                     found = copy_back(state, sd, transient, uses)
-                    if found is not None and in_place(state, found) and ordering_moves(state, found):
+                    if (
+                        found is not None
+                        and in_place(state, found)
+                        and restatable(state, found)
+                        and ordering_moves(state, found)
+                    ):
                         eliminate(state, sd, found, uses)
                         count += 1
         return count or None

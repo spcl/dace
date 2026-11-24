@@ -857,5 +857,53 @@ def test_statements_that_only_look_like_lanes_stay(program):
     assert RerollUnrolledLoops().apply_pass(program.to_sdfg(simplify=True), {}) is None
 
 
+@dace.program
+def overlapping_lane_accumulators(a: dace.float64[N], c: dace.float64[1]):
+    s0 = 0.0
+    s1 = 0.0
+    s2 = 0.0
+    for i in range(0, N - 2, 2):
+        s0 = s0 + a[i]
+        s1 = s1 + a[i + 1]
+        s2 = s2 + a[i + 2]
+    c[0] = s0 + s1 + s2
+
+
+def test_overlapping_lane_accumulators_keep_their_count():
+    """Step 2 over lanes ``{0, 1, 2}``: every interior even ``a[i]`` is summed by two lanes, once per lane."""
+    n = 13
+    a = np.random.default_rng(31).random(n)
+    exp = sum(a[i] + a[i + 1] + a[i + 2] for i in range(0, n - 2, 2))
+    sdfg = overlapping_lane_accumulators.to_sdfg(simplify=True)
+    RerollUnrolledLoops().apply_pass(sdfg, {})
+    sdfg.validate()
+    c = np.zeros(1)
+    sdfg(a=a, c=c, N=n)
+    assert np.isclose(c[0], exp, rtol=_RTOL), f"got {c[0]} expected {exp}"
+
+
+def test_declined_scaled_iterator_loop_keeps_its_states():
+    """``a[2*i] = ...`` then ``b[2*i + 1] = ...`` in two states: the iterator unscales, no matcher accepts the
+    two different statements, and the body must keep both states."""
+    sdfg = dace.SDFG("declined_scaled_iterator")
+    for name in ("a", "b", "x", "y"):
+        sdfg.add_array(name, [2 * N], dace.float64)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    first = loop.add_state("first", is_start_block=True)
+    second = loop.add_state_after(first, "second")
+    for st, src, dst, sub, code in (
+        (first, "x", "a", "2*i", "out = inp * 2.0"),
+        (second, "y", "b", "2*i + 1", "out = inp + 1.0"),
+    ):
+        t = st.add_tasklet("t", {"inp"}, {"out"}, code)
+        st.add_edge(st.add_read(src), None, t, "inp", dace.Memlet(f"{src}[{sub}]"))
+        st.add_edge(t, "out", st.add_write(dst), None, dace.Memlet(f"{dst}[{sub}]"))
+    before = sdfg.hash_sdfg()
+    assert RerollUnrolledLoops().apply_pass(sdfg, {}) is None
+    assert len(loop.nodes()) == 2, "a declined re-roll must not leave the body states fused"
+    assert sdfg.hash_sdfg() == before
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

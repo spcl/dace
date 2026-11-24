@@ -213,44 +213,105 @@ def unit_offset(index: str, symbol: str) -> sympy.Basic | None:
     return None if sym in offset.free_symbols else offset
 
 
-def proves_range(index: str, extent: sympy.Basic, symbol: str, base: sympy.Basic, count: sympy.Basic) -> bool:
-    """z3: ``0 <= index < extent`` confines ``symbol`` to ``[base, base + count)`` for every other symbol."""
+def proves_range(
+    index: str,
+    extent: sympy.Basic,
+    symbol: str,
+    base: sympy.Basic,
+    count: sympy.Basic,
+    guard: str | None = None,
+    otherwise: str | None = None,
+) -> bool:
+    """z3: ``0 <= index < extent`` confines ``symbol`` to ``[base, base + count)`` for every other symbol. With
+    ``guard``, ``index`` is read where ``guard`` holds and ``otherwise`` where it fails."""
     if not smt_dependence.has_z3():
         return False
     z3 = smt_dependence.z3
     cache: dict = {}
     arrays: dict = {}
-    term = smt_dependence._sympy_to_z3(symbolic.pystr_to_symbolic(index), cache, arrays)
+
+    def z3_of(text: str) -> object:
+        return smt_dependence._sympy_to_z3(symbolic.pystr_to_symbolic(text), cache, arrays)
+
+    term = z3_of(index)
     bound = smt_dependence._sympy_to_z3(sympy.sympify(extent), cache, arrays)
     low = smt_dependence._sympy_to_z3(sympy.sympify(base), cache, arrays)
     size = smt_dependence._sympy_to_z3(sympy.sympify(count), cache, arrays)
-    state = smt_dependence._sympy_to_z3(symbolic.pystr_to_symbolic(symbol), cache, arrays)
+    state = z3_of(symbol)
     if any(part is None for part in (term, bound, low, size, state)):
         return False
     in_bounds = z3.And(0 <= term, term < bound)
+    if guard is not None:
+        holds = smt_dependence._bool_to_z3(symbolic.pystr_to_symbolic(guard), cache, arrays)
+        other = z3_of(required(otherwise))
+        if holds is None or other is None:
+            return False
+        in_bounds = z3.And(z3.Implies(holds, in_bounds), z3.Implies(z3.Not(holds), z3.And(0 <= other, other < bound)))
     return smt_dependence.prove_unsat(in_bounds, z3.And(low <= state, state < low + size)) is True
+
+
+def short_circuit_guard(
+    region: ControlFlowRegion, block: ControlFlowBlock, follower: ControlFlowBlock | None
+) -> str | None:
+    """The condition of ``block`` when it is the frontend's short-circuit ``if`` (``t = a; if a: t = b``) deciding the
+    ``while t`` loop ``follower``: where the condition fails, ``t`` stays false and the loop runs no iteration."""
+    if not (isinstance(block, ConditionalBlock) and len(block.branches) == 1 and isinstance(follower, LoopRegion)):
+        return None
+    condition, body = block.branches[0]
+    flag = follower.loop_condition.as_string.strip()
+    if condition is None or follower.loop_variable or not flag.isidentifier():
+        return None
+    entering, leaving = region.in_edges(block), region.edges_between(block, follower)
+    if len(entering) != 1 or len(leaving) != 1 or flag in leaving[0].data.assignments:
+        return None
+    if not leaving[0].data.is_unconditional() or flag not in entering[0].data.assignments:
+        return None
+    entered = symbolic.pystr_to_symbolic(entering[0].data.assignments[flag])
+    return condition.as_string if entered == symbolic.pystr_to_symbolic(condition.as_string) else None
+
+
+def table_reads(text: str, symbol: str, shapes: dict[str, tuple]) -> list[tuple[str, sympy.Basic, sympy.Basic]]:
+    """Each index of a table read in ``text`` that is ``symbol`` plus an offset, with that offset and its extent."""
+    found = []
+    for read in subscripts(text):
+        if read.array not in shapes or len(read.indices) != len(shapes[read.array]):
+            continue
+        for dim, index in enumerate(read.indices):
+            if symbol in names(index):
+                offset = unit_offset(index, symbol)
+                if offset is not None:
+                    found.append((index, offset, shapes[read.array][dim]))
+    return found
 
 
 def index_bound(
     loop: LoopRegion, chain: list[ControlFlowBlock], symbol: str, shapes: dict[str, tuple]
 ) -> tuple[sympy.Basic, sympy.Basic] | None:
     """``(base, count)`` from the first read that indexes a table with ``symbol`` on the body's straight-line prefix,
-    before anything assigns ``symbol``."""
-    for block in chain:
-        if assigns(block, symbol):
+    before anything assigns ``symbol``. A read under a short-circuit ``if`` counts with a read on the path where its
+    condition fails, which skips the ``while`` loop after it (:func:`short_circuit_guard`)."""
+    guard: str | None = None
+    guarded: list[tuple[str, sympy.Basic, sympy.Basic]] = []
+    skipped: ControlFlowBlock | None = None
+    for position, block in enumerate(chain):
+        follower = chain[position + 1] if position + 1 < len(chain) else None
+        found = short_circuit_guard(loop, block, follower) if guard is None else None
+        if found is not None:
+            branch = block.branches[0][1]
+            if assigns(branch, symbol):
+                return None
+            guard, skipped = found, follower
+            guarded = [read for assigned, rhs in assignments_in(branch) for read in table_reads(rhs, symbol, shapes)]
+        elif block is not skipped and assigns(block, symbol):
             return None
         for lhs, rhs in chain_edge_assignments(loop, block):
-            for read in subscripts(rhs):
-                if read.array not in shapes or len(read.indices) != len(shapes[read.array]):
-                    continue
-                for dim, index in enumerate(read.indices):
-                    if symbol not in names(index):
-                        continue
-                    offset = unit_offset(index, symbol)
-                    if offset is None:
-                        continue
-                    extent = shapes[read.array][dim]
-                    if proves_range(index, extent, symbol, -offset, extent):
+            for index, offset, extent in table_reads(rhs, symbol, shapes):
+                if guard is None and proves_range(index, extent, symbol, -offset, extent):
+                    return -offset, extent
+                for inner, inner_offset, inner_extent in guarded if guard is not None else []:
+                    if (inner_offset, inner_extent) == (offset, extent) and proves_range(
+                        inner, extent, symbol, -offset, extent, guard, index
+                    ):
                         return -offset, extent
             if lhs == symbol:
                 return None

@@ -1098,18 +1098,6 @@ ARG_VALUE_CTYPES: tuple[str, ...] = (
 ARG_INDEX_CTYPES: tuple[str, ...] = ("int32_t", "int64_t")
 
 
-def arg_pair_declare(op: str, last: bool) -> str:
-    """The ``arg_<op>[_last]_pair`` reduction over every pair :data:`ARG_VALUE_CTYPES` x :data:`ARG_INDEX_CTYPES`
-    names."""
-    pairs = ", ".join(f"arg_pair<{v}, {i}>" for i in ARG_INDEX_CTYPES for v in ARG_VALUE_CTYPES)
-    lowest = "true" if op == "max" else "false"
-    kind = f"{op}_last" if last else op
-    return (
-        f"#pragma omp declare reduction(arg_{kind}_pair : {pairs} : omp_out = arg_{kind}_combine(omp_out, omp_in)) "
-        f"initializer(arg_seed(omp_priv, {lowest}, {'true' if last else 'false'}))"
-    )
-
-
 def arg_step_cpp(op: str, last: bool) -> str:
     """``arg_<op>[_last]_step``: a better value, or with ``last`` an equal one too, replaces the held pair."""
     better = "arg_greater(v, held.__ar_v)" if op == "max" else "arg_greater(held.__ar_v, v)"
@@ -1123,65 +1111,47 @@ def arg_step_cpp(op: str, last: bool) -> str:
 
 
 ARG_REDUCTION_CPP: dict[str, str] = {
-    "arg_pair": "\n".join(
-        [
-            "template <typename V, typename I>",
-            "struct arg_pair {",
-            "    V __ar_v;",
-            "    I __ar_i;",
-            "};",
-            "template <typename V, typename = void>",
-            "struct arg_is_complex : std::false_type {};",
-            "template <typename V>",
-            "struct arg_is_complex<V, std::void_t<decltype(std::declval<V>().imag())>> : std::true_type {};",
-            "template <typename V>",
-            "static inline bool arg_greater(const V &a, const V &b) {",
-            "    if constexpr (arg_is_complex<V>::value) {",
-            "        return a.real() > b.real() || (a.real() == b.real() && a.imag() > b.imag());",
-            "    } else {",
-            "        return a > b;",
-            "    }",
-            "}",
-            "template <bool Max, bool Last, typename V, typename I>",
-            "static inline arg_pair<V, I> arg_combine(const arg_pair<V, I> &out, const arg_pair<V, I> &in) {",
-            "    if (!(out.__ar_v == out.__ar_v) || !(in.__ar_v == in.__ar_v))",
-            "        return out.__ar_v == out.__ar_v ? in : out;",
-            "    const bool better = Max ? arg_greater(in.__ar_v, out.__ar_v) : arg_greater(out.__ar_v, in.__ar_v);",
-            "    const bool wins_tie = Last ? in.__ar_i > out.__ar_i : in.__ar_i < out.__ar_i;",
-            "    return (better || (in.__ar_v == out.__ar_v && wins_tie)) ? in : out;",
-            "}",
-            *(
-                "template <typename V, typename I>\n"
-                f"static inline arg_pair<V, I> arg_{op}{'_last' if last else ''}_combine("
-                "const arg_pair<V, I> &out, const arg_pair<V, I> &in) {\n"
-                f"    return arg_combine<{str(op == 'max').lower()}, {str(last).lower()}>(out, in);\n"
-                "}"
-                for last in (False, True)
-                for op in ("max", "min")
-            ),
-            "template <typename V>",
-            "static inline V arg_bound(bool lowest) {",
-            "    if constexpr (arg_is_complex<V>::value) {",
-            "        const typename V::value_type part = arg_bound<typename V::value_type>(lowest);",
-            "        return V(part, part);",
-            "    } else if constexpr (std::numeric_limits<V>::has_infinity) {",
-            "        return lowest ? -std::numeric_limits<V>::infinity() : std::numeric_limits<V>::infinity();",
-            "    } else {",
-            "        return lowest ? std::numeric_limits<V>::lowest() : std::numeric_limits<V>::max();",
-            "    }",
-            "}",
-            "template <typename V, typename I>",
-            "static inline void arg_seed(arg_pair<V, I> &priv, bool lowest, bool last = false) {",
-            "    priv = arg_pair<V, I>{arg_bound<V>(lowest), "
-            "last ? std::numeric_limits<I>::lowest() : std::numeric_limits<I>::max()};",
-            "}",
-            *(arg_pair_declare(op, last) for last in (False, True) for op in ("max", "min")),
-        ]
+    "arg_pair": (
+        "template <typename V, typename I>\n"
+        "struct arg_pair {\n"
+        "    V __ar_v;\n"
+        "    I __ar_i;\n"
+        "};\n"
+        "template <typename V, typename = void>\n"
+        "struct arg_is_complex : std::false_type {};\n"
+        "template <typename V>\n"
+        "struct arg_is_complex<V, std::void_t<decltype(std::declval<V>().imag())>> : std::true_type {};\n"
+        "template <typename V>\n"
+        "static inline bool arg_greater(const V &a, const V &b) {\n"
+        "    if constexpr (arg_is_complex<V>::value) {\n"
+        "        return a.real() > b.real() || (a.real() == b.real() && a.imag() > b.imag());\n"
+        "    } else {\n"
+        "        return a > b;\n"
+        "    }\n"
+        "}\n"
+        "template <bool Max, bool Last, typename V, typename I>\n"
+        "static inline arg_pair<V, I> arg_combine(const arg_pair<V, I> &out, const arg_pair<V, I> &in) {\n"
+        "    if (!(out.__ar_v == out.__ar_v) || !(in.__ar_v == in.__ar_v))\n"
+        "        return out.__ar_v == out.__ar_v ? in : out;\n"
+        "    const bool better = Max ? arg_greater(in.__ar_v, out.__ar_v) : arg_greater(out.__ar_v, in.__ar_v);\n"
+        "    const bool wins_tie = Last ? in.__ar_i > out.__ar_i : in.__ar_i < out.__ar_i;\n"
+        "    return (better || (in.__ar_v == out.__ar_v && wins_tie)) ? in : out;\n"
+        "}"
     ),
     "arg_pair_of": "template <typename V, typename I>\n"
     "static inline arg_pair<V, I> arg_pair_of(const V &v, I i) { return arg_pair<V, I>{v, i}; }",
     **{
         f"arg_{op}{'_last' if last else ''}_step": arg_step_cpp(op, last)
+        for last in (False, True)
+        for op in ("max", "min")
+    },
+    # One entry per merge, as per step: the renderer strips ``dace::`` from, and defines, only names it has an entry for.
+    **{
+        f"arg_{op}{'_last' if last else ''}_combine": "template <typename V, typename I>\n"
+        f"static inline arg_pair<V, I> arg_{op}{'_last' if last else ''}_combine("
+        "const arg_pair<V, I> &out, const arg_pair<V, I> &in) {\n"
+        f"    return arg_combine<{str(op == 'max').lower()}, {str(last).lower()}>(out, in);\n"
+        "}"
         for last in (False, True)
         for op in ("max", "min")
     },
@@ -1305,7 +1275,12 @@ LOW_PRECISION_MATH_CALL: "re.Pattern" = re.compile(
 DEFINITION_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     **{f"cpf_lowp_{name}": ("cpf_lowp_base",) for name in LOW_PRECISION_MATH},
     "arg_pair_of": ("arg_pair",),
-    **{f"arg_{op}{last}_step": ("arg_pair",) for op in ("max", "min") for last in ("", "_last")},
+    **{
+        f"arg_{op}{last}_{piece}": ("arg_pair",)
+        for op in ("max", "min")
+        for last in ("", "_last")
+        for piece in ("step", "combine")
+    },
     **{
         reduce_name(operation, parallel): (f"cpf_{operation}",)
         for operation in ("min", "max")
@@ -2101,70 +2076,170 @@ def residue_class_loop(n: str, s: str, head: str, step: str, parallel: bool) -> 
     )
 
 
-def blocked_strided_scan(n: str, s: str, source: str, target: str, operation: str, seeds: str | None) -> str:
-    """The inclusive scan ``target[j] = target[j - s] OP source[j]`` as a blocked scan over contiguous chunks.
+#: The rescan arms of a strided scan by carry distance ``K``: ``(least K, the runtime finding, what the arm runs)``.
+#: A loop of the recurrence through memory waits on store-to-load forwarding at every step, which made ``K == 2`` 2.5x
+#: slower than the same loop with the literal 2, whose chains the compiler keeps in registers.
+STRIDED_RESCAN_ARMS: tuple[tuple[int, str, str], ...] = (
+    (2, "K == 2", "two independent chains, each a prefix scan at the literal distance 2"),
+    (3, "3 <= K <= 8", "K independent chains, each a prefix scan carried in a register"),
+    (9, "K > 8", "K independent chains, each a prefix scan; a vector holds consecutive elements of different chains"),
+)
+#: The most chains the register arm carries.
+STRIDED_REGISTER_CHAINS = 8
 
-    A chunk is whole rows of ``s`` elements, so every residue class runs through it intact. Pass 1 folds each
-    chunk but the last into its own last row, a combine carries those totals from chunk to chunk, and pass 2
-    rescans each chunk from the previous chunk's last row; the last rows are final after the combine, so pass 2
-    leaves them alone. Rounds of chunks keep a chunk cached between its two passes. One thread runs the
-    recurrence once. Class ``k`` starts at ``seeds[k] OP source[k]``, or at ``source[k]`` with no seeds.
+
+def strided_rescan_arm(
+    least: int, o: str, i: str, s: str, span: tuple[str, str], fold: Callable[[str, str], str], acc_type: str
+) -> list[str]:
+    """``o[j] = o[j - s] OP i[j]`` over ``span`` (whose first element is at least ``s``) in the arm from ``least``."""
+    first, last = span
+    if least == 2:
+        return [
+            "for (long cpf_i = %s; cpf_i < %s; ++cpf_i) %s[cpf_i] = %s;"
+            % (first, last, o, fold("%s[cpf_i - 2]" % o, "%s[cpf_i]" % i))
+        ]
+    if least > STRIDED_REGISTER_CHAINS:
+        return [
+            "for (long cpf_i = %s; cpf_i < %s; ++cpf_i) %s[cpf_i] = %s;"
+            % (first, last, o, fold("%s[cpf_i - %s]" % (o, s), "%s[cpf_i]" % i))
+        ]
+    return [
+        "if (%s < %s) {" % (first, last),
+        "    %s cpf_acc[%d];" % (acc_type, STRIDED_REGISTER_CHAINS),
+        "    for (long cpf_k = 0; cpf_k < %s; ++cpf_k) cpf_acc[cpf_k] = %s[%s - %s + cpf_k];" % (s, o, first, s),
+        "    long cpf_i = %s;" % first,
+        "    for (; cpf_i + %s <= %s; cpf_i += %s) {" % (s, last, s),
+        "        for (long cpf_k = 0; cpf_k < %s; ++cpf_k) {" % s,
+        "            cpf_acc[cpf_k] = %s;" % fold("cpf_acc[cpf_k]", "%s[cpf_i + cpf_k]" % i),
+        "            %s[cpf_i + cpf_k] = cpf_acc[cpf_k];" % o,
+        "        }",
+        "    }",
+        "    for (long cpf_k = 0; cpf_i + cpf_k < %s; ++cpf_k) %s[cpf_i + cpf_k] = %s;"
+        % (last, o, fold("cpf_acc[cpf_k]", "%s[cpf_i + cpf_k]" % i)),
+        "}",
+    ]
+
+
+def strided_rescan(
+    o: str,
+    i: str,
+    s: str,
+    name: str,
+    span: tuple[str, str],
+    fold: Callable[[str, str], str],
+    acc_type: str,
+    kind: str,
+    distance: int | None,
+) -> list[str]:
+    """The recurrence ``o[j] = o[j - s] OP i[j]`` over ``span``, ``s >= 2``: the arm for a constant ``distance``, or a
+    runtime test of ``s`` over :data:`STRIDED_RESCAN_ARMS`, each arm labeled ``kind`` with what the test found about
+    the distance the program spells ``name``."""
+    if distance is not None:
+        arm = max(arm for arm in STRIDED_RESCAN_ARMS if arm[0] <= distance)
+        least, what = arm[0], arm[2]
+        label = "// %s -- scan, the carry distance is %d: %s" % (kind, distance, what.replace("K", str(distance), 1))
+        return [label, *strided_rescan_arm(least, o, i, s, span, fold, acc_type)]
+    tests = ("if (%s == 2) {" % s, "} else if (%s <= %d) {" % (s, STRIDED_REGISTER_CHAINS), "} else {")
+    lines = []
+    for test, (least, found, what) in zip(tests, STRIDED_RESCAN_ARMS):
+        label = "// %s -- scan, the runtime check found %s: %s" % (
+            kind,
+            found.replace("K", name),
+            what.replace("K", name, 1),
+        )
+        lines += [
+            test,
+            "    " + label,
+            *("    " + line for line in strided_rescan_arm(least, o, i, s, span, fold, acc_type)),
+        ]
+    return [*lines, "}"]
+
+
+def blocked_strided_scan(n: str, s: str, source: str, target: str, operation: str, seeds: str | None) -> str:
+    """The inclusive scan ``target[j] = target[j - s] OP source[j]`` for a carry distance ``K = s``.
+
+    ``K == 1`` is the unit-stride prefix scan, tested once per call. Above it the scan is blocked over contiguous
+    chunks. A chunk is whole rows of ``s`` elements, so every residue class runs through it intact. Pass 1 folds each
+    chunk but the last into its own last row, a combine carries those totals from chunk to chunk, and pass 2 rescans
+    each chunk from the previous chunk's last row; the last rows are final after the combine, so pass 2 leaves them
+    alone. Rounds of chunks keep a chunk cached between its two passes. One thread runs the recurrence once, as one
+    chunk. Pass 2 takes the arm of :func:`strided_rescan` for ``K``: a constant ``K`` its one arm, a symbolic one a test
+    per chunk, which is once per call on one thread. Class ``k`` starts at ``seeds[k] OP source[k]``, or at
+    ``source[k]`` with no seeds.
     """
 
     def fold(a: str, b: str) -> str:
         return STRIDED_SCAN_COMBINE[operation].format(a=a, b=b)
 
-    o, i = parenthesized(target), parenthesized(source)
+    o, i, k = parenthesized(target), parenthesized(source), parenthesized(s)
     head = fold("%s[cpf_j]" % parenthesized(seeds), "%s[cpf_j]" % i) if seeds is not None else "%s[cpf_j]" % i
     first_row = fold("%s[cpf_k]" % parenthesized(seeds), "%s[cpf_k]" % i) if seeds is not None else "%s[cpf_k]" % i
+    name = k[1:-1].strip()
+    distance = int(name) if re.fullmatch(r"\d+", name) and int(name) >= 2 else None
+    rescan = strided_rescan(
+        o, i, "cpf_s", name, ("cpf_j", "cpf_e"), fold, "__typeof__(%s[0])" % o, "parallel", distance
+    )
+    blocked = [
+        "  const long cpf_s = (long)%s;" % k,
+        "  // threads in the team; 1 without OpenMP",
+        "  long cpf_team = 0;",
+        "  #pragma omp parallel reduction(+ : cpf_team)",
+        "  cpf_team = 1;",
+        "  const long cpf_len = (%d / cpf_s > 1 ? %d / cpf_s : 1) * cpf_s;" % (STRIDED_SCAN_CHUNK, STRIDED_SCAN_CHUNK),
+        "  const long cpf_chunks = cpf_team > 1 ? (cpf_n + cpf_len - 1) / cpf_len : 1;",
+        "  const long cpf_round = %d * cpf_team;" % STRIDED_SCAN_CHUNKS_PER_THREAD,
+        "  #pragma omp parallel if (cpf_chunks > 1)",
+        "  for (long cpf_t = 0; cpf_t < cpf_chunks; cpf_t += cpf_round) {",
+        "      const long cpf_te = cpf_t + cpf_round < cpf_chunks ? cpf_t + cpf_round : cpf_chunks;",
+        "      const long cpf_fe = cpf_te < cpf_chunks - 1 ? cpf_te : cpf_chunks - 1;",
+        "      // pass 1: each chunk's per-class totals, into its last row",
+        "      #pragma omp for schedule(static)",
+        "      for (long cpf_c = cpf_t; cpf_c < cpf_fe; ++cpf_c) {",
+        "          const long cpf_b = cpf_c * cpf_len, cpf_l = cpf_b + cpf_len - cpf_s;",
+        "          for (long cpf_k = 0; cpf_k < cpf_s; ++cpf_k) {",
+        "              %s[cpf_l + cpf_k] = cpf_c == 0 ? %s : %s[cpf_b + cpf_k];" % (o, first_row, i),
+        "          }",
+        "          for (long cpf_r = cpf_b + cpf_s; cpf_r <= cpf_l; cpf_r += cpf_s) {",
+        "              for (long cpf_k = 0; cpf_k < cpf_s; ++cpf_k) {",
+        "                  %s[cpf_l + cpf_k] = %s;" % (o, fold("%s[cpf_l + cpf_k]" % o, "%s[cpf_r + cpf_k]" % i)),
+        "              }",
+        "          }",
+        "      }",
+        "      // combine: carry the totals from chunk to chunk, one class per iteration",
+        "      #pragma omp for schedule(static)",
+        "      for (long cpf_k = 0; cpf_k < cpf_s; ++cpf_k) {",
+        "          for (long cpf_c = cpf_t > 0 ? cpf_t : 1; cpf_c < cpf_fe; ++cpf_c) {",
+        "              const long cpf_l = (cpf_c + 1) * cpf_len - cpf_s + cpf_k;",
+        "              %s[cpf_l] = %s;" % (o, fold("%s[cpf_l - cpf_len]" % o, "%s[cpf_l]" % o)),
+        "          }",
+        "      }",
+        "      // pass 2: rescan each chunk from the previous chunk's last row",
+        "      #pragma omp for schedule(static)",
+        "      for (long cpf_c = cpf_t; cpf_c < cpf_te; ++cpf_c) {",
+        "          long cpf_j = cpf_c * cpf_len;",
+        "          const long cpf_e = cpf_c == cpf_chunks - 1 ? cpf_n : cpf_j + cpf_len - cpf_s;",
+        "          if (cpf_c == 0) {",
+        "              for (; cpf_j < cpf_s && cpf_j < cpf_e; ++cpf_j) %s[cpf_j] = %s;" % (o, head),
+        "          }",
+        *("          " + line for line in rescan),
+        "      }",
+        "  }",
+    ]
+    lines = ["{ const long cpf_n = (long)%s;" % parenthesized(n)]
+    if distance is not None:
+        return "\n".join([*lines, *blocked, "}"])
     return "\n".join(
         [
-            "{ const long cpf_n = (long)%s; const long cpf_s = (long)%s;" % (parenthesized(n), parenthesized(s)),
-            "  if (cpf_s <= 0) std::abort();",
-            "  // threads in the team; 1 without OpenMP",
-            "  long cpf_team = 0;",
-            "  #pragma omp parallel reduction(+ : cpf_team)",
-            "  cpf_team = 1;",
-            "  const long cpf_len = (%d / cpf_s > 1 ? %d / cpf_s : 1) * cpf_s;"
-            % (STRIDED_SCAN_CHUNK, STRIDED_SCAN_CHUNK),
-            "  const long cpf_chunks = cpf_team > 1 ? (cpf_n + cpf_len - 1) / cpf_len : 1;",
-            "  const long cpf_round = %d * cpf_team;" % STRIDED_SCAN_CHUNKS_PER_THREAD,
-            "  #pragma omp parallel if (cpf_chunks > 1)",
-            "  for (long cpf_t = 0; cpf_t < cpf_chunks; cpf_t += cpf_round) {",
-            "      const long cpf_te = cpf_t + cpf_round < cpf_chunks ? cpf_t + cpf_round : cpf_chunks;",
-            "      const long cpf_fe = cpf_te < cpf_chunks - 1 ? cpf_te : cpf_chunks - 1;",
-            "      // pass 1: each chunk's per-class totals, into its last row",
-            "      #pragma omp for schedule(static)",
-            "      for (long cpf_c = cpf_t; cpf_c < cpf_fe; ++cpf_c) {",
-            "          const long cpf_b = cpf_c * cpf_len, cpf_l = cpf_b + cpf_len - cpf_s;",
-            "          for (long cpf_k = 0; cpf_k < cpf_s; ++cpf_k) {",
-            "              %s[cpf_l + cpf_k] = cpf_c == 0 ? %s : %s[cpf_b + cpf_k];" % (o, first_row, i),
-            "          }",
-            "          for (long cpf_r = cpf_b + cpf_s; cpf_r <= cpf_l; cpf_r += cpf_s) {",
-            "              for (long cpf_k = 0; cpf_k < cpf_s; ++cpf_k) {",
-            "                  %s[cpf_l + cpf_k] = %s;" % (o, fold("%s[cpf_l + cpf_k]" % o, "%s[cpf_r + cpf_k]" % i)),
-            "              }",
-            "          }",
-            "      }",
-            "      // combine: carry the totals from chunk to chunk, one class per iteration",
-            "      #pragma omp for schedule(static)",
-            "      for (long cpf_k = 0; cpf_k < cpf_s; ++cpf_k) {",
-            "          for (long cpf_c = cpf_t > 0 ? cpf_t : 1; cpf_c < cpf_fe; ++cpf_c) {",
-            "              const long cpf_l = (cpf_c + 1) * cpf_len - cpf_s + cpf_k;",
-            "              %s[cpf_l] = %s;" % (o, fold("%s[cpf_l - cpf_len]" % o, "%s[cpf_l]" % o)),
-            "          }",
-            "      }",
-            "      // pass 2: rescan each chunk from the previous chunk's last row",
-            "      #pragma omp for schedule(static)",
-            "      for (long cpf_c = cpf_t; cpf_c < cpf_te; ++cpf_c) {",
-            "          long cpf_j = cpf_c * cpf_len;",
-            "          const long cpf_e = cpf_c == cpf_chunks - 1 ? cpf_n : cpf_j + cpf_len - cpf_s;",
-            "          if (cpf_c == 0) {",
-            "              for (; cpf_j < cpf_s && cpf_j < cpf_e; ++cpf_j) %s[cpf_j] = %s;" % (o, head),
-            "          }",
-            "          for (; cpf_j < cpf_e; ++cpf_j) %s[cpf_j] = %s;"
-            % (o, fold("%s[cpf_j - cpf_s]" % o, "%s[cpf_j]" % i)),
-            "      }",
+            *lines,
+            "  if (%s <= 0) std::abort();" % k,
+            "  if (%s == 1) {" % k,
+            "  // parallel -- scan, the runtime check found %s == 1: one chain, the unit-stride prefix scan" % name,
+            "  if (cpf_n > 0) {",
+            "      %s[0] = %s;" % (o, head.replace("cpf_j", "0")),
+            "      ::dace::scan::detail::scan_incl_%s(%s, %s, 1L, cpf_n, %s[0]);" % (operation, i, o, o),
+            "  }",
+            "  } else {",
+            *blocked,
             "  }",
             "}",
         ]
@@ -2269,6 +2344,15 @@ def c_static_calls(code: str) -> str:
     )
 
 
+#: A class line a library expansion writes into its own code, such as the label of a dispatch arm.
+NATIVE_CLASS_LINE: "re.Pattern" = re.compile(r"^([ \t]*)// ((?:parallel|sequential|unknown) -- [^\n]*)\n", re.MULTILINE)
+
+
+def native_class_lines(code: str) -> str:
+    """``code`` with each class line an expansion wrote rendered at the hint detail in force, as a loop's hint is."""
+    return NATIVE_CLASS_LINE.sub(lambda match: hint_comment(match.group(2), match.group(1)), code)
+
+
 def rewrite_native_code(code: str, dialect: Dialect | None = None, site: NativeSite | None = None) -> str:
     """Rewrite the ``dace::`` names in a hand-written C++ body to their standalone spellings.
 
@@ -2300,6 +2384,7 @@ def rewrite_native_code(code: str, dialect: Dialect | None = None, site: NativeS
     c_dialect = (dialect if dialect is not None else _active_dialect) is Dialect.STANDALONE_C
     code = POLICY_SORT_CALL.sub("std::sort(", code)
     code = rewrite_ctypes(respell_reduce_entry_points(respell_scan_entry_points(respell_copy_impl(code))), dialect)
+    code = native_class_lines(code)
 
     if c_dialect:
         # A C++ standard header (``<algorithm>``) names nothing in C; the unit's C headers come from its preamble.
@@ -2609,6 +2694,8 @@ C_MATH_SPEC: tuple[tuple[str, str, str, object], ...] = (
     ("lgamma", "lgamma", "real", 1),
     ("trunc", "trunc", "real", 1),
     ("hypot", "hypot", "real", 2),
+    # Called unqualified in C++, so no STD_RENAMES entry; C must type it inside a Max (cloudsc_monolith).
+    ("copysign", "copysign", "real", 2),
 )
 
 #: Runtime maths C already spells type-generically, as a ``<math.h>`` MACRO. Wrapping these in an
@@ -3396,7 +3483,7 @@ C_DTYPE_ALTERNATION: str = "|".join(sorted(C_SCALAR_SPELLINGS, key=len, reverse=
 #: (``cpf_scan_incl_sum_int8_int64_int64``). No group captures, so it can join another alternation.
 C_INSTANCE_NAMES: str = (
     r"cpf_(?:scan_(?:incl|excl)_(?:sum|product|min|max)|reduce_(?:seq_)?(?:%s)|arg_pair_of"
-    r"|arg_(?:max|min)(?:_last)?_step|atomic_max|atomic_min|detect_collision_sized"
+    r"|arg_(?:max|min)(?:_last)?_(?:step|combine)|atomic_max|atomic_min|detect_collision_sized"
     r"|detect_collision|sort)(?:_(?:%s))+" % ("|".join(REDUCE_OPERATIONS), C_DTYPE_ALTERNATION)
 )
 
@@ -3409,60 +3496,49 @@ C_INSTANCE_NAME: "re.Pattern" = re.compile(
 
 #: A typed argmax / argmin piece: its family, then the value's and the index's dace types.
 C_ARG_INSTANCE_NAME: "re.Pattern" = re.compile(
-    r"cpf_(arg_pair_of|arg_(?:max|min)(?:_last)?_step)_(%s)_(%s)" % (C_DTYPE_ALTERNATION, C_DTYPE_ALTERNATION)
+    r"cpf_(arg_pair_of|arg_(?:max|min)(?:_last)?_(?:step|combine))_(%s)_(%s)"
+    % (C_DTYPE_ALTERNATION, C_DTYPE_ALTERNATION)
 )
 
 
-#: What no element of a dace type is worse than and what none is better than: the seeds of a C arg reduction.
-C_ARG_BOUNDS: dict[str, tuple[str, str]] = {
-    "int8": ("INT8_MIN", "INT8_MAX"),
-    "int16": ("INT16_MIN", "INT16_MAX"),
-    "int32": ("INT32_MIN", "INT32_MAX"),
-    "int64": ("INT64_MIN", "INT64_MAX"),
-    "uint8": ("0", "UINT8_MAX"),
-    "uint16": ("0", "UINT16_MAX"),
-    "uint32": ("0", "UINT32_MAX"),
-    "uint64": ("0", "UINT64_MAX"),
-    "float32": ("-INFINITY", "INFINITY"),
-    "float64": ("-INFINITY", "INFINITY"),
-    "complex64": ("CMPLXF(-INFINITY, -INFINITY)", "CMPLXF(INFINITY, INFINITY)"),
-    "complex128": ("CMPLX(-INFINITY, -INFINITY)", "CMPLX(INFINITY, INFINITY)"),
-}
-
-
 def c_arg_pair_definition(value: str, index: str) -> str:
-    """The (value, index) pair of ``value`` x ``index`` in C: its struct, constructor, combiners and the four
-    ``arg_max[_last]_pair`` / ``arg_min[_last]_pair`` OpenMP reductions over it, as ``dace/arg_reduction.h``
-    declares them. A complex value orders lexicographically, real part first."""
+    """The (value, index) pair of ``value`` x ``index`` in C: its struct, its order and its constructor, as
+    ``dace/arg_reduction.h`` declares them. A complex value orders lexicographically, real part first."""
     v, i = C_SCALAR_SPELLINGS[value], C_SCALAR_SPELLINGS[index]
     pair, tag = f"cpf_arg_pair_{value}_{index}", f"{value}_{index}"
     if value in C_COMPLEX_DTYPES:
         greater = "creal(a) > creal(b) || (creal(a) == creal(b) && cimag(a) > cimag(b))"
     else:
         greater = "a > b"
-    lines = [
-        f"typedef struct {{ {v} __ar_v; {i} __ar_i; }} {pair};",
-        f"static inline int cpf_arg_greater_{tag}({v} a, {v} b) {{ return {greater}; }}",
-        f"static inline {pair} cpf_arg_pair_of_{tag}({v} v, {i} i) {{ {pair} p = {{v, i}}; return p; }}",
-    ]
-    lowest, highest = C_ARG_BOUNDS[value]
-    for op, better, seed in (
-        ("max", "cpf_arg_greater_%s(in.__ar_v, out.__ar_v)", lowest),
-        ("min", "cpf_arg_greater_%s(out.__ar_v, in.__ar_v)", highest),
-    ):
-        for kind, wins_tie, neutral_index in ((op, "<", "MAX"), (f"{op}_last", ">", "MIN")):
-            lines += [
-                f"static inline {pair} cpf_arg_{kind}_combine_{tag}({pair} out, {pair} in) {{",
-                "    if (!(out.__ar_v == out.__ar_v) || !(in.__ar_v == in.__ar_v))",
-                "        return out.__ar_v == out.__ar_v ? in : out;",
-                f"    return ({better % tag} || (in.__ar_v == out.__ar_v && in.__ar_i {wins_tie} out.__ar_i))",
-                "        ? in : out;",
-                "}",
-                f"#pragma omp declare reduction(arg_{kind}_pair : {pair} : "
-                f"omp_out = cpf_arg_{kind}_combine_{tag}(omp_out, omp_in)) "
-                f"initializer(omp_priv = cpf_arg_pair_of_{tag}({seed}, {index.upper()}_{neutral_index}))",
-            ]
-    return "\n".join(lines)
+    return "\n".join(
+        [
+            f"typedef struct {{ {v} __ar_v; {i} __ar_i; }} {pair};",
+            f"static inline int cpf_arg_greater_{tag}({v} a, {v} b) {{ return {greater}; }}",
+            f"static inline {pair} cpf_arg_pair_of_{tag}({v} v, {i} i) {{ {pair} p = {{v, i}}; return p; }}",
+        ]
+    )
+
+
+def c_arg_combine_definition(kind: str, value: str, index: str) -> str:
+    """Two threads' argmax / argmin pairs merged into one: the better value wins, a tie goes to the lower index (the
+    higher one for a ``_last`` kind), and a NaN pair wins as the sequential scan keeps it."""
+    pair, tag = f"cpf_arg_pair_{value}_{index}", f"{value}_{index}"
+    op = kind.removesuffix("_last")
+    better = (
+        f"cpf_arg_greater_{tag}(in.__ar_v, out.__ar_v)"
+        if op == "max"
+        else f"cpf_arg_greater_{tag}(out.__ar_v, in.__ar_v)"
+    )
+    wins_tie = ">" if kind != op else "<"
+    return "\n".join(
+        [
+            f"static inline {pair} cpf_arg_{kind}_combine_{tag}({pair} out, {pair} in) {{",
+            "    if (!(out.__ar_v == out.__ar_v) || !(in.__ar_v == in.__ar_v))",
+            "        return out.__ar_v == out.__ar_v ? in : out;",
+            f"    return ({better} || (in.__ar_v == out.__ar_v && in.__ar_i {wins_tie} out.__ar_i)) ? in : out;",
+            "}",
+        ]
+    )
 
 
 def c_arg_step_definition(kind: str, value: str, index: str) -> str:
@@ -3540,6 +3616,10 @@ def c_instance(name: str) -> tuple[str, tuple[str, ...]] | None:
         family, value, index = piece.groups()
         if family == "arg_pair_of":
             return c_arg_pair_definition(value, index), ()
+        if family.endswith("_combine"):
+            return c_arg_combine_definition(family[len("arg_") : -len("_combine")], value, index), (
+                f"cpf_arg_pair_of_{value}_{index}",
+            )
         return c_arg_step_definition(family[len("arg_") : -len("_step")], value, index), (
             f"cpf_arg_pair_of_{value}_{index}",
         )
@@ -5009,7 +5089,7 @@ C_NATIVE_CTYPE_DTYPES: dict[str, str] = {
 #: ``dace::arg_pair<V, I>`` and its calls, ``arg_pair_of`` / ``arg_max_step`` / ``arg_min_step``, as the
 #: ``ArgReduce`` CPU lowering writes them once :func:`rewrite_ctypes` has spelled ``V`` and ``I`` in C.
 C_ARG_PIECE: "re.Pattern" = re.compile(
-    r"(?:::)?(?:\bdace::)?\barg_(pair|pair_of|(?:max|min)(?:_last)?_step)\s*<\s*([^<>,]+?)\s*,\s*([^<>,]+?)\s*>"
+    r"(?:::)?(?:\bdace::)?\barg_(pair|pair_of|(?:max|min)(?:_last)?_(?:step|combine))\s*<\s*([^<>,]+?)\s*,\s*([^<>,]+?)\s*>"
 )
 
 

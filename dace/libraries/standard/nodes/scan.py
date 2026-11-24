@@ -906,6 +906,51 @@ def single_block_scan_call(op: ScanOp, exclusive: bool, n_expr: str, seed: str) 
     return f"{fn}({INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, 0L, static_cast<long>({n_expr}), {seed});"
 
 
+def strided_sequential_body(node: "Scan", ctype: str, n_expr: str) -> str:
+    """The strided scan ``out[j] = out[j - K] OP in[j]`` as one pass over the positions.
+
+    Class ``k < K`` opens at its first element (through its ``_scan_init`` entry when wired). A symbolic ``K`` is
+    tested once: ``K == 1`` is the unit-stride ``inscan`` pass, a larger ``K`` takes its arm of
+    :func:`~dace.cpf_lowering.strided_rescan`; a constant ``K`` takes its arm alone.
+    """
+    first = f"{INPUT_CONNECTOR_NAME}[_j]"
+    if _has_init(node):
+        first = _combine_expr(node.op, ctype, f"{INIT_CONNECTOR_NAME}[_j]", first)
+    name = sym2cpp(node.stride)
+    distance = None if symbolic.issymbolic(node.stride) else int(node.stride)
+    rescan = cpf_lowering.strided_rescan(
+        OUTPUT_CONNECTOR_NAME,
+        INPUT_CONNECTOR_NAME,
+        "_s",
+        name,
+        ("_s", "_n"),
+        lambda a, b: _combine_expr(node.op, ctype, a, b),
+        ctype,
+        "sequential",
+        distance,
+    )
+    lines = [
+        f"{{ long _s = (long)({name}); long _n = (long)({n_expr});",
+        "  if (_s <= 0) std::abort();",
+        f"  for (long _j = 0; _j < _s && _j < _n; ++_j) {OUTPUT_CONNECTOR_NAME}[_j] = {first};",
+    ]
+    if distance is not None:
+        return "\n".join([*lines, *("  " + line for line in rescan), "}"])
+    unit = f"::dace::scan::detail::scan_incl_{_OP_TO_OMP_SUFFIX[node.op]}"
+    return "\n".join(
+        [
+            *lines,
+            "  if (_s == 1) {",
+            f"  // sequential -- scan, the runtime check found {name} == 1: one chain, the unit-stride prefix scan",
+            f"  if (_n > 1) {unit}({INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, 1L, _n, {OUTPUT_CONNECTOR_NAME}[0]);",
+            "  } else {",
+            *("  " + line for line in rescan),
+            "  }",
+            "}",
+        ]
+    )
+
+
 #: The trade a Scan records: canonicalization takes the parallel form. Facts of the two lowerings only.
 PARALLEL_SCAN_HINT = (
     "parallel -- scan: each output combines all earlier inputs. Two passes over contiguous chunks on every "
@@ -949,37 +994,13 @@ class ExpandSequential(ExpandTransformation):
         n_expr = _resolve_length(node, state, sdfg)
         # The ACCUMULATOR's type, which is the output's: a widening scan reads a narrower input.
         ctype = out_desc.dtype.ctype
-        combined = _combine_expr(node.op, ctype, "_acc", f"{INPUT_CONNECTOR_NAME}[_j]")
-        stride_expr = sym2cpp(node.stride)
         is_stride_one = symbolic.equal_valued(1, node.stride)
 
         if not is_stride_one:
             refuse_widening(node, in_desc, out_desc, "stride > 1")
-            # No ``inscan`` here: the reduction spans one canonical loop, and a strided scan is one
-            # independent chain PER RESIDUE CLASS, so the vectorizable axis is across classes -- not
-            # the axis the dependence runs along. The classes stay scalar.
             if node.exclusive:
                 raise NotImplementedError("Scan(pure): exclusive with stride > 1 is not supported.")
-            # Outer loop over residue classes ``_k in [0, s)``; inner sequential scan.
-            # Initialise the accumulator from the class's seed and first input, or from the first
-            # input alone, so no per-op identity literal is needed (matches the residue-class oracle).
-            first = f"{INPUT_CONNECTOR_NAME}[_k]"
-            if _has_init(node):
-                first = _combine_expr(node.op, ctype, f"{INIT_CONNECTOR_NAME}[_k]", first)
-            body = (
-                f"{{ long _s = (long)({stride_expr}); long _n = (long)({n_expr});\n"
-                f"  if (_s <= 0) std::abort();\n"
-                f"  for (long _k = 0; _k < _s; ++_k) {{\n"
-                f"      if (_k >= _n) continue;\n"
-                f"      {ctype} _acc = {first};\n"
-                f"      {OUTPUT_CONNECTOR_NAME}[_k] = _acc;\n"
-                f"      for (long _j = _k + _s; _j < _n; _j += _s) {{\n"
-                f"          _acc = {combined};\n"
-                f"          {OUTPUT_CONNECTOR_NAME}[_j] = _acc;\n"
-                f"      }}\n"
-                f"  }}\n"
-                f"}}"
-            )
+            body = strided_sequential_body(node, ctype, n_expr)
         elif node.exclusive:
             body = single_block_scan_call(node.op, True, n_expr, _identity_expr(node, out_desc))
         elif _has_init(node):

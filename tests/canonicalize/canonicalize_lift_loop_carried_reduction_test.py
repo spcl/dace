@@ -132,7 +132,7 @@ NM = dace.symbol("NM")
 def _specialize(sdfg, **subs):
     """Substitute concrete integer sizes for the kernel's size symbols.
     ``LiftLoopCarriedReduction`` refuses SYMBOLIC extents (the lift's cost is undecidable
-    without knowing the inner-map size -- see the pass docstring), so the lift-expected tests specialize."""
+    without knowing the inner-map size -- see the module docstring), so the lift-expected tests specialize."""
     for name, val in subs.items():
         sdfg.replace(name, str(val))
     return sdfg

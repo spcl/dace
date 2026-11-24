@@ -101,8 +101,7 @@ class LoopToStreamCompaction(ppl.Pass):
                 m = self.match_loop(region, sd)
                 if m is None:
                     continue
-                for width_match, count_dtype in self.by_count_width(m):
-                    self.rewrite(width_match, resolver, count_dtype)
+                self.rewrite(m, resolver, self.count_width(m))
                 lifted += 1
         return lifted or None
 
@@ -405,9 +404,13 @@ class LoopToStreamCompaction(ppl.Pass):
             for edge in state.edges():
                 if edge.data.is_empty() or edge.data.data is None:
                     continue
-                if not (isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == edge.data.data):
+                # A copy named after its source writes its destination at the other subset
+                if not isinstance(edge.dst, nodes.AccessNode):
                     continue
-                names = {str(sym) for sym in required(edge.data.subset).free_symbols}
+                written = edge.data.get_dst_subset(edge, state)
+                if written is None:
+                    continue
+                names = {str(sym) for sym in written.free_symbols}
                 if cursor in names and names & moving:
                     return True
         return False
@@ -425,8 +428,13 @@ class LoopToStreamCompaction(ppl.Pass):
                     continue
                 for node in blk.data_nodes():
                     for edge in blk.out_edges(node):
-                        if not edge.data.is_empty() and edge.data.data == node.data:
-                            guard_reads.setdefault(node.data, []).append(edge.data.subset)
+                        if edge.data.is_empty():
+                            continue
+                        # A copy named after its destination reads its source at the other subset, or all of it
+                        read = edge.data.get_src_subset(edge, blk)
+                        if read is None:
+                            read = subsets.Range.from_array(sdfg.arrays[node.data])
+                        guard_reads.setdefault(node.data, []).append(read)
         if not guard_reads:
             return True
         loop_vars = [symbolic.pystr_to_symbolic(level.loop.loop_variable) for level in levels]
@@ -434,15 +442,16 @@ class LoopToStreamCompaction(ppl.Pass):
             for edge in state.edges():
                 if edge.data.is_empty() or edge.data.data is None:
                     continue
-                if not (isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == edge.data.data):
+                if not isinstance(edge.dst, nodes.AccessNode):
                     continue
-                name = edge.data.data
+                name = edge.dst.data
                 if name not in guard_reads:
                     continue
+                written = edge.data.get_dst_subset(edge, state)
                 # Reads of an array the body never writes hoist freely, at as many points as they like
-                if any(read != edge.data.subset for read in guard_reads[name]):
+                if written is None or any(read != written for read in guard_reads[name]):
                     return False  # the body overwrites an element the guard read at another index
-                if not self.subset_is_injective_point(edge.data.subset, loop_vars):
+                if not self.subset_is_injective_point(written, loop_vars):
                     return False  # two iterations share the element -> the hoist changes the value read
         return True
 
@@ -547,42 +556,12 @@ class LoopToStreamCompaction(ppl.Pass):
             for level in m.levels
         ]
 
-    def by_count_width(self, m: CompactionMatch) -> list[tuple[CompactionMatch, dtypes.typeclass]]:
-        """The lifts to make and their rank dtype: narrow if the reach ``K * iterations`` provably fits, else both
-        behind a runtime test of it."""
+    def count_width(self, m: CompactionMatch) -> dtypes.typeclass:
+        """The rank dtype: 32-bit when the reach ``K * iterations`` provably fits it, else 64-bit. One nest either
+        way, never a runtime choice between two copies."""
         reach = m.step * sympy.Mul(*self.rank_shape(m))
-        fits = f"({symbolic.symstr(reach)}) <= {NARROW_COUNT_LIMIT}"
-        if symbolic.provably_le(reach, NARROW_COUNT_LIMIT, SymbolResolver().facts_at(m.parent)):
-            return [(m, NARROW_COUNT_DTYPE)]
-        parent, root = m.parent, m.root
-        width = ConditionalBlock(f"{root.label}_count_width")
-        parent.add_node(width, ensure_unique_name=True, is_start_block=parent.start_block is root)
-        for edge in parent.in_edges(root):
-            parent.add_edge(edge.src, width, edge.data)
-        for edge in parent.out_edges(root):
-            parent.add_edge(width, edge.dst, edge.data)
-        parent.remove_node(root)
-        # The copy is the same nest, so it is the same match; re-matching it would see its twin's transients
-        memo: dict[int, Any] = {}
-        copy.deepcopy(root, memo)
-        levels = tuple(
-            level._replace(
-                loop=memo[id(level.loop)],
-                preamble=[memo[id(b)] for b in level.preamble],
-                child=memo[id(level.child)],
-                tail=tuple(memo[id(b)] for b in level.tail),
-            )
-            for level in m.levels
-        )
-        wide = m._replace(root=memo[id(root)], levels=levels, cond_block=memo[id(m.cond_block)])
-        lifts = []
-        for condition, lift, count_dtype in ((fits, m, NARROW_COUNT_DTYPE), (None, wide, COUNT_DTYPE)):
-            branch = ControlFlowRegion(f"{width.label}_{count_dtype.to_string()}", sdfg=m.sdfg)
-            branch.add_node(lift.root, is_start_block=True)
-            width.add_branch(condition, branch)
-            lifts.append((lift._replace(parent=branch), count_dtype))
-        own_scratch(wide.root, root, m.sdfg)
-        return lifts
+        fits = symbolic.provably_le(reach, NARROW_COUNT_LIMIT, SymbolResolver().facts_at(m.parent))
+        return NARROW_COUNT_DTYPE if fits else COUNT_DTYPE
 
     def rewrite(
         self, m: CompactionMatch, resolver: scopes.ScopedSymbolResolver, count_dtype: dtypes.typeclass = COUNT_DTYPE

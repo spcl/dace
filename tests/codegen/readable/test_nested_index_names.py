@@ -155,7 +155,7 @@ def test_uninlined_kernel_no_duplicate_idx(kernel):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     sdfg = getattr(mod, kernel).to_sdfg(simplify=True)
-    for n, _ in sdfg.all_nodes_recursive():
+    for n, parent in sdfg.all_nodes_recursive():
         if isinstance(n, nodes.NestedSDFG):
             n.no_inline = True
     with use_implementation(EXPERIMENTAL):
@@ -332,6 +332,18 @@ def test_scalar_connector_not_renamed():
     assert sdfg.to_json() == before
 
 
+def test_a_renamed_container_is_renamed_in_the_loop_labels_too():
+    """gmres: the label of a loop in a nested body said ``reduction: + into H`` where the body names it ``H_v0``."""
+    sdfg = _nested_view_sdfg((-1, -1))
+    inner = next(n.sdfg for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
+    (entry,) = [n for n in inner.start_block.nodes() if isinstance(n, nodes.MapEntry)]
+    entry.specialization_hint = "parallel -- reduction: + into A; the other accesses are independent of a value"
+    CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
+    assert (
+        entry.specialization_hint == "parallel -- reduction: + into A_v0; the other accesses are independent of a value"
+    )
+
+
 # #
 # Codegen-level: the pass + per-file dedup produce collision-free emitted C++.
 # #
@@ -374,7 +386,7 @@ def test_renamed_return_value_leaves_the_tuple_return_prefix():
     sdfg = _nested_view_sdfg((-1, -1), inner_name="__return", outer_name="__return")
     assert CanonicalizeNestedIndexNames().apply_pass(sdfg, {}) == 1
     sdfg.validate()
-    nested = next(n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
+    nested = next(n.sdfg for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
     assert not any(name.startswith("__return") for name in nested.arrays), sorted(nested.arrays)
 
 
@@ -441,6 +453,7 @@ if __name__ == "__main__":
     test_a_nested_return_is_not_renamed_into_the_return_namespace()
     test_scalar_connector_not_renamed()
     test_renamed_return_value_leaves_the_tuple_return_prefix()
+    test_a_renamed_container_is_renamed_in_the_loop_labels_too()
     for k in ("trisolv", "lu", "ludcmp"):
         test_uninlined_kernel_no_duplicate_idx(k)
     test_helper_is_named_apart_from_a_container()

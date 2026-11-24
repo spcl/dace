@@ -423,7 +423,8 @@ def test_forward_reads_same_index_only_is_noop():
 def test_forward_reads_reverse_stride_forward_read_is_not_snapshotted():
     """Reverse stride flips what ``a[i + 1]`` means: with ``i`` decreasing it is the value
     the PREVIOUS iteration wrote (RAW), not a read-ahead. Snapshotting it silently computes
-    the wrong ``D`` -- so the split must refuse, and the values must match the un-split run."""
+    the wrong ``D`` -- so the split must run the writer of ``A`` first, and the values must match
+    the un-split run."""
 
     def build(name):
         sdfg = dace.SDFG(name)
@@ -448,7 +449,10 @@ def test_forward_reads_reverse_stride_forward_read_is_not_snapshotted():
     build("rev_stride_ref").compile()(**ref, N=n)
 
     cand_sdfg = build("rev_stride_cand")
-    assert SplitStatements().apply_pass(cand_sdfg, {}) is None
+    assert SplitStatements().apply_pass(cand_sdfg, {}) == 1
+    loops = [r for r in cand_sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)]
+    stored = [sorted({n.data for st in lp.states() for n in st.data_nodes() if st.in_degree(n) > 0}) for lp in loops]
+    assert stored == [["A"], ["D"]], f"the writer of A must run first, got {stored}"
     got = {"A": a0.copy(), "B": b0.copy(), "D": np.zeros(n)}
     cand_sdfg.compile()(**got, N=n)
     for k in ref:

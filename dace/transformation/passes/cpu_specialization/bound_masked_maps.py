@@ -10,11 +10,12 @@ A vectorized spec walks every padded slot and masks the dead ones (examinimd's n
 
 The bound is read from data, so this is a CPU specialization: canonical form keeps the rectangular map a GPU tile or a
 vectorizer specializes from. The body is interpreted under ``slot < count == False``. It must write nothing that leaves
-the map but WCR sums, and each must add ``z``: a literal zero or ``0.0 * v``, with ``v`` one value across masked slots.
-``z`` is ``+-0`` or NaN, as ``v`` may be non-finite, so ``a + z + z == a + z``: the first masked slot stays and speaks
-for the rest. What runs is a subset of the original iterations in their order, plus one read of the count at an index the
-mask reads. A dropped iteration repeats the kept one's flags; its slot-dependent work is dead, and the compile flags
-keep no such flags (``-fno-trapping-math``). Anything the interpretation cannot speak for refuses.
+the map but WCR sums into an element whose index does not name ``slot``, and each must add ``z``: a literal zero or
+``0.0 * v``, with ``v`` one value across masked slots. ``z`` is ``+-0`` or NaN, as ``v`` may be non-finite, so every
+masked slot adds to the same ``a`` and ``a + z + z == a + z``: the first masked slot stays and speaks for the rest.
+What runs is a subset of the original iterations in their order, plus one read of the count at an index the mask
+reads. A dropped iteration repeats the kept one's flags; its slot-dependent work is dead, and the compile flags keep
+no such flags (``-fno-trapping-math``). Anything the interpretation cannot speak for refuses.
 """
 
 import ast
@@ -201,6 +202,9 @@ class MaskedBody:
         if sink not in self.members:
             if any(e.data.wcr is None or not self.facts.is_sum(e.data.wcr) for e in path):
                 raise Refusal(f"not a sum: {edge.data}")
+            # Each masked slot adds its ``z`` to its own element, which no kept slot speaks for
+            if self.slot in path[0].data.subset.free_symbols:
+                raise Refusal(f"sums into a slot-indexed element: {edge.data}")
             self.leaving.append(value)
         elif edge.data.wcr is not None or sink.data in self.values:
             # Accumulated, or assigned more than once: known to be one value at most

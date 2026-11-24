@@ -100,21 +100,24 @@ def test_inside_a_team_a_one_trip_loop_becomes_thread_zeros_block_and_the_team_s
 
 
 def test_a_connector_block_becomes_its_one_statement():
+    types = {"acc": "double", "s": "double", "x": "double", "y": "double", "a": "double"}
     wcr = "    {\n        double __out;\n        __out = (x[i] * y[i]);\n        *(acc) = *(acc) + (__out);\n    }\n"
-    assert collapse_connector_blocks(wcr) == "    *(acc) = *(acc) + (x[i] * y[i]);\n"
+    assert collapse_connector_blocks(wcr, types) == "    *(acc) = *(acc) + (x[i] * y[i]);\n"
     read = "    {\n        double __inp = acc[0];\n        a[i] = __inp;\n    }\n"
-    assert collapse_connector_blocks(read) == "    a[i] = acc[0];\n"
+    assert collapse_connector_blocks(read, types) == "    a[i] = acc[0];\n"
     twice = "    {\n        double __out;\n        __out = f(i);\n        s = __out * __out;\n    }\n"
-    assert collapse_connector_blocks(twice) == twice, "a value used twice must be evaluated once"
+    assert collapse_connector_blocks(twice, types) == twice, "a value used twice must be evaluated once"
     narrow = "    {\n        float __out;\n        __out = (x[i] * 2.0);\n        *(acc) = *(acc) + (__out);\n    }\n"
-    assert collapse_connector_blocks(narrow) == narrow, "a float local rounds its value: folding it in changes the sum"
+    assert collapse_connector_blocks(narrow, types) == narrow, (
+        "a float local rounds its value: folding it in changes the sum"
+    )
     named = "    {\n        double y;\n        y = (x[i] * 2.0);\n        *(acc) = *(acc) + (y);\n    }\n"
-    assert collapse_connector_blocks(named) == named, "a tasklet's own local keeps its declaration"
+    assert collapse_connector_blocks(named, types) == named, "a tasklet's own local keeps its declaration"
     atomic = (
         "    {\n        double __out;\n        __out = (x[i] * y[i]);\n        // atomic update: why\n"
         "        #pragma omp atomic update\n        *(s) = *(s) + (__out);\n    }\n"
     )
-    assert collapse_connector_blocks(atomic) == (
+    assert collapse_connector_blocks(atomic, types) == (
         "    // atomic update: why\n    #pragma omp atomic update\n    *(s) = *(s) + (x[i] * y[i]);\n"
     )
 

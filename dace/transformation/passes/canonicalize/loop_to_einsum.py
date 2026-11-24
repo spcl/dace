@@ -626,9 +626,9 @@ class LoopToEinsum(ppl.Pass):
         )
         # Folding onto zeros stored just before the nest (``C[:] = 0``) is overwriting; covered, they are dead.
         zeros = zero_before_block(state, out_array) if symbolic.equal_valued(1, node.beta) else None
-        if zeros is not None and zeros.subset.covers(out_subset, state.sdfg.facts()):
+        if zeros is not None and zeros.subset.covers_precise(out_subset, state.sdfg.facts()):
             node.beta = 0
-            if not zeros.observed and out_subset.covers(zeros.subset, state.sdfg.facts()):
+            if not zeros.observed and out_subset.covers_precise(zeros.subset, state.sdfg.facts()):
                 zeros.remove()
 
     def _replace_map_with_einsum(self, state: SDFGState, entry: nodes.MapEntry, spec: EinsumSpec) -> None:

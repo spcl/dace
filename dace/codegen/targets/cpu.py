@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+import collections
 import functools
 import itertools
 import re
@@ -50,6 +51,42 @@ if TYPE_CHECKING:
     from dace.codegen.targets.cuda import CUDACodeGen
     from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen
     from dace.codegen.targets.framecode import DaCeCodeGenerator
+
+
+def pointee(ptr: str) -> str:
+    """The lvalue ``*(ptr)`` names; a standalone unit spells it as its reads do: ``x`` for ``&x``, ``p[0]`` for ``p``
+    and ``p[e]`` for ``p + e``."""
+    if cpf_lowering.standalone():
+        scalar = re.fullmatch(r"(&?)(\w+)", ptr)
+        if scalar is not None:
+            return scalar[2] if scalar[1] else f"{scalar[2]}[0]"
+        element = re.fullmatch(r"(\w+) \+ (.+)", ptr)
+        depths = list(itertools.accumulate({"(": 1, ")": -1}.get(char, 0) for char in element[2])) if element else []
+        if element is not None and min(depths, default=0) >= 0 and depths[-1] == 0:
+            index = element[2]
+            group = index.startswith("(") and index.endswith(")") and 0 not in depths[:-1]
+            return f"{element[1]}[{index[1:-1] if group else index}]"
+    return f"*({ptr})"
+
+
+def file_scope_constants(nested: SDFG) -> list[str]:
+    """The constants of ``nested`` equal to the root SDFG's constant of the same name, which the unit declares once at
+    file scope."""
+    root = nested.root_sdfg.constants_prop
+    return [
+        name
+        for name, (desc, value) in nested.constants_prop.items()
+        if name in root and same_constant(root[name], (desc, value))
+    ]
+
+
+def same_constant(first: tuple[data.Data, object], second: tuple[data.Data, object]) -> bool:
+    """Whether two constants print the same ``constexpr``: kind, element type, shape and value. Other descriptor
+    properties, such as ``transient`` or the storage, do not reach it."""
+    (one, one_value), (other, other_value) = first, second
+    if type(one) is not type(other) or one.dtype != other.dtype or tuple(one.shape) != tuple(other.shape):
+        return False
+    return bool(np.array_equal(np.asarray(one_value), np.asarray(other_value)))
 
 
 def register_array_on_stack(sdfg: SDFG, nodedesc: data.Data, arrsize, lifetime, declared: bool) -> bool:
@@ -835,6 +872,21 @@ def nested_sdfg_fingerprint(nsdfg: SDFG) -> tuple:
             else:
                 parts.append((block.label,))
     return tuple(parts)
+
+
+def atomic_hint(memlet: mmlt.Memlet, op: str | None) -> str:
+    """The comment above a conflicting accumulation: the operator, the container, and why iterations collide."""
+    verb = {"+": "add into", "*": "multiply into", "max": "fold max into", "min": "fold min into"}.get(
+        op or "", f"combine ({op}) into" if op else "fold into"
+    )
+    # Only an index with no name in it is the same element for every iteration; ``out[idx_index]`` moves.
+    single = memlet.subset is not None and not memlet.subset.free_symbols and not memlet.dynamic
+    where = f"{memlet.data}[{memlet.subset}]" if single else f"an element of {memlet.data}"
+    cause = "every iteration writes that element" if single else "the index may repeat across iterations"
+    return (
+        f"// atomic update: iterations may {verb} {where} ({cause}), so the update is atomic; "
+        "alt: per-thread copies combined after the loop, where a copy per thread fits in memory\n"
+    )
 
 
 @registry.autoregister_params(name="cpu")
@@ -2032,9 +2084,7 @@ class CPUCodeGen(TargetCodeGenerator):
             elif copy_shape == [1]:  # Special case: accumulating one element
                 dst_expr = self.memlet_view_ctor(sdfg, memlet, dst_nodedesc.dtype, True)
                 stream.write(
-                    self.write_and_resolve_expr(
-                        sdfg, memlet, nc, dst_expr, "*(" + src_expr + ")", dtype=dst_nodedesc.dtype
-                    )
+                    self.write_and_resolve_expr(sdfg, memlet, nc, dst_expr, pointee(src_expr), dtype=dst_nodedesc.dtype)
                     + ";",
                     cfg,
                     state_id,
@@ -2178,6 +2228,7 @@ class CPUCodeGen(TargetCodeGenerator):
             ptr = f"{cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self)} + {indices}"
         else:
             ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices, codegen=self)
+        lvalue = self.memlet_lvalue(sdfg, memlet, ptr)
 
         # An OMP ``reduction(op:var)`` clause target: the clause privatizes the scalar
         # per thread and tree-reduces at the end, so the body accumulates into the private
@@ -2193,10 +2244,10 @@ class CPUCodeGen(TargetCodeGenerator):
                 credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1 :]
                 return (
                     f"({rp_flag} ? (void)dace::wcr_fixed<{credtype}, {wcr_desc.dtype.ctype}>::reduce_atomic("
-                    f"{ptr}, {inname}) : (void)(*({ptr}) = *({ptr}) {omp_op} ({inname})))"
+                    f"{ptr}, {inname}) : (void)({lvalue} = {lvalue} {omp_op} ({inname})))"
                 )
             if omp_op in ("+", "*", "&", "|", "^", "&&", "||"):
-                return f"*({ptr}) = *({ptr}) {omp_op} ({inname})"
+                return f"{lvalue} = {lvalue} {omp_op} ({inname})"
 
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type
@@ -2257,19 +2308,12 @@ class CPUCodeGen(TargetCodeGenerator):
                 f"CPF cannot render the conflicting vector WCR on {target}: an atomic needs "
                 "one scalar location. Scalarize the map before rendering."
             )
-        hint = (
-            (
-                f"// atomic update: iterations may add to the same {target}, so the update is atomic. "
-                "Faster: per-thread copies combined after the loop.\n"
-            )
-            if cpf_lowering.hint_detail() is cpf_lowering.HintDetail.PROOFS
-            else ""
-        )
+        op = _REDUCTION_TO_OMP_OP.get(redtype)
+        hint = atomic_hint(memlet, op) if cpf_lowering.hint_detail() is cpf_lowering.HintDetail.PROOFS else ""
         if cpf_lowering.device():
             return hint + standalone_gpu_atomic(
                 self.standalone_wcr_operator(sdfg, memlet, redtype, dtype, target), ptr, inname, redtype, dtype.ctype
             )
-        op = _REDUCTION_TO_OMP_OP.get(redtype)
         c_dialect = cpf_lowering.standalone_c()
         # Multi-statement forms are one block; the semicolon the caller appends is then an empty statement.
         if dtype.is_complex():
@@ -2297,10 +2341,11 @@ class CPUCodeGen(TargetCodeGenerator):
         if op in ("&&", "||"):
             # Only a falsy (``&&``) or truthy (``||``) value changes the accumulator, and then to a constant.
             guard, value = (f"!({inname})", 0) if op == "&&" else (f"{inname}", 1)
-            return f"{hint}if ({guard}) {{\n#pragma omp atomic write\n*({ptr}) = {value};\n}}"
+            return f"{hint}if ({guard}) {{\n#pragma omp atomic write\n{self.memlet_lvalue(sdfg, memlet, ptr)} = {value};\n}}"
         # Any other fold (a custom resolution, ``-``, ``/``): compare-and-swap until no other writer intervened.
         folded = self.standalone_wcr_value(sdfg, memlet, redtype, "cpf_seen", inname, target, dtype)
         ctype = dtype.ctype
+        lvalue = self.memlet_lvalue(sdfg, memlet, ptr)
         return (
             f"{hint}{{\n{ctype} cpf_seen, cpf_next;\n"
             "#if defined(__NVCOMPILER)\n"
@@ -2310,14 +2355,18 @@ class CPUCodeGen(TargetCodeGenerator):
             "#else\n"
             "int cpf_done = 0;\n"
             "while (!cpf_done) {\n"
-            f"#pragma omp atomic read\ncpf_seen = *({ptr});\n"
+            f"#pragma omp atomic read\ncpf_seen = {lvalue};\n"
             f"cpf_next = {folded};\n"
-            f"#pragma omp atomic compare capture\n{{ cpf_done = *({ptr}) == cpf_seen; if (cpf_done) {{ *({ptr}) = cpf_next; }} }}\n"
+            f"#pragma omp atomic compare capture\n{{ cpf_done = {lvalue} == cpf_seen; if (cpf_done) {{ {lvalue} = cpf_next; }} }}\n"
             "if (cpf_seen != cpf_seen) break;  // a NaN accumulator never compares equal; it stays NaN\n"
             "}\n"
             "#endif\n"
             "}"
         )
+
+    def memlet_lvalue(self, sdfg: SDFG, memlet, ptr: str) -> str:
+        """The lvalue ``*(ptr)`` of ``memlet``'s target; the readable generator names an element as its reads do."""
+        return pointee(ptr)
 
     def standalone_wcr_value(
         self,
@@ -2411,7 +2460,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 f"CPF cannot render the vector WCR on {target}: the vector type is a DaCe "
                 "runtime template. Scalarize the map before rendering."
             )
-        return f"*({ptr}) = {self.standalone_wcr_value(sdfg, memlet, redtype, f'*({ptr})', inname, target, dtype)}"
+        lvalue = self.memlet_lvalue(sdfg, memlet, ptr)
+        return f"{lvalue} = {self.standalone_wcr_value(sdfg, memlet, redtype, lvalue, inname, target, dtype)}"
 
     def process_out_memlets(
         self,
@@ -3588,7 +3638,10 @@ class CPUCodeGen(TargetCodeGenerator):
         try:
             if not unique_functions or not code_already_generated:
                 if not inline:
-                    self._frame.generate_constants(node.sdfg, nested_stream)
+                    # A standalone unit's helper sees the file-scope constants, so it does not declare them again
+                    standalone = cpf_lowering.standalone() and codegen is self and not do_split
+                    shared = file_scope_constants(node.sdfg) if standalone else ()
+                    self._frame.generate_constants(node.sdfg, nested_stream, skip=shared)
 
                 old_schedule = self._toplevel_schedule
 
@@ -3789,6 +3842,7 @@ class CPUCodeGen(TargetCodeGenerator):
           ``wcr_fixed`` path, which is already the non-atomic one here);
         * the array is not also READ through the map entry. The accumulator holds the running value
           in a register until the exit, so such a read would see the stale memory copy;
+        * no other edge into the map exit writes the array: its store at the exit would overwrite that write;
         * the value reaches the exit from a TASKLET. That is the only write resolved through
           :meth:`write_and_resolve_expr`, which is where the accumulation is redirected into the
           register. Every other source writes the destination directly and never sees the
@@ -3814,8 +3868,15 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(e.src, nodes.AccessNode) and e.data is not None and not e.data.is_empty()
         }
         map_param_set = set(map_entry.map.params)
+        # The exit's writes per array: a register holds an element over the whole loop and stores it at the exit, over
+        # anything another write of the loop put in memory meanwhile (``A[k] += x[j]; A[j] += y[j]`` at ``j == k``)
+        writers = collections.Counter(
+            e.data.data for e in state.in_edges(map_exit) if e.data is not None and not e.data.is_empty()
+        )
         for iedge in state.in_edges(map_exit):
             if iedge.data is None or iedge.data.wcr is None or iedge.data.subset is None:
+                continue
+            if writers[iedge.data.data] != 1:
                 continue
             in_conn = iedge.dst_conn
             if not in_conn or not in_conn.startswith("IN_"):
@@ -3866,11 +3927,16 @@ class CPUCodeGen(TargetCodeGenerator):
             # ``write_and_resolve_expr`` performs, so hoisted and un-hoisted name one location.
             ptrname = self.ptr(iedge.data.data, desc, sdfg)
             try:
-                defined_type, _ = self._dispatcher.defined_vars.get(ptrname)
+                defined_type, unused_ctype = self._dispatcher.defined_vars.get(ptrname)
             except KeyError:
                 continue  # not in scope where the accumulator would be declared -> leave it alone
-            target = "*(%s)" % cpp.cpp_ptr_expr(sdfg, iedge.data, defined_type, codegen=self)
+            target = self.memlet_lvalue(
+                sdfg, iedge.data, cpp.cpp_ptr_expr(sdfg, iedge.data, defined_type, codegen=self)
+            )
             var = f"__acc_{len(self._seq_accumulator_stack)}_{len(out)}_{iedge.data.data}"
+            # A transient by-value scalar is a register already: CPF accumulates into it in place.
+            if cpf_lowering.standalone() and defined_type == DefinedType.Scalar and desc is not None and desc.transient:
+                var = target
             out.append((iedge.data.data, iedge.data.subset, op_str, desc.dtype.ctype, target, var))
         return out
 
@@ -3940,7 +4006,9 @@ class CPUCodeGen(TargetCodeGenerator):
             defined_type = self._dispatcher.defined_vars.get(self.ptr(name, desc, sdfg))[0]
             # one per map: sibling maps (a vector body and its remainder) reduce into the same section in one C scope
             var = f"__red_{sdfg.cfg_id}_{state.block_id}_{state.node_id(map_entry)}_{name}"
-            value = "*(%s)" % cpp.cpp_ptr_expr(sdfg, edges[0].data, defined_type, codegen=self)
+            value = self.memlet_lvalue(
+                sdfg, edges[0].data, cpp.cpp_ptr_expr(sdfg, edges[0].data, defined_type, codegen=self)
+            )
             held.append((name, edges[0].data.subset, op_str, desc.dtype.ctype, value, var))
             out.append((op_str, var, name, declare))
         return out, held
@@ -3961,6 +4029,9 @@ class CPUCodeGen(TargetCodeGenerator):
         need a ``#pragma omp declare reduction`` (returned as ``declare_line``, ``+``/``*``
         only). Anything else falls through to the atomic path -- correct but contended.
 
+        (e) Every write of the array through the map exit takes the clause too: a clause privatizes the whole
+        name, so any other write would land in the private copy.
+
         Each returned tuple yields one clause; the caller emits any unique ``declare_line``
         ahead of the pragma and pushes ``data_name`` onto one scope frame so the nested
         ``write_and_resolve_expr`` skips the now-redundant atomic and accumulates into the
@@ -3975,6 +4046,14 @@ class CPUCodeGen(TargetCodeGenerator):
             map_exit = state.exit_node(map_entry)
         except (KeyError, StopIteration):
             return out
+        # The exit's writes per array, and those a clause covers: a clause privatizes the whole array name in the
+        # region, so a write it does not cover (a scatter ``s[i] += a[i]`` beside ``s[0] += b[i]``) would land in the
+        # private section, past its end and lost
+        writers = collections.Counter(
+            e.data.data for e in state.in_edges(map_exit) if e.data is not None and not e.data.is_empty()
+        )
+        covered: collections.Counter[str] = collections.Counter()
+        written_as: dict[str, str] = {}
         # The reduction targets reachable from the map scope.
         for iedge in state.in_edges(map_exit):
             if iedge.data is None or iedge.data.wcr is None:
@@ -4092,11 +4171,14 @@ class CPUCodeGen(TargetCodeGenerator):
                     continue
                 op_str, declare = named
 
+            covered[iedge.data.data] += 1
+            written_as[oedge.dst.data] = iedge.data.data
             key = (op_str, clause_target)
             if key in seen:
                 continue
             seen.add(key)
             out.append((op_str, clause_target, oedge.dst.data, declare))
+        out = [clause for clause in out if covered[written_as[clause[2]]] == writers[written_as[clause[2]]]]
         return one_section_per_array(out, whole_targets)
 
     def _range_private_targets(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry) -> dict[str, tuple]:
@@ -4577,11 +4659,12 @@ class CPUCodeGen(TargetCodeGenerator):
         if node.map.schedule == dtypes.ScheduleType.Sequential:
             seq_accumulators = self._collect_sequential_accumulators(sdfg, state_dfg, node)
         for held in seq_accumulators:
-            result.write(f"{held[3]} {held[5]} = {held[4]};", cfg, state_id, node)
+            if held[5] != held[4]:
+                result.write(f"{held[3]} {held[5]} = {held[4]};", cfg, state_id, node)
         self._seq_accumulator_stack.append(
             {
-                dname: {"var": var, "op": op, "subset": subset, "target": target}
-                for dname, subset, op, _ctype, target, var in seq_accumulators
+                dname: {"var": var, "op": op, "subset": subset, "target": target, "ctype": ctype}
+                for dname, subset, op, ctype, target, var in seq_accumulators
             }
         )
 
@@ -4760,7 +4843,8 @@ class CPUCodeGen(TargetCodeGenerator):
         # so the register holds the final value and the single store lands here.
         if self._seq_accumulator_stack:
             for acc in self._seq_accumulator_stack.pop().values():
-                result.write(f"{acc['target']} = {acc['var']};", cfg, state_id, node)
+                if acc["var"] != acc["target"]:
+                    result.write(f"{acc['target']} = {acc['var']};", cfg, state_id, node)
 
         # Close the encapsulating C scope only if the matching MapEntry opened one.
         if self._map_scope_braced.pop(self.map_scope_key(cfg, state_id, state_dfg, map_node), True):

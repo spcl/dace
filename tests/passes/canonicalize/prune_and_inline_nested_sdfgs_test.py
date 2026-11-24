@@ -150,3 +150,43 @@ def test_nothing_accepted_returns_none_and_leaves_the_graph_alone():
     before = ordered_signature(sdfg)
     assert PruneAndInlineNestedSDFGs().apply_pass(sdfg, {}) is None
     assert ordered_signature(sdfg) == before
+
+
+def test_an_inlined_body_whose_inner_map_kept_its_element_memlets_names_no_inner_parameter_outside():
+    """A lane-narrowed body (``MoveLoopIntoMap``) keeps its inner map's memlets as they were: the edges around ``map
+    j`` over ``[k, k]`` still read ``A[j]``. Inlined into ``map i``, propagation must start from ``map j``; from the
+    outer scope alone it lifts ``A[j]`` out of ``map j`` (CloudSC, ``Missing symbols on nested SDFG``)."""
+    N = dace.symbol("N")
+    inner = dace.SDFG("lane_body")
+    inner.add_symbol("k", dace.int64)
+    inner.add_array("A", [N], dace.float64)
+    inner.add_array("B", [N], dace.float64)
+    body = inner.add_state("body")
+    entry, exit_ = body.add_map("lane", {"j": "k:k+1"})
+    copy_ = body.add_tasklet("copy", {"a": None}, {"b": None}, "b = a")
+    entry.add_in_connector("IN_A")
+    entry.add_out_connector("OUT_A")
+    exit_.add_in_connector("IN_B")
+    exit_.add_out_connector("OUT_B")
+    body.add_edge(body.add_read("A"), None, entry, "IN_A", dace.Memlet("A[j]"))
+    body.add_edge(entry, "OUT_A", copy_, "a", dace.Memlet("A[j]"))
+    body.add_edge(copy_, "b", exit_, "IN_B", dace.Memlet("B[j]"))
+    body.add_edge(exit_, "OUT_B", body.add_write("B"), None, dace.Memlet("B[j]"))
+
+    outer = dace.SDFG("lanes")
+    outer.add_array("A", [N], dace.float64)
+    outer.add_array("B", [N], dace.float64)
+    state = outer.add_state("s")
+    lanes, lanes_exit = state.add_map("lanes", {"i": "0:N"})
+    nest = state.add_nested_sdfg(inner, {"A": None}, {"B": None}, symbol_mapping={"k": "i", "N": "N"})
+    state.add_memlet_path(state.add_read("A"), lanes, nest, dst_conn="A", memlet=dace.Memlet("A[0:N]"))
+    state.add_memlet_path(nest, lanes_exit, state.add_write("B"), src_conn="B", memlet=dace.Memlet("B[0:N]"))
+
+    assert PruneAndInlineNestedSDFGs().apply_pass(outer, {})
+    outer.validate()
+    for edge in state.in_edges(lanes) + state.out_edges(lanes_exit):
+        assert "j" not in {str(s) for s in edge.data.subset.free_symbols}, edge.data
+    a = np.arange(8, dtype=np.float64)
+    b = np.zeros(8)
+    outer(A=a, B=b, N=8)
+    assert np.array_equal(a, b)

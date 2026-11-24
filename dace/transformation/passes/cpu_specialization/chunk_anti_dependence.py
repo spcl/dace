@@ -53,6 +53,7 @@ import sympy
 
 from dace import Memlet, data, dtypes, properties, subsets, symbolic
 from dace.optionals import required
+from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.narrowing import as_basic, as_expr, as_map_entry
 from dace.sdfg.state import ConditionalBlock, SDFGState
@@ -70,10 +71,12 @@ _CPU_SCHEDULES = (
 )
 
 
-#: The class line of the in-chunk sweep, which reads the live array ahead of its own writes.
+#: The class line of the in-chunk sweep, which reads the live array ahead of its own writes: the counter ``{i}``, the
+#: array, the read-ahead distance and the seam buffer, in the names the rendering gives them.
 CHUNK_SWEEP_HINT = (
-    "sequential -- in order within a chunk: an iteration reads an element a later one writes (write after read); "
-    "the chunks run in parallel, each boundary copied first"
+    "sequential -- in order within a chunk: iteration {i} reads {arr}[{i} + {offset}] before iteration {i} + {offset} "
+    "overwrites it (write after read); the chunks run in parallel, and the last {offset} iteration(s) of each chunk "
+    "run after them, reading the next chunk's first cells from {seam}, copied before any chunk starts"
 )
 
 
@@ -99,7 +102,7 @@ def _exact(bound):
     return bound.expr if isinstance(bound, symbolic.SymExpr) else bound
 
 
-def _clone_contents(src: SDFGState, dst: SDFGState, sdfg: SDFG) -> None:
+def clone_contents(src: SDFGState, dst: SDFGState, sdfg: SDFG) -> dict[nodes.Node, nodes.Node]:
     """Copy every node and edge of ``src`` into the empty state ``dst``, privatizing the temporaries.
 
     The node list is deepcopied as ONE object so a MapEntry and its MapExit keep sharing
@@ -136,6 +139,7 @@ def _clone_contents(src: SDFGState, dst: SDFGState, sdfg: SDFG) -> None:
         if memlet is not None and memlet.data in private:
             memlet.data = private[memlet.data]
         dst.add_edge(mapping[e.src], e.src_conn, mapping[e.dst], e.dst_conn, memlet)
+    return mapping
 
 
 @properties.make_properties
@@ -215,6 +219,8 @@ class ChunkAntiDependence(ppl.Pass):
                 continue
             if not isinstance(me, nodes.MapEntry) or state.entry_node(me) is not None:
                 continue
+            if not self.only_computation(state, me, snap_node):
+                continue
             if me.map.schedule not in _CPU_SCHEDULES or is_devicelevel_gpu(sdfg, state, me):
                 continue
             if len(me.map.params) != 1 or len(me.map.range) != 1:
@@ -227,6 +233,18 @@ class ChunkAntiDependence(ppl.Pass):
                 continue
             return snap_node, arr, me, lo, hi, offset, copy_state, copy_edge
         return None
+
+    @staticmethod
+    def only_computation(state: SDFGState, me: nodes.MapEntry, snap_node: nodes.AccessNode) -> bool:
+        """Whether ``me``'s map is all ``state`` computes: the rewrite runs the state three times, prologue, chunks
+        and seam iterations, so any other statement there would run three times over its whole range."""
+        core = OrderedSet([me, state.exit_node(me), snap_node])
+        return all(
+            node in core
+            or isinstance(node, nodes.AccessNode)
+            and all((e.dst if e.src is node else e.src) in core for e in state.all_edges(node))
+            for node in state.scope_children()[None]
+        )
 
     def _read_ahead_offset(self, state: SDFGState, me: nodes.MapEntry, snap: str, arr: str):
         """The one ``D`` every snapshot read is ``[i + D]`` at, every live ``arr`` access being ``[i]``.
@@ -339,7 +357,9 @@ class ChunkAntiDependence(ppl.Pass):
         me.map.schedule = dtypes.ScheduleType.Sequential
         return outer
 
-    def _sequentialize(self, state: SDFGState, sdfg: SDFG, me: nodes.MapEntry) -> None:
+    def sequentialize(
+        self, state: SDFGState, sdfg: SDFG, me: nodes.MapEntry, arr: str, offset: int | sympy.Expr, seam: str
+    ) -> None:
         """Turn the in-chunk sweep into a ``LoopRegion``, leaving only the chunks a map.
 
         A Map asserts that its iterations carry NO dependence, and the in-chunk sweep carries one:
@@ -362,11 +382,12 @@ class ChunkAntiDependence(ppl.Pass):
         # than inlining it up to the parent region, where a map scope cannot hold it.
         to_loop.inline_after = False
         to_loop.map_entry = me
+        counter = me.map.params[0]
         to_loop.apply(state, sdfg)
         # The order is this pass's decision, not an open question: the rendering must not invite parallelizing it
         sweep = to_loop.loop_region
         sweep.pinned_sequential = True
-        sweep.specialization_hint = CHUNK_SWEEP_HINT
+        sweep.specialization_hint = CHUNK_SWEEP_HINT.format(i=counter, arr=arr, offset=offset, seam=seam)
 
     @staticmethod
     def _drop_copy(copy_state: SDFGState, copy_edge, snap_node: nodes.AccessNode) -> None:
@@ -434,8 +455,8 @@ class ChunkAntiDependence(ppl.Pass):
         pro = parent.add_state_before(state, label=f"{arr}_antidep_prologue")
         seam = parent.add_state_before(pro, label=f"{arr}_antidep_seams")
         tail = parent.add_state_after(state, label=f"{arr}_antidep_seam_iters")
-        _clone_contents(state, pro, sdfg)
-        _clone_contents(state, tail, sdfg)
+        pro_entry = clone_contents(state, pro, sdfg)[me]
+        tail_entry = clone_contents(state, tail, sdfg)[me]
 
         # Seam elements: each chunk's first element, gathered into consecutive slots, plus the
         # final read that no chunk boundary lands on. Strided source, contiguous destination.
@@ -476,7 +497,6 @@ class ChunkAntiDependence(ppl.Pass):
 
         # Prologue: the one iteration whose read-ahead has no chunk in front of it, so it
         # reads chunk 0's own first element -- slot 0.
-        pro_entry = next(n for n in pro.nodes() if isinstance(n, nodes.MapEntry))
         pro_entry.map.range = subsets.Range([(lo, _min(lo + offset - 1, hi), 1)])
         # Row 0 is chunk 0's first cells, or the trailing row when the range is too short for any chunk.
         self._redirect_to_seam(
@@ -495,11 +515,10 @@ class ChunkAntiDependence(ppl.Pass):
         for e in state.edges():
             if e.data is not None and e.data.data == snap:
                 e.data.data = arr
-        self._sequentialize(state, sdfg, me)
+        self.sequentialize(state, sdfg, me, arr, offset, buf)
 
         # Seam iterations: the last index of every chunk, whose read-ahead crosses into the
         # next chunk and must come from the buffer -- chunk ``k`` reads slot ``k + 1``.
-        tail_entry = next(n for n in tail.nodes() if isinstance(n, nodes.MapEntry) and tail.entry_node(n) is None)
         tail_entry.map.range = subsets.Range([(lo + offset, hi, 1)])
         tail_outer = self._tile(tail, sdfg, tail_entry, chunk)
         t_lo, t_hi, _ = tail_entry.map.range[0]

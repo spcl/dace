@@ -462,7 +462,8 @@ def test_gemm_cublas_gpu():
     for operand in ("A", "B", "C"):
         copies = [n for n in sdfg.arrays if n != operand and n.replace("_gpu", "").replace("gpu_", "") == operand]
         assert copies, f"no device copy of {operand} in {list(sdfg.arrays)}"
-        assert any(re.search(r"\b%s\b" % re.escape(c), call) for c in copies), (operand, copies, call)
+        # A persistent device copy lives in the state struct as ``__state->__0_A_gpu``.
+        assert any(re.search(r"\b(?:__\d+_)?%s\b" % re.escape(c), call) for c in copies), (operand, copies, call)
 
     # Compile + run bit-exact (requires a GPU device). The driver being installed is not the same
     # as a device being VISIBLE -- a CPU-only run sets CUDA_VISIBLE_DEVICES empty, and then the

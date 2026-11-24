@@ -7,15 +7,38 @@ import sympy
 
 from dace import SDFG, symbolic
 from dace.sdfg import nodes
-from dace.sdfg.state import BreakBlock, ContinueBlock, LoopRegion, ReturnBlock
+from dace.sdfg.state import BreakBlock, ContinueBlock, LoopRegion, ReturnBlock, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
 
 
+def map_runs(entry: nodes.EntryNode, facts: symbolic.Facts) -> bool:
+    """Whether ``entry`` is a map every dimension of which provably holds a point (``0:M`` may hold none)."""
+    if not isinstance(entry, nodes.MapEntry):
+        return False
+    for begin, end, step in entry.map.range:
+        step = sympy.sympify(step)
+        if not (step.is_number and step > 0 and symbolic.provably_le(sympy.sympify(begin), sympy.sympify(end), facts)):
+            return False
+    return True
+
+
+def scope_runs(state: SDFGState, entry: nodes.EntryNode) -> bool:
+    """Whether everything in ``entry``'s scope runs whenever ``state`` does: every map in it provably iterates, and
+    no nested SDFG in it propagates the accesses of its branches as if they ran."""
+    facts = state.sdfg.facts()
+    for node in state.scope_subgraph(entry).nodes():
+        if isinstance(node, nodes.NestedSDFG):
+            return False
+        if isinstance(node, nodes.EntryNode) and not map_runs(node, facts):
+            return False
+    return True
+
+
 def always_runs(block) -> bool:
-    """Whether ``block`` runs on every execution of the root SDFG: no conditional around it, only loops that provably
-    iterate, no conditional edge or early exit in what holds it, up through every nested SDFG."""
+    """Whether ``block`` runs on every execution of the root SDFG: no conditional around it, only loops and maps that
+    provably iterate, no conditional edge or early exit in what holds it, up through every nested SDFG."""
     region = block.parent_graph
     while region is not None:
         if isinstance(region, SDFG):
@@ -23,9 +46,17 @@ def always_runs(block) -> bool:
                 return False
             if any(isinstance(b, ReturnBlock) for b in region.all_control_flow_blocks()):
                 return False
-            if region.parent_nsdfg_node is None:
+            node = region.parent_nsdfg_node
+            if node is None:
                 return True
-            region = region.parent.parent_graph
+            state = region.parent
+            scopes = state.scope_dict()
+            entry = scopes[node]
+            while entry is not None:
+                if not map_runs(entry, state.sdfg.facts()):
+                    return False
+                entry = scopes[entry]
+            region = state.parent_graph
             continue
         if not isinstance(region, LoopRegion) or not loop_analysis.loop_provably_at_least_one_iteration(region):
             return False
@@ -76,7 +107,13 @@ def declare_in_bounds_extents(sdfg: SDFG) -> dict[str, int]:
                     if memlet.is_empty() or memlet.dynamic or memlet.data != an.data:
                         continue
                     # A nested SDFG's subset is propagated over its branches; its own accesses are visited with it.
-                    if isinstance(edge.dst if edge.src is an else edge.src, nodes.NestedSDFG):
+                    other = edge.dst if edge.src is an else edge.src
+                    if isinstance(other, nodes.NestedSDFG):
+                        continue
+                    # A map's memlet is propagated over its range, which may be empty
+                    if isinstance(other, nodes.ExitNode):
+                        other = state.entry_node(other)
+                    if isinstance(other, nodes.EntryNode) and not scope_runs(state, other):
                         continue
                     subset = memlet.src_subset if edge.src is an else memlet.dst_subset
                     subset = subset if subset is not None else memlet.subset

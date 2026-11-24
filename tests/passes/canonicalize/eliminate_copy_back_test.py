@@ -204,6 +204,60 @@ def test_folding_a_nested_writer_onto_a_wider_array_restates_the_connector():
     assert np.array_equal(got, expected)
 
 
+def folded_row(body: dace.SDFG, folds: int | None) -> np.ndarray:
+    """Folds ``t[0:4] -> A[1, 0:4]`` with ``body`` writing ``t[i]`` per map iteration, then runs it."""
+    sdfg = dace.SDFG(body.name + "_outer")
+    sdfg.add_array("A", [3, 4], dace.int64)
+    sdfg.add_transient("t", [4], dace.int64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("update", {"i": "0:4"})
+    nested = state.add_nested_sdfg(body, set(), {"t"}, {"i": "i"})
+    transient = state.add_access("t")
+    state.add_nedge(entry, nested, dace.Memlet())
+    state.add_memlet_path(nested, exit_node, transient, src_conn="t", memlet=dace.Memlet("t[i]"))
+    state.add_nedge(transient, state.add_write("A"), dace.Memlet("t[0:4] -> [1, 0:4]"))
+    sdfg.validate()
+    assert EliminateCopyBack().apply_pass(sdfg, {}) == folds
+    got = np.zeros((3, 4), dtype=np.int64)
+    sdfg(A=got)
+    return got
+
+
+def test_folding_restates_a_copy_that_names_the_other_container():
+    """``loc -> t`` stored as ``loc[0] -> t[i]`` indexes the connector through ``other_subset``."""
+    body = dace.SDFG("other_subset_body")
+    body.add_symbol("i", dace.int64)
+    body.add_array("t", [4], dace.int64)
+    body.add_transient("loc", [1], dace.int64)
+    inner = body.add_state()
+    task = inner.add_tasklet("set", {}, {"o"}, "o = 3")
+    loc = inner.add_access("loc")
+    inner.add_edge(task, "o", loc, None, dace.Memlet("loc[0]"))
+    inner.add_edge(loc, None, inner.add_write("t"), None, dace.Memlet(data="loc", subset="0", other_subset="i"))
+    expected = np.zeros((3, 4), dtype=np.int64)
+    expected[1, :] = 3
+    assert np.array_equal(folded_row(body, 1), expected)
+
+
+def test_a_writer_feeding_a_deeper_nested_sdfg_keeps_the_copy_back():
+    """Restating ``t`` as ``A`` one level down would leave the deeper ``t[4]`` connector unmatched: no fold."""
+    deepest = dace.SDFG("deepest")
+    deepest.add_symbol("i", dace.int64)
+    deepest.add_array("t", [4], dace.int64)
+    leaf = deepest.add_state()
+    task = leaf.add_tasklet("set", {}, {"o"}, "o = 3")
+    leaf.add_edge(task, "o", leaf.add_write("t"), None, dace.Memlet("t[i]"))
+    body = dace.SDFG("deeper_body")
+    body.add_symbol("i", dace.int64)
+    body.add_array("t", [4], dace.int64)
+    inner = body.add_state()
+    deeper = inner.add_nested_sdfg(deepest, set(), {"t"}, {"i": "i"})
+    inner.add_edge(deeper, "t", inner.add_write("t"), None, dace.Memlet("t[0:4]"))
+    expected = np.zeros((3, 4), dtype=np.int64)
+    expected[1, :] = 3
+    assert np.array_equal(folded_row(body, None), expected)
+
+
 def test_ordering_edges_of_the_transient_move_to_the_map_and_the_target():
     """``D``, ordered ahead of the transient, stays ahead of the map writing ``A``; ``later``, ordered behind it,
     waits for ``A``."""
@@ -248,4 +302,6 @@ if __name__ == "__main__":
     test_a_sibling_read_of_the_written_element_keeps_the_copy_back()
     test_a_stepped_copy_back_stays()
     test_folding_a_nested_writer_onto_a_wider_array_restates_the_connector()
+    test_folding_restates_a_copy_that_names_the_other_container()
+    test_a_writer_feeding_a_deeper_nested_sdfg_keeps_the_copy_back()
     test_ordering_edges_of_the_transient_move_to_the_map_and_the_target()

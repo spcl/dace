@@ -264,6 +264,42 @@ def test_non_accumulating_loop_whose_variable_is_not_in_the_output_is_not_lifted
     assert np.allclose(C, A[4] @ B)
 
 
+def test_map_lift_stays_ordered_after_the_store_of_the_prior_value():
+    """``X[:] = b`` then ``X[i] = X[i] + A[i, :] @ x`` in one state: the einsum (beta=1) reads ``X`` in place, so it
+    has to stay ordered after the copy that fed the map's read of ``X``."""
+    from dace.transformation.passes.canonicalize.nest_to_contraction import NestToContraction
+
+    sdfg = dace.SDFG("n2c_map_dot_after_copy")
+    sdfg.add_array("A", [N, K], dace.float64)
+    sdfg.add_array("x", [K], dace.float64)
+    sdfg.add_array("b", [N], dace.float64)
+    sdfg.add_array("X", [N], dace.float64)
+    sdfg.add_transient("T", [1], dace.float64)
+    state = sdfg.add_state()
+    stored = state.add_access("X")
+    state.add_nedge(state.add_read("b"), stored, dace.Memlet("b[0:N]"))
+    entry, exit_node = state.add_map("rows", {"i": "0:N"})
+    dot = blas.Dot("dot")
+    temp = state.add_access("T")
+    add = state.add_tasklet("add", {"p", "t"}, {"o"}, "o = p + t")
+    state.add_memlet_path(state.add_read("A"), entry, dot, dst_conn="_x", memlet=dace.Memlet("A[i, 0:K]"))
+    state.add_memlet_path(state.add_read("x"), entry, dot, dst_conn="_y", memlet=dace.Memlet("x[0:K]"))
+    state.add_edge(dot, "_result", temp, None, dace.Memlet("T[0]"))
+    state.add_edge(temp, None, add, "t", dace.Memlet("T[0]"))
+    state.add_memlet_path(stored, entry, add, dst_conn="p", memlet=dace.Memlet("X[i]"))
+    state.add_memlet_path(add, exit_node, state.add_write("X"), src_conn="o", memlet=dace.Memlet("X[i]"))
+    sdfg.validate()
+
+    assert NestToContraction().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    (einsum,) = [n for n in state.nodes() if isinstance(n, blas.Einsum)]
+    assert float(einsum.beta) == 1.0
+    assert stored in state.nodes() and einsum in set(state.bfs_nodes(stored))
+    A, x, b, X = random(6, 7), random(7), random(6), np.full(6, np.nan)
+    sdfg(A=A, x=x, b=b, X=X, N=6, K=7)
+    assert np.allclose(X, b + A @ x)
+
+
 @pytest.mark.gpu
 def test_gpu_map_of_gemms_becomes_a_vendor_tensor_contraction():
     vendor = "hipTENSOR" if common.get_gpu_backend() == "hip" else "cuTENSOR"
@@ -302,4 +338,5 @@ if __name__ == "__main__":
     test_overlapping_outputs_are_not_lifted()
     test_operand_written_in_the_nest_is_not_lifted()
     test_non_accumulating_loop_whose_variable_is_not_in_the_output_is_not_lifted()
+    test_map_lift_stays_ordered_after_the_store_of_the_prior_value()
     test_gpu_map_of_gemms_becomes_a_vendor_tensor_contraction()

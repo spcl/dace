@@ -159,7 +159,8 @@ def test_a_conflicting_wcr_renders_as_an_atomic_that_says_it_is_not_reduced():
 
     sdfg, code = render(scatter, "cpf_scatter_atomic")
     assert "#pragma omp atomic update\n" in code, "a conflicting accumulation must render as an atomic"
-    assert "// atomic update: iterations may add to the same" in code, "the atomic must carry the hint that says why"
+    # The operator, the container and the cause: ``out[idx[i]]`` lands on an element the index array may repeat
+    assert "// atomic update: iterations may add into an element of out (the index may repeat" in code, code
     assert "reduction(" not in code, "a conflicting scatter has no tree-reducible form to fold into"
     kinds = render_sdfg(scatter.to_sdfg(simplify=True), hints="kinds").code
     assert "#pragma omp atomic update\n" in kinds, "the kinds rendering keeps the atomic"
@@ -182,11 +183,11 @@ def test_a_conflicting_wcr_renders_as_an_atomic_that_says_it_is_not_reduced():
 #: ``Sub`` and ``Div`` are not in the table -- no OpenMP clause names them, so they reach CPF as
 #: ``Custom``, which is why one entry per SPELLING is not the same as one entry per reduction type.
 NON_CONFLICTING_WCR = [
-    ("sub", "lambda p, q: p - q", "*(out + i) = (*(out + i) - (y));", lambda o, x: o - x),
-    ("div", "lambda p, q: p / q", "*(out + i) = (*(out + i) / (y));", lambda o, x: o / x),
-    ("exchange", "lambda p, q: q", "*(out + i) = (y);", lambda o, x: x),
-    ("xor", "lambda p, q: p != q", "*(out + i) = (*(out + i) != (y));", lambda o, x: (o != x).astype(np.float64)),
-    ("custom", "lambda p, q: p * q + 1.0", "*(out + i) = ((*(out + i) * (y)) + 1.0);", lambda o, x: o * x + 1.0),
+    ("sub", "lambda p, q: p - q", "out[i] = (out[i] - (y));", lambda o, x: o - x),
+    ("div", "lambda p, q: p / q", "out[i] = (out[i] / (y));", lambda o, x: o / x),
+    ("exchange", "lambda p, q: q", "out[i] = (y);", lambda o, x: x),
+    ("xor", "lambda p, q: p != q", "out[i] = (out[i] != (y));", lambda o, x: (o != x).astype(np.float64)),
+    ("custom", "lambda p, q: p * q + 1.0", "out[i] = ((out[i] * (y)) + 1.0);", lambda o, x: o * x + 1.0),
 ]
 
 

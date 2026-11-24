@@ -2188,6 +2188,9 @@ class LoopLift:
     symbol_resolver: "SymbolResolver | None" = None
     #: Arrays the caller vouches for (a contract), whose conflicts are waived.
     contract_arrays: frozenset = frozenset()
+    #: Arrays whose reads the caller vouches never see another iteration's write (a runtime distance check), so the
+    #: read-after-write tests skip them.
+    contract_reads: frozenset = frozenset()
     #: Containers the caller makes iteration-private before lifting (a per-iteration slot or scalar each); the
     #: dependence analysis leaves them out, as it does a loop-local transient.
     assume_private: frozenset = frozenset()
@@ -2540,6 +2543,8 @@ class LoopLift:
                         if (
                             reason is None
                             and not self.waives(dn.data, permissive)
+                            # A reduction (WCR) combines colliding writes in any order
+                            and e.data.wcr is None
                             and moves_within_an_iteration(stored, itersym, varying)
                             # One iteration's writes, over its inner iterators, must stay clear of another's
                             and not _check_range(
@@ -2683,7 +2688,7 @@ class LoopLift:
 
                         # Container read AND written: match only if the locations can't race.
                         src_subset = in_closed_form(e.data.get_src_subset(e, state), closed_forms)
-                        if not self.test_read_memlet(
+                        if data not in self.contract_reads and not self.test_read_memlet(
                             sdfg,
                             state,
                             e,
@@ -2716,7 +2721,7 @@ class LoopLift:
             if isinstance(block, (LoopRegion, ConditionalBlock)):
                 isread_set.update(block.get_meta_read_memlets())
         for mmlt in [memlet_in_closed_form(m, closed_forms) for m in isread_set]:
-            if mmlt.data in write_memlets:
+            if mmlt.data in write_memlets and mmlt.data not in self.contract_reads:
                 if not self.test_read_memlet(
                     sdfg, None, None, itersym, itervar, start, end, step, write_memlets, mmlt, mmlt.subset, varying
                 ):
@@ -2752,6 +2757,8 @@ class LoopLift:
         Anything else returns ``None`` and the full analysis runs.
         """
         kind, name = facts.refusal_witness
+        if name in self.contract_reads:
+            return None
         desc = sdfg.arrays.get(name)
         if desc is None:
             return None

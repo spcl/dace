@@ -88,7 +88,8 @@ def comment_lines(code: str):
 def test_the_rendering_states_which_verdicts_are_settled_and_which_are_open():
     """Proven verdicts need no more reasoning, so the head of the unit says so once, before any loop."""
     lines = render(scaling_sdfg("cpf_contract")).code.splitlines()
-    assert lines[1 : 1 + len(CONTRACT_LINES)] == CONTRACT_LINES
+    # A unit of parallel loops explains the parallel class only: no line for a class it does not use
+    assert lines[1:5] == [CONTRACT_LINES[0], *CONTRACT_LINES[1:3], CONTRACT_LINES[-1]], lines[:8]
 
 
 def test_a_map_hint_is_rendered_one_comment_line_per_line():
@@ -664,7 +665,12 @@ def test_a_time_loop_over_a_stencil_is_proven_and_names_the_skew_it_is_not_given
     hints = [loop.specialization_hint.splitlines() for loop in loops_of(sdfg)]
     assert len(hints) == 1, hints
     assert hints[0][0].startswith(f"{PROVEN_PREFIX} on ") and "T=" in hints[0][0], hints
-    assert CONFLICT_MEANING["RAW"] in hints[0][0] and "alt: skew this loop" in hints[0][0], hints
+    # The alternative says what was not done and why, and does not contradict itself (review #17)
+    assert CONFLICT_MEANING["RAW"] in hints[0][0], hints
+    assert hints[0][0].endswith(
+        "alt: a wavefront that skews this loop with the parallel loops inside it, not applied because those loops "
+        "are parallel already at each iteration of this one"
+    ), hints
 
 
 def test_a_read_ahead_dependence_is_named_war_not_raw():
@@ -839,10 +845,13 @@ def test_a_guarded_loop_names_its_guard_on_both_arms():
         if isinstance(n, nodes.MapEntry)
     ]
     loops = [loop.specialization_hint.splitlines()[0] for loop in loops_of(sdfg)]
-    assert any(re.match(r"parallel -- independent when .*inc.* \(checked before the loop\)$", line) for line in maps), (
-        maps
-    )
-    assert any(re.match(r"sequential -- runs when .*inc.*: independence is not proven", line) for line in loops), loops
+    assert any(
+        re.match(r"parallel -- the runtime check found .*inc.*, so no iteration writes", line) for line in maps
+    ), maps
+    assert any(
+        re.match(r"sequential -- the runtime check found .*inc.*: .*, so this arm keeps the order", line)
+        for line in loops
+    ), loops
     # The fallback names the failing guard itself, never a negation of a negation
     assert not any("not (not" in line for line in loops), loops
 
@@ -1052,9 +1061,18 @@ def test_a_solver_example_writes_an_inner_iterator_as_its_range():
 
 
 def test_a_wavefront_names_its_skew_on_the_diagonal_and_the_front():
-    rendered = comment_lines(named(skewed_sdfg("cpf_kind_wavefront_skew", tile=0)))
-    lines = [line for line in rendered if "wavefront step" in line]
-    assert len(lines) >= 2 and all("skewed (t = " in line for line in lines), rendered
+    """wf_north_west: the skew labels named ``_loop_it_0`` and a placeholder ``w`` the rendering never declares; each
+    counter a wavefront label names is a loop counter of the rendered code."""
+    rendered_code = named(skewed_sdfg("cpf_kind_wavefront_skew", tile=0))
+    rendered = comment_lines(rendered_code)
+    diagonal = [
+        re.search(r"step (\w+) runs the points with row \+ column = \1 of the original nest", line) for line in rendered
+    ]
+    front = [re.search(r"(\w+) walks the (?:column|row) of step (\w+)", line) for line in rendered]
+    counters = [m.group(1) for m in diagonal if m] + [name for m in front if m for name in m.groups()]
+    assert len([m for m in diagonal if m]) >= 1 and len([m for m in front if m]) >= 1, rendered
+    code = "\n".join(line for line in rendered_code.splitlines() if not line.strip().startswith("//"))
+    assert all(re.search(rf"\bfor \([^;]*\b{name}\b", code) for name in counters), (counters, rendered_code)
 
 
 def test_a_thread_team_is_not_labelled_a_loop_of_independent_iterations():

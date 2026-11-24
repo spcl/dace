@@ -102,7 +102,7 @@ def test_device_reduction_folds_without_a_runtime_functor():
 
     assert "gpucub::BlockReduce" in code, "the block fold must survive -- CPF renders the tree reduction, not a loop"
     assert "_wcr_fixed" not in code, "the reduction functor must not be the runtime template"
-    partial = re.search(r"^\s*(__bpart_\w+)\[0\] = \1\[0\] \+ \(.*\);$", code, re.MULTILINE)
+    partial = re.search(r"^\s*(__bpart_\w+)\[0\] = \1\[0\] \+ (?:\(.*\)|[\w\[\]]+);$", code, re.MULTILINE)
     assert partial is not None, f"the per-thread partial must accumulate with a plain +\n{code}"
     assert re.search(r"cpf_gpu_atomic\(.*\[\] \(const double &__cpf_acc, const double &__cpf_val\)", code), (
         "the block result must commit through one device atomic taking the operator as a functor"

@@ -24,8 +24,18 @@ def normalize(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
     replacements = {}
     for node in floors:
         numerator, denominator = as_expr(sympy.together(node.args[0])).as_numer_denom()
+        # int_floor(a, b) equals floor(a / b) only for integer a and b, and int_floor(a, 1) folds to a: keep the
+        # floor of sqrt(N), 0.5*N or log(N), whose quotient is not one of two integers.
+        if denominator == 1 or not (integral(numerator) and integral(denominator)):
+            continue
         replacements[node] = symbolic.int_floor(numerator, denominator)
     return expr.subs(replacements)
+
+
+def integral(expr: sympy.Expr) -> bool:
+    """Whether ``expr`` is an integer once its symbols are, as index and shape symbols are."""
+    ints = {sym: sympy.Dummy(sym.name, integer=True) for sym in expr.free_symbols}
+    return expr.xreplace(ints).is_integer is True
 
 
 def normalize_subset(subset: Subset | None) -> bool:

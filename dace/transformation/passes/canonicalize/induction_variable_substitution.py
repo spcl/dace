@@ -139,6 +139,8 @@ def straddled_counter_step(
         for lhs, value in earlier.data.assignments.items()
         if writers[lhs] == 1 and lhs in sdfg.symbols
     }
+    # A temporary holding a comparison (``t = x < y``) is a flag, not part of an arithmetic step
+    temps = {lhs: value for lhs, value in temps.items() if isinstance(value, sympy.Expr)}
     for _depth in range(len(temps)):
         resolved = resolved.subs(temps)
     step = symbolic.simplify(resolved - symbolic.pystr_to_symbolic(name))

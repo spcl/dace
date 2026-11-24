@@ -52,7 +52,8 @@ def run_child(body: str, tmp_path, cache: str) -> str:
         """)
     )
     roots = [str(pathlib.Path(dace.__file__).parent.parent), str(pathlib.Path(__file__).parent)]
-    env = dict(os.environ, PYTHONPATH=os.pathsep.join(roots))
+    # Keep any PYTHONPATH already set (a container image puts dependencies there); dace's root goes first.
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(roots + [p for p in [os.environ.get("PYTHONPATH")] if p]))
     # Config.get() lets a DACE_cache env var win over set_temporary() (dace/config.py), so a
     # surrounding DACE_cache=... (CI pins one for the whole matrix leg) would silently override
     # the ``cache`` argument above in the child. Same fix as custom_build_folder_test.py's

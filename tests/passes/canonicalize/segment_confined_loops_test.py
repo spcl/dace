@@ -2,14 +2,18 @@
 """A loop over the components of a segmented graph lifts when every iteration touches only its own component
 (nfa_frontier), behind an entry guard that checks the data facts the confinement rests on."""
 
+import re
+
 import numpy as np
 
 import dace
+from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg import tasklet_utils as tutil
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.canonicalize.segment_confined_loops import SEGMENT_HINT
+from dace.transformation.passes.canonicalize.segment_confined_loops import SEGMENT_HINT, SegmentConfinedLoops
 
 C = dace.symbol("C")
 NS = dace.symbol("NS")
@@ -168,6 +172,19 @@ def test_the_hint_names_the_pointer_array():
     assert "{pointer}" in SEGMENT_HINT and "{var}" in SEGMENT_HINT
 
 
+def test_the_hint_states_the_checks_its_proof_rests_on():
+    """nfa_frontier: the hint said ``c touches only comp_ptr[c] .. comp_ptr[c + 1]``, though the loop reads other
+    elements, and left out that the proof holds only behind the entry checks."""
+    (entry,) = segment_maps(canonical(frontier_walk))
+    hint = entry.specialization_hint.splitlines()[0]
+    assert re.match(
+        r"parallel -- segment-confined: iteration (\w+) accesses the arrays the loop writes only at \[\1\] or inside "
+        r"\[comp_ptr\[\1\], comp_ptr\[\1 \+ 1\]\), and the checks before the loop abort unless "
+        r"comp_ptr is nondecreasing",
+        hint,
+    ), hint
+
+
 N = dace.symbol("N")
 knob = dace.symbol("knob", dace.float64)
 
@@ -195,8 +212,96 @@ def test_a_loop_whose_interstate_value_is_a_comparison_canonicalizes():
     assert np.allclose(b, ref)
 
 
+def store_symbol(state: dace.SDFGState, value: str, target: str) -> None:
+    tasklet = state.add_tasklet(f"store_{value}", {}, {"o"}, f"o = {value}")
+    state.add_edge(tasklet, "o", state.add_write(target.split("[")[0]), None, dace.Memlet(target))
+
+
+def worklist_count_carried_across_components() -> dace.SDFG:
+    """Per component ``c``: append the unseen starts to ``frontier[base + n]`` (``n`` reset per component), then copy
+    the kept ones to ``out[base + n_out]``, with ``n_out`` reset only before the component loop."""
+    sdfg = dace.SDFG("worklist_count_carried")
+    for name in ("C", "NS", "NSTART", "base", "lo", "hi", "s", "y", "n", "n_out"):
+        sdfg.add_symbol(name, dace.int64)
+    for name, shape in (("comp_ptr", "C + 1"), ("start_ptr", "C + 1"), ("start_idx", "NSTART")):
+        sdfg.add_array(name, [shape], dace.int64)
+    for name, shape in (("enabled", "NS"), ("frontier", "NS"), ("out", "2 * NS")):
+        sdfg.add_array(name, [shape], dace.int64)
+    sdfg.add_scalar("flag", dace.int64, transient=True)
+    init = sdfg.add_state("init", is_start_block=True)
+    components = LoopRegion("components", "c < C", "c", "c = 0", "c = c + 1", sdfg=sdfg)
+    sdfg.add_node(components)
+    sdfg.add_edge(init, components, dace.InterstateEdge(assignments={"n_out": "0"}))
+
+    head = components.add_state("head", is_start_block=True)
+    starts = LoopRegion("starts", "k < hi", "k", "k = lo", "k = k + 1", sdfg=sdfg)
+    components.add_node(starts)
+    bounds = {"base": "comp_ptr[c]", "n": "0", "lo": "start_ptr[c]", "hi": "start_ptr[c + 1]"}
+    components.add_edge(head, starts, dace.InterstateEdge(assignments=bounds))
+    load = starts.add_state("load", is_start_block=True)
+    test = starts.add_state_after(load, "test", assignments={"s": "start_idx[k]"})
+    test.add_nedge(test.add_read("enabled"), test.add_write("flag"), dace.Memlet("enabled[s] -> [0]"))
+    guard = ConditionalBlock("unseen")
+    starts.add_node(guard)
+    starts.add_edge(test, guard, dace.InterstateEdge())
+    arm = ControlFlowRegion("append", sdfg=sdfg)
+    guard.add_branch(CodeBlock("flag == 0"), arm)
+    mark = arm.add_state("mark", is_start_block=True)
+    store_symbol(mark, "1", "enabled[s]")
+    store_symbol(mark, "s", "frontier[base + n]")
+    arm.add_state_after(mark, "bumped", assignments={"n": "n + 1"})
+
+    copies = LoopRegion("copies", "j < n", "j", "j = 0", "j = j + 1", sdfg=sdfg)
+    components.add_node(copies)
+    components.add_edge(starts, copies, dace.InterstateEdge())
+    fetch = copies.add_state("fetch", is_start_block=True)
+    copy_out = copies.add_state_after(fetch, "copy_out", assignments={"y": "frontier[base + j]"})
+    store_symbol(copy_out, "y", "out[base + n_out]")
+    # Write every member, advance past the kept ones: the bump sits in its own region, so it stays a counter
+    keep = ConditionalBlock("keep")
+    copies.add_node(keep)
+    copies.add_edge(copy_out, keep, dace.InterstateEdge())
+    advance = ControlFlowRegion("advance", sdfg=sdfg)
+    keep.add_branch(CodeBlock("y >= base"), advance)
+    counted = advance.add_state("counted", is_start_block=True)
+    advance.add_state_after(counted, "next", assignments={"n_out": "n_out + 1"})
+    return sdfg
+
+
+def test_a_worklist_count_never_reset_per_component_keeps_the_loop():
+    """Component ``c`` writes ``out[comp_ptr[c] + S_c + j]``, ``S_c`` the starts of the earlier components: a lifted
+    map would restart ``n_out`` in every component and write ``out[comp_ptr[c] + j]``."""
+    sdfg = worklist_count_carried_across_components()
+    assert SegmentConfinedLoops().apply_pass(sdfg, {}) is None
+    comp_ptr, row_ptr, col_idx, start_ptr, start_idx = graph()
+    ns = row_ptr.size - 1
+    out = np.zeros(2 * ns, np.int64)
+    enabled = np.zeros(ns, np.int64)
+    frontier = np.zeros(ns, np.int64)
+    sdfg(
+        comp_ptr=comp_ptr,
+        start_ptr=start_ptr,
+        start_idx=start_idx,
+        enabled=enabled,
+        frontier=frontier,
+        out=out,
+        C=comp_ptr.size - 1,
+        NS=ns,
+        NSTART=start_idx.size,
+    )
+    want, seen, n_out = np.zeros(2 * ns, np.int64), np.zeros(ns, np.int64), 0
+    for c in range(comp_ptr.size - 1):
+        for k in range(start_ptr[c], start_ptr[c + 1]):
+            if seen[start_idx[k]] == 0:
+                seen[start_idx[k]] = 1
+                want[comp_ptr[c] + n_out] = start_idx[k]
+                n_out += 1
+    assert np.array_equal(out, want)
+
+
 if __name__ == "__main__":
     test_a_component_loop_lifts_behind_its_entry_guard_and_computes_the_reference()
     test_a_write_one_past_a_member_keeps_the_loop()
     test_the_hint_names_the_pointer_array()
     test_a_loop_whose_interstate_value_is_a_comparison_canonicalizes()
+    test_a_worklist_count_never_reset_per_component_keeps_the_loop()

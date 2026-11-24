@@ -2,6 +2,8 @@
 """``FuseMapsAtSharedAxes``: a producer map over ``(i, k)`` fuses into a consumer map over ``i`` that reads one
 producer iteration row, as an inner map over ``k``; a consumer reading another row keeps the producer as it was."""
 
+import re
+
 import numpy as np
 
 import dace
@@ -197,6 +199,15 @@ def test_a_consumer_sharing_an_inner_axis_keeps_its_order_and_both_maps_get_a_hi
     assert np.allclose(out, 2.0 * x[None, :] + np.arange(4.0)[:, None])
 
 
+def test_both_fusion_notes_name_the_intermediate_and_the_other_loop():
+    """nbody, examinimd: the note named neither the intermediate nor the loop on the other side."""
+    sdfg = per_particle_then_taps.to_sdfg(simplify=True)
+    FuseMapsAtSharedAxes().apply_pass(sdfg, {})
+    notes = sorted(e.specialization_hint or "" for e in top_level_entries(sdfg))
+    assert notes[0].startswith("fusion: shares (p) with the earlier loop that writes w, at an inner axis"), notes
+    assert notes[1].startswith("fusion: shares (p) with the later loop that reads w, at an inner axis of it"), notes
+
+
 def test_an_existing_hint_keeps_its_line_and_the_fusion_note_follows():
     sdfg = per_particle_then_taps.to_sdfg(simplify=True)
     consumer = next(e for e in top_level_entries(sdfg) if len(e.map.params) == 2)
@@ -227,9 +238,9 @@ def test_a_reduction_every_iteration_contributes_to_keeps_the_producer():
     assert np.allclose(b, 2.0 * a.sum())
 
 
-def test_a_fusion_hint_names_no_map_or_intermediate_and_is_said_once_per_pair():
-    """nbody: one producer handing a consumer nine intermediates stacked nine hint lines naming DaCe map labels and
-    ``__tmp`` names the rendering never shows. One line per map, in the loop's own names."""
+def test_a_fusion_hint_names_no_map_and_is_said_once_per_pair():
+    """nbody: one producer handing a consumer nine intermediates stacked nine hint lines naming DaCe map labels.
+    One line per map, naming every intermediate of the pair (``ReadableNames`` gives them the rendered names)."""
     sdfg = two_per_particle_then_taps.to_sdfg(simplify=True)
     FuseMapsAtSharedAxes().apply_pass(sdfg, {})
     entries = top_level_entries(sdfg)
@@ -237,7 +248,8 @@ def test_a_fusion_hint_names_no_map_or_intermediate_and_is_said_once_per_pair():
     for entry in entries:
         lines = [line for line in (entry.specialization_hint or "").splitlines() if line.startswith("fusion:")]
         assert len(lines) == 1, lines
-        assert not any(label in lines[0] for label in labels) and " w " not in lines[0] and " v " not in lines[0], lines
+        assert not any(label in lines[0] for label in labels), lines
+        assert re.search(r"\b(w and v|v and w)\b", lines[0]), lines
 
 
 if __name__ == "__main__":
@@ -247,7 +259,8 @@ if __name__ == "__main__":
     test_each_refused_consumer_sees_the_rebuilt_producer()
     test_the_split_axis_is_the_one_the_consumer_indexes_when_two_share_its_range()
     test_a_consumer_sharing_an_inner_axis_keeps_its_order_and_both_maps_get_a_hint()
+    test_both_fusion_notes_name_the_intermediate_and_the_other_loop()
     test_an_existing_hint_keeps_its_line_and_the_fusion_note_follows()
     test_maps_of_equal_rank_sharing_only_an_outer_axis_stay_apart_without_a_hint()
     test_a_reduction_every_iteration_contributes_to_keeps_the_producer()
-    test_a_fusion_hint_names_no_map_or_intermediate_and_is_said_once_per_pair()
+    test_a_fusion_hint_names_no_map_and_is_said_once_per_pair()

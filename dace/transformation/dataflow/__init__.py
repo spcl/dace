@@ -54,6 +54,7 @@ from .redundant_array_copying import (
 )
 from .merge_arrays import InMergeArrays, OutMergeArrays, MergeSourceSinkArrays
 from .prune_connectors import PruneConnectors, PruneSymbols
+from .fuse_identical_connectors import FuseIdenticalConnectors
 from .wcr_conversion import AugAssignToWCR, WCRToAugAssign
 from .tasklet_fusion import TaskletFusion
 from .trivial_tasklet_elimination import TrivialTaskletElimination

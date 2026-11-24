@@ -782,7 +782,7 @@ def read_overtaken_by_write(
 
     :param state: The state of both Maps.
     :param reader_entry: The entry of the Map whose reads move.
-    :param reader_exit: Its exit; what it writes itself is not another writer.
+    :param reader_exit: Its exit; what it or its body writes itself is not another writer.
     :param later_entry: The entry of the Map the reader is fused into.
     :param probe: What the probes of this state share.
     """
@@ -799,7 +799,8 @@ def read_overtaken_by_write(
     candidates = [node for name in read for node in probe.written(state, name)]
     if not candidates:
         return False
-    own = set(state.successors(reader_exit))
+    # Its own body's writes (an in-place update's inner node) are no other writer either
+    own = dict.fromkeys(itertools.chain(state.successors(reader_exit), scope_contents(state, reader_entry)))
     writers = [node for node in candidates if node not in own]
     if not writers:
         return False

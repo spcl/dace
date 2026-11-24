@@ -37,13 +37,19 @@ Constraint types:
 
 from dataclasses import dataclass
 
-from dace import SDFG, symbolic
+from dace import SDFG, Memlet, dtypes, subsets, symbolic
 from dace.optionals import required
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_expr
-from dace.sdfg.state import ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
+from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.loop_specialization import (
+    evaluate_before,
+    invariant_host,
+    specialize_loop_under_condition,
+)
 from dace.transformation.passes.symbol_propagation import consistent_bindings, resolve_bindings
 from dace.transformation.transformation import explicit_cf_compatible
 
@@ -105,6 +111,8 @@ class ParallelizeUnderConstraint(ppl.Pass):
         refusals = pipeline_results.get(REFUSALS)
 
         specialized = 0
+        # (host block, pointer, range) -> the symbol holding that pointer check's result, shared by every loop
+        checks: dict[tuple[int, str, str], str] = {}
         for sd in sdfg.all_sdfgs_recursive():
             owner = sd
             while owner.parent_sdfg is not None:
@@ -118,6 +126,12 @@ class ParallelizeUnderConstraint(ppl.Pass):
                 if parent is None or loop not in parent.nodes():
                     continue
                 refusal = None if refusals is None else refusals.get(loop)
+                if self.version_carried_distance(loop, owner, refusal) or self.version_segment_writes(
+                    loop, sd, owner, refusal, checks
+                ):
+                    facts = ScopeFacts(sd)
+                    specialized += 1
+                    continue
                 if refusals is not None and (refusal is None or refusal.kind is not Refusal.NON_UNIQUE_WRITE):
                     continue
                 # Cheap, read-only structural filter FIRST: only the symbolic-
@@ -147,6 +161,104 @@ class ParallelizeUnderConstraint(ppl.Pass):
                 facts = ScopeFacts(sd)
                 specialized += 1
         return specialized or None
+
+    def version_carried_distance(self, loop: LoopRegion, owner: SDFG, refusal) -> bool:
+        """Version ``loop`` on its :class:`CarriedDistance`, the test evaluated once before the outermost loop that
+        leaves its operands unchanged. A fallback an earlier guard pinned is a candidate too: the guard it failed
+        (``k <= 0`` for a snapshot) says nothing about this one (``k >= N``).
+
+        :param refusal: Why :class:`ParallelizeLoops` kept ``loop`` a loop, or ``None`` when no record exists.
+        :returns: Whether ``loop`` was versioned.
+        """
+        from dace.transformation.interstate.loop_to_map import LoopToMap, Refusal
+        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
+
+        if refusal is not None and refusal.kind not in (Refusal.CARRIED_DEPENDENCE, Refusal.PINNED):
+            return False
+        distance = carried_distance(loop)
+        if distance is None:
+            return False
+        pinned = loop.pinned_sequential
+        if refusal is None and not pinned and ParallelizeLoops().accepts(loop, LoopToMap()):
+            return False
+        # The write is one-to-one and the check rules out the read meeting another iteration's write
+        probe = LoopToMap()
+        probe.contract_arrays = probe.contract_reads = frozenset({distance.array})
+        loop.pinned_sequential = False
+        try:
+            accepted = ParallelizeLoops().accepts(loop, probe)
+        finally:
+            loop.pinned_sequential = pinned
+        if not accepted:
+            return False
+
+        def parallelize(par_loop: LoopRegion, par_region: ControlFlowRegion, own: SDFG) -> None:
+            ParallelizeLoops().parallelize_loop(own, par_loop, proven=True)
+
+        host = None if self.assume_constraint else invariant_host(loop, distance.condition)
+        flag = None if host is None else evaluate_before(host, f"{distance.array}_independent", distance.condition)
+        # The class line an earlier guard gave this fallback; both arms are labelled anew below
+        loop.specialization_hint = None
+        specialize_loop_under_condition(
+            loop,
+            flag or distance.condition,
+            parallelize,
+            owner,
+            assume=self.assume_constraint,
+            labels=distance.labels(flag, host),
+        )
+        return True
+
+    def version_segment_writes(
+        self, loop: LoopRegion, sdfg: SDFG, owner: SDFG, refusal, checks: dict[tuple[int, str, str], str]
+    ) -> bool:
+        """Version a loop whose iteration ``n`` writes only ``P[n] .. P[n + 1]`` of its targets (a CSR row's segment)
+        on ``P`` being non-decreasing, which makes the segments disjoint. The check is one pass over ``P``, placed
+        before the outermost loop that writes neither ``P`` nor the loop's bounds, and shared by every loop
+        segmented by the same stretch of ``P``.
+
+        :param checks: The checks emitted so far, keyed by host block, pointer and range.
+        :returns: Whether ``loop`` was versioned.
+        """
+        from dace.transformation.interstate.loop_to_map import LoopToMap, Refusal
+        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
+
+        if refusal is not None and refusal.kind not in (Refusal.NON_UNIQUE_WRITE, Refusal.OVERLAPPING_WRITES):
+            return False
+        segments = segment_write(loop, sdfg)
+        if segments is None:
+            return False
+        pointer, targets = segments
+        first, last = loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop)
+        if refusal is None and ParallelizeLoops().accepts(loop, LoopToMap()):
+            return False
+        probe = LoopToMap()
+        probe.contract_arrays = frozenset(targets)
+        if not ParallelizeLoops().accepts(loop, probe):
+            return False
+        low, high = symbolic.symstr(first), symbolic.symstr(last + 1)
+        host = pointer_check_host(loop, pointer, OrderedSet(symbolic.free_symbol_names([first, last])))
+        key = (id(host), pointer, f"{low}:{high}")
+        if key not in checks:
+            checks[key] = nondecreasing_check(sdfg, host, pointer, low, high)
+        count = checks[key]
+
+        def parallelize(par_loop: LoopRegion, par_region: ControlFlowRegion, own: SDFG) -> None:
+            ParallelizeLoops().parallelize_loop(own, par_loop, proven=True)
+
+        where = "" if host is loop else f", checked once before the {host.loop_variable} loop"
+        written = ", ".join(sorted(targets))
+        labels = (
+            f"parallel -- the runtime check found {pointer} non-decreasing ({count} == 0{where}), so the ranges "
+            f"{pointer}[n] .. {pointer}[n + 1] of different iterations n are disjoint: each iteration writes its own "
+            f"elements of {written}",
+            f"sequential -- the runtime check found {pointer} decreasing ({count} > 0{where}): two iterations' ranges "
+            f"of {written} may overlap and the later write must win, so this arm keeps the order",
+        )
+        specialize_loop_under_condition(
+            loop, f"{count} == 0", parallelize, owner, assume=self.assume_constraint, labels=labels
+        )
+        return True
 
     def symbolic_stride_condition(self, loop: LoopRegion, sdfg: SDFG, facts: ScopeFacts | None = None) -> str | None:
         """The parallel-validity condition for a symbolic-stride **injective write**.
@@ -270,4 +382,197 @@ class ParallelizeUnderConstraint(ppl.Pass):
         return coeffs
 
 
-__all__ = ["ParallelizeUnderConstraint"]
+@dataclass(frozen=True, slots=True)
+class CarriedDistance:
+    """The one carried dependence of a loop: iteration ``n`` reads the element of ``array`` that iteration
+    ``source`` writes, ``distance`` apart in the index. The loop is parallel exactly when ``distance`` is 0 or
+    reaches ``limit``, past every other iteration."""
+
+    array: str
+    distance: str
+    limit: str
+    source: str
+
+    @property
+    def condition(self) -> str:
+        d, lim = self.distance, self.limit
+        return f"(({d}) == 0) or (({d}) >= ({lim})) or (({d}) <= -({lim}))"
+
+    def labels(self, flag: str | None, host: LoopRegion | None) -> tuple[str, str]:
+        """The class lines of the parallel arm and of the fallback arm; ``flag`` holds the check, evaluated before
+        the ``host`` loop."""
+        d, lim = self.distance, self.limit if self.limit.isidentifier() else f"({self.limit})"
+        check = "the runtime check"
+        if flag is not None and host is not None:
+            check = f"the runtime check {flag} (evaluated once, before the {host.loop_variable} loop)"
+        return (
+            f"parallel -- {check} found {d} == 0 or {d} >= {lim} or {d} <= -{lim}: no iteration reads an element "
+            f"of {self.array} another one writes",
+            f"sequential -- {check} found {d} != 0 and -{lim} < {d} < {lim}: iteration n reads the element of "
+            f"{self.array} that iteration {self.source} writes; this arm keeps the order",
+        )
+
+
+def non_transient_accesses(loop: LoopRegion) -> tuple[dict, dict]:
+    """``(writes, reads)``: per non-transient array, its subsets in ``loop`` keyed by spelling."""
+    writes: dict[str, dict[str, subsets.Range]] = {}
+    reads: dict[str, dict[str, subsets.Range]] = {}
+    for state in loop.states():
+        for e in state.edges():
+            if e.data.is_empty():
+                continue
+            for node, table, subset in (
+                (e.src, reads, e.data.get_src_subset(e, state)),
+                (e.dst, writes, e.data.get_dst_subset(e, state)),
+            ):
+                if isinstance(node, nodes.AccessNode) and subset is not None:
+                    if not state.sdfg.arrays[node.data].transient:
+                        table.setdefault(node.data, {})[str(subset)] = subset
+    return writes, reads
+
+
+def read_in_control_flow(loop: LoopRegion, array: str) -> bool:
+    """Whether an interstate edge or a loop or branch condition inside ``loop`` reads ``array``."""
+    arrays = loop.sdfg.arrays
+    if any(m.data == array for e in loop.all_interstate_edges() for m in e.data.get_read_memlets(arrays)):
+        return True
+    return any(
+        m.data == array
+        for block in loop.all_control_flow_blocks()
+        if isinstance(block, (LoopRegion, ConditionalBlock))
+        for m in block.get_meta_read_memlets()
+    )
+
+
+def carried_distance(loop: LoopRegion) -> CarriedDistance | None:
+    """The :class:`CarriedDistance` of a loop writing one array at one point ``a[c*i + d1]`` and reading it at one
+    other point ``a[c*i + d2]``, with ``c`` a nonzero number and ``d2 - d1`` symbolic and fixed before the loop
+    (``s[i + k] += s[i]``); ``None`` for any other shape. The other dimensions of the two points must match."""
+    from dace.transformation.interstate.loop_to_map import loop_varying_symbols  # avoid an import cycle
+
+    first, last = loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    if first is None or last is None or stride is None or not (stride.is_number and stride > 0):
+        return None
+    writes, reads = non_transient_accesses(loop)
+    pairs = []
+    for array, written in writes.items():
+        other = [subset for key, subset in reads.get(array, {}).items() if key not in written]
+        if len(written) == 1 and len(other) == 1:
+            pairs.append((array, next(iter(written.values())), other[0]))
+    if len(pairs) != 1:
+        return None
+    array, write, read = pairs[0]
+    if write.dims() != read.dims() or read_in_control_flow(loop, array):
+        return None
+    differ = [dim for dim in range(write.dims()) if str(write[dim]) != str(read[dim])]
+    if len(differ) != 1:
+        return None
+    (wb, we, wstep), (rb, re_, rstep) = write[differ[0]], read[differ[0]]
+    if wb != we or rb != re_:
+        return None
+    wexpr, rexpr, var = symbolic.equalize_symbols_across(
+        symbolic.pystr_to_symbolic(wb), symbolic.pystr_to_symbolic(rb), symbolic.pystr_to_symbolic(loop.loop_variable)
+    )
+    affine = symbolic.affine_coefficients(wexpr, var)
+    if affine is None or not affine[0].is_number or affine[0] == 0:
+        return None
+    distance = symbolic.simplify(rexpr - wexpr)
+    varying = loop_varying_symbols(loop) | {loop.loop_variable}
+    names = symbolic.free_symbol_names([distance]).keys()
+    # A numeric distance is the static test's to decide; a varying one is no single runtime test
+    if not names or names & varying or symbolic.free_symbol_names([affine[1]]).keys() & varying:
+        return None
+    # Two iterations at most ``limit - 1`` apart in the index: a longer distance never reaches another iteration
+    limit = symbolic.simplify(abs(affine[0]) * (last - first) + 1)
+    shown = -distance if distance.could_extract_minus_sign() else distance
+    step = symbolic.simplify(distance / affine[0])
+    source = f"n - {symbolic.symstr(-step)}" if step.could_extract_minus_sign() else f"n + {symbolic.symstr(step)}"
+    return CarriedDistance(array, symbolic.symstr(shown), symbolic.symstr(limit), source)
+
+
+def segment_write(loop: LoopRegion, sdfg: SDFG) -> tuple[str, OrderedSet[str]] | None:
+    """``(P, targets)`` when every write of ``loop`` to the ``targets`` (the arrays it writes at a subset that moves)
+    lies in ``P[n] .. P[n + 1]`` for iteration ``n`` in one dimension, and the targets are read only where written;
+    ``None`` for any other loop. The loop's start must be numeric or fixed and its stride 1."""
+    from dace.transformation.passes.canonicalize.segment_confined_loops import SegmentLoop  # avoid an import cycle
+
+    if loop_analysis.get_loop_stride(loop) != 1 or loop_analysis.get_loop_end(loop) is None:
+        return None
+    if loop_analysis.get_init_assignment(loop) is None:
+        return None
+    analysis = SegmentLoop(sdfg, loop)
+    writes, reads = non_transient_accesses(loop)
+    pointers: OrderedSet[str] = OrderedSet()
+    targets: OrderedSet[str] = OrderedSet()
+    for array, written in writes.items():
+        bounds = [segment_bounds(subset, analysis) for subset in written.values()]
+        if not any(bounds):
+            continue
+        if not all(bounds) or set(reads.get(array, {})) - set(written):
+            return None
+        pointers.update(bounds)
+        targets.add(array)
+    if len(pointers) != 1 or next(iter(pointers)) in writes:
+        return None
+    return next(iter(pointers)), targets
+
+
+def segment_bounds(subset: subsets.Range, analysis) -> str | None:
+    """The pointer ``P`` when a dimension of ``subset`` spans ``lo .. hi - 1`` with ``lo`` bound to ``P[n]`` and ``hi``
+    to ``P[n + 1]`` for iteration ``n`` of ``analysis``'s loop."""
+    for begin, end, step in subset.ndrange():
+        low = analysis.pointer_binding(str(begin))
+        top = analysis.pointer_binding(str(symbolic.simplify(end + 1)))
+        if low is not None and top is not None and low[0] == top[0] and (low[1], top[1]) == (0, 1):
+            return low[0]
+    return None
+
+
+def pointer_check_host(loop: LoopRegion, pointer: str, bounds: OrderedSet[str]) -> LoopRegion:
+    """The outermost loop around ``loop`` (or ``loop`` itself) whose iterations write neither ``pointer`` nor a
+    symbol of ``bounds``: a check of ``pointer`` before it holds for every run of ``loop`` inside."""
+    from dace.transformation.interstate.loop_to_map import loop_varying_symbols  # avoid an import cycle
+
+    host = loop
+    region = loop.parent_graph
+    while isinstance(region, LoopRegion) and region.loop_variable:
+        if pointer in loop_analysis.written_names(region):
+            break
+        if any(name in bounds for name in (*loop_varying_symbols(region), region.loop_variable)):
+            break
+        host = region
+        region = region.parent_graph
+    return host
+
+
+def nondecreasing_check(sdfg: SDFG, before: LoopRegion, pointer: str, low: str, high: str) -> str:
+    """Count, in one parallel pass right before ``before``, the positions ``c`` in ``[low, high)`` where
+    ``pointer[c + 1] < pointer[c]``; returns the new symbol holding the count."""
+    count = sdfg.find_new_symbol(f"{pointer}_descents")
+    sdfg.add_symbol(count, dtypes.int64)
+    total, total_desc = sdfg.add_array(f"{count}_total", [1], dtypes.int64, transient=True, find_new_name=True)
+    region = before.parent_graph
+    scan = region.add_state_before(
+        before, f"{count}_check", is_start_block=region.start_block is before, assignments={count: f"{total}[0]"}
+    )
+    zero = region.add_state_before(scan, f"{count}_zero", is_start_block=region.start_block is scan)
+    init = zero.add_tasklet(f"{count}_zero", {}, {"out"}, "out = 0")
+    zero.add_edge(init, "out", zero.add_write(total), None, Memlet(f"{total}[0]"))
+    index = f"{count}_c"
+    entry, exit_ = scan.add_map(f"{count}_scan", {index: f"{low}:{high}"})
+    entry.specialization_hint = (
+        f"runtime check: one pass over {pointer}[{low}:{high} + 1] (O(n)) counts the positions where {pointer} "
+        f"decreases into {count}; the loops after it branch on {count}"
+    )
+    step = scan.add_tasklet(f"{count}_step", {"lo", "hi"}, {"out"}, "out = 1 if hi < lo else 0")
+    source = scan.add_read(pointer)
+    scan.add_memlet_path(source, entry, step, dst_conn="lo", memlet=Memlet(f"{pointer}[{index}]"))
+    scan.add_memlet_path(source, entry, step, dst_conn="hi", memlet=Memlet(f"{pointer}[{index} + 1]"))
+    scan.add_memlet_path(
+        step, exit_, scan.add_write(total), src_conn="out", memlet=Memlet(f"{total}[0]", wcr="lambda a, b: a + b")
+    )
+    return count
+
+
+__all__ = ["CarriedDistance", "ParallelizeUnderConstraint", "carried_distance", "segment_write"]

@@ -19,8 +19,9 @@ import pytest
 
 import dace
 from dace import subsets, symbolic
+from dace.properties import CodeBlock
 from dace.sdfg import nodes as nd
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.symbolic import permutation
 from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.canonicalize import canonicalize
@@ -301,15 +302,27 @@ def rank_dtypes(sdfg: dace.SDFG) -> set:
     return {desc.dtype for name, desc in sdfg.arrays.items() if name.startswith(IDX_PREFIX)}
 
 
+def width_tests(sdfg: dace.SDFG) -> int:
+    return sum(1 for node, unused in sdfg.all_nodes_recursive() if node.label.endswith("_count_width"))
+
+
 def test_rank_is_int32_when_the_nest_provably_fits_it():
-    """24x24 iterations cannot reach 2^31: the scan writes, and the scatter reads, a 32-bit rank."""
-    assert rank_dtypes(build(s343_static_kernel)) == {dace.int32}
+    """24x24 iterations cannot reach 2^31: one nest, whose scan writes and scatter reads a 32-bit rank."""
+    sdfg = build(s343_static_kernel)
+    assert rank_dtypes(sdfg) == {dace.int32} and width_tests(sdfg) == 0
+    rng = np.random.default_rng(343)
+    aa, bb = rng.standard_normal((MM, MM)), rng.standard_normal((MM, MM))
+    want = np.zeros(MM * MM)
+    want_k = oracle_s343(aa, bb, want)
+    got, got_k = np.zeros(MM * MM), np.zeros(1, dtype=np.int64)
+    sdfg(aa=aa.copy(), bb=bb.copy(), flat=got, kout=got_k)
+    assert np.array_equal(got, want) and int(got_k[0]) == want_k
 
 
-def test_rank_width_is_picked_at_runtime_when_the_extent_is_symbolic():
-    """``N`` may be anything: a test of ``N`` against 2^31 runs the 32-bit lift, else an int64 copy of it."""
+def test_rank_is_int64_in_one_nest_when_the_extent_is_symbolic():
+    """``N`` may be anything: no proof bounds it, so one nest takes a 64-bit rank, and no runtime test clones it."""
     sdfg = build(s341_kernel)
-    assert rank_dtypes(sdfg) == {dace.int32, dace.int64}
+    assert rank_dtypes(sdfg) == {dace.int64} and width_tests(sdfg) == 0
     b = np.random.default_rng(341).standard_normal(77)
     want = np.zeros(77)
     want_j = oracle_s341(want, b)
@@ -924,7 +937,51 @@ def test_a_write_mixing_cursor_and_iterator_is_not_lifted():
         assert np.array_equal(got, want)
 
 
+def source_named_cursor_copy() -> dace.SDFG:
+    """``cursor_and_iterator_append`` with the store a copy named after its source: ``x[i] -> b[2*j - i + N_MIX]``."""
+    sdfg = dace.SDFG("source_named_cursor_copy")
+    sdfg.add_symbol("N_MIX", dace.int64)
+    sdfg.add_symbol("j", dace.int64)
+    sdfg.add_symbol("t", dace.float64)
+    sdfg.add_array("x", ["N_MIX"], dace.float64)
+    sdfg.add_array("b", ["2 * N_MIX"], dace.float64)
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion("append", "i < N_MIX", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"j": "-1"}))
+    head = loop.add_state("head", is_start_block=True)
+    guard = ConditionalBlock("guard")
+    loop.add_node(guard)
+    loop.add_edge(head, guard, dace.InterstateEdge(assignments={"t": "x[i]"}))
+    arm = ControlFlowRegion("taken", sdfg=sdfg)
+    guard.add_branch(CodeBlock("t > 0.0"), arm)
+    bump = arm.add_state("bump", is_start_block=True)
+    store = arm.add_state_after(bump, "store", assignments={"j": "j + 1"})
+    copy_memlet = dace.Memlet(data="x", subset="i", other_subset="2 * j - i + N_MIX")
+    store.add_nedge(store.add_read("x"), store.add_write("b"), copy_memlet)
+    return sdfg
+
+
+def test_a_source_named_copy_mixing_cursor_and_iterator_is_not_lifted():
+    """The cursor check read only memlets named after the written array, so this copy's ``b[2*j - i + N_MIX]``
+    passed as a plain cursor write and the scatter raced on ``b[7]`` (iterations 3 and 5)."""
+    sdfg = source_named_cursor_copy()
+    assert LoopToStreamCompaction().apply_pass(sdfg, {}) is None
+    x = np.array([1.0, -1.0, 2.0, 3.0, -1.0, 4.0])
+    want = np.zeros(12)
+    j = -1
+    for i in range(6):
+        if x[i] > 0.0:
+            j = j + 1
+            want[2 * j - i + 6] = x[i]
+    got = np.zeros(12)
+    sdfg(x=x.copy(), b=got, N_MIX=6)
+    assert np.array_equal(got, want)
+
+
 if __name__ == "__main__":
+    test_rank_is_int32_when_the_nest_provably_fits_it()
+    test_rank_is_int64_in_one_nest_when_the_extent_is_symbolic()
     pytest.main([__file__, "-v"])
 
 N_GUARD = dace.symbol("N_GUARD", dtype=dace.int64)

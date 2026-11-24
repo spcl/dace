@@ -602,7 +602,7 @@ def nest_einsum(
     return f"{','.join(full_terms)}->{full_out}", contracted
 
 
-def add_einsum(sdfg: SDFG, state: SDFGState, label: str, contraction: Contraction, reuse: bool):
+def add_einsum(sdfg: SDFG, state: SDFGState, label: str, contraction: Contraction, reuse: bool) -> nodes.LibraryNode:
     from dace.libraries.blas.nodes.einsum import Einsum  # Avoid import loop
 
     axes = contraction.axes
@@ -623,6 +623,7 @@ def add_einsum(sdfg: SDFG, state: SDFGState, label: str, contraction: Contractio
     node.add_out_connector("_out")
     dst = output.root if reuse else state.add_write(output.array)
     state.add_edge(node, "_out", dst, None, Memlet(data=output.array, subset=widened(sdfg, output, axes)))
+    return node
 
 
 def state_counts_of(sdfg: SDFG) -> dict[str, int]:
@@ -697,11 +698,10 @@ class NestToContraction(ppl.Pass):
                 if contraction is None:
                     continue
                 roots = [op.root for op in contraction.operands] + [contraction.output.root]
-                outside = [e.src for e in state.in_edges(entry)] + [
-                    e.dst for e in state.out_edges(state.exit_node(entry))
-                ]
+                sources = dict.fromkeys(e.src for e in state.in_edges(entry))
+                outside = [*sources, *(e.dst for e in state.out_edges(state.exit_node(entry)))]
                 state.remove_nodes_from(state.scope_subgraph(entry, include_entry=True, include_exit=True).nodes())
-                add_einsum(sdfg, state, entry.map.label + "_contraction", contraction, reuse=True)
+                einsum = add_einsum(sdfg, state, entry.map.label + "_contraction", contraction, reuse=True)
                 state.remove_nodes_from(
                     [
                         n
@@ -709,6 +709,11 @@ class NestToContraction(ppl.Pass):
                         if n not in roots and n in state.nodes() and state.degree(n) == 0
                     ]
                 )
+                # A source the einsum does not read (the prior value of an accumulated ``X``) still orders the
+                # nest after its producer: beta=1 reads ``X`` in place through the output edge.
+                for n in sources:
+                    if n not in roots and n in state.nodes():
+                        state.add_nedge(n, einsum, Memlet())
                 counts = state_counts_of(sdfg)
                 count += 1
         return count

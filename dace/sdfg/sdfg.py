@@ -689,6 +689,10 @@ class InterstateEdge:
             alltypes = symbols
 
         inferred_lhs_symbols = {k: infer_expr_type(v, alltypes) for k, v in self.assignments.items()}
+        if sdfg is not None:
+            # An expression inference cannot type (``sqrt`` of an untyped name) keeps the declared type
+            declared = sdfg.symbols
+            inferred_lhs_symbols = {k: declared.get(k) if v is None else v for k, v in inferred_lhs_symbols.items()}
         lhs_symbols = self.new_symbol_names()
         return {k: v for k, v in inferred_lhs_symbols.items() if k in lhs_symbols}
 

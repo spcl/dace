@@ -53,6 +53,7 @@ from dace.symbolic_facts import SMALL_CONSTANT_EXTENT, prove
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import share_out_past_leading_small_axes
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.annotate_loop_kinds import parallel_hint
 from dace.transformation.passes.cpu_specialization.machine import ITERATIONS_PER_THREAD, topology
 
 #: Schedules a CPU map or library node still parallelizes under. ``Default`` is included because
@@ -88,12 +89,12 @@ def pinned_inner_trips(entry: nodes.MapEntry, children: dict[Any, list[nodes.Nod
     return trips[0] if len(trips) == 1 else 1
 
 
-def note_sequential(entry: nodes.MapEntry, reason: str) -> None:
-    """Make ``entry``'s map ``Sequential`` and add the reason under its class line."""
-    from dace.transformation.passes.canonicalize.annotate_loop_kinds import PARALLEL
-
+def note_sequential(state: SDFGState, entry: nodes.MapEntry, reason: str) -> None:
+    """Make ``entry``'s map ``Sequential`` and add the reason under its class line; a map without one (made after the
+    labels, as a lifted reduction is) gets the line the labels would give it, a reduction where it accumulates."""
+    first = entry.specialization_hint or parallel_hint(state, entry, [])
     entry.map.schedule = dtypes.ScheduleType.Sequential
-    entry.specialization_hint = f"{entry.specialization_hint or PARALLEL}\n{SEQUENTIAL_ON_CPU.format(reason=reason)}"
+    entry.specialization_hint = f"{first}\n{SEQUENTIAL_ON_CPU.format(reason=reason)}"
 
 
 def without_sequential_note(hint: str | None) -> str | None:
@@ -362,7 +363,7 @@ def release_few_trips(
             body += [(nested.sdfg, inner_state, n) for n in inner_state.scope_children()[None] if unscheduled_map(n)]
     if not one_trip and not any(wider(e.map.range.num_elements(), count, facts_of) for _, _, e in body):
         return False
-    note_sequential(wrapper, ONE_TRIP_REASON if one_trip else FEW_TRIPS_REASON.format(count=count))
+    note_sequential(state, wrapper, ONE_TRIP_REASON if one_trip else FEW_TRIPS_REASON.format(count=count))
     for owner, body_state, entry in body:
         if privatize_interior_transients(owner, body_state, entry):
             entry.map.schedule = dtypes.ScheduleType.CPU_Multicore
@@ -764,7 +765,7 @@ class DecideCpuParallelAxes(ppl.Pass):
         if schedule not in CPU_PARALLEL_SCHEDULES:
             return in_parallel, False
         if in_parallel:
-            note_sequential(node, NESTED_REASON)
+            note_sequential(state, node, NESTED_REASON)
             self.pinned += 1
             return True, False
         # Only the root SDFG's own top-level maps: a released one hands the team to its body
@@ -790,6 +791,6 @@ class DecideCpuParallelAxes(ppl.Pass):
         if reason is None:
             node.map.schedule = dtypes.ScheduleType.CPU_Multicore
             return True, reshaped
-        note_sequential(node, reason)
+        note_sequential(state, node, reason)
         self.pinned += 1
         return False, reshaped

@@ -81,6 +81,35 @@ def test_the_guarded_block_products_become_one_gathered_batched_product():
     assert set(BATCH_INDEX.values()) <= set(libs[0].in_connectors)
 
 
+@dace.program
+def guard_cleared_by_the_nest(
+    flag: dace.int64[NA + 1],
+    a_index: dace.int64[NA],
+    a_blocks: dace.float64[NA, BS, BS],
+    W: dace.float64[BS, BS],
+    C: dace.float64[NA * BS, BS],
+):
+    for ia in range(NA):
+        f = flag[ia]
+        if f <= 0:
+            continue
+        a_bid = a_index[ia]
+        product = a_blocks[a_bid] @ W
+        for bi in range(BS):
+            for bj in range(BS):
+                C[ia * BS + bi, bj] = product[bi, bj]
+        flag[ia + 1] = 0
+
+
+def test_a_guard_the_nest_writes_is_not_batched():
+    """The nest clears ``flag[ia + 1]``, so the count and fill copies, which read ``flag`` before any of those
+    writes, would select iterations the nest skips."""
+    sdfg = guard_cleared_by_the_nest.to_sdfg(simplify=True)
+    canonicalize(sdfg, target="gpu")
+    libs = [n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, BatchedMatMul)]
+    assert not libs, libs
+
+
 @pytest.mark.gpu
 def test_the_gathered_batched_product_matches_numpy():
     """The device run sums each guarded pair's product into its block, as the nest does."""
@@ -111,3 +140,4 @@ def test_the_gathered_batched_product_matches_numpy():
 if __name__ == "__main__":
     test_the_guarded_block_products_become_one_gathered_batched_product()
     test_the_gathered_batched_product_matches_numpy()
+    test_a_guard_the_nest_writes_is_not_batched()

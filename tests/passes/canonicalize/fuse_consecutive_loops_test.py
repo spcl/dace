@@ -306,9 +306,34 @@ def test_scratch_of_a_nested_sdfg_is_judged_in_its_own_sdfg():
     assert np.allclose(out, np.concatenate([2.0 * a[:4], -2.0 * a[4:]]))
 
 
+@dace.program
+def damped_split_sum(x: dace.float64[N], out: dace.float64[1]):
+    acc = 0.0
+    for i in range(0, 1):
+        acc = 0.5 * (acc + x[i])
+    tail = 0.0
+    for i in range(1, N):
+        tail = 0.5 * (tail + x[i])
+    out[0] = acc + tail
+
+
+def test_a_damped_accumulator_is_no_split_reduction():
+    """``acc = 0.5 * (acc + x[i])`` is not ``acc + x[i]``: redirecting ``tail`` into ``acc`` changes the sum."""
+    sdfg = _prep(damped_split_sum)
+    assert FuseConsecutiveLoops().apply_pass(sdfg, {}) is None
+    x = np.random.default_rng(2).standard_normal(7)
+    tail = 0.0
+    for value in x[1:]:
+        tail = 0.5 * (tail + value)
+    out = np.zeros(1)
+    sdfg(x=x.copy(), out=out, N=7)
+    assert np.isclose(out[0], 0.5 * x[0] + tail)
+
+
 if __name__ == "__main__":
     test_fused_range_keeps_the_iterations_of_an_empty_side()
     test_bodies_that_only_look_alike_are_not_fused(_swapped_scratches)
     test_bodies_that_only_look_alike_are_not_fused(_different_reductions)
     test_bodies_that_only_look_alike_are_not_fused(_iterators_read_after)
     test_scratch_of_a_nested_sdfg_is_judged_in_its_own_sdfg()
+    test_a_damped_accumulator_is_no_split_reduction()

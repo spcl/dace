@@ -59,8 +59,9 @@ def _build_wcr_scalar_sum(dtype=dace.float64) -> dace.SDFG:
 
 def _compile_and_read_src(sdfg: dace.SDFG):
     """Compile the SDFG and return ``(csdfg, generated_cpp_source)``."""
-    if os.path.exists(sdfg.build_folder):
-        shutil.rmtree(sdfg.build_folder)
+    # Only the sources: on NFS a loaded library of an earlier test leaves .nfs files that rmtree of the
+    # whole folder cannot delete. Compiling rewrites the sources, so the read below sees this compile.
+    shutil.rmtree(os.path.join(sdfg.build_folder, "src"), ignore_errors=True)
     csdfg = sdfg.compile()
     src_path = os.path.join(sdfg.build_folder, "src", "cpu", sdfg.name + ".cpp")
     assert os.path.exists(src_path), src_path

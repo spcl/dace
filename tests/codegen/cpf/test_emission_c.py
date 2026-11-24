@@ -833,7 +833,7 @@ def test_custom_conflict_resolution_needs_no_lambda_in_c():
     a translation unit a C compiler has to accept, and that the inlined arithmetic still runs.
     """
     rendering = render_sdfg(wcr_sdfg("cpf_c_resolve", "lambda p, q: p * q + 1.0"), language="c")
-    assert "*(out + i) = ((*(out + i) * (y)) + 1.0);" in rendering.code, "the resolution must be inlined"
+    assert "out[i] = ((out[i] * (y)) + 1.0);" in rendering.code, "the resolution must be inlined"
     assert "[] (" not in rendering.code, "the C++ lambda spelling from unparse_cr must not reach the C dialect"
 
     rng = np.random.default_rng(0)

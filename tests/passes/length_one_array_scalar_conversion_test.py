@@ -760,10 +760,12 @@ def test_single_element_scratch_becomes_a_scalar():
     assert _run(sdfg, 3.0) == 7.0
 
 
-def test_single_element_scratch_a_nested_sdfg_reads_stays_an_array():
+def test_single_element_scratch_a_nested_sdfg_reads_becomes_a_scalar_on_both_sides():
     sdfg = _single_element_scratch_sdfg(nested=True)
-    assert ConvertLengthOneArraysToScalars(single_element=True).apply_pass(sdfg, {}) is None
-    assert type(sdfg.arrays["tmp"]) is dd.Array
+    assert ConvertLengthOneArraysToScalars(single_element=True).apply_pass(sdfg, {}) >= {"tmp"}
+    assert isinstance(sdfg.arrays["tmp"], dd.Scalar)
+    inner = next(n.sdfg for n in sdfg.start_block.nodes() if isinstance(n, dace.nodes.NestedSDFG))
+    assert isinstance(inner.arrays["s"], dd.Scalar)
     sdfg.validate()
     assert _run(sdfg, 3.0) == 7.0
 
@@ -819,5 +821,5 @@ if __name__ == "__main__":
     test_staged_scalar_of_a_kernel_written_array_keeps_device_storage()
     test_a_rewritten_symbol_mapping_stays_symbolic()
     test_single_element_scratch_becomes_a_scalar()
-    test_single_element_scratch_a_nested_sdfg_reads_stays_an_array()
+    test_single_element_scratch_a_nested_sdfg_reads_becomes_a_scalar_on_both_sides()
     test_a_heap_length_one_array_becomes_a_stack_scalar()

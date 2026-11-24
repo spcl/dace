@@ -135,7 +135,6 @@ def unrolled_step(loop: LoopRegion) -> tuple[int | None, IteratorScaling | None]
     undo = unscale_iterator(loop) if step == 1 else None
     if undo is None:
         return step, None
-    fuse_body_states(loop)
     return undo.factor, undo
 
 
@@ -331,12 +330,17 @@ class RerollUnrolledLoops(ppl.Pass):
                         continue
                     # The step rewrite rebuilds the bound from the start and the end; a loop without both is left.
                     if loop_analysis.get_loop_end(cfg) is None or loop_analysis.get_init_assignment(cfg) is None:
+                        if undo is not None:
+                            undo.restore()
                         continue
-                    if (
-                        self._try_reroll(cfg, step)
-                        or self._try_reroll_chain(cfg, step)
-                        or self._try_reroll_accumulator_reduction(cfg, step)
-                    ):
+                    if undo is not None and len(cfg.nodes()) > 1:
+                        # Fusing the unscaled body's states cannot be undone, so a copy decides whether any matcher
+                        # accepts the fused body before the real body is fused.
+                        if not self.rerolls_fused_copy(cfg, step):
+                            undo.restore()
+                            continue
+                        fuse_body_states(cfg)
+                    if self.reroll(cfg, step):
                         rerolled += 1
                     elif undo is not None:
                         undo.restore()
@@ -344,6 +348,22 @@ class RerollUnrolledLoops(ppl.Pass):
                 break
             total += rerolled
         return total or None
+
+    def reroll(self, loop: LoopRegion, step: int) -> bool:
+        return (
+            self._try_reroll(loop, step)
+            or self._try_reroll_chain(loop, step)
+            or self._try_reroll_accumulator_reduction(loop, step)
+        )
+
+    def rerolls_fused_copy(self, loop: LoopRegion, step: int) -> bool:
+        """Whether ``reroll`` accepts a copy of ``loop`` with its body states fused."""
+        memo: dict[int, Any] = {}
+        probe = copy.deepcopy(loop.sdfg, memo)
+        if not probe.cfg_list:
+            probe.reset_cfg_list()
+        fuse_body_states(memo[id(loop)])
+        return self.reroll(memo[id(loop)], step)
 
     def _body_states(self, loop: LoopRegion) -> list[SDFGState] | None:
         """The loop's body states when the body is made only of states."""
@@ -589,7 +609,8 @@ class RerollUnrolledLoops(ppl.Pass):
         if lane_nodes is None:
             return False
         acc = self.carried_accumulators(loop, states, lane_nodes, shared, edge_offsets)
-        if acc is None:
+        # Overlapping lanes fold a shared position into one accumulator per covering lane; the re-roll folds it once.
+        if acc is None or (acc and step != m * g):
             return False
 
         private = {d: {st: lane_nodes[st][d] for st in states} for d in distinct}

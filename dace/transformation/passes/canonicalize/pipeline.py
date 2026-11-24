@@ -51,6 +51,7 @@ from dace.transformation.passes.canonicalize.expand_fill_copy import ExpandFillC
 from dace.transformation.passes.canonicalize.expand_index_remaps import ExpandIndexRemaps
 from dace.transformation.passes.canonicalize.fill_through_copies import FillThroughCopies
 from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
+from dace.transformation.passes.canonicalize.forward_copy_maps import ForwardCopyMaps
 from dace.transformation.passes.canonicalize.forward_offset_copies import ForwardOffsetCopies
 from dace.transformation.passes.canonicalize.forward_store_to_load import ForwardStoreToLoad
 from dace.transformation.passes.canonicalize.fuse_chained_scalar_reductions import FuseChainedScalarReductions
@@ -272,6 +273,8 @@ class StructuralCleanup(ppl.Pass):
             ppl.Pipeline([ArrayElimination(fold_ordered_copies=True, nested=True)]),
             # A shifted copy array elimination keeps (read in several states) is read at the shifted source index
             ForwardOffsetCopies(),
+            # A transient a map copies element by element (nbody's x.T) is read from the array it copies
+            ForwardCopyMaps(),
             PruneUnreferencedTransients(),
         ]
 

@@ -7,6 +7,7 @@ snapshot copy plus a fully parallel map reading it at ``[i + 1]``.
 
 import contextlib
 import os
+import re
 
 import numpy as np
 import pytest
@@ -21,7 +22,6 @@ from dace.transformation.passes import BreakAntiDependence
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import AssumeSymbolConstraints
 from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision
 from dace.transformation.passes.cpu_specialization import ChunkAntiDependence
-from dace.transformation.passes.cpu_specialization.chunk_anti_dependence import CHUNK_SWEEP_HINT
 
 N = dace.symbol("N")
 
@@ -164,7 +164,13 @@ def test_the_rendered_sweep_says_it_is_sequential_on_purpose():
     AnnotateLoopKinds().apply_pass(sdfg, {})
     (sweep,) = [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
     assert sweep.pinned_sequential
-    assert sweep.specialization_hint.startswith(CHUNK_SWEEP_HINT), sweep.specialization_hint
+    named = re.match(
+        r"sequential -- in order within a chunk: iteration (\w+) reads a\[\1 \+ 1\] before iteration \1 \+ 1 overwrites"
+        r" it \(write after read\);.* from (\w+), copied before any chunk starts$",
+        sweep.specialization_hint,
+    )
+    assert named is not None and named.group(1) == sweep.loop_variable, sweep.specialization_hint
+    assert named.group(2) in sdfg.arrays, sweep.specialization_hint
 
 
 def test_chunk_rewrite_is_bit_exact():
@@ -404,6 +410,38 @@ def test_a_symbolic_stride_is_chunked_under_unit_stride_and_snapshotted_otherwis
     assert sdfg.hash_sdfg() == before
 
 
+def test_a_second_map_beside_the_snapshot_map_runs_once():
+    """The rewrite runs the snapshot map's state three times; ``c += d`` beside it must still run once."""
+    sdfg = _canonical(_shift)
+    (state,) = [
+        st
+        for st in sdfg.states()
+        for n in st.data_nodes()
+        if n.data.endswith("_antidep_snap") and any(isinstance(e.dst, nodes.MapEntry) for e in st.out_edges(n))
+    ]
+    sdfg.add_array("c", [N], dace.float64)
+    sdfg.add_array("d", [N], dace.float64)
+    state.add_mapped_tasklet(
+        "accumulate",
+        {"j": "0:N"},
+        {"x": dace.Memlet("c[j]"), "y": dace.Memlet("d[j]")},
+        "z = x + y",
+        {"z": dace.Memlet("c[j]")},
+        external_edges=True,
+    )
+    ChunkAntiDependence().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    n = 40
+    rng = np.random.default_rng(23)
+    a, b, c, d = (rng.standard_normal(n) for k in range(4))
+    got_a, got_c = a.copy(), c.copy()
+    with contextlib.redirect_stdout(open(os.devnull, "w")):
+        sdfg(a=got_a, b=b.copy(), c=got_c, d=d.copy(), N=n)
+    assert np.array_equal(got_a, _ref_shift(a, b))
+    assert np.array_equal(got_c, c + d)
+
+
 if __name__ == "__main__":
     test_the_in_chunk_sweep_is_a_loop_and_not_a_map()
     test_the_rendered_sweep_says_it_is_sequential_on_purpose()
@@ -419,6 +457,7 @@ if __name__ == "__main__":
     test_a_wider_read_ahead_offset_chunks_with_a_row_of_seam_cells(_shift_two, 2)
     test_chunk_rewrite_is_idempotent()
     test_a_symbolic_stride_is_chunked_under_unit_stride_and_snapshotted_otherwise()
+    test_a_second_map_beside_the_snapshot_map_runs_once()
 
 
 @pytest.mark.parametrize("prog,offset", [(_shift, 1), (_shift_two, 2), (_shift_sym, 3)])

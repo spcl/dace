@@ -194,5 +194,27 @@ def test_the_rebound_iterator_keeps_its_range():
         assert symbolic.ask(relation, facts) is symbolic.Truth.TRUE, (lhs, rhs)
 
 
+@pytest.mark.parametrize("n", [5, 0])
+def test_iterator_read_after_the_loop_keeps_its_exit_value(n):
+    """``for i = N - 1; i >= 0; i -= 1`` then ``out[0] = i``: the loop leaves ``i == -1``, also when it runs no
+    iteration."""
+    sdfg = dace.SDFG(f"negative_stride_iterator_read_after_{n}")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("a", [8], dace.int64)
+    sdfg.add_array("out", [1], dace.int64)
+    loop = LoopRegion("L", "i >= 0", "i", "i = N - 1", "i = i - 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    body.add_edge(body.add_tasklet("t", {}, {"o"}, "o = i"), "o", body.add_write("a"), None, dace.Memlet("a[i]"))
+    after = sdfg.add_state_after(loop, "after")
+    after.add_edge(after.add_tasklet("t", {}, {"o"}, "o = i"), "o", after.add_write("out"), None, dace.Memlet("out[0]"))
+
+    NormalizeNegativeStride().apply_pass(sdfg, {})
+    sdfg.validate()
+    a, out = np.zeros(8, dtype=np.int64), np.full(1, 7, dtype=np.int64)
+    sdfg(a=a, out=out, N=n)
+    assert out[0] == -1, f"i after the loop is {out[0]}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

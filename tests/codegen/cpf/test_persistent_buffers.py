@@ -9,6 +9,7 @@ the program exits or the library is unloaded; with one, the
 workspace holds it (:func:`dace.codegen.cpf.plan_workspace`).
 """
 
+import copy
 import re
 import subprocess
 import warnings
@@ -19,6 +20,7 @@ import pytest
 import dace
 from dace import dtypes
 from dace.codegen.cpf import EntrySignature, lift_persistent_transients, render
+from dace.sdfg.state import LoopRegion
 from tests.codegen.cpf.conftest import build_standalone, call_standalone
 
 N = dace.symbol("N")
@@ -139,6 +141,58 @@ def test_a_buffer_the_nest_may_read_before_writing_stays_an_input(write, write_f
     assert "t" in node.in_connectors and "t" in node.out_connectors
 
 
+def loop_sized_nest(name: str) -> dace.SDFG:
+    """``for i in range(N)`` calls a nest that fills a ``Persistent`` ``t[n]`` with ``n = i + 1`` and copies it to
+    ``B[0:n]``."""
+    inner = dace.SDFG(f"{name}_inner")
+    inner.add_symbol("n", dace.int64)
+    inner.add_array("A", [N], dace.float64)
+    inner.add_array("B", [N], dace.float64)
+    inner.add_array("t", ["n"], dace.float64, transient=True, lifetime=dtypes.AllocationLifetime.Persistent)
+    fill = inner.add_state("fill")
+    use = inner.add_state_after(fill, "use")
+    fill.add_mapped_tasklet(
+        "w", {"j": "0:n"}, {"a": dace.Memlet("A[j]")}, "o = 2 * a", {"o": dace.Memlet("t[j]")}, external_edges=True
+    )
+    use.add_mapped_tasklet(
+        "r", {"j": "0:n"}, {"x": dace.Memlet("t[j]")}, "o = x + 1", {"o": dace.Memlet("B[j]")}, external_edges=True
+    )
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    loop = LoopRegion("steps", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("call", is_start_block=True)
+    node = state.add_nested_sdfg(inner, {"A": None}, {"B": None}, {"N": "N", "n": "i + 1"})
+    state.add_edge(state.add_read("A"), None, node, "A", dace.Memlet("A[0:N]"))
+    state.add_edge(node, "B", state.add_write("B"), None, dace.Memlet("B[0:N]"))
+    return sdfg
+
+
+@pytest.mark.parametrize("language", ["c++", "c"])
+def test_a_buffer_sized_by_a_loop_iterator_stays_in_the_nest(language):
+    """At the entry ``i`` has no value yet: a lifted ``t[i + 1]`` would be sized before the loop sets ``i``."""
+    name = f"cpf_persistent_loop_sized_{'cpp' if language == 'c++' else 'c'}"
+    sdfg = loop_sized_nest(name)
+    assert lift_persistent_transients(copy.deepcopy(sdfg)) == 0
+    result = render(sdfg, language=language)
+    n = 40
+    x = np.random.default_rng(3).random(n)
+    args = {"A": x, "B": np.zeros(n), "N": n}
+    call_standalone(build_standalone(result.code, name, language=language), result.sdfg, args)
+    np.testing.assert_allclose(args["B"], x * 2.0 + 1.0, rtol=1e-12, atol=0.0)
+
+
+@pytest.mark.parametrize("language", ["c++", "c"])
+def test_the_unit_states_that_calls_share_its_static_buffer(language):
+    """Calls share ``__cpf_persistent_buf`` with no lock, so the unit has to tell its caller not to run two at once."""
+    name = f"cpf_persistent_contract_{'cpp' if language == 'c++' else 'c'}"
+    code = render(persistent_sdfg(name), language=language, check_compiles=False).code
+    comment = re.search(r"^// __cpf_persistent_buf: (.*)\n(.*)\n", code, re.MULTILINE)
+    assert comment is not None, code
+    assert "serialize" in comment.group(1) and comment.group(2).startswith("static double *__cpf_persistent_buf")
+
+
 if __name__ == "__main__":
     test_without_a_workspace_the_buffer_is_one_static_allocation("c++")
     test_without_a_workspace_the_buffer_is_one_static_allocation("c")
@@ -147,6 +201,10 @@ if __name__ == "__main__":
     test_a_buffer_written_before_every_read_is_no_input_of_the_nest()
     test_a_buffer_the_nest_may_read_before_writing_stays_an_input("0:N", False)
     test_a_buffer_the_nest_may_read_before_writing_stays_an_input("1:N", True)
+    test_a_buffer_sized_by_a_loop_iterator_stays_in_the_nest("c++")
+    test_a_buffer_sized_by_a_loop_iterator_stays_in_the_nest("c")
+    test_the_unit_states_that_calls_share_its_static_buffer("c++")
+    test_the_unit_states_that_calls_share_its_static_buffer("c")
 
 
 def test_two_units_of_one_library_each_release_their_own_buffer(tmp_path):

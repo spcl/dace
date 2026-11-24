@@ -343,8 +343,14 @@ class FuseConsecutiveLoops(ppl.Pass):
         return None
 
     @staticmethod
+    def is_copy(node: nodes.Tasklet, conn: str | None) -> bool:
+        """Whether ``node`` is ``__out = <its one input>``."""
+        lhs, eq, rhs = node.code.as_string.strip().partition("=")
+        return bool(eq) and lhs.strip() == "__out" and rhs.strip().strip("()").strip() == conn
+
+    @staticmethod
     def single_carried_scalar_op(state: SDFGState, name: str) -> str | None:
-        """Op string if ``state`` carries scalar ``name`` via ``name = name OP x``; else ``None``."""
+        """Op string if ``state`` carries scalar ``name`` via exactly ``name = name OP x``; else ``None``."""
         acc_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == name]
         src = [n for n in acc_nodes if state.in_degree(n) == 0]
         snk = [n for n in acc_nodes if state.out_degree(n) == 0]
@@ -365,10 +371,10 @@ class FuseConsecutiveLoops(ppl.Pass):
                     if desc is None or not desc.transient or state.in_degree(node) != 1:
                         return None
                 elif isinstance(node, nodes.Tasklet):
-                    if state.in_degree(node) != 1:
-                        return None
-                    code = node.code.as_string.strip()
-                    if "=" not in code or code.split("=", 1)[0].strip() != "__out":
+                    # Only a copy may follow the op: acc = g(acc OP x) is no reduction, so splitting it is unsound.
+                    if state.in_degree(node) != 1 or not FuseConsecutiveLoops.is_copy(
+                        node, state.in_edges(node)[0].dst_conn
+                    ):
                         return None
                 else:
                     return None

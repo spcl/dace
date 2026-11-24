@@ -765,15 +765,18 @@ def find_conflict_witness(
     sizes: set[str],
     rlimit: int = DEFAULT_RLIMIT,
     outer: tuple[IterRange, ...] = (),
+    shape: tuple[sp.Basic | None, ...] = (),
 ) -> dict[str, int] | None:
     """Values under which ``first``, at an earlier iteration of the carrying loop, and ``second``, at a later one,
     touch the same element; ``None`` when there are none, the solver gives up, or something cannot be encoded.
 
     The iterator lists run outermost first, and both start with the carrying loop. Each side gets its own copy of
-    every iterator. The only other symbols the witness may choose are ``sizes``, nonnegative: a symbol outside
+    every iterator. The only other symbols the witness may choose are ``sizes``, at least 1: a symbol outside
     them is a fixed value nobody knows, and a conflict for one chosen value of it proves nothing about the
     program, so its presence refuses the query. ``outer`` are the counters of the loops around the carrying one,
     outermost first: both accesses share one copy, an iteration of those loops in which the carrying loop runs.
+    ``shape`` is the accessed array's extent per dimension (``None`` where it is not in ``sizes``): both accesses
+    must lie inside it, so no witness rests on an index no valid input reaches.
     """
     exprs = [sp.sympify(e) for e in first + second]
     exprs += [sp.sympify(b) for _, start, end, _ in outer + first_iters + second_iters for b in (start, end)]
@@ -790,7 +793,15 @@ def find_conflict_witness(
     solver = bounded_solver(rlimit)
     solver.add(*shared[0], *sides[0][0], *sides[1][0], *(a == b for a, b in zip(sides[0][1], sides[1][1])))
     solver.add(earlier < later if int(symbolic.evaluate(step, {})) > 0 else earlier > later)
-    solver.add(*(required(z3).Int(name) >= 0 for name in sorted(sizes)))
+    solver.add(*(required(z3).Int(name) >= 1 for name in sorted(sizes)))
+    for dim, extent in enumerate(shape):
+        if extent is None or not admissible([sp.sympify(extent)], sizes):
+            continue
+        bound = _sympy_to_z3(sp.sympify(extent), sym_cache, {})
+        if bound is None:
+            continue
+        solver.add(*(term >= 0 for term in (sides[0][1][dim], sides[1][1][dim])))
+        solver.add(*(term < bound for term in (sides[0][1][dim], sides[1][1][dim])))
     try:
         verdict = solver.check()
         if verdict != required(z3).sat:

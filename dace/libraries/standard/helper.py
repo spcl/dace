@@ -110,6 +110,21 @@ def call_scratch_lifetime(
     return dtypes.AllocationLifetime.Persistent
 
 
+#: The host LAPACK implementations: they return the ``info`` status by value (``_res = LAPACKE_...``).
+HOST_LAPACK = ("OpenBLAS", "MKL")
+
+
+def add_info_status(
+    sdfg: "dace.SDFG", storage: dtypes.StorageType, lifetime: dtypes.AllocationLifetime, implementation: str
+) -> tuple[str, "dace.data.Data"]:
+    """Add the solver status ``_info`` to ``sdfg``: a scalar for a host LAPACK, which returns it by value; a one-element
+    array for a GPU solver, which writes it through a pointer."""
+    stored = scratch_storage(storage, lifetime)
+    if implementation not in HOST_LAPACK:
+        return sdfg.add_array("_info", [1], dace.int32, transient=True, storage=stored, lifetime=lifetime)
+    return sdfg.add_scalar("_info", dace.int32, transient=True, storage=stored, lifetime=lifetime)
+
+
 def scratch_storage(storage: dtypes.StorageType, lifetime: dtypes.AllocationLifetime) -> dtypes.StorageType:
     """``storage`` for scratch of ``lifetime``: a ``Persistent`` one left to storage inference (``Default``, or a
     ``Register`` operand's) is placed on the heap, the only host storage a persistent allocation may take; a ``State``

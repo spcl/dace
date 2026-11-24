@@ -991,7 +991,10 @@ def _hoist_tasklet_out_of_map(
             return False
         src_access = outer_edges[0].src
         if isinstance(src_access, nodes.AccessNode) and src_access.data not in outer_reads:
-            outer_reads[src_access.data] = state.add_access(src_access.data)
+            # A source inside an enclosing scope holds that iteration's value and must stay its producer: a fresh
+            # read would sit outside the scope, read before the write, and pull ``me`` out of the enclosing map
+            scoped = state.entry_node(src_access) is not None
+            outer_reads[src_access.data] = src_access if scoped else state.add_access(src_access.data)
         elif not isinstance(src_access, (nodes.AccessNode, nodes.MapEntry)):
             return False
 

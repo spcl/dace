@@ -319,6 +319,42 @@ def access_offset(read_subset: subsets.Subset | None, write_subset: subsets.Subs
     return 0
 
 
+def iteration_direction(
+    read_subset: subsets.Subset | None, write_subset: subsets.Subset | None, loop: LoopRegion
+) -> int | None:
+    """``+1`` when the store at ``write_subset`` that hits the element read at ``read_subset`` runs in a LATER
+    iteration than the read, ``-1`` when it ran in an EARLIER one, ``None`` when undecidable."""
+    stride = loop_analysis.get_loop_stride(loop)
+    read, write = subset_point(read_subset), subset_point(write_subset)
+    if stride is None or read is None or write is None or len(read) != len(write):
+        return None
+    stride = symbolic.simplify(stride)
+    if not isinstance(stride, sympy.Integer) or stride == 0:
+        return None
+    distance = None
+    for r, w in zip(read, write):
+        try:
+            r, w = symbolic.equalize_symbols(r, w)
+            diff = symbolic.simplify(r - w)
+            ivs = [s for s in w.free_symbols if str(s) == loop.loop_variable]
+            coef = symbolic.simplify(sympy.diff(w, ivs[0])) if ivs else sympy.Integer(0)
+        except (TypeError, ValueError, AttributeError):
+            return None
+        if not isinstance(diff, sympy.Integer) or not isinstance(coef, sympy.Integer):
+            return None
+        if coef == 0:
+            if diff != 0:
+                return None
+            continue
+        # The store at iteration ``i + d`` hits ``w + coef * d``, so the read element needs ``d = diff / coef``.
+        if distance is not None and distance != diff / coef:
+            return None
+        distance = diff / coef
+    if not distance:
+        return None
+    return 1 if distance * stride > 0 else -1
+
+
 def output_read_edges(sdfg: SDFG, out_name: str, input_names: dict[str, None]) -> list[ConeRead]:
     """``(state, access_node, edge)`` for every input array read in ``out_name``'s producer cone."""
     found = []
@@ -479,7 +515,12 @@ def split_order(
                     # Same element, same iteration: whether the read already sees the write decides.
                     first = writer if sees_written_value(states, name, state, node) else reader
                 else:
-                    first = reader if required(offset) > 0 else writer
+                    # The element offset alone flips under a reversed subscript (``a[N - i]``) or a negative stride;
+                    # what decides is whether the store hitting the read element runs before or after the read.
+                    directions = {iteration_direction(read, w, body) for w in stores}
+                    if len(directions) != 1 or None in directions:
+                        return None
+                    first = reader if required(directions.pop()) > 0 else writer
                 after[first][writer if first == reader else reader] = None
                 constrained = True
     if not constrained:

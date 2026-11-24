@@ -447,7 +447,7 @@ def assigns_any(region: ControlFlowRegion, names: frozenset[str]) -> bool:
 def writes_any(region: ControlFlowRegion, names: frozenset[str]) -> bool:
     """Whether a state of ``region`` writes a container named in ``names``; a nested SDFG's or a library node's output
     reaches an access node of the state that holds it, so an access node with an in-edge is every write."""
-    for state in [b for b in region.all_control_flow_blocks(recursive=True) if isinstance(b, SDFGState)]:
+    for state in region.states():
         if any(isinstance(n, nodes.AccessNode) and n.data in names and state.in_degree(n) > 0 for n in state.nodes()):
             return True
     return False

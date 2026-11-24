@@ -111,6 +111,14 @@ def test_the_tiles_cover_the_axis_exactly_once():
     assert "Min(" in code, "the last tile must stop at the axis end"
 
 
+def test_a_tile_size_is_one_ceiling_division():
+    """The tile is ``ceil(size / (P * r))`` rounded up to a multiple of ``MIN_TILE``: one ``int_ceil`` by
+    ``P * r * MIN_TILE``, not a ceiling of a ceiling an agent re-checks by hand (tsvc_2_s2233)."""
+    code = emitted(finalized(column_scan, "tile_one_ceiling"))
+    assert "__dace_tile" in code and "int_ceil(" in code, code
+    assert not re.search(r"int_ceil\(\s*int_ceil\(", code), code
+
+
 @pytest.mark.parametrize(
     "program,reference,names,tag",
     [
@@ -390,6 +398,7 @@ def test_a_copy_beside_the_maps_into_a_view_of_shared_data_is_not_replicated():
 if __name__ == "__main__":
     test_a_distance_zero_carry_is_tiled()
     test_the_tiles_cover_the_axis_exactly_once()
+    test_a_tile_size_is_one_ceiling_division()
     test_the_finalized_kernel_matches_the_reference(column_scan, reference_column_scan, ("aa", "bb"), "num_s231")
     test_the_finalized_kernel_matches_the_reference(diagonal_carry, reference_diagonal_carry, ("aa", "bb"), "num_s119")
     test_the_finalized_kernel_matches_the_reference(skewed_carry, reference_skewed_carry, ("a", "b"), "num_skew")

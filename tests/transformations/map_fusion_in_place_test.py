@@ -177,7 +177,7 @@ def updates_of_one_column(name: str, shift: int) -> dace.SDFG:
     sdfg.add_array("a", [SIZE + 1, 3], dace.float64)
     sdfg.add_array("c", [SIZE], dace.float64)
     state = sdfg.add_state()
-    chain = [state.add_access("a") for _ in range(3)]
+    chain = [state.add_access("a") for copy in range(3)]
     state.add_mapped_tasklet(
         "first",
         {"i": f"0:{SIZE}"},
@@ -230,7 +230,7 @@ def test_a_piece_computed_from_an_earlier_piece_fuses_without_a_cycle():
     sdfg.add_array("out", [SIZE, 3], dace.float64)
     sdfg.add_array("c", [SIZE], dace.float64)
     state = sdfg.add_state()
-    chain = [state.add_access("a") for _ in range(3)]
+    chain = [state.add_access("a") for copy in range(3)]
     state.add_mapped_tasklet(
         "first", {"i": f"0:{SIZE}"}, {"q": dace.Memlet("c[i]")}, "o = q + 1", {"o": dace.Memlet("a[i, 0]")},
         output_nodes={"a": chain[0]}, external_edges=True,
@@ -252,6 +252,79 @@ def test_a_piece_computed_from_an_earlier_piece_fuses_without_a_cycle():
     assert np.array_equal(array, np.stack([values + 1, -(values + 1), 3 * (values + 1)], axis=1))
 
 
+def two_updates_and_a_reader(name: str, shift: int) -> dace.SDFG:
+    """Two Maps updating ``a[i, 1]`` of an argument, a third writing ``a[k, 2]`` from ``a[k + shift, 1]``."""
+    sdfg = updates_of_one_column(name, 0)
+    state = sdfg.start_block
+    last = next(n for n in state.sink_nodes() if isinstance(n, nodes.AccessNode) and n.data == "a")
+    state.add_mapped_tasklet(
+        "third", {"k": f"0:{SIZE}"}, {"p": dace.Memlet(f"a[k + {shift}, 1]")}, "o = p + 3",
+        {"o": dace.Memlet("a[k, 2]")}, input_nodes={"a": last}, output_nodes={"a": state.add_access("a")},
+        external_edges=True,
+    )  # fmt: skip
+    return sdfg
+
+
+def test_a_third_map_fuses_into_two_updates_fused_in_place():
+    """The first fusion leaves a node of argument ``a`` inside the body; the third Map still fuses."""
+    sdfg = two_updates_and_a_reader("three_updates", 0)
+    assert sdfg.apply_transformations_repeated(relaxed_fusion(), validate_all=True) == 2
+    assert top_level_maps(sdfg) == 1
+    array, factor = np.arange(3.0 * (SIZE + 1)).reshape(SIZE + 1, 3), np.arange(1.0, SIZE + 1)
+    expected = array.copy()
+    expected[:-1, 1] = (expected[:-1, 1] * factor + 1) * 2
+    expected[:-1, 2] = expected[:-1, 1] + 3
+    sdfg(a=array, c=factor)
+    assert np.array_equal(array, expected)
+
+
+def test_a_third_map_reading_another_iteration_stays_apart():
+    sdfg = two_updates_and_a_reader("three_shifted_updates", 1)
+    assert sdfg.apply_transformations_repeated(relaxed_fusion(), validate_all=True) == 1
+    assert top_level_maps(sdfg) == 2
+    array, factor = np.arange(3.0 * (SIZE + 1)).reshape(SIZE + 1, 3), np.arange(1.0, SIZE + 1)
+    expected = array.copy()
+    expected[:-1, 1] = (expected[:-1, 1] * factor + 1) * 2
+    expected[:-1, 2] = expected[1:, 1] + 3
+    sdfg(a=array, c=factor)
+    assert np.array_equal(array, expected)
+
+
+def test_pieces_that_tile_no_box_fuse_in_place():
+    """The first Map updates rows 0 and 2 of argument ``a`` (no box without row 1), the second writes row 1 from them:
+    cloudsc's ``zsolqa[4, 0, i]`` and ``zsolqa[0, 4, i]``."""
+    sdfg = dace.SDFG("pieces_with_a_hole")
+    sdfg.add_array("a", [3, SIZE], dace.float64)
+    sdfg.add_array("c", [SIZE], dace.float64)
+    state = sdfg.add_state()
+    chain = [state.add_access("a") for copy in range(3)]
+    state.add_mapped_tasklet(
+        "first", {"i": f"0:{SIZE}"},
+        {"p0": dace.Memlet("a[0, i]"), "p2": dace.Memlet("a[2, i]"), "q": dace.Memlet("c[i]")},
+        "o0 = p0 + q\no2 = p2 * q", {"o0": dace.Memlet("a[0, i]"), "o2": dace.Memlet("a[2, i]")},
+        input_nodes={"a": chain[0]}, output_nodes={"a": chain[1]}, external_edges=True,
+    )  # fmt: skip
+    state.add_mapped_tasklet(
+        "second", {"j": f"0:{SIZE}"}, {"p0": dace.Memlet("a[0, j]"), "p2": dace.Memlet("a[2, j]")},
+        "o = p0 - p2", {"o": dace.Memlet("a[1, j]")}, input_nodes={"a": chain[1]}, output_nodes={"a": chain[2]},
+        external_edges=True,
+    )  # fmt: skip
+    sdfg.validate()
+    assert sdfg.apply_transformations_repeated(relaxed_fusion(), validate_all=True) == 1
+    assert top_level_maps(sdfg) == 1
+    # The write-back names the two rows, not the box over all three
+    exit_node = next(n for n in state.nodes() if isinstance(n, nodes.MapExit))
+    assert sorted(str(e.data.subset) for e in state.in_edges(exit_node)) == ["0, i", "1, i", "2, i"]
+    rng = np.random.default_rng(0)
+    array, factor = rng.random((3, SIZE)), rng.random(SIZE)
+    expected = array.copy()
+    expected[0] += factor
+    expected[2] *= factor
+    expected[1] = expected[0] - expected[2]
+    sdfg(a=array, c=factor)
+    assert np.allclose(array, expected)
+
+
 if __name__ == "__main__":
     test_a_row_recurrence_and_its_reader_fuse_in_place()
     test_a_reader_of_elements_another_map_wrote_fuses_in_place()
@@ -261,3 +334,6 @@ if __name__ == "__main__":
     test_two_updates_of_one_container_fuse_in_place()
     test_an_update_reading_another_iteration_stays_apart()
     test_a_piece_computed_from_an_earlier_piece_fuses_without_a_cycle()
+    test_a_third_map_fuses_into_two_updates_fused_in_place()
+    test_a_third_map_reading_another_iteration_stays_apart()
+    test_pieces_that_tile_no_box_fuse_in_place()

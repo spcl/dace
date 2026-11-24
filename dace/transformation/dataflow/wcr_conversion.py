@@ -14,7 +14,7 @@ from dace.ordered import OrderedSet
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.propagation import propagate_memlets_state
-from dace.sdfg.state import SymbolResolver, is_written
+from dace.sdfg.state import LoopRegion, SymbolResolver, is_written
 from dace.transformation import transformation
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
 
@@ -94,19 +94,28 @@ def _index_syms_across_nesting(sdfg: SDFG, names: set) -> set:
     return syms
 
 
-def outer_maps_vary_index(sdfg: SDFG, write_subset, data_name: str, outer_params: set) -> bool:
+def outer_maps_vary_index(
+    sdfg: SDFG, write_subset, data_name: str, outer_params: set, inner_params: Sequence[str] = ()
+) -> bool:
     """Whether every map parameter of ``outer_params``, outside ``sdfg``, varies the index of a write to
-    ``data_name``, one to one wherever ``write_subset`` names it: ``int_floor(i, 1000)`` names ``i`` and repeats."""
+    ``data_name``, one to one wherever ``write_subset`` names it: ``int_floor(i, 1000)`` names ``i`` and repeats.
+    One to one jointly with what varies inside one outer iteration (``inner_params``, the maps around the write in
+    ``sdfg``, and ``sdfg``'s loops and assigned symbols): ``s[i + j]`` over an outer ``i`` and an inner ``j`` names
+    ``i``, yet iterations ``i`` and ``i + 1`` both write ``s[i + 1]``."""
     names = {str(s) for s in write_subset.free_symbols}
     index_syms = _index_syms_across_nesting(sdfg, names) | boundary_write_index_syms(sdfg, data_name)
     if any(str(it) not in index_syms for it in outer_params):
         return index_loaded_injectively(sdfg, write_subset, outer_params)
     params = {str(it) for it in outer_params}
     varying = [name for name in names if params & _index_syms_across_nesting(sdfg, {name})]
+    inside = OrderedSet(inner_params)
+    inside.update(r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
+    inside.update(name for edge in sdfg.all_interstate_edges(recursive=True) for name in edge.data.assignments)
+    inner = sorted(name for name in names if name in inside and name not in varying)
     # Avoid import loop: the vectorization package imports this module.
     from dace.transformation.passes.vectorization.utils.injectivity import write_subset_is_injective
 
-    return not varying or write_subset_is_injective(write_subset, varying)
+    return not varying or write_subset_is_injective(write_subset, varying + inner)
 
 
 def index_loaded_injectively(sdfg: SDFG, write_subset, outer_params: set) -> bool:
@@ -1264,7 +1273,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
                 if isinstance(scope, nodes.MapEntry):
                     outer_map_params |= set(scope.map.params)
             outer_map_params -= set(params)
-            if not outer_maps_vary_index(sdfg, sub, self.output.data, outer_map_params):
+            if not outer_maps_vary_index(sdfg, sub, self.output.data, outer_map_params, params):
                 return False
         # The tasklet must already READ BACK the destination element (same data, same subset), so
         # ``__out`` already equals ``dest <op> incoming`` and dropping the WCR keeps the accumulate.
@@ -1436,7 +1445,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             # (``_loop_it_1`` -> body ``_loop_it_2``) is still recognised as varying the write
             # (an injective per-element in-place RMW like s212 ``b[i] += a[i+1]*d[i]``), not a
             # cross-iteration reduction that must keep its WCR.
-            if not outer_maps_vary_index(sdfg, edge.data.subset, edge.data.data, outer_map_params):
+            if not outer_maps_vary_index(sdfg, edge.data.subset, edge.data.data, outer_map_params, params):
                 return False
 
         return True

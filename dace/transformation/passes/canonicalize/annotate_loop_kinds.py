@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Name every loop in the canonical form, so the standalone rendering says what each one is."""
 
+import copy
 import re
 from collections.abc import Iterator
 from typing import Any, NamedTuple
@@ -16,7 +17,7 @@ from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_basic, as_range, free_symbols
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.subsets import Subset
+from dace.subsets import Range, Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.interstate.loop_to_map import LoopRefusal, Refusal
@@ -69,7 +70,8 @@ SEQUENTIAL_PROVEN = PROVEN_PREFIX + " {reason}"
 #: A carried dependence on a loop whose body is a Do-All nest (a time loop over a stencil): proven too, but a skew
 #: of the loop with the nest inside it would parallelize it -- canonicalization does not skew a time loop.
 SEQUENTIAL_PROVEN_OVER_DOALL = (
-    PROVEN_PREFIX + " {reason}; alt: skew this loop with the parallel loops inside it (a wavefront), not done here"
+    PROVEN_PREFIX + " {reason}; alt: a wavefront that skews this loop with the parallel loops inside it, not applied "
+    "because those loops are parallel already at each iteration of this one"
 )
 
 #: A loop the dependence test declined to answer, or never examined.
@@ -82,43 +84,46 @@ NO_COUNTER = f"{NEVER_EXAMINED}: a while loop has no single counter to test"
 
 #: A while loop: its condition reads what the previous trip computed, so the trips run in order.
 WHILE_LOOP = "sequential -- while loop: each test of the condition reads what the previous iteration computed"
-#: A short loop over small fixed sizes that ``LoopToMap`` keeps in order by design: the order is a choice, not proven.
-SMALL_LOOP = (
-    "sequential -- kept in order: only a few iterations over small fixed sizes ({range}); not analyzed for "
-    "dependences, and forking would not pay"
-)
-#: ``LoopToMap``'s message for a loop over SMALL symbols names the range.
-SMALL_RANGE = re.compile(r"loop range (.+?) spans SMALL")
-
 #: A loop the dependence test finds independent that an earlier pass pinned sequential anyway (the
 #: fallback arm of a specialization). Rendered without a pragma, so it must not read as parallel.
 SEQUENTIAL_PINNED = (
     "sequential -- kept in order by an earlier pass; the dependence test finds its iterations independent"
 )
 
-#: The untiled skew: a sequential diagonal over a parallel front; ``alt`` names the other correct shape.
+#: The untiled skew: a sequential diagonal over a parallel front; ``alt`` names the other correct shape. ``{skew}`` is
+#: :func:`skew_label` on the diagonal and :func:`front_label` on the front, both in the loops' own names: the skew
+#: replaced the original counters, so the rendering has no name for them.
 WAVEFRONT_DIAGONAL = (
-    "sequential -- wavefront step: each step reads what the previous step wrote, skewed {skew}; alt: the unskewed nest"
+    "sequential -- wavefront step: each step reads what the previous step wrote; {skew}; alt: the unskewed nest"
 )
-WAVEFRONT_FRONT = "parallel -- one wavefront step: its points do not depend on each other, skewed {skew}"
+WAVEFRONT_FRONT = "parallel -- one wavefront step: its points do not depend on each other; {skew}"
 
 #: The tiled skew: a sequential tile diagonal over a parallel tile column over a sequential interior.
 WAVEFRONT_TILE_DIAGONAL = (
-    "sequential -- wavefront of tiles {tile}: each step reads what the previous step wrote, skewed {skew}; "
+    "sequential -- wavefront of tiles {tile}: each step reads what the previous step wrote; {skew}; "
     "alt: the element wavefront or the unskewed nest"
 )
-WAVEFRONT_TILE_COLUMN = "parallel -- the tiles {tile} of one wavefront step do not depend on each other"
+WAVEFRONT_TILE_COLUMN = "parallel -- the tiles {tile} of one wavefront step do not depend on each other; {skew}"
 WAVEFRONT_TILE_INTERIOR = "sequential -- inside one wavefront tile {tile}: the original order carries the dependence"
 
 
-def skew_label(a: int, b: int, u: str, v: str) -> str:
-    """The skew that produced this wavefront, as ``(t = i + j)``."""
+def skew_label(a: int, b: int, step: str, unit: str = "") -> str:
+    """What step ``step`` of the diagonal runs: ``step t runs the points with row + column = t of the original nest``;
+    ``unit`` is ``"tile "`` for a diagonal of tiles."""
 
     def term(coeff: int, name: str) -> str:
         return name if abs(coeff) == 1 else f"{abs(coeff)}*{name}"
 
-    lead = f"-{term(a, u)}" if a < 0 else term(a, u)
-    return f"(t = {lead} {'-' if b < 0 else '+'} {term(b, v)})"
+    row, column = f"{unit}row", f"{unit}column"
+    lead = f"-{term(a, row)}" if a < 0 else term(a, row)
+    what = "tiles" if unit else "points"
+    sign = "-" if b < 0 else "+"
+    return f"step {step} runs the {what} with {lead} {sign} {term(b, column)} = {step} of the original nest"
+
+
+def front_label(step: str, front: str, along: str) -> str:
+    """Which coordinate the front ``front`` of step ``step`` walks: ``p walks the column of step t``."""
+    return f"{front} walks the {along} of step {step}"
 
 
 def tile_label(bi: int, bj: int) -> str:
@@ -135,6 +140,8 @@ def refusal_reason(loop: LoopRegion, session: Any = None) -> LoopRefusal | str |
     from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
     probe = LoopToMap()
+    # A short loop is analyzed too: its trip count decides whether to fork, never its class.
+    probe.keep_small_loops_sequential = False
     pinned = loop.pinned_sequential
     loop.pinned_sequential = False
     try:
@@ -235,52 +242,86 @@ def quoted(container: str | None, subset: Any) -> str:
     return f"{container}[{index}]" if index and len(index) <= SHORT_INDEX else container
 
 
+#: The tail of an ``unknown`` reason without a condition of its own: what settles it, and what goes wrong otherwise.
+UNSHOWN_TAIL = (
+    "parallel if no iteration touches an element another one writes; otherwise an iteration may read or overwrite "
+    "another one's element, so keep the order"
+)
+
+
 def unproven_reason(refusal: LoopRefusal) -> str:
-    """The reason of an ``unknown`` loop in the loop's words: which check failed, on which array or name."""
+    """The reason of an ``unknown`` loop, one template for every refusal: what the test could not show, naming the
+    array or symbol; ``parallel if`` the condition that would settle it; ``otherwise`` what goes wrong."""
     kind = refusal.kind
-    first_write = refusal.writes[0] if refusal.writes else None
-    first_read = refusal.reads[0] if refusal.reads else None
+    written = quoted(refusal.container, refusal.writes[0] if refusal.writes else None)
+    read = quoted(refusal.container, refusal.reads[0] if refusal.reads else None)
+    later_wins = "otherwise a later iteration's write must win, so keep the order"
     if kind is Refusal.NON_UNIQUE_WRITE:
         return (
-            f"the solver could not show that each iteration writes a different element of "
-            f"{quoted(refusal.container, first_write)}; parallel if no two iterations write the same element "
-            "(for example, an index array without repeats)"
+            f"the solver could not show that each iteration writes a different element of {written}; parallel if no "
+            f"two iterations write the same element (an index array without repeated values); {later_wins}"
         )
     if kind is Refusal.DYNAMIC_WRITE:
         return (
-            f"a conditional write to {quoted(refusal.container, first_write)} at an index the loop counter does not "
-            "fix; parallel if no two iterations write the same element"
+            f"a conditional write to {written} at an index the loop counter does not fix may hit one element in two "
+            f"iterations; parallel if no two iterations write the same element; {later_wins}"
         )
     if kind is Refusal.OVERLAPPING_WRITES:
         return (
             f"the dependence test could not show that writes to {refusal.container or 'an array'} from different "
-            "iterations never overlap; parallel if they are disjoint"
+            f"iterations never overlap; parallel if they are disjoint; {later_wins}"
         )
     if kind is Refusal.CARRIED_DEPENDENCE:
         return (
-            f"the dependence test could not show that a read of {quoted(refusal.container, first_read)} never "
-            "sees another iteration's write; parallel if no iteration reads an element another iteration writes"
+            f"the dependence test could not show that a read of {read} never sees another iteration's write; "
+            "parallel if no iteration reads an element another iteration writes; otherwise that read must see the "
+            "earlier iteration's value, so keep the order"
         )
     if kind is Refusal.CARRIED_SYMBOL:
         return (
             f"{carried_symbol_text(refusal)} may carry a value from one iteration to the next (a branch may skip "
-            "it); parallel if every iteration assigns it before reading it, otherwise only as a scan"
+            "it); parallel if every iteration assigns it before reading it; otherwise parallel only as a scan"
         )
     if kind is Refusal.LIVE_OUT_SYMBOL:
         names = ", ".join(sorted(refusal.symbols)) or "a scalar"
-        return f"{names} is read after the loop; parallel with the last iteration's value kept (lastprivate)"
+        return (
+            f"{names} is read after the loop; parallel if the last iteration's value is kept (lastprivate); "
+            "otherwise the read after the loop sees whichever iteration finished last"
+        )
+    return unexamined_reason(refusal, written)
+
+
+def unexamined_reason(refusal: LoopRefusal, written: str) -> str:
+    """:func:`unproven_reason` for the refusals that stop the test before any dependence question."""
+    kind = refusal.kind
     if kind is Refusal.UNANALYZABLE_RANGE:
         return (
-            f"{NEVER_EXAMINED}: the loop bounds or step could not be analyzed; integer bounds fixed before the loop "
-            "would let the test run"
+            f"{NEVER_EXAMINED}: the loop bounds or step could not be analyzed; parallel if the test passes once the "
+            "bounds are integers fixed before the loop; otherwise keep the order, since nothing is known about the "
+            "iterations"
         )
     if kind is Refusal.UNSUPPORTED_BODY:
         found = BODY_BLOCK.search(refusal.message)
         block = found.group(1) if found is not None else "block"
         if block == "ContinueBlock":
-            return f"{NEVER_EXAMINED}: the body skips the rest of an iteration (continue); rewritten as an if, it can be analyzed"
-        return f"{NEVER_EXAMINED}: the body holds a {block}"
-    return refusal.message
+            return (
+                f"{NEVER_EXAMINED}: the body skips the rest of an iteration (continue); parallel if, rewritten as an "
+                "if, the test passes; otherwise keep the order"
+            )
+        if block == "BreakBlock":
+            return (
+                f"{NEVER_EXAMINED}: the body leaves the loop early (break); parallel only as a first-hit search; "
+                "otherwise iterations after the exit would run"
+            )
+        return f"{NEVER_EXAMINED}: the body holds a {block}; {UNSHOWN_TAIL}"
+    if kind is Refusal.ORDERED_SIDE_EFFECT:
+        return (
+            "the body has a side effect whose order counts (a call, a message); parallel if that order does not "
+            "matter; otherwise the effects happen out of order"
+        )
+    # PINNED and any later kind: name the array, never the refusal's own text (it may hold a whole subset)
+    where = f" on {written}" if refusal.container else ""
+    return f"the dependence test refused the loop{where}; {UNSHOWN_TAIL}"
 
 
 #: Array name -> (outer array, element offset in the loop's names) for every array the body can see.
@@ -334,7 +375,8 @@ def edge_accesses(
 ) -> list[Access]:
     """The element reads and writes ``edge`` makes: into or out of a tasklet, or an array copy."""
     memlet = edge.data
-    if memlet.is_empty() or memlet.wcr is not None:
+    # A dynamic memlet may not happen, like an access under a branch: it proves no dependence.
+    if memlet.is_empty() or memlet.wcr is not None or memlet.dynamic:
         return []
     if isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode):
         sides = [
@@ -531,12 +573,13 @@ def copy_sites(
     arrays: ArrayBindings,
     mapping: dict[str, sympy.Expr],
     iters: tuple,
+    seed: int,
 ) -> list[Site]:
     """Both ends of an array copy as sites, each range dimension a fresh iterator over that range."""
     product = type(edge.dst).__name__ in ("Dot", "MatMul") and isinstance(edge.dst, nodes.LibraryNode)
     if not (isinstance(edge.src, nodes.AccessNode) and (product or isinstance(edge.dst, nodes.AccessNode))):
         return []
-    if edge.data.is_empty() or edge.data.wcr is not None:
+    if edge.data.is_empty() or edge.data.wcr is not None or edge.data.dynamic:
         return []
     sites = []
     sides = [(edge.src.data, edge.data.get_src_subset(edge, state), False)]
@@ -554,7 +597,7 @@ def copy_sites(
             if begin == end:
                 element = begin
             else:
-                var = f"__copy{id(edge)}_{side}_{dim}"
+                var = f"{COPY_ITERATOR}{seed}_{side}_{dim}"
                 extra.append((var, begin, end, step))
                 element = sympy.Symbol(var)
             index.append(element + offset[dim] if offset else element)
@@ -569,7 +612,7 @@ def state_sites(
     for edge in state.edges():
         scoped = edge.dst if isinstance(edge.dst, nodes.Tasklet) else edge.src
         inner = iters + map_ranges(state, scoped, mapping)
-        copies = copy_sites(edge, state, arrays, mapping, inner)
+        copies = copy_sites(edge, state, arrays, mapping, inner, len(out))
         out.extend(copies or (Site(access, inner) for access in edge_accesses(edge, state, arrays, mapping)))
     for node in state.nodes():
         if isinstance(node, nodes.NestedSDFG):
@@ -672,11 +715,25 @@ def witnessed_carrying_access(loop: LoopRegion) -> str | None:
                 continue
             with canon_stats.timed("z3", loop):
                 found = smt_dependence.find_conflict_witness(
-                    first.access.index, second.access.index, first.iters, second.iters, sizes, outer=tuple(outer)
+                    first.access.index,
+                    second.access.index,
+                    first.iters,
+                    second.iters,
+                    sizes,
+                    outer=tuple(outer),
+                    shape=array_extent(loop.sdfg, first.access.array, len(first.access.index)),
                 )
             if found is not None:
                 return conflict_label(first, second, found, counter[0])
     return None
+
+
+def array_extent(sdfg: SDFG, name: str, dims: int) -> tuple[sympy.Expr | None, ...]:
+    """The shape of ``name`` per dimension, ``()`` when its rank is not ``dims``."""
+    desc = sdfg.arrays.get(name)
+    if desc is None or len(desc.shape) != dims:
+        return ()
+    return tuple(as_basic(extent) for extent in desc.shape)
 
 
 def rewritten_in_iteration(read: Site, sites: list[Site]) -> bool:
@@ -701,15 +758,36 @@ def site_text(site: Site) -> str:
 
 
 def index_text(expr: sympy.Expr, inner: tuple[smt_dependence.IterRange, ...]) -> str:
-    """``expr`` with the one unit-step iterator of ``inner`` it adds, as a range: ``j + 1`` -> ``1:N + 1``."""
+    """``expr`` with the one unit-step iterator of ``inner`` it adds, as a range: ``j + 1`` -> ``1:N + 1``; a copy's
+    iterator, which the rendering has no name for, always as its range."""
     found = [(name, begin, end) for name, begin, end, step in inner if step == 1 and name in free_names(expr)]
-    if len(found) != 1:
-        return str(expr)
+    copies = [it for it in inner if it[0].startswith(COPY_ITERATOR) and it[0] in free_names(expr)]
+    if len(found) != 1 or copies and found[0][0] != copies[0][0]:
+        return copy_range_text(expr, copies) if copies else str(expr)
     name, begin, end = found[0]
     var = next(s for s in expr.free_symbols if str(s) == name)
     if sympy.diff(expr, var) != 1:
-        return str(expr)
+        return copy_range_text(expr, copies) if copies else str(expr)
     return f"{expr.subs(var, begin)}:{expr.subs(var, end) + 1}"
+
+
+#: The prefix of the iterator :func:`copy_sites` gives each range dimension of an array copy.
+COPY_ITERATOR = "__copy"
+
+
+def copy_range_text(expr: sympy.Expr, copies: list[smt_dependence.IterRange]) -> str:
+    """``expr`` with its first copy iterator written as the range it covers, ``lo:hi + 1:stride``, and any other one
+    as ``lo..hi``: the rendering has no name for either."""
+    name, begin, end, step = copies[0]
+    var = next(s for s in expr.free_symbols if str(s) == name)
+    slope = sympy.diff(expr, var) * step
+    first, last = expr.subs(var, begin), expr.subs(var, end)
+    text = f"{first}:{last + 1}" if slope == 1 else f"{first}:{last + 1}:{slope}"
+    if not slope.is_number:
+        text = f"{first}..{last}"
+    for other in copies[1:]:
+        text = text.replace(other[0], f"({other[1]}..{other[2]})")
+    return text
 
 
 def free_names(obj: sympy.Basic | Subset) -> OrderedSet[str]:
@@ -734,10 +812,7 @@ def loop_hint(loop: LoopRegion, session: Any = None) -> str:
     if reason == NO_COUNTER:
         return WHILE_LOOP
     if isinstance(reason, str):
-        return UNKNOWN.format(reason=reason)
-    if reason.kind is Refusal.SMALL:
-        found = SMALL_RANGE.search(reason.message)
-        return SMALL_LOOP.format(range=found.group(1) if found is not None else "small sizes")
+        return UNKNOWN.format(reason=f"{reason}; {UNSHOWN_TAIL}")
     required = order_requirement(reason)
     if required is not None:
         return required
@@ -748,20 +823,46 @@ def loop_hint(loop: LoopRegion, session: Any = None) -> str:
     return UNKNOWN.format(reason=unproven_reason(reason))
 
 
+def recurrence_before_rewrite(loop: LoopRegion) -> str | None:
+    """The ``sequential`` label of ``loop`` when its body as it stands proves a carried dependence, naming only the
+    array: a pass about to rewrite the body (a wavefront skew) records it, because the rewritten body's accesses are
+    guarded and prove nothing, and its counters are gone."""
+    reason = refusal_reason(loop)
+    if reason is None or isinstance(reason, str):
+        return None
+    found = re.match(r"(RAW|WAR|WAW) on (\w+)\[", proof_of_carry(loop, reason) or "")
+    if found is None:
+        return None
+    meaning = CONFLICT_MEANING[found.group(1)]
+    return f"{PROVEN_PREFIX} on {found.group(2)}: {meaning}, shown before the loops inside were skewed"
+
+
 def parallel_loop_hint(loop: LoopRegion) -> str:
     """``PARALLEL`` for a loop ``LoopToMap`` accepts, or ``REDUCTION`` when its body accumulates through a WCR write
     two iterations may share; either names the loop-local containers each iteration writes."""
     states = list(loop.states())
     private = loop_private(loop, states)
-    # A symbol the body assigns moves per iteration too, but no one shows it moves injectively.
-    assigned = [name for edge in loop.all_interstate_edges() for name in edge.data.assignments]
     reductions = OrderedSet(
         reduction_text(wcr, name)
         for name, wcr, subset in wcr_writes(states)
-        if name not in private and not distinct_per_iteration(subset, [loop.loop_variable], assigned)
+        if name not in private and not distinct_per_iteration(subset, [loop.loop_variable], moving_names(loop))
     )
     first = REDUCTION.format(reductions=" and ".join(sorted(reductions))) if reductions else PARALLEL
     return first + PRIVATE.format(names=", ".join(private)) if private else first
+
+
+def moving_names(loop: LoopRegion) -> list[str]:
+    """The names that change within one iteration of ``loop``: inner loop counters, map parameters and interstate
+    assignments at any depth. A write index that adds one of them to the counter is not shown injective."""
+    names = OrderedSet(name for edge in loop.all_interstate_edges(recursive=True) for name in edge.data.assignments)
+    for region in loop.all_control_flow_regions(recursive=True):
+        if isinstance(region, LoopRegion) and region is not loop and region.loop_variable:
+            names.add(region.loop_variable)
+    for state in loop.states():
+        for node in state.nodes():
+            if isinstance(node, nodes.MapEntry):
+                names.update(node.map.params)
+    return list(names)
 
 
 def distinct_per_iteration(subset: Subset | None, params: list[str], varying: list[str] | None = None) -> bool:
@@ -924,8 +1025,9 @@ def map_names(state: SDFGState, entry: nodes.MapEntry) -> set[str]:
 
 
 def map_reductions(state: SDFGState, entry: nodes.MapEntry) -> list[str]:
-    """``+ into s`` for every container the map accumulates into through a WCR edge leaving its exit, in name order;
-    not where every innermost write provably lands on a different element per iteration."""
+    """``+ into s`` for every container the map accumulates into, through a WCR edge leaving its exit or a WCR write
+    inside a nested SDFG in its scope, in name order; not where every write provably lands on a different element per
+    iteration."""
     found: OrderedSet[str] = OrderedSet()
     params = list(entry.map.params)
     for edge in state.out_edges(state.exit_node(entry)):
@@ -935,6 +1037,88 @@ def map_reductions(state: SDFGState, entry: nodes.MapEntry) -> list[str]:
         subsets = [leaf.data.get_dst_subset(leaf, state) or leaf.data.subset for leaf in leaves]
         if not all(distinct_per_iteration(subset, params) for subset in subsets):
             found.add(reduction_text(edge.data.wcr, edge.data.data))
+    for call in nested_outputs(state, entry):
+        if call.wcr is not None and not all(
+            subset is not None and distinct_per_iteration(subset, params) for subset in call.subsets
+        ):
+            found.add(reduction_text(call.wcr, call.container))
+    return sorted(found)
+
+
+class NestedOutput(NamedTuple):
+    """A container outside a map that a nested SDFG in the map's scope writes: the accumulation operator if it
+    accumulates, and the subsets of its writes inside, in the map's names."""
+
+    container: str
+    wcr: str | None
+    subsets: list[Subset | None]
+
+
+def nested_outputs(state: SDFGState, entry: nodes.MapEntry) -> list[NestedOutput]:
+    """Every write a nested SDFG in ``entry``'s scope makes to a container that leaves the map through its exit."""
+    exit_node = state.exit_node(entry)
+    found = []
+    for node in state.scope_subgraph(entry).nodes():
+        if not isinstance(node, nodes.NestedSDFG):
+            continue
+        accumulated = {write[0]: write[1] for write in wcr_writes(list(node.sdfg.states()))}
+        for edge in state.out_edges(node):
+            if edge.src_conn is None or edge.data.is_empty():
+                continue
+            path = state.memlet_path(edge)
+            if not any(e.dst is exit_node for e in path):
+                continue
+            found.append(NestedOutput(path[-1].data.data, accumulated.get(edge.src_conn), writes_through(state, edge)))
+    return found
+
+
+def writes_through(state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> list[Subset | None]:
+    """The subsets the nested SDFG at the source of ``edge`` writes through it, in the caller's indices and through
+    any deeper nested SDFG; ``None`` for a write whose elements are not known there (a view of part of the container,
+    whose indices start elsewhere, or a dynamic write)."""
+    node = edge.src
+    outer, inner = state.sdfg.arrays[edge.data.data], node.sdfg.arrays[edge.src_conn]
+    whole = str(edge.data.subset) == str(Range.from_array(outer))
+    if not whole or len(inner.shape) != len(outer.shape) or list(inner.offset) != list(outer.offset):
+        return [None]
+    found: list[Subset | None] = []
+    for inner_state in node.sdfg.states():
+        for access in inner_state.data_nodes():
+            if access.data != edge.src_conn:
+                continue
+            for write in inner_state.in_edges(access):
+                if write.data.is_empty():
+                    continue
+                if isinstance(write.src, nodes.NestedSDFG):
+                    found += writes_through(inner_state, write)
+                elif write.data.dynamic:
+                    found.append(None)
+                else:
+                    found.append(required(write.data.get_dst_subset(write, inner_state) or write.data.subset))
+    return [None if subset is None else as_outer(subset, node.symbol_mapping) for subset in found]
+
+
+def as_outer(subset: Subset, mapping: dict[str, Any]) -> Subset:
+    """``subset`` with a nested SDFG's symbols replaced by what its caller passes for them."""
+    outer = copy.deepcopy(subset)
+    outer.replace(
+        {symbolic.pystr_to_symbolic(name): symbolic.pystr_to_symbolic(str(value)) for name, value in mapping.items()}
+    )
+    return outer
+
+
+def shared_buffers(state: SDFGState, entry: nodes.MapEntry) -> list[str]:
+    """Transients outside the map that a nested SDFG in its scope writes, without accumulating, at elements no map
+    parameter moves: every iteration writes the same elements, so the iterations share one buffer (a scratch lifted
+    out of the nested SDFG), and a parallel run needs a copy per iteration."""
+    params = OrderedSet(entry.map.params)
+    found: OrderedSet[str] = OrderedSet()
+    for call in nested_outputs(state, entry):
+        if call.wcr is not None or not state.sdfg.arrays[call.container].transient or not call.subsets:
+            continue
+        known = [subset for subset in call.subsets if subset is not None]
+        if len(known) == len(call.subsets) and not any(params & free_names(subset) for subset in known):
+            found.add(call.container)
     return sorted(found)
 
 
@@ -947,9 +1131,26 @@ def parallel_hint(state: SDFGState, entry: nodes.MapEntry, traps: list[tuple[str
     reductions = map_reductions(state, entry)
     if reductions:
         first = REDUCTION.format(reductions=" and ".join(reductions))
+    shared = shared_buffers(state, entry)
+    if shared:
+        first += PRIVATE.format(names=", ".join(shared))
     relied = sorted({held for held, names in traps if names & map_names(state, entry)})
     if relied:
         first += ASSUMES.format(predicates=" and ".join(relied))
+    return first
+
+
+def expanded_map_hint(state: SDFGState, entry: nodes.MapEntry, original: str | None) -> str | None:
+    """The hint of one map of the nest ``MapExpansion`` made of a labelled map (``original``): its class line
+    re-derived for its own parameters, as :func:`parallel_hint` would, keeping the entry traps the original line rests
+    on; the outermost map keeps the original's notes. ``None`` when the original had no class line."""
+    lines = (original or "").split("\n")
+    if not lines[0].startswith(("parallel -- independent", "parallel -- reduction")):
+        return None
+    first = parallel_hint(state, entry, [])
+    assumed = lines[0].find(ASSUMES.split("{")[0])
+    if assumed >= 0:
+        first += lines[0][assumed:]
     return first
 
 

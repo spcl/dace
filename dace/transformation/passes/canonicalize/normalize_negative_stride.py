@@ -6,7 +6,7 @@ from typing import Any
 import dace
 from dace import SDFG, properties, symbolic
 from dace.sdfg.narrowing import as_expr
-from dace.sdfg.state import LoopRegion, SymbolResolver
+from dace.sdfg.state import ConditionalBlock, LoopRegion, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -20,6 +20,26 @@ def is_negative_number(value: symbolic.SymbolicType, facts: symbolic.Facts) -> b
     """``True`` iff ``facts`` prove ``value`` negative."""
     relation = symbolic.predicate_relation(symbolic.Predicate.NEGATIVE, as_expr(value))
     return symbolic.ask(relation, facts) is symbolic.Truth.TRUE
+
+
+def read_after_loop(loop: LoopRegion, name: str) -> bool:
+    """Whether a block or interstate edge that may run after ``loop`` reads ``name``."""
+    block, region = loop, loop.parent_graph
+    while True:
+        if isinstance(region, ConditionalBlock):
+            block, region = region, region.parent_graph
+            continue
+        if isinstance(region, LoopRegion):
+            # The enclosing loop's header and next iteration run after ``loop`` as well.
+            return region.loop_variable == name or name in region.free_symbols
+        reached = list(region.bfs_nodes(block))
+        if any(name in b.free_symbols for b in reached if b is not block):
+            return True
+        if any(name in e.data.free_symbols for b in reached for e in region.out_edges(b)):
+            return True
+        if isinstance(region, SDFG):
+            return False
+        block, region = region, region.parent_graph
 
 
 @properties.make_properties
@@ -61,6 +81,10 @@ class NormalizeNegativeStride(ppl.Pass):
         end = loop_analysis.get_loop_end(loop)
         # The rebinding ``i = start + stride * j`` reads ``start`` in every iteration
         if start is None or end is None or loop_analysis.body_writes(loop, start):
+            return False
+        # The rewrite leaves the old iterator at its last body value (unset on a zero-trip loop) instead of the first
+        # failing value, so a later read of it would change.
+        if read_after_loop(loop, loop.loop_variable):
             return False
         try:
             trip = symbolic.simplify(symbolic.int_floor(start - end, -stride) + 1)

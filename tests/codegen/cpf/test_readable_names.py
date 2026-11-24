@@ -132,7 +132,9 @@ def test_a_nested_function_reuses_its_callers_names_and_states_a_repeated_bound_
     body = function_text(result.code, "body")
     assert re.search(r"void body\([^)]*\bint64_t i\)", body), body
     assert body.count("lo = ") == 1 and body.count("hi = ") == 1, body
-    assert body.count("for (int64_t j = lo; j < hi; j += 1)") == 2, body
+    # Every loop counter is unique in the file: the second sibling map numbers its counter
+    assert body.count("for (int64_t j = lo; j < hi; j += 1)") == 1, body
+    assert body.count("for (int64_t j2 = lo; j2 < hi; j2 += 1)") == 1, body
     assert re.search(r"for \(int64_t i = 0; i < 2; i \+= 1\)", result.code), result.code
     assert generated_names(result.code) == [], generated_names(result.code)
     a = np.random.default_rng(2).random(11)
@@ -218,6 +220,37 @@ def test_a_loop_comment_names_the_renamed_variables(language):
     run(result, name, language, args, {"b": expected})
 
 
+M = dace.symbol("M")
+
+
+@dace.program
+def names_guarded_quotient_bounds(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    if M > 0:
+        b[0 : N // M - 1] = a[0 : N // M - 1] * 2.0
+        c[0 : N // M - 1] = a[0 : N // M - 1] + 1.0
+
+
+@pytest.mark.parametrize("language", ["c++", "c"])
+def test_a_repeated_bound_dividing_by_a_guarded_symbol_stays_in_its_branch(language):
+    """``N // M - 1`` runs only under ``M > 0``; hoisted to the entry, ``M = 0`` divided by zero there."""
+    name = f"cpf_names_guarded_bound_{suffix(language)}"
+    sdfg = names_guarded_quotient_bounds.to_sdfg(simplify=True)
+    sdfg.name = name
+    result = render(sdfg, language=language)
+    entry = result.sdfg.start_block
+    hoisted = [e.data.assignments for e in result.sdfg.out_edges(entry) if entry.label.startswith("bounds")]
+    assert not any("M" in value for assignments in hoisted for value in assignments.values()), hoisted
+    library = build_standalone(result.code, name, language=language)
+    for m in (0, 2):
+        a = np.random.default_rng(m).random(12)
+        b, c = np.zeros(12), np.zeros(12)
+        args = {"a": a, "b": b.copy(), "c": c.copy(), "N": 12, "M": m}
+        if m > 0:
+            b[: 12 // m - 1], c[: 12 // m - 1] = a[: 12 // m - 1] * 2.0, a[: 12 // m - 1] + 1.0
+        call_standalone(library, result.sdfg, args)
+        assert_matches({"b": b, "c": c}, {"b": args["b"], "c": args["c"]}, name)
+
+
 if __name__ == "__main__":
     for lang in ("c++", "c"):
         test_array_expressions_render_with_letter_iterators_and_no_generated_names(lang)
@@ -225,6 +258,7 @@ if __name__ == "__main__":
         test_a_nested_function_reuses_its_callers_names_and_states_a_repeated_bound_once(lang)
         test_a_temporary_named_like_an_argument_or_a_keyword_takes_a_numbered_name(lang)
         test_a_loop_comment_names_the_renamed_variables(lang)
+        test_a_repeated_bound_dividing_by_a_guarded_symbol_stays_in_its_branch(lang)
 
 
 def test_a_tasklets_file_scope_code_takes_the_renamed_iterator_without_a_shadow():

@@ -7,11 +7,13 @@ import copy as copy_module
 import numpy as np
 
 import dace
+from dace.libraries.blas.nodes.gemm import Gemm
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize.forward_offset_copies import ForwardOffsetCopies
 
 N = dace.symbol("N")
+K = dace.symbol("K")
 
 
 def shifted_copy_sdfg(write_between: bool) -> dace.SDFG:
@@ -241,6 +243,66 @@ def test_an_offset_symbol_rebound_inside_a_branch_keeps_the_copy():
     assert "t" in sdfg.arrays
 
 
+def snapshot_shaped_copy_sdfg(name: str, rebind: bool) -> dace.SDFG:
+    """``s = n``, then a branch copying ``t = a[0:n, 0:K]`` into ``t`` of shape ``(s, K)`` that feeds ``c = t @ b``
+    and setting ``n = n - 1`` after, as the frontend sizes ``np.copy(a[:n, :k])`` by a copy of ``n``; with
+    ``rebind``, ``n = n - 1`` also runs between ``s = n`` and the copy."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [N + 2, K + 3], dace.float64)
+    sdfg.add_array("b", [K, 4], dace.float64)
+    sdfg.add_array("c", [N, 4], dace.float64)
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_symbol("s", dace.int64)
+    sdfg.add_transient("t", ["s", K], dace.float64)
+    head = sdfg.add_state("head", is_start_block=True)
+    bind = sdfg.add_state_after(head, "bind", assignments={"n": "N"})
+    branch = ConditionalBlock("branch")
+    sdfg.add_node(branch)
+    if rebind:
+        middle = sdfg.add_state_after(bind, "middle", assignments={"s": "n"})
+        sdfg.add_edge(middle, branch, dace.InterstateEdge(assignments={"n": "n - 1"}))
+    else:
+        sdfg.add_edge(bind, branch, dace.InterstateEdge(assignments={"s": "n"}))
+    arm = ControlFlowRegion("arm", sdfg=sdfg)
+    branch.add_branch("N > 0", arm)
+    copy = arm.add_state("copy", is_start_block=True)
+    arm.add_edge(copy, arm.add_state("after"), dace.InterstateEdge(assignments={"n": "n - 1"}))
+    gemm = Gemm("gemm")
+    gemm.implementation = "pure"
+    copy.add_node(gemm)
+    t = copy.add_access("t")
+    copy.add_nedge(copy.add_read("a"), t, dace.Memlet("a[0:n, 0:K] -> [0:n, 0:K]"))
+    copy.add_edge(t, None, gemm, "_a", dace.Memlet("t[0:n, 0:K]"))
+    copy.add_edge(copy.add_read("b"), None, gemm, "_b", dace.Memlet("b[0:K, 0:4]"))
+    copy.add_edge(gemm, "_c", copy.add_write("c"), None, dace.Memlet("c[0:n, 0:4]"))
+    sdfg.reset_cfg_list()
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_copy_into_a_buffer_sized_by_a_symbol_copy_feeds_the_gemm_from_its_source():
+    sdfg = snapshot_shaped_copy_sdfg("snapshot_shaped_copy", rebind=False)
+    assert ForwardOffsetCopies().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert "t" not in sdfg.arrays
+    (operand,) = [e for st in sdfg.states() for e in st.edges() if e.dst_conn == "_a"]
+    assert operand.data.data == "a"
+    rng = np.random.default_rng(5)
+    a, b, c = rng.random((8, 6)), rng.random((3, 4)), np.zeros((6, 4))
+    sdfg(a=a, b=b, c=c, N=6, K=3)
+    assert np.allclose(c, a[:6, :3] @ b)
+
+
+def test_a_symbol_rebound_after_its_copy_keeps_the_copy():
+    sdfg = snapshot_shaped_copy_sdfg("snapshot_shaped_copy_rebound", rebind=True)
+    assert ForwardOffsetCopies().apply_pass(sdfg, {}) is None
+    assert "t" in sdfg.arrays
+    rng = np.random.default_rng(6)
+    a, b, c = rng.random((8, 6)), rng.random((3, 4)), np.zeros((6, 4))
+    sdfg(a=a, b=b, c=c, N=6, K=3)
+    assert np.allclose(c[:5], a[:5, :3] @ b)
+
+
 if __name__ == "__main__":
     test_a_shifted_copy_read_in_a_later_state_reads_its_source()
     test_a_write_to_the_source_between_keeps_the_copy()
@@ -252,3 +314,5 @@ if __name__ == "__main__":
     test_a_loop_writing_the_source_keeps_the_copy()
     test_a_copy_whose_extent_is_spelled_floor_is_forwarded()
     test_an_offset_symbol_rebound_inside_a_branch_keeps_the_copy()
+    test_a_copy_into_a_buffer_sized_by_a_symbol_copy_feeds_the_gemm_from_its_source()
+    test_a_symbol_rebound_after_its_copy_keeps_the_copy()

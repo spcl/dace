@@ -37,6 +37,16 @@ def test_normalize_is_value_preserving_and_survives_codegen(expression):
     assert "1 / 2" not in sym2cpp(converted), sym2cpp(converted)
 
 
+@pytest.mark.parametrize("expression", ["floor(sqrt(N))", "floor(0.5 * N)", "floor(log(N + 1))"])
+def test_a_floor_of_no_integer_quotient_keeps_its_floor(expression):
+    n = symbol("N")
+    floored = eval(expression, {"N": n, "floor": sympy.floor, "sqrt": sympy.sqrt, "log": sympy.log})
+    converted = normalize(floored)
+    for value in range(1, 12):
+        assert int(converted.subs({n: value})) == int(floored.subs({n: value})), value
+        assert converted.subs({n: value}).is_integer, value
+
+
 def test_pass_rewrites_map_ranges_memlets_and_shapes():
     """All three places a bad index reaches codegen from."""
     i = symbol("i")
@@ -88,3 +98,14 @@ def test_normalized_kernel_computes_the_same_numbers():
     b = np.zeros(size)
     sdfg(a=a, b=b, N=size)
     np.testing.assert_allclose(b, a[(np.arange(size) + 1) // 2])
+
+
+if __name__ == "__main__":
+    test_parsed_dace_source_already_uses_int_floor()
+    for source in ["(N + 1) * 4 // 8", "(N - 1) // 2", "floor(N / 2)", "(2 * N + 3) // 4"]:
+        test_normalize_is_value_preserving_and_survives_codegen(source)
+    for source in ["floor(sqrt(N))", "floor(0.5 * N)", "floor(log(N + 1))"]:
+        test_a_floor_of_no_integer_quotient_keeps_its_floor(source)
+    test_pass_rewrites_map_ranges_memlets_and_shapes()
+    test_pass_is_a_noop_on_a_clean_sdfg()
+    test_normalized_kernel_computes_the_same_numbers()

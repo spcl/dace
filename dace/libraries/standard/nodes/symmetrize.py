@@ -119,7 +119,8 @@ class ExpandSymmetrizeBoundingBox(ExpandTransformation):
         entry, exit_ = nstate.add_map(
             f"{node.label}_row",
             {
-                "__i": f"{node.row_lo}:{node.row_hi}",
+                # A row at or past ``col_hi - col_offset`` has no columns: the clamp would copy one it never had.
+                "__i": f"{node.row_lo}:min({node.row_hi}, ({node.col_hi}) - {node.col_offset})",
                 "__jj": f"0:{width}",
             },
             schedule=dace.dtypes.ScheduleType.Default,

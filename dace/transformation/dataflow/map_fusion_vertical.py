@@ -1002,20 +1002,23 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             ]
             if not producer_edges:
                 return None
+            # Fused in place, the intermediate is not reduced: what follows guards the reduced copy only.
+            reduced = intermediate_node.data not in in_place
             group_subset = self.tiled_producer_subset(producer_edges, facts)
-            if group_subset is None:
+            # In place, pieces that do not tile a box (cloudsc's ``zsolqa[4, 0, i]`` and ``zsolqa[0, 4, i]``) are
+            #  written back one by one, see `handle_intermediate_set()`.
+            if group_subset is None and reduced:
                 return None
 
             # The shape `apply()` will actually build, sized from the whole group.
-            _, reduced_inter_shape, _ = self.compute_reduced_intermediate(
-                producer_subset=group_subset, inter_desc=intermediate_desc
-            )
+            if group_subset is not None:
+                raw_inter_shape, reduced_inter_shape, squeezed_dims = self.compute_reduced_intermediate(
+                    producer_subset=group_subset, inter_desc=intermediate_desc
+                )
 
             # If the fused Map would create a new intermediate with symbolic size,
             #  dynamic memory allocation may be required. Prevent this unless the
             #  user explicitly opted in via `allow_intermediates_with_symbolic_size`.
-            # Fused in place, the intermediate is not reduced: what follows guards the reduced copy only.
-            reduced = intermediate_node.data not in in_place
             if (
                 reduced
                 and isinstance(intermediate_desc, dace.data.Array)
@@ -1059,7 +1062,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 if not isinstance(producer_edge.data.dst_subset, subsets.Range):
                     return None
 
-                _, reduced_inter_shape, _ = self.compute_reduced_intermediate(
+                raw_inter_shape, reduced_inter_shape, squeezed_dims = self.compute_reduced_intermediate(
                     producer_subset=producer_edge.data.dst_subset, inter_desc=intermediate_desc
                 )
 
@@ -1430,11 +1433,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 for oedge in out_edges
                 for e in state.in_edges_by_connector(first_map_exit, "IN_" + oedge.src_conn[4:])
             ]
-            producer_subset = self.tiled_producer_subset(pre_exit_edges, facts)
-            if producer_subset is None:
-                raise NotImplementedError
-
             is_in_place = inter_name in in_place
+            producer_subset = self.tiled_producer_subset(pre_exit_edges, facts)
+            if producer_subset is None and not is_in_place:
+                raise NotImplementedError
             if is_in_place:
                 new_inter_name, new_inter_desc, is_scalar = inter_name, inter_desc, False
                 # A body that fused this container in place before holds it in a node already, no copy onto itself.
@@ -1726,31 +1728,36 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 #  or preserve the output for the intermediate node. It is important
                 #  that we use the data that `preExitEdge` was used. With several producers
                 #  the restored write covers the box they tile, not any single piece of it.
-                final_pre_exit_memlet = copy.deepcopy(pre_exit_edges[0].data)
-                final_pre_exit_memlet.subset = copy.deepcopy(producer_subset)
-                final_pre_exit_memlet.other_subset = (
-                    copy.deepcopy(producer_subset) if is_in_place else subsets.Range.from_array(new_inter_desc)
+                #  In place, pieces that tile no box are restored one by one.
+                pieces = (
+                    [producer_subset] if producer_subset is not None else [e.data.dst_subset for e in pre_exit_edges]
                 )
+                for piece in pieces:
+                    final_pre_exit_memlet = copy.deepcopy(pre_exit_edges[0].data)
+                    final_pre_exit_memlet.subset = copy.deepcopy(piece)
+                    final_pre_exit_memlet.other_subset = (
+                        copy.deepcopy(piece) if is_in_place else subsets.Range.from_array(new_inter_desc)
+                    )
 
-                new_pre_exit_conn = second_map_exit.next_connector()
-                state.add_edge(
-                    new_inter_node,
-                    None,
-                    second_map_exit,
-                    "IN_" + new_pre_exit_conn,
-                    final_pre_exit_memlet,
-                )
-                state.add_edge(
-                    second_map_exit,
-                    "OUT_" + new_pre_exit_conn,
-                    inter_node,
-                    out_edge.dst_conn,
-                    copy.deepcopy(out_edge.data),
-                )
-                second_map_exit.add_in_connector("IN_" + new_pre_exit_conn)
-                second_map_exit.add_out_connector("OUT_" + new_pre_exit_conn)
-                if rebuilt is not None:
-                    rebuilt.append(new_pre_exit_conn)
+                    new_pre_exit_conn = second_map_exit.next_connector()
+                    state.add_edge(
+                        new_inter_node,
+                        None,
+                        second_map_exit,
+                        "IN_" + new_pre_exit_conn,
+                        final_pre_exit_memlet,
+                    )
+                    state.add_edge(
+                        second_map_exit,
+                        "OUT_" + new_pre_exit_conn,
+                        inter_node,
+                        out_edge.dst_conn,
+                        copy.deepcopy(out_edge.data),
+                    )
+                    second_map_exit.add_in_connector("IN_" + new_pre_exit_conn)
+                    second_map_exit.add_out_connector("OUT_" + new_pre_exit_conn)
+                    if rebuilt is not None:
+                        rebuilt.append(new_pre_exit_conn)
 
                 for oedge in out_edges:
                     first_map_exit.remove_out_connector(oedge.src_conn)
@@ -1909,15 +1916,29 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             for map_body in [first_map_body, second_map_body]
         ]
 
+        facts = (SymbolResolver() if symbols is None else symbols).facts_at(state, state.exit_node(first_map_entry))
+        # Global data a body touches only where its own Map's boundary does (the node an in-place fusion leaves between
+        #  two updates of ``out[i]``) is seen by `has_read_write_dependency()`, so neither rule below applies to it.
+        first_seen, second_seen = (
+            OrderedSet(
+                name
+                for name in body_data
+                if not sdfg.arrays[name].transient and self.accessed_within_boundary(name, entry, body, state, facts)
+            )
+            for entry, body, body_data in (
+                (first_map_entry, first_map_body, first_map_body_data),
+                (second_map_entry, second_map_body, second_map_body_data),
+            )
+        )
+
         # If there is data that is referenced in both, then we consider this as an error
         #  this is the second rule above.
         # Unless both bodies touch their own slice of it each iteration: lulesh's per-element rows ``b[e, :, 0]`` and
         #  ``b[e, :, 2]``, updated in place by two element maps.
-        common = first_map_body_data & second_map_body_data
+        common = (first_map_body_data & second_map_body_data) - (first_seen & second_seen)
         if common:
             if param_repl is None:
                 return True
-            facts = (SymbolResolver() if symbols is None else symbols).facts_at(state, state.exit_node(first_map_entry))
             for name in common:
                 accesses = [
                     access
@@ -1932,10 +1953,31 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # We consider it as a problem if any Map refers to non-transient data.
         #  This is an implementation detail and could be dropped if we do further
         #  analysis.
-        if any(not sdfg.arrays[data].transient for data in first_map_body_data.union(second_map_body_data)):
+        if any(
+            not sdfg.arrays[data].transient
+            for data in (first_map_body_data - first_seen) | (second_map_body_data - second_seen)
+        ):
             return True
 
         return False
+
+    @staticmethod
+    def accessed_within_boundary(
+        name: str, entry: nodes.MapEntry, body: list[nodes.Node], state: SDFGState, facts: symbolic.Facts
+    ) -> bool:
+        """Whether every access to ``name`` inside ``entry``'s body is written through to its exit, at a subset one
+        edge into the exit writes in the same iteration; reads may also be ones an edge out of the entry reads."""
+        exit_node = state.exit_node(entry)
+        writes = [e.data.get_dst_subset(e, state) for e in state.in_edges(exit_node) if e.data.data == name]
+        reads = [e.data.get_src_subset(e, state) for e in state.out_edges(entry) if e.data.data == name]
+        if not writes or any(s is None for s in writes + reads):
+            return False
+        inner_reads, inner_writes = MapFusionVertical.body_accesses(name, body, state, None)
+        if inner_reads is None or inner_writes is None:
+            return False
+        return all(any(w.covers(s, facts) for w in writes) for s in inner_writes) and all(
+            any(b.covers(s, facts) for b in writes + reads) for s in inner_reads
+        )
 
     @staticmethod
     def body_accesses(

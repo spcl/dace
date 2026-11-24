@@ -564,3 +564,42 @@ def test_every_gpu_strided_plan_matches_the_residue_class_oracle(op: ScanOp, dty
         out = cupy.zeros(n, dtype=values.dtype)
         csdfg(x=cupy.asarray(values), y=out, SN=n, SS=stride)
         np.testing.assert_allclose(cupy.asnumpy(out), class_scan_oracle(values, stride, op), rtol=1e-9, err_msg=plan)
+
+
+def strided_scan_in_map(name: str, op: ScanOp, rows: int) -> dace.SDFG:
+    """``rows`` scans at the symbolic carry distance ``SS``, one per iteration of a parallel map."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_symbol("SS", dace.int64)
+    for array in ("x", "y"):
+        sdfg.add_array(array, [rows, SN], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("rows", {"r": f"0:{rows}"}, schedule=dace.dtypes.ScheduleType.CPU_Multicore)
+    node = Scan("scan", op=op, exclusive=False)
+    node.stride = SS
+    node.implementation = "CPU"
+    state.add_node(node)
+    state.add_memlet_path(
+        state.add_read("x"), me, node, dst_conn=INPUT_CONNECTOR_NAME, memlet=dace.Memlet("x[r, 0:SN]")
+    )
+    state.add_memlet_path(
+        node, mx, state.add_write("y"), src_conn=OUTPUT_CONNECTOR_NAME, memlet=dace.Memlet("y[r, 0:SN]")
+    )
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("op", [ScanOp.SUM, ScanOp.MIN])
+def test_the_sequential_form_takes_one_arm_per_carry_distance(op: ScanOp):
+    """The sequential form inside a parallel map tests the symbolic carry distance once per scan and runs its arm."""
+    sdfg = strided_scan_in_map(f"sequential_arms_{op.value}", op, rows=3)
+    code = "".join(o.clean_code for o in sdfg.generate_code())
+    for found in ("SS == 1", "SS == 2", "3 <= SS <= 8", "SS > 8"):
+        assert code.count(f"sequential -- scan, the runtime check found {found}:") == 1, code
+    csdfg = strided_scan_in_map(f"sequential_arms_{op.value}_run", op, rows=3).compile()
+    for stride in (1, 2, 3, 8, 9):
+        for n in (37, 5, 4096 * 3 + 5):
+            values = np.stack([plan_operand(op, dace.float64, n, stride + n + row) for row in range(3)])
+            out = np.zeros_like(values)
+            csdfg(x=values, y=out, SN=n, SS=stride)
+            want = np.stack([class_scan_oracle(row, stride, op) for row in values])
+            np.testing.assert_allclose(out, want, rtol=1e-9, err_msg=f"{stride} {n}")

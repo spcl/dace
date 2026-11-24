@@ -77,9 +77,9 @@ def canonical(program, name: str) -> dace.SDFG:
 
 
 def parallel_block_loops(code: str) -> int:
-    """How many loops over the block index ``__c`` (rendered ``c``, or ``c1`` where the program names a ``c``) an
-    OpenMP worksharing pragma opens."""
-    return len(re.findall(r"#pragma omp parallel for[^\n]*\n\s*for \(int64_t c\d* = 0;", code))
+    """How many loops over the block index ``__c`` (rendered ``c``, or ``c1`` where the program names a ``c``; a second
+    loop over it ``c1_2``, as every counter is unique in the file) an OpenMP worksharing pragma opens."""
+    return len(re.findall(r"#pragma omp parallel for[^\n]*\n\s*for \(int64_t c\d*(?:_\d+)? = 0;", code))
 
 
 def test_a_host_state_scan_is_offered_its_cpu_expansion_first():

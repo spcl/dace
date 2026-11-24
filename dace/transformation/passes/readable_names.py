@@ -9,6 +9,8 @@ starting with ``_``) are renamed; names the program spelled are kept, and so are
 * a nested SDFG's symbol or container bound to a plain name of its parent takes that name;
 * other generated containers and symbols drop their underscores and pass prefixes (``__gather0_o`` -> ``gather0``);
 * a map bound that several maps of a nested SDFG repeat is assigned once to ``lo`` / ``hi`` at its start;
+* every loop counter and map parameter is unique in the rendered file (``i``, then ``i2``), because the loop comments
+  and the unit header name loops by them;
 * each nested SDFG gets a short function name (:attr:`NestedSDFG.unique_name`), shared by equal bodies.
 """
 
@@ -394,12 +396,28 @@ class FunctionRenamer:
 
 
 def hoistable(expr: object, invariant: OrderedSet[str]) -> bool:
-    """Whether ``expr`` is a compound expression over names fixed for the whole function."""
+    """Whether ``expr`` is a compound expression over names fixed for the whole function that cannot trap."""
     if not isinstance(expr, sympy.Basic) or expr.is_Atom:
         return False
     if sympy.count_ops(expr) < 2:
         return False
-    return all(str(s) in invariant for s in expr.free_symbols)
+    return all(str(s) in invariant for s in expr.free_symbols) and cannot_trap(expr)
+
+
+def cannot_trap(expr: sympy.Basic) -> bool:
+    """Whether evaluating ``expr`` is safe on every path: the hoisted bound runs at function entry, also where a
+    branch or an abort guard kept the map from running (``if M > 0`` around ``0:N // M``), so a division by a symbol
+    is refused."""
+    for node in sympy.preorder_traversal(expr):
+        if isinstance(node, (symbolic.int_floor, symbolic.int_ceil, symbolic.CMod, sympy.Mod)):
+            if not (node.args[1].is_Number and node.args[1] != 0):
+                return False
+        elif isinstance(node, sympy.Pow):
+            if not (node.exp.is_Integer and node.exp >= 0):
+                return False
+        elif not (node.is_Atom or isinstance(node, (sympy.Add, sympy.Mul, sympy.Max, sympy.Min))):
+            return False
+    return True
 
 
 def rename_tree(sdfg: SDFG, parent: tuple[SDFGState, nodes.NestedSDFG] | None, outer_symbols: OrderedSet[str]) -> None:
@@ -426,6 +444,80 @@ def name_functions(sdfg: SDFG) -> None:
             node.unique_name = by_body[body]
 
 
+def iteration_scopes(region: ControlFlowRegion) -> list[LoopRegion | tuple[SDFGState, nodes.MapEntry]]:
+    """The loops and maps of one function, outermost first, in the order the rendering emits them."""
+    found: list[LoopRegion | tuple[SDFGState, nodes.MapEntry]] = []
+    for block in region.nodes():
+        if isinstance(block, LoopRegion):
+            if block.loop_variable:
+                found.append(block)
+            found += iteration_scopes(block)
+        elif isinstance(block, ConditionalBlock):
+            for branch in block.sub_regions():
+                found += iteration_scopes(branch)
+        elif isinstance(block, ControlFlowRegion):
+            found += iteration_scopes(block)
+        elif isinstance(block, SDFGState):
+            found += [(block, node) for node in block.nodes() if isinstance(node, nodes.MapEntry)]
+    return found
+
+
+def numbered(name: str, taken: OrderedSet[str]) -> str:
+    """``name2``, ``name3``, ... (``name_2`` after a digit), the first free one; it joins ``taken``."""
+    n = 2
+    while not is_free(f"{name}_{n}" if name[-1].isdigit() else f"{name}{n}", taken):
+        n += 1
+    found = f"{name}_{n}" if name[-1].isdigit() else f"{name}{n}"
+    taken.add(found)
+    return found
+
+
+def rename_scope(sdfg: SDFG, scope: LoopRegion | tuple[SDFGState, nodes.MapEntry], repl: dict[str, str]) -> None:
+    """Rename the iterators ``repl`` names in one loop or map, its body and the hints inside it."""
+    if isinstance(scope, LoopRegion):
+        (old,) = repl
+        dtype = scope.new_symbols(dict(sdfg.symbols)).get(old)
+        FunctionRenamer(sdfg, None, OrderedSet()).rename_loop(scope, old, repl[old], dtype)
+        holders: list[object] = [*scope.all_control_flow_blocks(), scope]
+        holders += [n for state in scope.states() for n in state.nodes() if isinstance(n, nodes.MapEntry)]
+    else:
+        state, entry = scope
+        declared = entry.new_symbols(sdfg, state, dict(sdfg.symbols))
+        subgraph = state.scope_subgraph(entry, include_entry=True, include_exit=True)
+        with symbolic.serialization_symbol_dtypes({new: declared[old] for old, new in repl.items()}, True):
+            rename_cpp_code(subgraph.nodes(), repl)
+            replace_dict(subgraph, repl)
+        rename_strings(subgraph, repl)
+        holders = [n for n in subgraph.nodes() if isinstance(n, nodes.MapEntry)]
+    for holder in holders:
+        holder.specialization_hint = rewrite_text(holder.specialization_hint, repl)
+
+
+def unique_iterators(sdfg: SDFG) -> None:
+    """Make every loop counter and map parameter unique in the rendered file: the first keeps its name, a later one
+    gets a number (``i``, ``i2``). Loop comments and the unit header name loops by their counters (seidel_2d had two
+    loops ``i`` in two functions). Equal nested bodies are renamed alike, so they still share one function."""
+    taken = OrderedSet(name for nested in sdfg.all_sdfgs_recursive() for name in function_namespace(nested))
+    used: OrderedSet[str] = OrderedSet()
+    bodies = {id(nested): nested.hash_sdfg() for nested in sdfg.all_sdfgs_recursive()}
+    done: dict[str, list[dict[str, str]]] = {}
+    for nested in sdfg.all_sdfgs_recursive():
+        scopes = iteration_scopes(nested)
+        plan = done.get(bodies[id(nested)]) if nested is not sdfg else None
+        if plan is None:
+            plan = []
+            for scope in scopes:
+                names = [scope.loop_variable] if isinstance(scope, LoopRegion) else list(scope[1].map.params)
+                # A counter read after its loop keeps its name: the reads outside would name nothing
+                kept = isinstance(scope, LoopRegion) and read_after(nested, scope, scope.loop_variable)
+                plan.append({name: numbered(name, taken) for name in names if name in used and not kept})
+                used.update(plan[-1].get(name, name) for name in names)
+            done[bodies[id(nested)]] = plan
+        for scope, repl in zip(scopes, plan):
+            if repl:
+                rename_scope(nested, scope, repl)
+
+
 @explicit_cf_compatible
 class ReadableNames(ppl.Pass):
     """Rename generated names to short readable ones, function by function. Requires the code generator's
@@ -441,5 +533,6 @@ class ReadableNames(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, object]) -> None:
         rename_tree(sdfg, None, OrderedSet())
+        unique_iterators(sdfg)
         name_functions(sdfg)
         sdfg.reset_cfg_list()

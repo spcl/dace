@@ -73,9 +73,9 @@ def assert_lowers_to_a_parallel_reduction(sdfg, name):
     """The libnode must reach the C++ as a parallel arg-reduction, not a sequential scan."""
     finalize.finalize_for_target(sdfg, "cpu")
     src = "\n".join(o.clean_code for o in sdfg.generate_code())
-    assert "#pragma omp parallel for reduction" in src, f"{name}: ArgReduce must lower to a parallel reduction"
-    # The (value, index) combiner is declared once in ``dace/arg_reduction.h``; the clause must name it.
-    assert "reduction(arg_max_pair : " in src, f"{name}: the arg-reduction needs its (value, index) combiner"
+    assert "#pragma omp for nowait" in src, f"{name}: ArgReduce must lower to a parallel scan"
+    # Each thread's (value, index) pair merges through the combiner of ``dace/arg_reduction.h``.
+    assert "dace::arg_max_combine" in src, f"{name}: the arg-reduction needs its (value, index) combiner"
 
 
 def assert_matches_reference(kernel, sdfg):

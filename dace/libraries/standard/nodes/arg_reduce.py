@@ -227,7 +227,7 @@ class ExpandArgReducePure(ExpandTransformation):
 
 @library.expansion
 class ExpandArgReduceCPU(ExpandTransformation):
-    """Parallel CPU lowering: the ``arg_max_pair`` / ``arg_min_pair`` OpenMP reductions over a (value, index) pair.
+    """Parallel CPU lowering: per-thread (value, index) pairs merged by the ``arg_<op>_combine`` combiners.
 
     argmax is associative on the PAIR, not on the value alone -- combining two partial results has
     to carry the index that produced the winning value, and break ties toward the LOWER index (the
@@ -252,12 +252,20 @@ class ExpandArgReduceCPU(ExpandTransformation):
         in_dtype, it, n_str, read, has_val = _scan_context(node, parent_state, parent_sdfg)
         types = f"<{in_dtype.ctype}, {it}>"
         kind = node.op + tie_suffix(node)
-        # Seeded from element 0, the input slice is never empty; each thread starts from the neutral pair.
+        # Seeded from element 0, the input slice is never empty. Each thread scans its share from element 0 too (the
+        # combiner is idempotent on one index) and merges under a critical section: no ``declare reduction``, which
+        # NVC's OpenMP refuses. Ties break by index, so the merge order never changes the result.
         code = (
             f"dace::arg_pair{types} __ar_best = dace::arg_pair_of{types}({read('0')}, 0);\n"
-            f"#pragma omp parallel for reduction(arg_{kind}_pair : __ar_best)\n"
-            f"for ({it} __i = 1; __i < ({n_str}); ++__i) {{\n"
-            f"    __ar_best = dace::arg_{kind}_step{types}(__ar_best, {read('__i')}, __i);\n"
+            "#pragma omp parallel\n"
+            "{\n"
+            f"    dace::arg_pair{types} __ar_mine = dace::arg_pair_of{types}({read('0')}, 0);\n"
+            "    #pragma omp for nowait\n"
+            f"    for ({it} __i = 1; __i < ({n_str}); ++__i) {{\n"
+            f"        __ar_mine = dace::arg_{kind}_step{types}(__ar_mine, {read('__i')}, __i);\n"
+            "    }\n"
+            "    #pragma omp critical\n"
+            f"    __ar_best = dace::arg_{kind}_combine{types}(__ar_best, __ar_mine);\n"
             f"}}\n" + _writeback(has_val)
         )
         return nodes.Tasklet(

@@ -2,6 +2,7 @@
 import collections
 import pathlib
 import re
+from collections.abc import Collection
 from collections.abc import Set as AbstractSet
 from typing import Any
 
@@ -252,9 +253,11 @@ class DaCeCodeGenerator:
         """
         pass
 
-    def generate_constants(self, sdfg: SDFG, callsite_stream: CodeIOStream):
-        # Write constants
+    def generate_constants(self, sdfg: SDFG, callsite_stream: CodeIOStream, skip: Collection[str] = ()):
+        # Write constants, except ``skip`` (declared once at file scope already)
         for cstname, (csttype, cstval) in sdfg.constants_prop.items():
+            if cstname in skip:
+                continue
             if isinstance(csttype, data.Array):
                 stored = constant_as_stored(csttype, cstval)
                 const_str = "constexpr " + csttype.dtype.ctype + " " + cstname + "[" + str(stored.size) + "] = {"

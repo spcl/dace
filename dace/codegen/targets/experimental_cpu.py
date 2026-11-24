@@ -32,6 +32,8 @@ from dace.codegen.targets.cpu import (
     aligned_new_value,
     loop_counter_index,
     loop_local_counter_loop,
+    pointee,
+    reduction_alias,
     use_aligned_operator_new,
 )
 from dace.config import Config
@@ -41,6 +43,7 @@ from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, nodes, type_inference
+from dace.sdfg import scope as sdfg_scope
 from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.state import SDFGState
 from dace.sdfg.utils import dynamic_map_inputs
@@ -77,6 +80,17 @@ def scalar_decl() -> str:
     at the top of its scope), ``late`` (``T x;`` right before its first use) or ``late_fused`` (``T x = expr;``, the
     declaration is the first write)."""
     return Config.get("compiler", "cpu", "codegen_params", "scalar_decl")
+
+
+#: A one-trip map in a thread team, which renders as thread 0's block.
+THREAD_ZERO = (
+    "sequential -- not a loop: the map's one iteration runs on thread 0 of the team, and the other threads wait at "
+    "the barrier after it"
+)
+THREAD_ZERO_NOWAIT = (
+    "sequential -- not a loop: the map's one iteration runs on thread 0 of the team; the other threads do not wait "
+    "for it (nowait)"
+)
 
 
 def map_hint(node: nodes.MapEntry) -> str:
@@ -382,15 +396,21 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             return True
         if node.map.instrument != dtypes.InstrumentationType.No_Instrumentation:
             return True
-        # A complex-type ``#pragma omp declare reduction`` must not leak into sibling maps.
+        # A complex-type ``#pragma omp declare reduction`` and a persistent array's reduction alias
+        # (``T* __rd_<cfg>_<array> = ...;``) are declared ahead of the loop: a sibling map reducing into the same
+        # array declares the same name.
         if (
             node.map.schedule == dtypes.ScheduleType.CPU_Multicore
             and emits_tree_reductions(self.experimental_codegen)
             and any(
-                declare is not None for _op, _ct, _dname, declare in self._collect_omp_reductions(sdfg, state_dfg, node)
+                declare is not None or reduction_alias(sdfg, dname) is not None
+                for unused_op, unused_target, dname, declare in self._collect_omp_reductions(sdfg, state_dfg, node)
             )
         ):
             return True
+        # So is a sequential map's register accumulator (``T __acc_<depth>_<index>_<array> = ...;``).
+        if node.map.schedule == dtypes.ScheduleType.Sequential:
+            return any(held[5] != held[4] for held in self._collect_sequential_accumulators(sdfg, state_dfg, node))
         return False
 
     def emit_provenance(self, node, cfg, state_id, callsite_stream) -> None:
@@ -417,10 +437,24 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
     def _generate_MapEntry(self, sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream):
         self.emit_provenance(node, cfg, state_id, callsite_stream)
-        hint = cpf_lowering.hint_comment(map_hint(node))
+        text = map_hint(node)
+        if self.thread_zero_block(sdfg, cfg.state(state_id), node):
+            # Rendered as thread 0's block, not a loop: the comment says what runs, not what a loop would be.
+            text = "\n".join([THREAD_ZERO_NOWAIT if node.map.omp_nowait else THREAD_ZERO, *text.split("\n")[1:]])
+        hint = cpf_lowering.hint_comment(text)
         if hint:
             callsite_stream.write(hint.rstrip("\n"), cfg, state_id, node)
         super()._generate_MapEntry(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+
+    def thread_zero_block(self, sdfg: SDFG, state: SDFGState, node: nodes.MapEntry) -> bool:
+        """Whether ``CPUCodeGen._generate_MapEntry`` renders ``node`` as ``if (omp_get_thread_num() == 0)``."""
+        if node.map.schedule != dtypes.ScheduleType.CPU_Multicore or len(node.map.range) != 1:
+            return False
+        in_team = sdfg_scope.is_in_scope(sdfg, state, node, [dtypes.ScheduleType.CPU_Persistent])
+        reductions = (
+            self._collect_omp_reductions(sdfg, state, node) if emits_tree_reductions(self.experimental_codegen) else []
+        )
+        return self.one_trip_in_team(node, in_team, reductions)
 
     def make_keyword_remover(self, sdfg, memlets, defined_symbols):
         return ReadableKeywordRemover(sdfg, memlets, sdfg.constants, self, defined_symbols)
@@ -493,10 +527,45 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                 callsite_stream.write("%s%s\n" % (line, label), cfg, state_id, node)
                 return
         self.emit_pending_late_decls(cfg, state_id, node, callsite_stream)
+        if cpf_lowering.standalone() and not label:
+            from dace.codegen import cpf  # Avoid import loop: cpf drives this generator
+
+            # The connector locals fold into their uses, typed by the tasklet's own connectors and data.
+            block = "{\n%s\n%s\n}" % (re.sub(r"[ \t]*////__(DACE:|CODEGEN;).*", "", inner_body), postamble)
+            callsite_stream.write(
+                cpf.collapse_connector_blocks(block, self.block_types(cfg, state_id, node)), cfg, state_id, node
+            )
+            return
         callsite_stream.write("{%s" % label, cfg, state_id, node)
         callsite_stream.write(inner_body, cfg, state_id, node)
         callsite_stream.write(postamble)
         callsite_stream.write("}", cfg, state_id, node)
+
+    def memlet_lvalue(self, sdfg, memlet, ptr: str) -> str:
+        lvalue = pointee(ptr)
+        desc = sdfg.arrays.get(memlet.data)
+        # Only the element the memlet itself names: a caller-added offset keeps the pointer form.
+        if not cpf_lowering.standalone() or desc is None or str(memlet.subset.num_elements()) != "1":
+            return lvalue
+        if ptr != cpp.cpp_ptr_expr(sdfg, memlet, DefinedType.Pointer, codegen=self):
+            return lvalue
+        info = self.array_index_access(sdfg, desc, memlet.data)
+        if info is None or info.ndim != len(memlet.subset):
+            return lvalue
+        starts = [str(start) for start in memlet.subset.min_element()]
+        return format_index_access(info.ptrname, info.fnname, starts, info.extra, info.kept)
+
+    def block_types(self, cfg, state_id: int, node) -> dict[str, str]:
+        """The C type of each container a tasklet's edges name, and of each sequential accumulator in scope."""
+        state = cfg.state(state_id)
+        arrays = state.sdfg.arrays
+        types = {
+            edge.data.data: arrays[edge.data.data].dtype.ctype
+            for edge in [*state.in_edges(node), *state.out_edges(node)]
+            if edge.data.data in arrays
+        }
+        types.update((acc["var"], acc["ctype"]) for frame in self._seq_accumulator_stack for acc in frame.values())
+        return types
 
     @staticmethod
     def tasklet_read_types(cfg, state_id: int, node) -> dict[str, dtypes.typeclass]:
@@ -831,8 +900,13 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             return name
         self._persistent_holders[name] = nodedesc
         release = self.standalone_heap_free_stmt(name, True, nodedesc)
+        # The caller of the unit cannot see from the signature that calls share state.
+        contract = (
+            f"// {name}: one buffer every call of this unit shares, reallocated without a lock when a call needs "
+            "more. Calls running at once corrupt it: serialize them, or render the unit with a workspace argument.\n"
+        )
         if cpf_lowering.standalone_c():
-            defn = (
+            defn = contract + (
                 f"static {ctype} *{name} = NULL;\n"
                 f"static size_t {name}_count = 0;\n"
                 f"__attribute__((destructor)) static void {name}_release(void) {{\n{release}}}"
@@ -841,7 +915,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             # the guard's TYPE has internal linkage too: a named namespace-scope class makes its destructor a weak
             # symbol, and two units of one library holding a buffer of one name (a GPU kernel's host and device
             # units) would share it, freeing one unit's pointer twice at unload
-            defn = (
+            defn = contract + (
                 f"static {ctype} *{name} = nullptr;\n"
                 f"static size_t {name}_count = 0;\n"
                 f"namespace {{\n"

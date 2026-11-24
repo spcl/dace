@@ -83,7 +83,7 @@ def one_map_sdfg(name, shape, ranges, loop_end=None, schedule=dtypes.ScheduleTyp
 
 def schedules(sdfg):
     """Every map label -> schedule in ``sdfg``."""
-    return {n.map.label: n.map.schedule for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)}
+    return {n.map.label: n.map.schedule for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)}
 
 
 def test_map_below_break_even_goes_sequential():
@@ -104,7 +104,7 @@ def test_symbolic_extent_stays_parallel():
     """A symbolic extent not provably below break-even keeps its parallel map: a symbol is assumed big."""
     sdfg = one_map_sdfg("symbolic_top_level", [N], ["0:N-1"])
     DecideCpuParallelAxes().apply_pass(sdfg, {})
-    entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+    entry = next(n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
     assert entry.map.schedule == dtypes.ScheduleType.CPU_Multicore
 
 
@@ -142,7 +142,7 @@ def test_a_data_segment_map_in_a_sequential_loop_goes_sequential(in_loop):
     few elements (1.5 s against numba's 11 ms). At top level the same map is one region and keeps it."""
     sdfg = csr_segment_sdfg(f"csr_segment_{in_loop}", in_loop)
     DecideCpuParallelAxes().apply_pass(sdfg, {})
-    entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+    entry = next(n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
     if in_loop:
         assert entry.map.schedule == dtypes.ScheduleType.Sequential
         assert (
@@ -151,6 +151,39 @@ def test_a_data_segment_map_in_a_sequential_loop_goes_sequential(in_loop):
         )
     else:
         assert entry.map.schedule == dtypes.ScheduleType.CPU_Multicore
+
+
+def csr_row_sum_sdfg() -> dace.SDFG:
+    """sgs_pcg's ``s = s - A_data[k] * y[j]`` over a CSR row: a map over ``b:e`` adding into ``s`` in a row loop."""
+    sdfg = dace.SDFG("csr_row_sum")
+    sdfg.add_array("indptr", [N + 1], dace.int64)
+    sdfg.add_array("a", [M], dace.float64)
+    sdfg.add_array("s", [1], dace.float64)
+    for bound in ("b", "e"):
+        sdfg.add_symbol(bound, dace.int64)
+    rows = loop(sdfg, "rows", "N")
+    read = rows.add_state("read_row", is_start_block=True)
+    body = rows.add_state("body")
+    body.add_mapped_tasklet(
+        "body",
+        {"k": "b:e"},
+        {"v": dace.Memlet("a[k]")},
+        "w = v",
+        {"w": dace.Memlet("s[0]", wcr="lambda x, y: x + y")},
+        external_edges=True,
+    )
+    rows.add_edge(read, body, dace.InterstateEdge(assignments={"b": "indptr[it]", "e": "indptr[it + 1]"}))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_sequential_map_made_after_the_labels_says_it_reduces():
+    """sgs_pcg, sparse_cholesky: a lifted row sum kept in order on CPU read ``parallel -- independent``."""
+    sdfg = csr_row_sum_sdfg()
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
+    entry = next(n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+    assert entry.map.schedule == dtypes.ScheduleType.Sequential
+    assert entry.specialization_hint.startswith("parallel -- reduction: + into s;"), entry.specialization_hint
 
 
 def row_count_sdfg(name: str, count: str, assign_in_loop: bool) -> dace.SDFG:
@@ -221,7 +254,7 @@ def test_a_stencil_width_map_in_a_sequential_loop_goes_sequential(order_is_small
     sdfg.add_symbol("order", dace.int64)
     if order_is_small:
         sdfg.set_symbol_scale("order", dace.symbolic.Scale.SMALL)
-    entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+    entry = next(n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
     entry.map.range = dace.subsets.Range.from_string("0:order + 2 - cnt")
     DecideCpuParallelAxes().apply_pass(sdfg, {})
     expected = dtypes.ScheduleType.Sequential if order_is_small else dtypes.ScheduleType.CPU_Multicore
@@ -727,6 +760,7 @@ if __name__ == "__main__":
     test_map_re_entered_by_symbolic_loop_stays_parallel()
     for in_loop in [True, False]:
         test_a_data_segment_map_in_a_sequential_loop_goes_sequential(in_loop)
+    test_a_sequential_map_made_after_the_labels_says_it_reduces()
     test_a_row_length_map_in_a_sequential_loop_goes_sequential()
     for order_is_small in [True, False]:
         test_a_stencil_width_map_in_a_sequential_loop_goes_sequential(order_is_small)

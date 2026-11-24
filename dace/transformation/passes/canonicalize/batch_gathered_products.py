@@ -10,7 +10,7 @@ from dace.libraries.blas.nodes.batched_matmul import BATCH_INDEX, BatchedMatMul
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.matmul import MatMul
 from dace.sdfg import nodes
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.canonicalize.loop_to_stream_compaction import COUNT_DTYPE, LoopToStreamCompaction
@@ -54,6 +54,20 @@ def bindings_only(blocks) -> bool:
 
 def written_in(region: ControlFlowRegion) -> set[str]:
     return {n.data for st in region.states() for n in st.data_nodes() if st.in_degree(n) > 0}
+
+
+def control_reads(nest: LoopRegion) -> dict[str, None]:
+    """The containers the nest's loop bounds, guards and interstate bindings read."""
+    arrays = nest.sdfg.arrays
+    regions = list(nest.all_control_flow_regions())
+    memlets = [m for r in regions for e in r.edges() for m in e.data.get_read_memlets(arrays, include_scalars=True)]
+    memlets += [
+        m
+        for r in regions
+        if isinstance(r, (LoopRegion, ConditionalBlock))
+        for m in r.get_meta_read_memlets(arrays, include_scalars=True)
+    ]
+    return dict.fromkeys(m.data for m in memlets)
 
 
 def guarded_work_state(nest: LoopRegion) -> tuple[ControlFlowRegion, SDFGState] | None:
@@ -100,6 +114,10 @@ def match(nest: LoopRegion) -> Product | None:
     if out.data.subset.ranges != [(0, extent - 1, 1) for extent in desc.shape]:
         return None
     if {op.data for op in operands.values()} & written_in(nest):
+        return None
+    # The count and fill copies evaluate the guards and bindings before the nest writes anything, so they pick
+    # the iterations the nest picks only when nothing the nest writes is read there.
+    if control_reads(nest).keys() & written_in(nest):
         return None
     inside = set(branch.states())
     if any(n.data == result.data for st in sdfg.states() if st not in inside for n in st.data_nodes()):

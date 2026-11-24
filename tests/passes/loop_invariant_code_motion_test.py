@@ -1708,6 +1708,50 @@ def test_the_map_query_answers_as_the_hoist_does_and_changes_nothing():
     sdfg.validate()
 
 
+def test_a_tasklet_reading_a_value_the_enclosing_map_writes_keeps_its_producer():
+    """On CPU the inner map's invariant ``y = s * 2`` leaves ``map j`` for ``map i``, whose body writes ``s`` per ``i``.
+    The hoisted tasklet reads that ``s`` node itself: a fresh read of ``s`` outside both maps would read it before the
+    write and pull ``map j`` out of ``map i`` (xsbench, ``Illegal memlet between disjoint scopes``)."""
+    sdfg = dace.SDFG("licm_scoped_source")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [K], dace.float64)
+    sdfg.add_array("outp", [N, K], dace.float64)
+    sdfg.add_transient("s", [1], dace.float64)
+    sdfg.add_transient("t", [1], dace.float64)
+    state = sdfg.add_state("st", is_start_block=True)
+    mi, xi = state.add_map("mi", {"i": "0:N"})
+    mj, xj = state.add_map("mj", {"j": "0:K"})
+    produce = state.add_tasklet("produce", {"x": None}, {"y": None}, "y = x + 1.0")
+    value = state.add_access("s")
+    twice = state.add_tasklet("twice", {"x": None}, {"y": None}, "y = x * 2.0")
+    doubled = state.add_access("t")
+    keep = state.add_tasklet("keep", {"x": None, "z": None}, {"y": None}, "y = x + z")
+    state.add_memlet_path(state.add_read("a"), mi, produce, dst_conn="x", memlet=mm.Memlet("a[i]"))
+    state.add_edge(produce, "y", value, None, mm.Memlet("s[0]"))
+    state.add_memlet_path(value, mj, twice, dst_conn="x", memlet=mm.Memlet("s[0]"))
+    state.add_edge(twice, "y", doubled, None, mm.Memlet("t[0]"))
+    state.add_edge(doubled, None, keep, "x", mm.Memlet("t[0]"))
+    state.add_memlet_path(state.add_read("b"), mi, mj, keep, dst_conn="z", memlet=mm.Memlet("b[j]"))
+    state.add_memlet_path(keep, xj, xi, state.add_write("outp"), src_conn="y", memlet=mm.Memlet("outp[i, j]"))
+    mi.map.schedule = dace.ScheduleType.CPU_Multicore
+    sdfg.validate()
+
+    assert SplitInvariantMapNests().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    hoisted = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet) and n.label.startswith("twice"))
+    assert state.scope_dict()[hoisted] is mi
+    assert state.scope_dict()[mj] is mi
+
+    def reference(a, b, outp, N, K):
+        for i in range(N):
+            for j in range(K):
+                outp[i, j] = 2.0 * (a[i] + 1.0) + b[j]
+
+    n, k = 6, 5
+    _run_and_check(sdfg, reference, a=np.arange(n, dtype=np.float64), b=np.arange(k, dtype=np.float64) + 0.5,
+                   outp=np.zeros((n, k)), N=n, K=k)  # fmt: skip
+
+
 if __name__ == "__main__":
     test_the_loop_query_answers_as_the_hoist_does_and_changes_nothing()
     test_the_map_query_answers_as_the_hoist_does_and_changes_nothing()
@@ -1753,3 +1797,4 @@ if __name__ == "__main__":
     test_an_ordering_edge_into_an_invariant_tasklet_does_not_pin_it()
     test_an_ordering_tasklet_stays_between_the_writes_it_orders()
     test_a_constant_inside_a_map_in_a_loop_leaves_through_the_map()
+    test_a_tasklet_reading_a_value_the_enclosing_map_writes_keeps_its_producer()

@@ -15,7 +15,12 @@ from dace.libraries.lapack import Getrf, Getrs, environments
 from dace.libraries.lapack import block as lapack_block
 from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock
 from dace.libraries.linalg.nodes.transpose import Transpose
-from dace.libraries.standard.helper import call_scratch_lifetime, host_accessible_info_storage, scratch_storage
+from dace.libraries.standard.helper import (
+    add_info_status,
+    call_scratch_lifetime,
+    host_accessible_info_storage,
+    scratch_storage,
+)
 from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
 
@@ -159,14 +164,7 @@ def _make_sdfg_getrs(node: "Solve", parent_state, parent_sdfg, implementation):
     )
     # cuSOLVER writes ``devInfo`` through a raw pointer; the status scalar is host-checkable, so it
     # must live in host-accessible (pinned) memory instead of the input's GPU_Global storage.
-    info_arr = sdfg.add_array(
-        "_info",
-        [1],
-        dtype=dace.int32,
-        transient=True,
-        storage=scratch_storage(host_accessible_info_storage(storage), lifetime),
-        lifetime=lifetime,
-    )
+    info_arr = add_info_status(sdfg, host_accessible_info_storage(storage), lifetime, implementation)
 
     state = sdfg.add_state(f"{node.label}_state")
 

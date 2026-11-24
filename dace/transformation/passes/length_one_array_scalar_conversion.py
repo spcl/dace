@@ -43,6 +43,7 @@ from collections.abc import Set as AbstractSet
 
 import dace
 from dace import Memlet, dtypes, properties, subsets, symbolic
+from dace.libraries.standard.nodes.reduce import Reduce
 from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, nodes
@@ -243,6 +244,49 @@ def repoint_memlet_to_element(edge: "dace.sdfg.graph.MultiConnectorEdge", rename
 
 #: A bare identifier, not preceded by a word character or ``.``: every name a code slot can reference.
 IDENTIFIER_RE = re.compile(r"(?<![\w.])([A-Za-z_]\w*)")
+
+
+def one_element(desc: "dace.data.Data") -> bool:
+    """Whether every extent of ``desc`` is 1, symbolic extents that simplify to 1 included."""
+    return all(symbolic.equal(dim, 1) is True for dim in desc.shape)
+
+
+#: The library connectors that write one result element: a dot product's, a LAPACK routine's ``info``.
+RESULT_CONNECTORS = frozenset({"_result", "_res"})
+
+
+def single_result(edge: "dace.sdfg.graph.MultiConnectorEdge", lib: nodes.LibraryNode) -> bool:
+    """Whether ``lib`` writes one element through ``edge``: its expansion declares that output a ``(1,)`` array, which a
+    Scalar feeds (``Array.is_equivalent``)."""
+    if edge.src is not lib or edge.data.wcr is not None:
+        return False
+    if edge.src_conn not in RESULT_CONNECTORS and not (isinstance(lib, Reduce) and edge.src_conn == "_out"):
+        return False
+    # A GPU expansion (``CUDA (block)``, ``GPUAuto``) is raw C++ that indexes its output ``out[0]``
+    if lib.schedule in dtypes.GPU_SCHEDULES or (lib.implementation or "").startswith(("CUDA", "GPU")):
+        return False
+    return symbolic.equal(edge.data.subset.num_elements(), 1) is True
+
+
+def scalarize_descriptor(sdfg: SDFG, name: str) -> None:
+    """Turn the one-element array ``name`` of ``sdfg`` into a Scalar of the same transience in place, and index it
+    as one in every memlet and code slot of ``sdfg``."""
+    arr = sdfg.arrays[name]
+    sdfg.remove_data(name, validate=False)
+    sdfg.add_scalar(
+        name,
+        dtype=arr.dtype,
+        storage=dtypes.StorageType.Default if arr.storage == dtypes.StorageType.CPU_Heap else arr.storage,
+        transient=arr.transient,
+        lifetime=arr.lifetime,
+        debuginfo=arr.debuginfo,
+        find_new_name=False,
+    )
+    rename = {name: name}
+    for state in sdfg.states():
+        for edge in state.edges():
+            repoint_memlet_to_element(edge, rename)
+    rewrite_code_slots(sdfg, lambda text: rewrite_refs(text, rename))
 
 
 def control_flow_reads(sdfg: SDFG) -> OrderedSet[str]:
@@ -462,15 +506,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                     continue
                 for edge in itertools.chain(state.in_edges(node), state.out_edges(node)):
                     nb = edge.src if edge.dst is node else edge.dst
-                    if isinstance(nb, nodes.LibraryNode):
-                        blocked.add(node.data)
-                        break
-                    if isinstance(nb, nodes.Tasklet) and nb.language != dtypes.Language.Python:
-                        blocked.add(node.data)
-                        break
-                    if isinstance(nb, nodes.NestedSDFG) and len(arr.shape) > 1:
-                        # A connector takes a Scalar for a ``(1,)`` array only (``Array.is_equivalent``): the
-                        # nested SDFG's own ``(1, 1)`` descriptor would no longer match.
+                    if self.neighbor_keeps_array(state, edge, nb, node.data):
                         blocked.add(node.data)
                         break
                     if isinstance(nb, nodes.MapEntry) and nb.map.schedule in dtypes.GPU_SCHEDULES:
@@ -493,6 +529,62 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                             break
         return blocked
 
+    def connector_follows(
+        self, state: SDFGState, nest: nodes.NestedSDFG, edge: "dace.sdfg.graph.MultiConnectorEdge", name: str
+    ) -> bool:
+        """Whether the descriptor ``nest`` takes ``name`` through can become a Scalar with it: one element, a
+        connector that carries ``name`` alone, and nothing inside ``nest`` that keeps it an array."""
+        conn = edge.dst_conn if edge.dst is nest else edge.src_conn
+        inner = nest.sdfg.arrays.get(conn)
+        if any(e.data.data != name for e in state.all_edges(nest) if conn in (e.dst_conn, e.src_conn)):
+            return False
+        if type(inner) is dace.data.Scalar:
+            return True
+        if type(inner) is not dace.data.Array or not one_element(inner) or isinstance(inner.dtype, dtypes.opaque):
+            return False
+        return conn not in self._blocked_descriptors(nest.sdfg)
+
+    def neighbor_keeps_array(
+        self, state: SDFGState, edge: "dace.sdfg.graph.MultiConnectorEdge", nb: nodes.Node, name: str
+    ) -> bool:
+        """Whether ``nb``, at the other end of ``edge``, generates code that needs ``name`` to stay an array: a library
+        node other than one writing a single result, a non-Python tasklet, a nested SDFG whose connector cannot
+        follow."""
+        if isinstance(nb, nodes.LibraryNode):
+            return not single_result(edge, nb)
+        if isinstance(nb, nodes.Tasklet):
+            return nb.language != dtypes.Language.Python
+        # A connector takes a Scalar for a ``(1,)`` array only (``Array.is_equivalent``): a higher rank needs the
+        # nested SDFG's own descriptor to become a Scalar with it.
+        return isinstance(nb, nodes.NestedSDFG) and not self.nest_takes(state, nb, edge, name)
+
+    def nest_takes(
+        self, state: SDFGState, nest: nodes.NestedSDFG, edge: "dace.sdfg.graph.MultiConnectorEdge", name: str
+    ) -> bool:
+        """Whether ``nest`` still takes ``name`` once it is a Scalar: a ``(1,)`` array connector does as it is."""
+        return len(state.sdfg.arrays[name].shape) == 1 or self.connector_follows(state, nest, edge, name)
+
+    def scalarize_connectors(self, sdfg: SDFG, names: set[str]) -> None:
+        """Make each one-element descriptor through which a nested SDFG of ``sdfg`` takes one of ``names`` a
+        Scalar, and so on into the nests inside it: the caller passes ``&s``, the callee reads ``s``."""
+        for state in sdfg.states():
+            for nest in [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]:
+                followed: set[str] = set()
+                for edge in state.all_edges(nest):
+                    conn = edge.dst_conn if edge.dst is nest else edge.src_conn
+                    if edge.data.data not in names or conn in followed:
+                        continue
+                    if not self.connector_follows(state, nest, edge, edge.data.data):
+                        continue
+                    if type(nest.sdfg.arrays[conn]) is dace.data.Array:
+                        scalarize_descriptor(nest.sdfg, conn)
+                    for connectors in (nest.in_connectors, nest.out_connectors):
+                        if conn in connectors:
+                            connectors[conn] = nest.sdfg.arrays[conn].dtype
+                    followed.add(conn)
+                if followed:
+                    self.scalarize_connectors(nest.sdfg, followed)
+
     def _is_eligible(
         self, sdfg: SDFG, arr_name: str, arr: "dace.data.Data", blocked: set[str], apply_filter: bool
     ) -> bool:
@@ -505,8 +597,8 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
             return False
         if arr_name in blocked:
             return False
-        is_len1 = arr.shape == (1,) or arr.shape == [1]
-        is_single = self.single_element and len(arr.shape) >= 1 and all(d == 1 for d in arr.shape)
+        is_len1 = len(arr.shape) == 1 and one_element(arr)
+        is_single = self.single_element and len(arr.shape) >= 1 and one_element(arr)
         if not (is_len1 or is_single):
             return False
         if isinstance(arr.dtype, dace.dtypes.opaque):
@@ -609,6 +701,9 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
             prefixes = [f"offset_{a}_d" for a in rename] + [f"{a}_d" for a in rename]
             if any(nm.startswith(p) for p in prefixes):
                 sdfg.symbol_repo.remove(nm)
+
+        # A nested SDFG's connector descriptor follows the array it takes, so no single-element array is left.
+        self.scalarize_connectors(sdfg, set(rename.values()))
 
         rewritten = set(rename)
         if self.recursive:

@@ -15,6 +15,7 @@ from dace.symbolic_facts import SMALL_CONSTANT_EXTENT
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.dataflow import MapExpansion
+from dace.transformation.passes.canonicalize import annotate_loop_kinds
 from dace.transformation.passes.unroll_small_maps import constant_trips, outside_every_map
 
 OMP_DIRECTIVE = "#pragma omp"
@@ -209,7 +210,8 @@ class MarkSIMDMaps(ppl.Pass):
                     # new nest outermost-first, and propagates the scope it rewrote by itself, so
                     # ``annotate`` stays off: a whole-SDFG propagation per map is quadratic.
                     if len(entry.map.params) > 1:
-                        entry = MapExpansion.apply_to(
+                        original = entry.specialization_hint
+                        nest = MapExpansion.apply_to(
                             nsdfg,
                             options={
                                 "expansion_limit": len(entry.map.params) - 1,
@@ -219,7 +221,10 @@ class MarkSIMDMaps(ppl.Pass):
                             verify=False,
                             annotate=False,
                             save=False,
-                        )[-1]
+                        )
+                        # After the loop kinds were written: each loop of the nest says what it is on its own.
+                        relabel_expanded(state, nest, original)
+                        entry = nest[-1]
                     entry.map.omp_simd = True
                     marked.add((nsdfg.cfg_id, entry.map.label))
         return marked or None
@@ -256,3 +261,13 @@ class MarkSIMDMaps(ppl.Pass):
                 not map_has_wcr(state, map_entry) or reduces_into_fixed_elements(state, map_entry)
             )
         return False
+
+
+def relabel_expanded(state: SDFGState, nest: list[nodes.MapEntry], original: str | None) -> None:
+    """Give each map of an expanded nest its own class line; the outermost keeps the original's other lines."""
+    for level, entry in enumerate(nest):
+        head = annotate_loop_kinds.expanded_map_hint(state, entry, original)
+        if head is None:
+            continue
+        notes = (original or "").split("\n")[1:] if level == 0 else []
+        entry.specialization_hint = "\n".join([head, *notes])

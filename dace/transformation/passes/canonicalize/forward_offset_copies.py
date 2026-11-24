@@ -5,8 +5,19 @@ from collections import defaultdict
 from typing import Any
 
 from dace import SDFG, data, properties, subsets, symbolic
+from dace.libraries.blas.nodes.gemm import Gemm
+from dace.libraries.blas.nodes.matmul import MatMul
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState, is_written
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    ConditionalBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    SDFGState,
+    is_written,
+)
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.dataflow.redundant_array import same_extent
@@ -158,7 +169,7 @@ def offset_copy_subsets(
     src_subset, dst_subset = edge.data.get_src_subset(edge, state), edge.data.get_dst_subset(edge, state)
     if not isinstance(src_subset, subsets.Range) or not isinstance(dst_subset, subsets.Range):
         return None
-    if any(s != 1 for _, _, s in src_subset.ranges) or not same_extent(dst_subset, subsets.Range.from_array(b)):
+    if any(step != 1 for begin, end, step in src_subset.ranges) or not fills(state, dst_subset, b):
         return None
     if not same_extent(src_subset.size(), dst_subset.size()):
         return None
@@ -175,14 +186,77 @@ def readers_take_the_source(sdfg: SDFG, uses, laid_out: bool) -> bool:
                 end = leaf.dst
                 if isinstance(end, nodes.NestedSDFG):
                     return False
+                # A GEMM operand is read through the strides of the array feeding it, whatever they are
                 addressed = (
-                    isinstance(end, nodes.LibraryNode)
+                    (isinstance(end, nodes.LibraryNode) and not isinstance(end, (Gemm, MatMul)))
                     or (isinstance(end, nodes.AccessNode) and isinstance(sdfg.arrays[end.data], data.View))
                     or (isinstance(end, nodes.Tasklet) and symbolic.equal(leaf.data.num_elements(), 1) is not True)
                 )
                 if addressed and not laid_out:
                     return False
     return True
+
+
+def assigned_within(block: ControlFlowBlock) -> OrderedSet[str]:
+    """The symbols an interstate edge or a loop inside ``block`` binds."""
+    names: OrderedSet[str] = OrderedSet()
+    if not isinstance(block, AbstractControlFlowRegion):
+        return names
+    for region in block.all_control_flow_regions():
+        if isinstance(region, LoopRegion):
+            names.add(region.loop_variable)
+        for edge in region.edges():
+            names.update(edge.data.assignments)
+    return names
+
+
+def held_copies(state: SDFGState) -> dict[str, str]:
+    """The symbol copies ``s = v`` that hold on entry to ``state``: made on its chain of single predecessors, up
+    through enclosing loops and branches, with neither ``s`` nor ``v`` bound again after."""
+    sdfg = state.sdfg
+    held: dict[str, str] = {}
+    rebound: OrderedSet[str] = OrderedSet()
+    block: ControlFlowBlock = state
+    while not isinstance(block, SDFG):
+        region = block.parent_graph
+        incoming = region.in_edges(block)
+        if len(incoming) > 1:
+            break
+        if not incoming and isinstance(region, SDFG):
+            break
+        if not incoming:
+            # Leaving a loop body: an earlier iteration may have bound any name the loop binds
+            if isinstance(region, LoopRegion):
+                rebound.update(assigned_within(region))
+            block = region.parent_graph if isinstance(region.parent_graph, ConditionalBlock) else region
+            continue
+        assignments = incoming[0].data.assignments
+        for name, value in assignments.items():
+            value = value.strip()
+            copies = value.isidentifier() and value not in sdfg.arrays and value not in assignments
+            if copies and name not in rebound and name not in held and value not in rebound:
+                held[name] = value
+        rebound.update(assignments)
+        block = incoming[0].src
+        rebound.update(assigned_within(block))
+    return held
+
+
+def fills(state: SDFGState, subset: subsets.Range, desc: data.Data) -> bool:
+    """Whether ``subset`` is all of ``desc``, also when ``desc``'s shape names a copy of a symbol (``__sym_n = n``)
+    that ``subset`` spells by the symbol itself."""
+    whole = subsets.Range.from_array(desc)
+    return same_extent(subset, whole) or same_extent(subset, held_extent(state, whole))
+
+
+def held_extent(state: SDFGState, whole: subsets.Range) -> subsets.Range:
+    """``whole`` with every symbol that holds a copy of another on entry to ``state`` read as what it copies."""
+    held = held_copies(state)
+    named = whole.symbols
+    repl = {named[name]: symbolic.pystr_to_symbolic(held[name]) for name in named if name in held}
+    extent = subsets.Range(list(whole.ranges))
+    extent.replace(repl)
+    return extent
 
 
 def source_unwritten_until(

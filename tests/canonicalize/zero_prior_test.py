@@ -124,6 +124,15 @@ def test_partial_zeros_are_folded_onto():
     assert fill_maps(sdfg) == ["zero_map"]
 
 
+def test_strided_zeros_are_folded_onto():
+    """Only the even rows are zeroed: their bounding box covers every row, but the odd rows keep a prior value."""
+    sdfg = block_products(rows="0:N:2")
+    sdfg.name = "lift_einsum_zero_fill_strided"
+    assert sdfg.apply_transformations(LiftEinsum) == 1
+    assert dace.symbolic.equal_valued(1, einsum_of(sdfg).beta)
+    assert fill_maps(sdfg) == ["zero_map"]
+
+
 def test_nonzero_fill_is_folded_onto():
     sdfg = block_products(fill="1.0")
     assert sdfg.apply_transformations(LiftEinsum) == 1
@@ -156,6 +165,31 @@ def test_zeros_ahead_of_an_accumulate_loop_become_an_overwrite():
     a, b, c = rng.random((n, n)), rng.random((n, n)), np.full((n, n), np.nan)
     sdfg(A=a, B=b, C=c, N=n)
     assert np.allclose(c, a @ b)
+
+
+@dace.program
+def gemm_accum_even_rows_zeroed(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
+    C[0:N:2, :] = 0
+    for i in range(N):
+        for j in range(N):
+            for k in range(N):
+                C[i, j] += A[i, k] * B[k, j]
+
+
+def test_strided_zeros_ahead_of_an_accumulate_loop_are_folded_onto():
+    """``C[0:N:2, :] = 0`` leaves the odd rows of the caller's ``C`` as the prior value the nest adds onto."""
+    sdfg = gemm_accum_even_rows_zeroed.to_sdfg(simplify=True)
+    LoopToEinsum().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert dace.symbolic.equal_valued(1, einsum_of(sdfg).beta)
+    n = 9
+    rng = np.random.default_rng(3)
+    a, b, c = rng.random((n, n)), rng.random((n, n)), rng.random((n, n))
+    want = c.copy()
+    want[0::2] = 0
+    want += a @ b
+    sdfg(A=a, B=b, C=c, N=n)
+    assert np.allclose(c, want)
 
 
 @dace.program
@@ -214,6 +248,8 @@ if __name__ == "__main__":
     test_zero_fill_ahead_of_the_sum_becomes_an_overwrite()
     test_observed_zeros_stay_and_the_sum_still_overwrites()
     test_partial_zeros_are_folded_onto()
+    test_strided_zeros_are_folded_onto()
     test_nonzero_fill_is_folded_onto()
     test_zeros_ahead_of_an_accumulate_loop_become_an_overwrite()
+    test_strided_zeros_ahead_of_an_accumulate_loop_are_folded_onto()
     test_gemver_matvecs_are_lifted_and_overwrite_their_outputs()

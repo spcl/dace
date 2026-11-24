@@ -1,10 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""CPF never serializes an accumulation behind ``omp critical``, and argmax / argmin reduce through declared pairs.
+"""CPF never serializes an accumulation behind ``omp critical``, and argmax / argmin merge per-thread pairs.
 
 A conflicting write-conflict resolution takes an OpenMP atomic in every form: ``atomic update`` for the arithmetic
 and bitwise operators, ``atomic compare`` for min / max, ``atomic write`` for a logical fold, a compare-and-swap loop
-for any other fold, and one ``atomic update`` per component for a complex sum. An ``ArgReduce`` names the
-``arg_max_pair`` / ``arg_min_pair`` reductions CPF declares over its (value, index) pair, ties to the lower index.
+for any other fold, and one ``atomic update`` per component for a complex sum. An ``ArgReduce`` scans each thread's
+share into its own (value, index) pair and merges the pairs once per thread, ties to the lower index, with no
+``declare reduction`` (NVC's OpenMP refuses one).
 """
 
 import numpy as np
@@ -114,7 +115,7 @@ def arg_reduce_sdfg(name: str, op: str, dtype: dace.typeclass, tie: str = "first
 @pytest.mark.parametrize("op", ["max", "min"])
 @pytest.mark.parametrize("dtype", [dace.float64, dace.int32, dace.complex128], ids=str)
 @pytest.mark.parametrize("tie", ["first", "last"])
-def test_argmax_and_argmin_reduce_through_the_declared_pair_and_keep_the_tied_extreme(language, op, dtype, tie):
+def test_argmax_and_argmin_merge_per_thread_pairs_and_keep_the_tied_extreme(language, op, dtype, tie):
     lang = "c" if language == "c" else "cpp"
     sdfg = arg_reduce_sdfg(f"cpf_arg_{op}_{dtype.to_string()}_{tie}_{lang}", op, dtype, tie)
     rng = np.random.default_rng(3)
@@ -131,7 +132,9 @@ def test_argmax_and_argmin_reduce_through_the_declared_pair_and_keep_the_tied_ex
     code = rendered_run(sdfg, language, {"a": a, "val": val, "idx": idx, "N": SIZE})
 
     kind = op if tie == "first" else f"{op}_last"
-    assert f"reduction(arg_{kind}_pair : __ar_best)" in code and "critical" not in code, code
+    # One merge per thread, never per element: the scan runs ``omp for nowait`` and only the merge is critical
+    assert "declare reduction" not in code and "#pragma omp for nowait" in code, code
+    assert code.count("#pragma omp critical") == 1 and f"arg_{kind}_combine" in code, code
     assert "omp_orig" not in code, "icx 2026.2 at -O2 loses a thread's update on a reduction seeded from omp_orig"
     hits = np.flatnonzero(a == (a[~np.isnan(a)].max() if op == "max" else a[~np.isnan(a)].min()))
     expected = int(hits[0] if tie == "first" else hits[-1])

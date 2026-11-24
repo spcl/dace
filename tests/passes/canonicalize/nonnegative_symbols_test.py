@@ -92,7 +92,8 @@ def test_a_read_ahead_after_a_write_of_the_same_iteration_is_versioned_on_positi
     sdfg = written_then_read_ahead.to_sdfg(simplify=True)
     sdfg.name = "contract_written_then_read_ahead"
     canonicalize(sdfg, validate=True, nonnegative_symbols={"N", "K"})
-    assert versions(sdfg) == ["(1 <= K)"]
+    # The fallback (``K == 0`` here) is versioned again on the carried distance, which then always holds
+    assert versions(sdfg) == ["(1 <= K)", "((K == 0) or (K >= (N - 2)) or (K <= (- (N - 2))))"]
     compiled = sdfg.compile()
     n = 30
     rng = np.random.default_rng(1)

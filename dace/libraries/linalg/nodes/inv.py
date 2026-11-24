@@ -17,6 +17,7 @@ from dace.libraries.lapack.nodes import Getrf, Getri, Getrs
 from dace.libraries.linalg.nodes.solve import gesv_core_program, restride
 from dace.libraries.standard.helper import (
     GPU_RESIDENT_STORAGES,
+    add_info_status,
     call_scratch_lifetime,
     host_accessible_info_storage,
     scratch_storage,
@@ -59,14 +60,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
         storage=scratch_storage(dace.StorageType.Default, lifetime),
         lifetime=lifetime,
     )
-    info_arr = sdfg.add_array(
-        "_info",
-        [1],
-        dtype=dace.int32,
-        transient=True,
-        storage=scratch_storage(info_storage, lifetime),
-        lifetime=lifetime,
-    )
+    info_arr = add_info_status(sdfg, info_storage, lifetime, implementation)
 
     state = sdfg.add_state(f"{node.label}_state")
 
@@ -147,14 +141,7 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
         storage=scratch_storage(operand_storage, lifetime),
         lifetime=lifetime,
     )
-    info_arr = sdfg.add_array(
-        "_info",
-        [1],
-        dtype=dace.int32,
-        transient=True,
-        storage=scratch_storage(info_storage, lifetime),
-        lifetime=lifetime,
-    )
+    info_arr = add_info_status(sdfg, info_storage, lifetime, implementation)
 
     state = sdfg.add_state(f"{node.label}_state")
 

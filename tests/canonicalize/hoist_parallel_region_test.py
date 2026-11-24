@@ -368,7 +368,7 @@ def test_a_map_the_team_shares_out_drops_its_no_thread_pragma_note():
     seq = mapped_state(outer, "seq", "b", "2.0", ["0:N"], schedule=dtypes.ScheduleType.Sequential)
     outer.add_edge(outer.nodes()[0], outer.nodes()[1], dace.InterstateEdge())
     (entry,) = [n for n in seq.nodes() if isinstance(n, nd.MapEntry)]
-    note_sequential(entry, "only 3 iterations")
+    note_sequential(seq, entry, "only 3 iterations")
     sdfg.validate()
     assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
     (shared,) = [
@@ -564,6 +564,105 @@ def test_top_level_nested_sdfg_in_the_loop_is_refused():
     outer.add_edge(outer.nodes()[0], nest_state, dace.InterstateEdge())
     sdfg.validate()
     assert_declined(sdfg, "a top-level nested SDFG breaks replication-freedom (H)")
+
+
+def fill_read_by_control_flow_sdfg(name):
+    """``t[:] = 3; b[1:N] = t[1:N]; c = t[0]; out[0] = c``: the interstate edge reads the one cell no map reads."""
+    from dace.libraries.standard.nodes.fill import FillLibraryNode
+
+    sdfg = dace.SDFG(name)
+    sdfg.add_transient("t", [N], dace.float64)
+    sdfg.add_array("b", [N], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
+    sdfg.add_symbol("c", dace.float64)
+    fill_state = sdfg.add_state("fill", is_start_block=True)
+    fill = FillLibraryNode("fill_t", value=3.0)
+    fill_state.add_node(fill)
+    fill_state.add_edge(
+        fill, FillLibraryNode.OUTPUT_CONNECTOR_NAME, fill_state.add_access("t"), None, dace.Memlet("t[0:N]")
+    )
+    read = sdfg.add_state_after(fill_state, "read")
+    read.add_mapped_tasklet(
+        "copy_t", {"i": "1:N"}, {"x": dace.Memlet("t[i]")}, "y = x", {"y": dace.Memlet("b[i]")}, external_edges=True
+    )
+    store = sdfg.add_state("store")
+    sdfg.add_edge(read, store, dace.InterstateEdge(assignments={"c": "t[0]"}))
+    tasklet = store.add_tasklet("store_c", {}, {"o": None}, "o = c")
+    store.add_edge(tasklet, "o", store.add_write("out"), None, dace.Memlet("out[0]"))
+    sdfg.validate()
+    return sdfg, fill_state.out_edges(fill)[0]
+
+
+def test_a_fill_read_by_an_interstate_edge_keeps_the_cell_it_reads():
+    """The hull of the dataflow reads is ``t[1:N]``, but ``c = t[0]`` reads ``t[0]``: the fill must still write it."""
+    sdfg, written = fill_read_by_control_flow_sdfg("fill_read_by_interstate_edge")
+    whole = str(written.data.subset)
+    HoistParallelRegion().apply_pass(sdfg, {})
+    assert str(written.data.subset) == whole
+    b, out = np.zeros(16), np.zeros(1)
+    sdfg(b=b, out=out, N=16)
+    assert out[0] == 3.0
+    assert np.array_equal(b[1:], np.full(15, 3.0))
+
+
+def test_a_narrowed_fill_alone_reports_the_pass_applied():
+    """No loop is hoisted, but the fill is narrowed: ``None`` would tell the caller the SDFG is unchanged."""
+    from dace.libraries.standard.nodes.fill import FillLibraryNode
+
+    sdfg = dace.SDFG("fill_narrowed_no_loop")
+    sdfg.add_transient("t", [N], dace.float64)
+    sdfg.add_array("b", [N], dace.float64)
+    fill_state = sdfg.add_state("fill", is_start_block=True)
+    fill = FillLibraryNode("fill_t", value=3.0)
+    fill_state.add_node(fill)
+    written = fill_state.add_edge(
+        fill, FillLibraryNode.OUTPUT_CONNECTOR_NAME, fill_state.add_access("t"), None, dace.Memlet("t[0:N]")
+    )
+    read = sdfg.add_state_after(fill_state, "read")
+    read.add_mapped_tasklet(
+        "copy_t", {"i": "1:N"}, {"x": dace.Memlet("t[i]")}, "y = x", {"y": dace.Memlet("b[i]")}, external_edges=True
+    )
+    sdfg.validate()
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 0
+    assert str(written.data.subset) == "1:N"
+
+
+def converge_loop_sdfg(name):
+    """``while err > 0.5: err = 0; for i in map: x[i] *= 0.5; err = max(err, x[i])``. Every thread of a team would
+    test ``err`` while thread 0 resets it for the next trip, with no barrier between."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("x", [N], dace.float64)
+    sdfg.add_array("err", [1], dace.float64)
+    loop = LoopRegion("converge", condition_expr="err[0] > 0.5")
+    sdfg.add_node(loop, is_start_block=True)
+    reset = loop.add_state("reset", is_start_block=True)
+    tasklet = reset.add_tasklet("reset", {}, {"o": None}, "o = 0.0")
+    reset.add_edge(tasklet, "o", reset.add_write("err"), None, dace.Memlet("err[0]"))
+    halve = loop.add_state_after(reset, "halve")
+    halve.add_mapped_tasklet(
+        "halve",
+        {"i": "0:N"},
+        {"v": dace.Memlet("x[i]")},
+        "y = 0.5 * v\nm = y",
+        {"y": dace.Memlet("x[i]"), "m": dace.Memlet("err[0]", wcr="lambda a, b: max(a, b)")},
+        schedule=dtypes.ScheduleType.CPU_Multicore,
+        external_edges=True,
+    )
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_loop_whose_condition_reads_what_it_writes_gets_no_team():
+    sdfg = converge_loop_sdfg("converge_condition_race")
+    assert_declined(sdfg, "the loop condition reads err, which the body writes with no barrier ahead")
+    x = np.random.default_rng(5).random(64) * 8.0
+    want = x * 0.5
+    while want.max() > 0.5:
+        want *= 0.5
+    err = np.array([1e9])
+    sdfg(x=x, err=err, N=64)
+    assert np.array_equal(x, want)
+    assert err[0] == want.max()
 
 
 def test_a_private_scalar_statement_runs_on_every_thread_without_a_barrier():
@@ -1549,6 +1648,9 @@ if __name__ == "__main__":
     test_top_level_sequential_map_in_the_loop_is_shared_out()
     test_sequential_map_around_a_parallel_map_is_refused()
     test_a_read_inside_a_map_narrows_a_whole_fill_over_the_map_range()
+    test_a_fill_read_by_an_interstate_edge_keeps_the_cell_it_reads()
+    test_a_narrowed_fill_alone_reports_the_pass_applied()
+    test_a_loop_whose_condition_reads_what_it_writes_gets_no_team()
     test_top_level_fill_in_the_loop_is_expanded_and_shared_out()
     test_a_fill_expanding_to_a_map_nest_shares_out_only_its_outer_map()
     test_a_loop_over_small_maps_only_gets_no_team()

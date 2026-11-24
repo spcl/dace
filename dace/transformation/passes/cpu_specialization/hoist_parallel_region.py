@@ -46,9 +46,12 @@ What DOES change is that every statement of the loop body which is not inside a 
 construct is executed by all P threads instead of once. Hence the two conditions this pass demands:
 
 **(H) Replication-freedom.** Every statement the loop body executes lies inside a ``CPU_Multicore``
-map scope. Access nodes and map entries/exits emit nothing, and pure control flow (loop counters,
-branch conditions) every thread evaluates identically, because the data it reads was last written
-before a barrier. What does emit a statement at a state's top level is repaired where it can be and
+map scope. Access nodes and map entries/exits emit nothing. Every thread evaluates the control flow
+(loop headers, branch conditions, interstate assignments) itself, and the threads agree on it only when
+no thread can write what it reads before all have read it; no barrier precedes the next trip's first
+write. So a loop whose control flow may read an element the loop writes in that trip or a later one is
+refused (:func:`control_flow_reads_written`), save a scalar each thread computes for itself
+(:func:`replicable_tasklets`). What does emit a statement at a state's top level is repaired where it can be and
 refused where it cannot:
 
 - a ``Tasklet`` is wrapped in its own one-iteration ``CPU_Multicore`` map (an ``omp for`` over one
@@ -115,9 +118,11 @@ import sympy
 
 from dace import SDFG, Memlet, data, dtypes, properties, subsets, symbolic
 from dace.libraries.standard.nodes import FillLibraryNode, MergeLibraryNode, Reduce
+from dace.ordered import OrderedSet
 from dace.sdfg import memlet_utils, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
+from dace.sdfg.narrowing import as_basic
 from dace.sdfg.propagation import propagate_subset
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
@@ -132,6 +137,7 @@ from dace.sdfg.state import (
 )
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.analysis.loop_analysis import get_loop_stride
 from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import small_count, without_sequential_note
 from dace.transformation.passes.loop_fission import LoopFission, _block_rw, _independent_block_groups
 
@@ -316,20 +322,31 @@ def whole_fill_hull(
     return hull
 
 
-def narrow_whole_fills(sdfg: SDFG) -> None:
+def narrow_whole_fills(sdfg: SDFG) -> int:
     """Shrink every whole-array fill of a transient in ``sdfg`` and its nests to the hull of the
     transient's reads (:func:`whole_fill_hull`). Run before any loop is outlined: a nest's boundary
-    memlet is the union of what it touches, and would widen every hull it is part of."""
+    memlet is the union of what it touches, and would widen every hull it is part of.
+
+    :returns: how many fills were narrowed.
+    """
+    # Avoid import loop: strip_mine_interchange builds on this module
+    from dace.transformation.passes.cpu_specialization.strip_mine_interchange import control_flow_reads
+
+    narrowed = 0
     for owner in sdfg.all_sdfgs_recursive():
-        reads = inputs = None
+        reads = inputs = control = None
         for state in owner.states():
             for node in [n for n in state.nodes() if isinstance(n, FillLibraryNode)]:
-                if reads is None or inputs is None:
+                if reads is None or inputs is None or control is None:
                     reads, inputs = reads_by_data(owner), owner.free_symbols
+                    control = OrderedSet(name for name, indices in control_flow_reads(owner))
                 hull = whole_fill_hull(node, state, reads, inputs)
-                if hull is not None:
+                # A read by control flow (``c = t[0]``) is not among ``reads``, so the hull would leave it unfilled
+                if hull is not None and state.out_edges(node)[0].dst.data not in control:
                     (edge,) = state.out_edges(node)
                     edge.data.subset = copy.deepcopy(hull)  # the hull may be a read memlet's own subset
+                    narrowed += 1
+    return narrowed
 
 
 def split_shared_views(sdfg: SDFG, loop: LoopRegion) -> None:
@@ -420,6 +437,57 @@ def replication_free(loop: LoopRegion, resolver: SymbolResolver, memo: dict[node
             if not sequential_leaf_map(entry, block):
                 return False
     return worksharing
+
+
+def offset_from(expr: Any, var: str) -> int | None:
+    """``expr - var`` when it is an integer constant, else None."""
+    offset = symbolic.pystr_to_symbolic(f"({symbolic.symstr(expr)}) - ({var})")
+    return int(offset) if offset.is_Integer else None
+
+
+def ahead_of_read(read: list[Any], write: subsets.Subset | None, var: str, stride: int) -> bool:
+    """Whether every element ``write`` stores at trip ``k`` or later misses the element ``read`` (its per-dimension
+    indices) names at trip ``k``: in one dimension both are ``var`` plus a constant, the write's ahead of the read
+    in the direction ``var`` moves by ``stride``."""
+    if not isinstance(write, subsets.Range) or len(read) != len(write):
+        return False
+    for index, (begin, end, step) in zip(read, write.ranges, strict=True):
+        offsets = [offset_from(expr, var) for expr in (index, begin, end)]
+        if None in offsets:
+            continue
+        at, low, high = offsets
+        if stride > 0 and low > at or stride < 0 and high < at:
+            return True
+    return False
+
+
+def control_flow_reads_written(sdfg: SDFG, loop: LoopRegion) -> bool:
+    """Whether the control flow of ``loop`` may read an element ``loop`` writes in the same trip or a later one,
+    other than in a thread-private scalar of :func:`replicable_tasklets`. Every thread of a team evaluates it, and
+    no barrier orders one thread's read before another thread's later write: a slow thread reads the new value
+    while the others took the branch on the old one, and the threads then wait at different barriers. A write
+    of an earlier trip ran inside a worksharing construct, whose barrier orders it before the read."""
+    # Avoid import loop: strip_mine_interchange builds on this module
+    from dace.transformation.passes.cpu_specialization.strip_mine_interchange import control_flow_reads
+
+    writes: dict[str, list[subsets.Subset | None]] = {}
+    for block in loop.all_control_flow_blocks():
+        if isinstance(block, SDFGState):
+            for node in block.data_nodes():
+                for edge in block.in_edges(node):
+                    if not edge.data.is_empty():
+                        writes.setdefault(node.data, []).append(edge.data.get_dst_subset(edge, block))
+    reads = [(name, indices) for name, indices in control_flow_reads(loop) if name in writes]
+    if not reads:
+        return False
+    stride = get_loop_stride(loop) if loop.loop_variable else None
+    step = int(stride) if stride is not None and as_basic(stride).is_Integer else 0
+    private = replicable_tasklets(sdfg, loop)[1]
+    return any(
+        name not in private
+        and not (step and all(ahead_of_read(indices, write, loop.loop_variable, step) for write in writes[name]))
+        for name, indices in reads
+    )
 
 
 def innermost_loop(block: ControlFlowBlock, loop: LoopRegion) -> LoopRegion:
@@ -868,14 +936,14 @@ class HoistParallelRegion(ppl.Pass):
 
         :param sdfg: the SDFG to specialize, in place.
         :param _pipeline_results: unused.
-        :returns: how many loops were hoisted, or ``None`` if none were.
+        :returns: how many loops were hoisted, or ``None`` if the SDFG is unchanged.
         """
         self.hoisted = 0
-        narrow_whole_fills(sdfg)
+        self.modified = narrow_whole_fills(sdfg) > 0
         # Outlining moves whole states into a new SDFG through ``add_node``, which re-homes every nested
         # SDFG that travelled with them.
         self.visit_sdfg(sdfg)
-        return self.hoisted or None
+        return self.hoisted if self.hoisted or self.modified else None
 
     def visit_sdfg(self, sdfg: SDFG) -> None:
         """Walk one SDFG known to sit outside every map scope.
@@ -889,8 +957,9 @@ class HoistParallelRegion(ppl.Pass):
 
         Outermost, because one region around the whole nest costs one fork where a region around an
         inner loop costs one per trip of the outer one. A loop satisfying (H) that can be outlined has
-        its bulk statements shared out on the spot: the team hoist takes every
-        such loop, so a repair is never left behind in a loop that stays sequential.
+        its bulk statements shared out on the spot. The team hoist takes every such loop; a subclass whose
+        :meth:`hoistable` refuses after the share-out leaves the repairs, each a ``parallel for`` per trip, and
+        does not count them as a change.
 
         :param region: the control-flow region to walk.
         :param sdfg: the SDFG owning ``region``.
@@ -901,6 +970,7 @@ class HoistParallelRegion(ppl.Pass):
                     continue
                 parts = distribute_over_components(block)
                 if parts is not None:
+                    self.modified = True
                     for part in parts:
                         if not self.try_hoist(part, sdfg):
                             self.visit_region(part, sdfg)
@@ -923,6 +993,7 @@ class HoistParallelRegion(ppl.Pass):
             replication_free(loop, resolver, memo)
             and repairs_amortized(loop, resolver, memo)
             and outlinable(sdfg, loop)
+            and self.control_flow_agrees(loop, sdfg)
         ):
             return False
         share_out_bulk_statements(sdfg, loop)
@@ -931,6 +1002,16 @@ class HoistParallelRegion(ppl.Pass):
         self.hoist(loop, sdfg)
         self.hoisted += 1
         return True
+
+    def control_flow_agrees(self, loop: LoopRegion, sdfg: SDFG) -> bool:
+        """Whether every thread of the team takes the same branches and trip count in ``loop``: no control flow
+        reads what the loop writes (:func:`control_flow_reads_written`).
+
+        :param loop: the candidate loop region.
+        :param sdfg: the SDFG owning ``loop``.
+        :returns: ``True`` if the hoist keeps the threads in step.
+        """
+        return not control_flow_reads_written(sdfg, loop)
 
     def hoistable(self, loop: LoopRegion, sdfg: SDFG) -> bool:
         """Whether this pass rewrites the replication-free, shared-out ``loop``: always, for the team.

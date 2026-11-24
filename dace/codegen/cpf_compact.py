@@ -7,15 +7,17 @@ without changing what it computes or exports. It is conservative by construction
 SDFG says are generated, and it drops only definitions nothing can reach.
 
 1. A generated name gets a short one: a container ``arr0, arr1, ...``, a symbol, map or loop variable ``sym0,
-   ...``, a ``static`` function ``f0, ...``. A candidate is a name of the prepared SDFG (or a ``static`` function
-   of the unit) longer than four characters that contains ``_`` or a digit, so a plain word is never respelled.
+   ...``, a ``static`` function ``f0, ...``, and a sequential accumulator ``<container>_acc0``, named after the
+   container it accumulates as that container is spelled now (``__acc_1_0_out`` -> ``out_acc0``). A candidate
+   is a name of the prepared SDFG (or a ``static`` function of the unit) longer than four characters that
+   contains ``_`` or a digit, so a plain word is never respelled; an accumulator is one by its ``__acc_`` spelling.
    Names derived from a renamed one follow it (``x_idx`` -> ``arr0_idx``; a persistent buffer, its count and its
    release function ``arr0_buf``, ``arr0_cap``, ``arr0_free``). Every short name, derived ones included, is new
    to the unit.
-2. Never renamed: the names the caller keeps (the entry point's name and parameters), every non-``static``
-   file-scope name, the ``cpf_`` runtime helpers, and any name that occurs in a preprocessor line other than
-   ``#pragma`` (``#define``, ``#if``, ``#include``) or next to ``##``. A ``#pragma`` line is respelled with the
-   code, since an OpenMP clause names the code's variables.
+2. Never renamed: the names the caller keeps (the entry point's name and parameters), every file-scope name
+   that is neither ``static`` nor ``constexpr``, the ``cpf_`` runtime helpers, and any name that occurs in a
+   preprocessor line other than ``#pragma`` (``#define``, ``#if``, ``#include``) or next to ``##``. A ``#pragma``
+   line is respelled with the code, since an OpenMP clause names the code's variables.
 3. Comments keep their text with the respelled names in it; string literals are never touched.
 4. A ``static`` definition nothing references goes, to a fixpoint, when it is exactly one plain ``static``
    function or variable: no attribute, no directive inside, balanced braces.
@@ -24,6 +26,7 @@ SDFG says are generated, and it drops only definitions nothing can reach.
 returned, so a short name can be read back as the SDFG's (:meth:`Compacted.revert`).
 """
 
+import collections
 import itertools
 import re
 from collections.abc import Iterable, Iterator
@@ -51,6 +54,8 @@ PRAGMA = re.compile(r"^[ \t]*#[ \t]*pragma\b")
 #: their short forms.
 PERSISTENT_PREFIX = "__cpf_persistent_"
 PERSISTENT_PARTS = {"": "_buf", "_count": "_cap", "_release": "_free"}
+#: The CPU generator's sequential accumulator of a container (``__acc_1_0_<container>``).
+ACCUMULATOR = re.compile(r"__acc_\d+_\d+_(?P<container>\w+)")
 #: Suffixes of names derived from a container's (its index and size helpers).
 DERIVED_SUFFIXES = ("_idx", "_size")
 #: The name a non-``static`` file-scope definition or declaration introduces.
@@ -137,7 +142,8 @@ def exported_names(text: str) -> set[str]:
     names: set[str] = set()
     for item in split_top_level(text):
         code = code_of(item)
-        if not code or re.match(r"(static|typedef|struct|union|enum)\b", code):
+        # A file-scope ``constexpr`` has internal linkage, in C23 as in C++.
+        if not code or re.match(r"(static|constexpr|typedef|struct|union|enum)\b", code):
             continue
         match = EXPORTED.match(code)
         if match is not None:
@@ -167,7 +173,7 @@ def generated_names(sdfg: SDFG) -> tuple[list[str], list[str]]:
     containers: dict[str, None] = {}
     symbols: dict[str, None] = {}
     for nested in sdfg.all_sdfgs_recursive():
-        containers.update((name, None) for name in nested.arrays if is_candidate(name))
+        containers.update((name, None) for name in [*nested.arrays, *nested.constants_prop] if is_candidate(name))
         symbols.update((name, None) for name in nested.symbols if is_candidate(name))
         for node, unused_parent in nested.all_nodes_recursive():
             if isinstance(node, nodes.MapEntry):
@@ -185,11 +191,11 @@ def static_functions(text: str) -> list[str]:
 
 def name_map(text: str, sdfg: SDFG, keep: Iterable[str]) -> dict[str, str]:
     """Rendering name -> short name, for every identifier of ``text`` :func:`compact` respells."""
-    present = {piece for kind, piece in tokens(text) if kind == "ident"}
+    present = dict.fromkeys(piece for kind, piece in tokens(text) if kind == "ident")
     fixed = protected(text, keep)
-    taken = present | fixed
+    taken = set(present) | fixed
     mapping: dict[str, str] = {}
-    counters = {prefix: itertools.count() for prefix in ("arr", "sym", "f")}
+    counters: collections.defaultdict[str, Iterator[int]] = collections.defaultdict(itertools.count)
 
     def fresh(prefix: str, endings: Iterable[str]) -> str:
         """A short name with ``prefix`` that is new to the unit with each of ``endings`` appended too."""
@@ -216,6 +222,12 @@ def name_map(text: str, sdfg: SDFG, keep: Iterable[str]) -> dict[str, str]:
     for name in symbols:
         if name in present and free(name):
             mapping[name] = fresh("sym", ())
+    for name in present:
+        accumulator = ACCUMULATOR.fullmatch(name)
+        if accumulator is not None and free(name):
+            # It keeps the name of the container it accumulates, as that container is spelled now
+            container = accumulator["container"]
+            mapping[name] = fresh(mapping.get(container, container) + "_acc", ())
     for name in static_functions(text):
         if free(name) and is_candidate(name) and not name.startswith("cpf_") and not name.endswith(DERIVED_SUFFIXES):
             mapping[name] = fresh("f", ())

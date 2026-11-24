@@ -47,6 +47,8 @@ from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     WAVEFRONT_TILE_COLUMN,
     WAVEFRONT_TILE_DIAGONAL,
     WAVEFRONT_TILE_INTERIOR,
+    front_label,
+    recurrence_before_rewrite,
     skew_label,
     tile_label,
 )
@@ -227,6 +229,16 @@ def copy_to_map(state: SDFGState, st: Statement) -> nodes.MapEntry:
     return me
 
 
+def label_enclosing_recurrences(outer: LoopRegion) -> None:
+    """Label each unlabelled loop around ``outer`` that carries a dependence its body proves now: after the skew the
+    accesses sit under tile guards and prove nothing (seidel_2d's time loop read ``unknown``)."""
+    region = outer.parent_graph
+    while region is not None and not isinstance(region, SDFG):
+        if isinstance(region, LoopRegion) and region.loop_variable and not region.specialization_hint:
+            region.specialization_hint = recurrence_before_rewrite(region)
+        region = region.parent_graph
+
+
 @properties.make_properties
 @xf.explicit_cf_compatible
 class WavefrontSkew(ppl.Pass):
@@ -290,6 +302,7 @@ class WavefrontSkew(ppl.Pass):
             plan = self.plan(outer, sdfg, occurrence_index(sdfg) if occurrences is None else occurrences)
         if plan is None:
             return False
+        label_enclosing_recurrences(outer)
         self.commit(plan, sdfg)
         return True
 
@@ -464,8 +477,7 @@ class WavefrontSkew(ppl.Pass):
         )
         set_header(outer, t_var, t_lo, t_hi)
         outer.pinned_sequential = True
-        skew = skew_label(a, b, u, "v")
-        outer.specialization_hint = WAVEFRONT_DIAGONAL.format(skew=skew)
+        outer.specialization_hint = WAVEFRONT_DIAGONAL.format(skew=skew_label(a, b, t_var))
         t = sym(t_var)
         for st, p_var in zip(body.statements, p_vars):
             fr = plan.fronts[st.order]
@@ -477,7 +489,7 @@ class WavefrontSkew(ppl.Pass):
             else:
                 u_expr, v_expr = p, b * (t - a * p) - shift
             repl = {u: symbolic.symstr(simplified(u_expr)), st.var: symbolic.symstr(simplified(v_expr))}
-            hint = WAVEFRONT_FRONT.format(skew=skew)
+            hint = WAVEFRONT_FRONT.format(skew=front_label(t_var, p_var, "column" if abs(a) == 1 else "row"))
             if st.kind == "loop":
                 loop = st.block
                 assert isinstance(loop, LoopRegion)
@@ -496,7 +508,6 @@ class WavefrontSkew(ppl.Pass):
         t_var, (p_var,) = self.fresh_names(sdfg, 1)
         subs = {PROBE_T: sym(t_var), PROBE_P: sym(p_var), TILE_NI: tp.n_i, TILE_NJ: tp.n_j}
         tile = tile_label(tp.bi, tp.bj)
-        skew = skew_label(1, 1, u, "w")
 
         p_loop = LoopRegion(
             f"{outer.label}_tile_diag",
@@ -525,7 +536,7 @@ class WavefrontSkew(ppl.Pass):
             outer, t_var, bound_str(tp.bounds.t_lo_terms, subs, "max"), bound_str(tp.bounds.t_hi_terms, subs, "min")
         )
         outer.pinned_sequential = True
-        outer.specialization_hint = WAVEFRONT_TILE_DIAGONAL.format(skew=skew, tile=tile)
+        outer.specialization_hint = WAVEFRONT_TILE_DIAGONAL.format(skew=skew_label(1, 1, t_var, "tile "), tile=tile)
 
         for st in body.statements:
             # ``w = v + shift + k*u`` in ``[j_lo, j_lo + bj - 1]``.
@@ -546,7 +557,8 @@ class WavefrontSkew(ppl.Pass):
         if self.target == "gpu":
             with canon_stats.timed("isl", sdfg):
                 self.skew_tile_interior(plan, sdfg, i_loop, i_lo, j_lo)
-        self.lift(outer, p_loop, sdfg, WAVEFRONT_TILE_COLUMN.format(tile=tile))
+        column = f"{p_var} is the tile column and {t_var} - {p_var} the tile row"
+        self.lift(outer, p_loop, sdfg, WAVEFRONT_TILE_COLUMN.format(tile=tile, skew=column))
 
     def skew_tile_interior(
         self, plan: Plan, sdfg: SDFG, i_loop: LoopRegion, i_lo: sympy.Expr, j_lo: sympy.Expr
@@ -580,10 +592,10 @@ class WavefrontSkew(ppl.Pass):
         declare_iterators(d_var, *k_vars)
         set_header(i_loop, d_var, symbolic.symstr(d_lo), symbolic.symstr(d_hi))
         i_loop.pinned_sequential = True
-        i_loop.specialization_hint = WAVEFRONT_DIAGONAL.format(skew=skew_label(1, 1, u, "w"))
+        i_loop.specialization_hint = WAVEFRONT_DIAGONAL.format(skew=skew_label(1, 1, d_var) + " within the tile")
         d = sym(d_var)
-        hint = WAVEFRONT_FRONT.format(skew=skew_label(1, 1, u, "w"))
         for st, bounds, k_var in zip(body.statements, fronts, k_vars):
+            hint = WAVEFRONT_FRONT.format(skew=front_label(d_var, k_var, "column"))
             subs = {PROBE_T: d, PROBE_P: sym(k_var)}
             p_lo, p_hi = bound_str(bounds.p_lo_terms, subs, "max"), bound_str(bounds.p_hi_terms, subs, "min")
             coord = simplified(j_lo + sym(k_var))

@@ -1,5 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lift a loop-carried in-place array reduction to a write-conflict resolution."""
+"""Lift a loop-carried in-place array reduction to a write-conflict resolution.
+
+The lift is sound for any extent. It is refused for a symbolic loop trip count or map range on cost alone: whether
+running the accumulations in parallel, as WCR updates, beats the sequential loop depends on the inner map's size, and
+without a number for it the pass cannot decide.
+"""
 
 import ast
 from typing import Any
@@ -44,6 +49,7 @@ def carried_update(loop: LoopRegion) -> tuple[SDFGState, AugAssignToWCR] | None:
     for state in loop.states():
         for tasklet in [n for n in state.nodes() if isinstance(n, nodes.Tasklet)]:
             entry = state.entry_node(tasklet)
+            # A symbolic range is refused on cost, as a symbolic trip count is (module docstring)
             if not isinstance(entry, nodes.MapEntry) or entry.map.range.free_symbols:
                 continue
             for expr, binding in map_tasklet_augassign_candidates(state, entry, tasklet):

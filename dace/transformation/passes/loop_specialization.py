@@ -16,15 +16,24 @@ control-flow surgery, the callback owns what "parallel" means.
 import copy
 from collections.abc import Callable, Sequence
 
-from dace import symbolic
+from dace import dtypes, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 
 #: The class line of a parallel arm: the guard is the evidence the iterations are independent.
-GUARDED = "parallel -- independent when {guard} (checked before the loop)"
+GUARDED = (
+    "parallel -- the runtime check found {guard}, so no iteration writes an element another iteration reads or writes"
+)
 #: The class line of the sequential arm a guard falls back to: the original loop, for the inputs the guard rejects.
-GUARD_FALLBACK = "sequential -- runs when {negated}: independence is not proven for these inputs, keep the order"
+#: The negation is simplified (``inc == 0``, never ``not (not ...)``, review #10), and the arm says why it keeps the
+#: order, not that a dependence was proven (review #1).
+GUARD_FALLBACK = (
+    "sequential -- the runtime check found {negated}: two iterations may then touch the same element, so this arm "
+    "keeps the order"
+)
+#: What both arms of a versioned loop start with, after the class.
+VERSIONED = "the runtime check found "
 
 
 def condition_text(condition: str) -> str:
@@ -55,17 +64,25 @@ def label_arm(node, kind: str) -> None:
     node.specialization_hint = f"{kind}\n{hint}" if hint else kind
 
 
-def label_arms(par_region: ControlFlowRegion, seq_region: ControlFlowRegion, guard: str) -> None:
+def label_arms(
+    par_region: ControlFlowRegion, seq_region: ControlFlowRegion, guard: str, labels: tuple[str, str] | None = None
+) -> None:
     """Name ``guard``, the condition the parallel arm runs under, on that arm's outermost maps and on the pinned
-    loops of the sequential arm."""
+    loops of the sequential arm. ``labels``, when given, are the two arms' class lines in place of the generic
+    :data:`GUARDED` and :data:`GUARD_FALLBACK`."""
+    if labels is None:
+        labels = (
+            GUARDED.format(guard=condition_text(guard)),
+            GUARD_FALLBACK.format(negated=condition_text(f"not ({guard})")),
+        )
     for block in par_region.all_control_flow_blocks():
         if isinstance(block, SDFGState):
             for node in block.nodes():
                 if isinstance(node, nodes.MapEntry) and block.entry_node(node) is None:
-                    label_arm(node, GUARDED.format(guard=condition_text(guard)))
+                    label_arm(node, labels[0])
     for region in seq_region.all_control_flow_regions():
         if isinstance(region, LoopRegion) and region.pinned_sequential:
-            label_arm(region, GUARD_FALLBACK.format(negated=condition_text(f"not ({guard})")))
+            label_arm(region, labels[1])
 
 
 def _owner_sdfg(loop: LoopRegion) -> SDFG:
@@ -116,6 +133,7 @@ def specialize_loop_under_condition(
     owner_sdfg: SDFG | None = None,
     assume: bool = False,
     pin: bool = True,
+    labels: tuple[str, str] | None = None,
 ) -> ConditionalBlock | None:
     """Replace ``loop`` with ``if (condition) { parallel } else { original loop }``.
 
@@ -132,6 +150,7 @@ def specialize_loop_under_condition(
         (the caller owns that contract); returns ``None`` since no ``ConditionalBlock`` is built.
     :param pin: Pin the fallback sequential. A caller whose fallback the facts there (the failed ``condition``) keep
         it from specializing again, and which another pass may still parallelize, passes ``False``.
+    :param labels: The class lines of the parallel and the fallback arm (see :func:`label_arms`).
     :returns: The inserted :class:`ConditionalBlock`, or ``None`` in ``assume`` mode.
     """
     if owner_sdfg is None:
@@ -171,8 +190,39 @@ def specialize_loop_under_condition(
     privatize_clone_local_transients(owner_sdfg, par_loop, seq_loop)
     give_clone_its_own_iterators(owner_sdfg, conditional, seq_loop)
     parallelize(par_loop, par_region, owner_sdfg)
-    label_arms(par_region, seq_region, condition.as_string.strip())
+    label_arms(par_region, seq_region, condition.as_string.strip(), labels)
     return conditional
+
+
+def invariant_host(block: ControlFlowBlock, condition: str) -> LoopRegion | None:
+    """The outermost loop enclosing ``block`` (in its SDFG) that leaves every operand of ``condition`` unchanged,
+    where a guard of ``block`` on ``condition`` can be evaluated once; ``None`` if there is none or ``condition``
+    reads a container."""
+    from dace.transformation.interstate.loop_to_map import loop_varying_symbols  # avoid an import cycle
+
+    operands = CodeBlock(condition).get_free_symbols()
+    if operands & block.sdfg.arrays.keys():
+        return None
+    host = None
+    region = block.parent_graph
+    while isinstance(region, LoopRegion) and region.loop_variable:
+        if operands & (loop_varying_symbols(region) | {region.loop_variable}):
+            break
+        host = region
+        region = region.parent_graph
+    return host
+
+
+def evaluate_before(host: ControlFlowBlock, name: str, condition: str) -> str:
+    """Save ``condition`` into a new boolean symbol named after ``name`` on entry to ``host``; returns its name."""
+    sdfg = host.sdfg
+    flag = sdfg.find_new_symbol(name)
+    sdfg.add_symbol(flag, dtypes.bool)
+    region = host.parent_graph
+    region.add_state_before(
+        host, f"{flag}_check", is_start_block=region.start_block is host, assignments={flag: condition}
+    )
+    return flag
 
 
 def give_clone_its_own_iterators(owner_sdfg: SDFG, conditional: ConditionalBlock, clone: LoopRegion) -> None:
@@ -238,6 +288,9 @@ def specialize_loop_under_relations(
 __all__ = [
     "GUARDED",
     "GUARD_FALLBACK",
+    "VERSIONED",
+    "evaluate_before",
+    "invariant_host",
     "label_arms",
     "specialize_loop_under_condition",
     "specialize_loop_under_relations",

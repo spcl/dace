@@ -288,5 +288,52 @@ def test_nested_sequential_maps_accumulate_into_one_register():
     assert np.allclose(out[0], x.sum())
 
 
+def two_writes_of_one_array(name: str, first: str, second: str) -> dace.SDFG:
+    """A sequential loop over ``j`` adding ``p[j]`` into ``out[first]`` and ``q[j]`` into ``out[second]``: two writes
+    of one array through the loop's exit, each into its own write node, as two loops fused into one leave them."""
+    sdfg = dace.SDFG(name)
+    for array in ("p", "q", "out"):
+        sdfg.add_array(array, [N], dace.float64)
+    for symbol in dict.fromkeys((first, second)):
+        if symbol != "j":
+            sdfg.add_symbol(symbol, dace.int64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("columns", {"j": "0:N"}, schedule=dtypes.ScheduleType.Sequential)
+    for source, index in (("p", first), ("q", second)):
+        tasklet = state.add_tasklet(f"add_{source}", {"v"}, {"o"}, "o = v")
+        state.add_memlet_path(state.add_read(source), entry, tasklet, dst_conn="v", memlet=dace.Memlet(f"{source}[j]"))
+        sum_into = dace.Memlet(f"out[{index}]", wcr="lambda a, b: a + b")
+        state.add_memlet_path(tasklet, exit_, state.add_write("out"), src_conn="o", memlet=sum_into)
+    return sdfg
+
+
+def test_a_held_element_keeps_a_moving_write_of_the_same_array():
+    """``out[K] += p[j]; out[j] += q[j]``: a register for ``out[K]`` stored at the loop's exit would overwrite what
+    ``out[j]`` added to it at ``j == K``."""
+    sdfg = two_writes_of_one_array("seq_wcr_fixed_and_moving", "K", "j")
+    assert "__acc_" not in generated_cpu_code(sdfg)
+    rng = np.random.default_rng(4)
+    n, k = 12, 5
+    p, q, out = rng.random(n), rng.random(n), rng.random(n)
+    want = out + q
+    want[k] += p.sum()
+    sdfg(p=p, q=q, out=out, N=n, K=k)
+    np.testing.assert_allclose(out, want)
+
+
+def test_two_held_elements_that_meet_at_run_time_keep_both_sums():
+    """``out[A] += p[j]; out[B] += q[j]`` with ``A == B``: two registers would each start from the old value, and the
+    later store would drop the other one's sum."""
+    sdfg = two_writes_of_one_array("seq_wcr_two_fixed", "A", "B")
+    assert "__acc_" not in generated_cpu_code(sdfg)
+    rng = np.random.default_rng(5)
+    n = 12
+    p, q, out = rng.random(n), rng.random(n), rng.random(n)
+    want = out.copy()
+    want[3] += p.sum() + q.sum()
+    sdfg(p=p, q=q, out=out, N=n, A=3, B=3)
+    np.testing.assert_allclose(out, want)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

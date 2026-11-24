@@ -557,6 +557,11 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             used_inside |= block.used_symbols(all_symbols=True)
         for ise in nsdfg.edges():
             used_inside |= ise.data.free_symbols
+        # A state's used symbols leave out every map parameter it defines, so a key named like an inner map's
+        #  parameter (``__i0``) and also read outside that map would be dropped; every memlet counts
+        for inner_state in nsdfg.states():
+            for edge in inner_state.edges():
+                used_inside |= set(map(str, edge.data.free_symbols))
         non_identity_mapping = {k: v for k, v in non_identity_mapping.items() if k in used_inside}
 
         # Reconnect state machine. For each edge ``predecessor -> nsdfg_state``

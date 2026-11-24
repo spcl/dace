@@ -377,7 +377,9 @@ class LiftEinsum(xf.SingleStateTransformation):
             while state.entry_node(outermost) is not None:
                 outermost = state.entry_node(outermost)
             fill = None if has_identity else zero_before_scope(state, out_node, outermost)
-            if fill is not None and not fill.subset.covers(state.memlet_path(out_edge)[-1].data.subset, sdfg.facts()):
+            if fill is not None and not fill.subset.covers_precise(
+                state.memlet_path(out_edge)[-1].data.subset, sdfg.facts()
+            ):
                 fill = None  # some element the sum writes keeps a prior value other than zero
             if has_identity or fill is not None:
                 einsum.beta = 0.0

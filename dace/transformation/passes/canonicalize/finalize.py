@@ -760,7 +760,7 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     if device == dtypes.DeviceType.CPU:
         # Strip-mining takes the carried nests it can tile: one worksharing construct outside the carry.
         tiled = StripMineInterchange().apply_pass(sdfg, {})
-        if HoistParallelRegion().apply_pass(sdfg, {}) or tiled:
+        if HoistParallelRegion().apply_pass(sdfg, {}) is not None or tiled is not None:
             infer_types.infer_connector_types(sdfg)
     # The states specialization adds beside states they fuse with: a flag set ahead of a privatized loop, an
     # anti-dependence prologue, an outlined team, an if-conversion's branches, an expansion's transposes ahead of its

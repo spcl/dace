@@ -1228,7 +1228,8 @@ def tile_size(cut: Cut) -> Any:
     while tile * 2 <= min(positions, MAX_TILE):
         tile *= 2
     rounds = symbolic.int_ceil(cut.size, THREADS_SYMBOL * tile)
-    return MIN_TILE * symbolic.int_ceil(symbolic.int_ceil(cut.size, THREADS_SYMBOL * rounds), MIN_TILE)
+    # ceil(ceil(size / (P * r)) / MIN_TILE) is ceil(size / (P * r * MIN_TILE)) for positive divisors: one ceiling
+    return MIN_TILE * symbolic.int_ceil(cut.size, THREADS_SYMBOL * rounds * MIN_TILE)
 
 
 def cut_into_tiles(statement: Statement, tile: Any, size: Any) -> None:
@@ -1291,6 +1292,16 @@ class StripMineInterchange(HoistParallelRegion):
         #: walk asks the predicate and then immediately rewrites the same loop, so ONE entry is
         #: enough and the analysis is never run twice over a graph.
         self._approved = None
+
+    def control_flow_agrees(self, loop: LoopRegion, sdfg: SDFG) -> bool:
+        """Always: each tile runs the whole loop alone, and :meth:`hoistable` refuses control flow that reads what
+        another tile writes (:func:`record_control_flow_reads`), so no two tiles need to take the same branch.
+
+        :param loop: the candidate loop region.
+        :param sdfg: the SDFG owning ``loop``.
+        :returns: ``True``.
+        """
+        return True
 
     def hoistable(self, loop: LoopRegion, sdfg: SDFG) -> bool:
         """Tile locality of the replication-free, shared-out ``loop``.

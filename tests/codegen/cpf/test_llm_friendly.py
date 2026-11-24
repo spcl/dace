@@ -89,6 +89,7 @@ class FakeSdfg:
         self.name = name
         self.arrays = dict.fromkeys(arrays)
         self.symbols: dict[str, None] = {}
+        self.constants_prop: dict[str, None] = {}
 
     def all_sdfgs_recursive(self) -> list["FakeSdfg"]:
         return [self]
@@ -161,6 +162,16 @@ def test_repeated_includes_go_only_outside_conditional_blocks():
     assert drop_repeated_includes(code) == "#include <a.h>\n#ifdef X\n#include <a.h>\n#endif\nint x;\n"
 
 
+def test_a_guarded_repeat_of_omp_h_goes_with_its_block():
+    """tsvc_2_s2233 included ``<omp.h>`` in the preamble and again under the frame's ``#ifdef _OPENMP``."""
+    from dace.codegen.cpf import drop_repeated_includes
+
+    code = "#include <omp.h>\nint y;\n#ifdef _OPENMP\n#include <omp.h>\n#endif\nint x;\n"
+    assert drop_repeated_includes(code) == "#include <omp.h>\nint y;\nint x;\n"
+    guarded = "#ifdef _OPENMP\n#include <omp.h>\n#else\nint s;\n#endif\n"
+    assert drop_repeated_includes(guarded) == guarded
+
+
 if __name__ == "__main__":
     test_the_llm_friendly_unit_computes_the_same_values_in_fewer_characters()
     test_generated_names_shorten_while_the_entry_and_its_exports_keep_theirs()
@@ -173,3 +184,4 @@ if __name__ == "__main__":
     test_no_include_line_repeats(False)
     test_no_include_line_repeats(True)
     test_repeated_includes_go_only_outside_conditional_blocks()
+    test_a_guarded_repeat_of_omp_h_goes_with_its_block()
