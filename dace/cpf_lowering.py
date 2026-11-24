@@ -218,6 +218,7 @@ class Reason(enum.Enum):
     REDUCTION = "reduction"
     SCAN = "scan"
     GUARDED = "the runtime check found "
+    SMALL_EXTENT = "small extent"
     THREAD_TEAM = "thread team"
     NOT_A_LOOP = "not a loop"
     DIMENSION = "dimension "

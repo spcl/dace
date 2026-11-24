@@ -41,5 +41,20 @@ def test_a_sequential_loop_over_an_indirect_access_offers_no_wavefront():
     assert "wavefront" not in outer and "alt:" not in outer, outer
 
 
+def test_an_unproven_loop_over_a_few_iterations_is_unknown_not_sequential():
+    """CloudSC's species loop: the dependence test could not show the writes distinct."""
+
+    @dace.program
+    def species(a: dace.float64[N], order: dace.int64[5]):
+        for s in range(5):
+            a[order[s]] = a[order[s]] + 1.0
+
+    first = class_lines(rendered(species, "cpf_comment_small_extent"))[0]
+    assert first.startswith("// unknown -- small extent (5 iterations), not proven: "), first
+    code = rendered(species, "cpf_comment_small_extent_header")
+    assert "// cpf: proven: partial; open: s" in code, code
+
+
 if __name__ == "__main__":
     test_a_sequential_loop_over_an_indirect_access_offers_no_wavefront()
+    test_an_unproven_loop_over_a_few_iterations_is_unknown_not_sequential()

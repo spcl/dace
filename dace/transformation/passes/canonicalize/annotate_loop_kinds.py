@@ -85,11 +85,13 @@ SEQUENTIAL_PROVEN = PROVEN_PREFIX + " {reason}"
 UNKNOWN = LoopClass.UNKNOWN.prefix + "{reason}"
 
 #: An unproven loop over a literal trip count ``symbolic.is_small_extent`` calls small: too few iterations to share
-#: out, so a parallel version is not worth a runtime check; ``{reason}`` is what the dependence test left open.
+#: out, so a parallel version is not worth a runtime check. It stays ``unknown``: the dependence test did not settle
+#: it, whatever its length; ``{reason}`` is what the test left open.
 SMALL_EXTENT = (
-    LoopClass.SEQUENTIAL.prefix
-    + "small extent: {trips} iterations, too few to share out among threads, so no parallel version is "
-    "worth a runtime check; not proven: {reason}"
+    LoopClass.UNKNOWN.prefix
+    + Reason.SMALL_EXTENT.value
+    + " ({trips} iterations), not proven: {reason}; the loop is too short to share out among threads, so no "
+    "parallel version is worth a runtime check"
 )
 
 #: The ``UNKNOWN`` reason of a loop the dependence test never answered for; the specific cause follows a colon.

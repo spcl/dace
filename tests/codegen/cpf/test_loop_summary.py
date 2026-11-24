@@ -227,14 +227,16 @@ def scattered_species(a: dace.float64[N], order: dace.int64[5], b: dace.float64[
         b[order[i % 5]] = b[order[i % 5]] + 1.0
 
 
-def test_an_unproven_loop_over_a_few_fixed_iterations_is_sequential_and_settled():
-    """Owner 11-24 (CloudSC's nclv = 5 species loops): too few iterations to share out, so no check is worth it; the
-    same body over ``N`` iterations stays open."""
+def test_an_unproven_loop_over_a_few_fixed_iterations_is_unknown_and_open():
+    """CloudSC's nclv = 5 species loops: too few iterations to share out, so no check is worth it, but the dependence
+    test did not settle them, so they are open like the same body over ``N`` iterations."""
     sdfg = scattered_species.to_sdfg(simplify=True)
     sdfg.name = "cpf_audit_summary_small_extent"
     header = summary(named(sdfg))
-    assert any(re.match(r"//   sequential: s, small extent: 5 iterations", line) for line in header), header
-    assert header[-1] == "// cpf: proven: partial; open: i", header
+    assert any(re.match(r"//   unknown: s, small extent \(5 iterations\), not proven: ", line) for line in header), (
+        header
+    )
+    assert header[-1] == "// cpf: proven: partial; open: s, i", header
 
 
 VERSIONED_LOOP = """\
