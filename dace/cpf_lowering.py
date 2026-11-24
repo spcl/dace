@@ -231,6 +231,11 @@ class Reason(enum.Enum):
     IMPLEMENTATION = "implementation loop of "
 
 
+#: What a pass or the renderer appends to the class line of a proven-parallel loop that has no thread pragma (or, on a
+#: GPU, no kernel), followed by why: the loop stays ``parallel``, because it is; this says it is not run in parallel.
+NOT_PARALLELIZED = "; not parallelized: "
+
+
 def reason_of(reason: str) -> Reason | None:
     """The :class:`Reason` ``reason`` opens with, or ``None`` for a proof text."""
     return next((kind for kind in Reason if reason.startswith(kind.value)), None)
@@ -308,6 +313,9 @@ def kind_line(hint: str) -> str | None:
     """The kinds rendering of ``hint``: its class word, and for a ``sequential`` or ``unknown`` loop the reason (its
     class line without the example iterations and the alternative); ``None`` if no line names a class."""
     word = kind_word(hint)
+    first = str(hint).split("\n", 1)[0]
+    if word == LoopClass.PARALLEL.value and NOT_PARALLELIZED in first:
+        return f"{word}: {first.split(NOT_PARALLELIZED, 1)[1].strip()}"
     if word not in (LoopClass.SEQUENTIAL.value, LoopClass.UNKNOWN.value):
         return word
     for line in str(hint).splitlines():

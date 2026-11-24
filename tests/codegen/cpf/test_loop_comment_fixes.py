@@ -6,6 +6,8 @@ Each test renders a few-line program and checks the comment string of the loop t
 import dace
 from dace.sdfg import tasklet_utils
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
+from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import DecideCpuParallelAxes
+from tests.codegen.cpf.conftest import render_gpu
 from tests.codegen.cpf.test_specialization_hints import named, trapped_sdfg
 
 N = dace.symbol("N")
@@ -109,9 +111,9 @@ def test_only_the_loop_that_shares_the_accumulator_is_a_reduction():
     inner ``j`` loop reduces into them."""
     outer, inner = class_lines(any_per_row_code())
     assert outer.startswith("// parallel -- independent: "), outer
-    assert inner == "// parallel -- reduction: && into unset and || into flag; the other accesses are independent", (
-        inner
-    )
+    assert inner.startswith(
+        "// parallel -- reduction: && into unset and || into flag; the other accesses are independent"
+    ), inner
 
 
 def test_the_header_lists_every_reduction_of_a_loop():
@@ -222,6 +224,54 @@ def test_a_loop_comment_keeps_a_precondition_a_function_renamed():
     assert "; independent only if n > 0 (the program aborts at entry otherwise)" in code, code
 
 
+def decided(program: dace.program, name: str) -> str:
+    """``program`` canonicalized, with CPU specialization's decision on its parallel axes, rendered."""
+    sdfg = program.to_sdfg(simplify=True)
+    sdfg.name = name
+    canonicalize(sdfg, validate=True, validate_all=False, target="cpu")
+    DecideCpuParallelAxes().apply_pass(sdfg, {})
+    return named(sdfg)
+
+
+def test_a_map_inside_a_parallel_loop_stays_parallel_and_names_the_loop():
+    @dace.program
+    def nested(a: dace.float64[M, N], b: dace.float64[M, N]):
+        for i in dace.map[0:M]:
+            for j in dace.map[0:N]:
+                b[i, j] = a[i, j] * 2.0
+
+    outer, inner = class_lines(decided(nested, "cpf_comment_nested"))
+    assert outer.startswith("// parallel -- independent: ") and "not parallelized" not in outer, outer
+    assert inner.startswith("// parallel -- independent: ") and inner.endswith(
+        "; not parallelized: inside parallel loop i"
+    ), inner
+
+
+def test_a_short_map_stays_parallel_and_says_it_is_too_short_to_fork():
+    @dace.program
+    def short(a: dace.float64[4], b: dace.float64[4]):
+        for j in dace.map[0:4]:
+            b[j] = a[j] * 2.0
+
+    (only,) = class_lines(decided(short, "cpf_comment_short"))
+    assert only.startswith("// parallel -- independent: "), only
+    assert only.endswith("; not parallelized: 4 iterations, too short to pay for a fork"), only
+
+
+def test_a_map_a_gpu_thread_runs_stays_parallel_and_says_so():
+    @dace.program
+    def nested(a: dace.float64[M, N], b: dace.float64[M, N]):
+        for i in dace.map[0:M]:
+            for j in dace.map[0:N]:
+                b[i, j] = a[i, j] * 2.0
+
+    rendering = render_gpu(nested, "cpf_comment_gpu_nested", "cuda")
+    lines = class_lines(rendering.code) + class_lines(rendering.device_code or "")
+    threaded = [line for line in lines if "; not parallelized: inside GPU kernel loop " in line]
+    assert threaded and all(line.startswith("// parallel -- independent: ") for line in threaded), lines
+    assert not [line for line in lines if line.startswith("// sequential")], lines
+
+
 if __name__ == "__main__":
     test_a_sequential_loop_over_an_indirect_access_offers_no_wavefront()
     test_an_unproven_loop_over_a_few_iterations_is_unknown_not_sequential()
@@ -237,3 +287,6 @@ if __name__ == "__main__":
     test_the_header_lists_the_entry_abort_preconditions()
     test_a_loop_comment_does_not_repeat_an_entry_precondition_the_header_lists()
     test_a_loop_comment_keeps_a_precondition_a_function_renamed()
+    test_a_map_inside_a_parallel_loop_stays_parallel_and_names_the_loop()
+    test_a_short_map_stays_parallel_and_says_it_is_too_short_to_fork()
+    test_a_map_a_gpu_thread_runs_stays_parallel_and_says_so()
