@@ -385,6 +385,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             update_expr=node.loop.update_statement,
             unroll=node.loop.unroll,
             unroll_factor=node.loop.unroll_factor,
+            pipeline_depth=node.loop.pipeline_depth,
             inverted=node.loop.inverted,
             update_before_condition=node.loop.update_before_condition,
         )
