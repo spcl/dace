@@ -55,7 +55,8 @@ NOT_A_LOOP = (Reason.THREAD_TEAM, Reason.NOT_A_LOOP)
 
 CLOSING = (
     "// No reordering is left to prove: every loop is either parallel or a proven recurrence. Gains beyond this form "
-    "come from memory traffic (layout, fusion, blocking), not from more parallelism."
+    "come from memory traffic (layout, fusion, blocking) and from where the threads fork (once for a whole nest, or "
+    "once per iteration of an enclosing sequential loop)."
 )
 
 
@@ -289,6 +290,91 @@ def comment_every_loop(code: str, kinds: bool = False) -> str:
                 chain = False
             if not holds_label(stripped):
                 labelled, nest, covered = False, 0, 0
+        out.append(line)
+    return "\n".join(out) + ("\n" if code.endswith("\n") else "")
+
+
+FORK_PRAGMA = re.compile(r"#pragma omp\b[^\n]*\bparallel\b")
+TRIP_COUNT = re.compile(r"^\s*\w+\s*<\s*(.+?)\s*$")
+
+
+def trip_count(line: str) -> str:
+    """The iteration count of the ``for`` head ``line`` when it counts up to ``<`` a bound, else ``""``."""
+    start, condition = bounds_of(line)
+    bound = TRIP_COUNT.match(condition)
+    if bound is None:
+        return ""
+    begin = start.split("=", 1)[-1].strip()
+    return bound.group(1) if begin == "0" else f"{bound.group(1)} - {begin}"
+
+
+def forks_inside(lines: list[str], head: int) -> list[str]:
+    """``counter (N iterations)`` of each loop in the body of the loop at ``lines[head]`` that forks a thread team (an
+    ``omp parallel`` pragma above it), outermost only: one inside a forking loop shares its team."""
+    own = indent_of(lines[head])
+    found: list[str] = []
+    inside = -1
+    for n in range(head + 1, len(lines)):
+        line = lines[n]
+        if line.strip() and not line.strip().startswith(("//", "#")) and indent_of(line) <= own:
+            break
+        if inside >= 0 and line.strip() and not line.strip().startswith(("//", "#")) and indent_of(line) <= inside:
+            inside = -1
+        if inside >= 0 or not ANY_LOOP_HEAD.match(line):
+            continue
+        pragmas = " ".join(lines[pragma_start(lines, n) : n])
+        if FORK_PRAGMA.search(pragmas):
+            trips = trip_count(line)
+            found.append(f"{loop_counter(line)} ({trips} iterations)" if trips else loop_counter(line))
+            inside = indent_of(line)
+    return found
+
+
+def note_forks(code: str) -> str:
+    """``code`` with, under the class line of each ``sequential`` or ``unknown`` loop that holds loops forking a thread
+    team, the fact that those forks happen once per iteration of it, with their iteration counts: the cost of the order
+    a reader sees only by walking the nest."""
+    lines = code.splitlines()
+    out: list[str] = []
+    for index, line in enumerate(lines):
+        out.append(line)
+        classed = CLASS_LINE.match(line)
+        if classed is None or LoopClass(classed.group(1)) is LoopClass.PARALLEL:
+            continue
+        head = next((n for n in range(index + 1, len(lines)) if not holds_label(lines[n].strip())), None)
+        if head is None or not ANY_LOOP_HEAD.match(lines[head]):
+            continue
+        forks = forks_inside(lines, head)
+        if forks:
+            out.append(
+                f"{line[: indent_of(line)]}// its parallel loops {', '.join(forks)} fork a thread team once per "
+                "iteration of this loop"
+            )
+    return "\n".join(out) + ("\n" if code.endswith("\n") else "")
+
+
+BLAS_COMMENT = re.compile(r"^\s*// (?:BLAS|LAPACK)\b")
+VENDOR_CALL = re.compile(r"\b(?:cblas|LAPACKE)_\w+\s*\(")
+SINGLE_THREAD = (
+    "// 1 thread: a pthreads OpenBLAS is pinned to one thread (openblas_set_num_threads(1) in "
+    "cpf_defer_openblas_threads), so the call does not use the OpenMP team"
+)
+
+
+def note_blas_threads(code: str) -> str:
+    """``code`` with, above each BLAS or LAPACK call a library node's comment introduces, that a pthreads OpenBLAS runs
+    it on 1 thread; only in a unit that pins OpenBLAS."""
+    if "cpf_defer_openblas_threads" not in code:
+        return code
+    lines = code.splitlines()
+    out: list[str] = []
+    waiting = False
+    for line in lines:
+        if BLAS_COMMENT.match(line):
+            waiting = True
+        elif waiting and VENDOR_CALL.search(line):
+            out.append(f"{line[: indent_of(line)]}{SINGLE_THREAD}")
+            waiting = False
         out.append(line)
     return "\n".join(out) + ("\n" if code.endswith("\n") else "")
 

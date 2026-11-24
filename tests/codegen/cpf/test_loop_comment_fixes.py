@@ -131,6 +131,44 @@ def test_a_blas_zero_fill_is_a_library_loop_not_a_sequential_one():
     assert "implementation loop of BLAS" not in code, code
 
 
+def test_a_sequential_loop_says_its_parallel_loops_fork_once_per_iteration():
+    """The time loop is in order, and the map inside it forks a team on every one of its iterations."""
+
+    @dace.program
+    def time_loop(a: dace.float64[N], b: dace.float64[N]):
+        for t in range(1, T):
+            for i in dace.map[0:N]:
+                b[i] = a[i] * 2.0
+            for i in dace.map[0:N]:
+                a[i] = b[i]
+
+    code = rendered(time_loop, "cpf_comment_forks")
+    assert (
+        "// its parallel loops i (N iterations), i2 (N iterations) fork a thread team once per iteration of this loop"
+        in code
+    ), code
+
+
+def test_a_blas_call_says_it_runs_on_one_thread():
+    """cholesky: OpenBLAS is pinned to one thread beside the OpenMP team, so the gemv does not use the team."""
+
+    @dace.program
+    def lower(A: dace.float64[N, N]):
+        for i in range(N):
+            A[i, 0:i] = A[i, 0:i] - A[0:i, 0:i] @ A[i, 0:i]
+
+    code = rendered(lower, "cpf_comment_blas_threads")
+    lines = [line.strip() for line in code.splitlines()]
+    call = next(n for n, line in enumerate(lines) if line.startswith("cblas_dgemv("))
+    assert lines[call - 1].startswith("// 1 thread: "), lines[call - 3 : call + 1]
+
+
+def test_the_closing_line_does_not_steer_away_from_fork_placement():
+    code = any_per_row_code()
+    closing = next(line for line in code.splitlines() if line.startswith("// No reordering is left to prove"))
+    assert "not from more parallelism" not in closing and "where the threads fork" in closing, closing
+
+
 if __name__ == "__main__":
     test_a_sequential_loop_over_an_indirect_access_offers_no_wavefront()
     test_an_unproven_loop_over_a_few_iterations_is_unknown_not_sequential()
@@ -139,3 +177,6 @@ if __name__ == "__main__":
     test_only_the_loop_that_shares_the_accumulator_is_a_reduction()
     test_the_header_lists_every_reduction_of_a_loop()
     test_a_blas_zero_fill_is_a_library_loop_not_a_sequential_one()
+    test_a_sequential_loop_says_its_parallel_loops_fork_once_per_iteration()
+    test_a_blas_call_says_it_runs_on_one_thread()
+    test_the_closing_line_does_not_steer_away_from_fork_placement()

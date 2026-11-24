@@ -2449,9 +2449,14 @@ def render_unit(
         code, names = compacted.code, tuple(sorted(compacted.names.items()))
     proofs = cpf_lowering.hint_detail() is cpf_lowering.HintDetail.PROOFS
     if proofs:
+        commented = cpf_summary.comment_every_loop(code)
         code = cpf_summary.with_summary(
-            cpf_summary.drop_missing_fusion_names(
-                cpf_summary.drop_inner_reductions(cpf_summary.drop_inner_privates(cpf_summary.comment_every_loop(code)))
+            cpf_summary.note_blas_threads(
+                cpf_summary.note_forks(
+                    cpf_summary.drop_missing_fusion_names(
+                        cpf_summary.drop_inner_reductions(cpf_summary.drop_inner_privates(commented))
+                    )
+                )
             ),
             (CONTRACT_LINES[-1], RENDERED_BY),
         )
