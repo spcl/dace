@@ -3278,6 +3278,10 @@ class LoopLift:
             rset, wset = state.read_and_write_sets()
             read_set |= rset
             write_set |= wset
+            # And arrays a memlet subset reads (``B[i + off[0]]``): no access node names them, so the nest lost them --
+            # QE vexx_bp_k_gpu after symbol propagation: ``rhoc_d[ir, jbnd - Max(jstart_0, ... + all_start[wegrp])]``
+            # left ``all_start`` a free symbol of the nest that nothing maps.
+            read_set |= {s for e in state.edges() for s in e.data.subset_containers() if s in sdfg.arrays}
             # Add to write set also scalars between tasklets
             for src_node in state.nodes():
                 if not isinstance(src_node, nodes.Tasklet):
