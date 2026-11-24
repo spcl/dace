@@ -212,7 +212,14 @@ def library_comment(lines: list[str], index: int, construct: str) -> str:
     """The comment of a loop a library call's lowering writes without a pragma: it is no program loop and no tuning
     target, and its order is the lowering's own, so it carries no class word. A loop whose body stores zero is the
     zero fill."""
-    body = " ".join(lines[index : index + 2])
+    head = lines[index]
+    depth, end = 0, 0
+    for end, char in enumerate(head):
+        depth += {"(": 1, ")": -1}.get(char, 0)
+        if char == ")" and depth == 0:
+            break
+    # The body, not the head's own ``q = 0``: what follows the head's closing parenthesis, and the next line
+    body = f"{head[end + 1 :]} {lines[index + 1] if index + 1 < len(lines) else ''}"
     role = " zero fill" if ZERO_FILL.search(body) else ""
     return f"{LoopClass.LIBRARY.value} ({construct}{role}): not a tuning target"
 
@@ -325,7 +332,7 @@ def forks_inside(lines: list[str], head: int) -> list[str]:
         pragmas = " ".join(lines[pragma_start(lines, n) : n])
         if FORK_PRAGMA.search(pragmas):
             trips = trip_count(line)
-            found.append(f"{loop_counter(line)} ({trips} iterations)" if trips else loop_counter(line))
+            found.append(f"{loop_counter(line)} ({unwrapped(trips)} iterations)" if trips else loop_counter(line))
             inside = indent_of(line)
     return found
 

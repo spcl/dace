@@ -6,6 +6,7 @@ Each test renders a few-line program and checks the comment string of the loop t
 import numpy as np
 
 import dace
+from dace.codegen import cpf_summary
 from dace.sdfg import tasklet_utils
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import DecideCpuParallelAxes
@@ -324,6 +325,18 @@ def test_the_header_lists_program_loops_not_helper_calls_or_lowering_counters():
     assert all("(" not in line and "__" not in line for line in parallel), header
 
 
+def test_a_library_loop_counting_from_zero_is_not_a_zero_fill():
+    """The scan helper's carry loop starts at ``q = 0`` and stores nothing but its result."""
+    code = """\
+static inline void cpf_carry(double *o, long size) {
+    for (long q = 0; q < size; ++q) {
+        o[q] = o[q] + 1.0;
+    }
+}
+"""
+    assert "// library loop (helper cpf_carry): not a tuning target" in cpf_summary.comment_every_loop(code)
+
+
 if __name__ == "__main__":
     test_a_sequential_loop_over_an_indirect_access_offers_no_wavefront()
     test_an_unproven_loop_over_a_few_iterations_is_unknown_not_sequential()
@@ -332,6 +345,7 @@ if __name__ == "__main__":
     test_only_the_loop_that_shares_the_accumulator_is_a_reduction()
     test_the_header_lists_every_reduction_of_a_loop()
     test_a_blas_zero_fill_is_a_library_loop_not_a_sequential_one()
+    test_a_library_loop_counting_from_zero_is_not_a_zero_fill()
     test_a_sequential_loop_says_its_parallel_loops_fork_once_per_iteration()
     test_a_blas_call_says_it_runs_on_one_thread()
     test_the_closing_line_does_not_steer_away_from_fork_placement()
