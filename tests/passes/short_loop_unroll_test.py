@@ -147,7 +147,7 @@ def test_short_loop_unroll_at_most_doubles_the_program() -> None:
     assert ShortLoopUnroll(10, 6).apply_pass(sdfg, {}) == 1
     assert _num_loops(sdfg) == 1
     rng = np.random.default_rng(2)
-    A, B, C = (rng.random(3) for _ in range(3))
+    A, B, C = (rng.random(3) for count in range(3))
     want = [A * 3.0 + 3.0, B * 2.0 - 2.0, C + 3.0]
     sdfg(A=A, B=B, C=C)
     assert all(np.allclose(got, ref) for got, ref in zip((A, B, C), want))

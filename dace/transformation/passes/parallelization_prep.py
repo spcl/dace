@@ -438,7 +438,7 @@ class ShortLoopUnroll(ppl.Pass):
         # unrolling at most doubles the program; a loop whose clones would overdraw the allowance stays rolled.
         allowance = max(
             self.unroll_tasklet_budget,
-            sum(1 for node, _ in sdfg.all_nodes_recursive() if isinstance(node, nodes.Tasklet)),
+            sum(1 for node, parent in sdfg.all_nodes_recursive() if isinstance(node, nodes.Tasklet)),
         )
         while True:
             # One LEVEL at a time: every eligible loop at the deepest eligible depth unrolls, then each
