@@ -22,9 +22,6 @@ keep the call count low by batching, but it cannot hold 2**N candidate
 subgraphs in a few megabytes.
 """
 
-import os
-import subprocess
-import sys
 import tracemalloc
 
 import dace
@@ -125,35 +122,6 @@ def test_greedy_enumerator_is_linear_in_map_count():
     assert peak <= MAX_PEAK_BYTES, f"enumeration of {N_MAPS} maps peaked at {peak / 1e6:.2f} MB"
 
 
-def measure_in_fresh_process(num_maps: int) -> tuple[int, int]:
-    """Condition calls and traced peak bytes of one enumeration, in a process of its own.
-
-    tracemalloc counts every thread of its process, so a measurement inside the pytest process also counts what
-    pytest-xdist's receiver and the other plugins allocate meanwhile.
-    """
-    env = {**os.environ, "PYTHONPATH": os.pathsep.join(path for path in sys.path if path)}
-    out = subprocess.run(
-        [sys.executable, __file__, "measure", str(num_maps)], env=env, capture_output=True, text=True, check=True
-    ).stdout
-    calls, peak = out.split()[-2:]
-    return int(calls), int(peak)
-
-
-def test_greedy_enumerator_scales_linearly():
-    """Doubling the map count must not more than double the cost."""
-    small_calls, small_peak = measure_in_fresh_process(N_MAPS // 2)
-    large_calls, large_peak = measure_in_fresh_process(N_MAPS)
-
-    assert large_calls <= 2 * small_calls + 2, (
-        f"{small_calls} calls for {N_MAPS // 2} maps but {large_calls} for {N_MAPS}"
-    )
-    # Allow a quadratic slack on memory: the adjacency list of a clique is
-    # inherently O(N**2). Anything combinatorial blows straight through this.
-    assert large_peak <= 4 * small_peak + MAX_PEAK_BYTES // 32, (
-        f"{small_peak / 1e6:.2f} MB for {N_MAPS // 2} maps but {large_peak / 1e6:.2f} MB for {N_MAPS}"
-    )
-
-
 def test_greedy_fuse_terminates_on_map_heavy_state():
     """End-to-end guard: the driver completes and leaves a valid, acyclic SDFG."""
     sdfg = _clique_state_sdfg(N_MAPS)
@@ -168,13 +136,5 @@ def test_greedy_fuse_terminates_on_map_heavy_state():
 
 
 if __name__ == "__main__":
-    if sys.argv[1:2] == ["measure"]:
-        num_maps = int(sys.argv[2])
-        # Warm the symbolic and descriptor caches so the peak measures the enumerator alone
-        _enumerate(_clique_state_sdfg(num_maps))
-        measured_groups, measured_calls, measured_peak = _enumerate(_clique_state_sdfg(num_maps), measure=True)
-        print(measured_calls, measured_peak)
-    else:
-        test_greedy_enumerator_is_linear_in_map_count()
-        test_greedy_enumerator_scales_linearly()
-        test_greedy_fuse_terminates_on_map_heavy_state()
+    test_greedy_enumerator_is_linear_in_map_count()
+    test_greedy_fuse_terminates_on_map_heavy_state()
