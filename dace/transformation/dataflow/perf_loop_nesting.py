@@ -647,6 +647,14 @@ def _wrap_tasklet_in_trivial_map(state: SDFGState, t: nodes.Tasklet):
     me, mx = state.add_map(f"{t.label}_wrap", {"_p": "0:1"})
 
     for idx, e in enumerate(in_edges):
+        if e.data.is_empty():
+            # An ordering edge crosses a scope without connectors: an IN_/OUT_ pair of empty memlets breaks once a
+            # pass reroutes the edge on one side (QE vexx: InlineSDFG's order tasklets left IN_out_1 unpaired).
+            state.remove_edge(e)
+            state.add_nedge(e.src, me, mm.Memlet())
+            if not state.edges_between(me, t):
+                state.add_nedge(me, t, mm.Memlet())
+            continue
         key = e.dst_conn or f"in_{idx}"
         in_c = f"IN_{key}"
         out_c = f"OUT_{key}"
@@ -657,6 +665,12 @@ def _wrap_tasklet_in_trivial_map(state: SDFGState, t: nodes.Tasklet):
         state.add_edge(me, out_c, t, e.dst_conn, _copy.deepcopy(e.data))
 
     for idx, e in enumerate(out_edges):
+        if e.data.is_empty():
+            state.remove_edge(e)
+            if not state.edges_between(t, mx):
+                state.add_nedge(t, mx, mm.Memlet())
+            state.add_nedge(mx, e.dst, mm.Memlet())
+            continue
         key = e.src_conn or f"out_{idx}"
         in_c = f"IN_{key}"
         out_c = f"OUT_{key}"
@@ -666,9 +680,9 @@ def _wrap_tasklet_in_trivial_map(state: SDFGState, t: nodes.Tasklet):
         state.add_edge(t, e.src_conn, mx, in_c, _copy.deepcopy(e.data))
         state.add_edge(mx, out_c, e.dst, e.dst_conn, _copy.deepcopy(e.data))
 
-    if not in_edges:
+    if not state.edges_between(me, t):
         state.add_nedge(me, t, mm.Memlet())
-    if not out_edges:
+    if not state.edges_between(t, mx):
         state.add_nedge(t, mx, mm.Memlet())
 
 
