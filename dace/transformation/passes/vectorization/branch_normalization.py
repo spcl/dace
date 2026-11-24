@@ -11,11 +11,15 @@ No ``ConditionalBlock`` remains afterwards.
 
 import ast
 import copy
+import math
 from collections.abc import Callable
 from typing import Any
 
+import numpy
+
 import dace
 from dace import properties, subsets, symbolic
+from dace.frontend.operations import detect_reduction_type
 from dace.memlet import Memlet
 from dace.optionals import required
 from dace.ordered import OrderedSet
@@ -33,6 +37,7 @@ from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg 
     arm_accesses_are_in_range_unguarded,
     condition_guards_iteration_symbol,
 )
+from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
 
 
 def rewrite_blocks_to_fixpoint(sdfg: dace.SDFG, rewrite: Callable[[ConditionalBlock], bool]) -> int:
@@ -935,6 +940,17 @@ class BranchNormalization(ppl.Pass):
         # Redirect ONE write edge through ``arr = ITE(cond, expr, arr)``, or ``arr = IT(cond, expr)`` when ``masked``,
         # which neither reads nor writes the element where the guard fails. A copy's memlet may name either end.
         write_subset = in_edge.data.get_dst_subset(in_edge, state)
+        # An accumulation stays one: where the guard fails it folds in the operator's identity, and it keeps its WCR,
+        # so a guarded ``arr (+)= x`` becomes ``arr (+)= ITE(c, x, 0)``, never the store ``if (c) arr = x``.
+        wcr = in_edge.data.wcr
+        identity = None
+        if wcr is not None:
+            identity = dace.dtypes.reduction_identity(sdfg.arrays[arr_name].dtype, detect_reduction_type(wcr))
+            if identity is None or not math.isfinite(float(identity)):
+                raise VectorizeUnsupported(f"guarded {wcr} into {arr_name} has no finite identity to gate with")
+            # A Python literal for the tasklet: a numpy scalar would print as ``np.float64(0.0)``
+            identity = numpy.asarray(identity).item()
+            masked = False
 
         # 1-element scratch ``__bn_<arr>_new`` holds this element's value.
         tmp_name, _ = sdfg.add_array(
@@ -961,7 +977,7 @@ class BranchNormalization(ppl.Pass):
                 ):
                     old_an = re_.src
                     break
-        if old_an is None and not masked:
+        if old_an is None and not masked and wcr is None:
             old_an = state.add_access(arr_name)
 
         # Redirect the existing in-edge to write to the temp instead; a copy keeps the element it reads.
@@ -970,7 +986,7 @@ class BranchNormalization(ppl.Pass):
             redirected.other_subset = copy.deepcopy(in_edge.data.get_src_subset(in_edge, state))
         state.remove_edge(in_edge)
         state.add_edge(in_edge.src, in_edge.src_conn, tmp_an, None, redirected)
-        inputs = ("_new",) if masked else ("_new", "_old")
+        inputs = ("_new",) if masked or wcr is not None else ("_new", "_old")
         if cond_array_name is not None:
             # Reuse the producing AN (see ``_resolve_cond_to_array``): a
             # fresh read node disconnects the lift and lets codegen emit
@@ -979,14 +995,17 @@ class BranchNormalization(ppl.Pass):
             cond, inputs = "_c", ("_c", *inputs)
         else:
             cond = cond_text
-        code = f"_o = IT({cond}, _new)" if masked else f"_o = ITE({cond}, _new, _old)"
+        if wcr is not None:
+            code = f"_o = ITE({cond}, _new, {identity!r})"
+        else:
+            code = f"_o = IT({cond}, _new)" if masked else f"_o = ITE({cond}, _new, _old)"
         ite_t = state.add_tasklet(name=f"bn_ite_{arr_name}", inputs=OrderedSet(inputs), outputs={"_o"}, code=code)
         if cond_array_name is not None:
             cond_subset = "0" if sdfg.arrays[cond_array_name].total_size == 1 else write_subset
             state.add_edge(cond_access, None, ite_t, "_c", dace.Memlet(expr=f"{cond_array_name}[{cond_subset}]"))
         state.add_edge(tmp_an, None, ite_t, "_new", dace.Memlet(expr=f"{tmp_name}[0]"))
-        if not masked:
+        if not masked and wcr is None:
             state.add_edge(old_an, None, ite_t, "_old", dace.Memlet(expr=f"{arr_name}[{write_subset}]"))
-        written = dace.Memlet(expr=f"{arr_name}[{write_subset}]")
+        written = dace.Memlet(expr=f"{arr_name}[{write_subset}]", wcr=wcr)
         written.dynamic = masked
         state.add_edge(ite_t, "_o", write_an, None, written)
