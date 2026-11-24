@@ -81,13 +81,6 @@ MAP_DIMENSIONS = "the {count} nested loops over {params} are all parallel"
 PROVEN_PREFIX = LoopClass.SEQUENTIAL.prefix + "proven dependence"
 SEQUENTIAL_PROVEN = PROVEN_PREFIX + " {reason}"
 
-#: A carried dependence on a loop whose body is a Do-All nest (a time loop over a stencil): proven too, but a skew
-#: of the loop with the nest inside it would parallelize it -- canonicalization does not skew a time loop.
-SEQUENTIAL_PROVEN_OVER_DOALL = (
-    PROVEN_PREFIX + " {reason}; alt: a wavefront that skews this loop with the parallel loops inside it, not applied "
-    "because those loops are parallel already at each iteration of this one"
-)
-
 #: A loop the dependence test declined to answer, or never examined.
 UNKNOWN = LoopClass.UNKNOWN.prefix + "{reason}"
 
@@ -1032,8 +1025,7 @@ def loop_hint(loop: LoopRegion, session: Any = None) -> str:
         return required
     access = proof_of_carry(loop, reason)
     if access is not None:
-        text = SEQUENTIAL_PROVEN_OVER_DOALL if over_doall_nest(loop) else SEQUENTIAL_PROVEN
-        return text.format(reason=proven_reason(access))
+        return SEQUENTIAL_PROVEN.format(reason=proven_reason(access))
     return unproven_hint(loop, unproven_reason(reason))
 
 
@@ -1154,17 +1146,6 @@ def loop_private(loop: LoopRegion, states: list[SDFGState]) -> list[str]:
             if writes and not all(s is not None and loop.loop_variable in free_names(s) for s in subsets):
                 found.add(node.data)
     return sorted(found)
-
-
-def over_doall_nest(loop: LoopRegion) -> bool:
-    """Whether ``loop``'s body is a Do-All nest: maps, no reduction and no loop of its own (a time loop over a stencil)."""
-    blocks = list(loop.all_control_flow_blocks())
-    states = [block for block in blocks if isinstance(block, SDFGState)]
-    return (
-        not any(isinstance(block, LoopRegion) for block in blocks)
-        and any(isinstance(node, nodes.MapEntry) for state in states for node in state.nodes())
-        and not any(edge.data.wcr is not None for state in states for edge in state.edges())
-    )
 
 
 def proof_of_carry(loop: LoopRegion, reason: LoopRefusal) -> str | None:

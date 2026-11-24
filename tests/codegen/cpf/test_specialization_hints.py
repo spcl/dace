@@ -648,9 +648,9 @@ def test_an_inner_loop_carried_dependence_is_proven_in_one_outer_iteration():
     assert "(example the solver found: i=" in inner[0], inner
 
 
-def test_a_time_loop_over_a_stencil_is_proven_and_names_the_skew_it_is_not_given():
+def test_a_time_loop_over_a_stencil_is_proven_and_names_no_skew_the_wavefront_pass_did_not_prove():
     """heat_3d: ``TSTEPS`` only bounds the time loop, so a witness may choose it like an array size. The loop carries
-    a dependence, but a skew with the parallel nest inside would parallelize it, so the label says so."""
+    a dependence; the wavefront pass models no skew of a time loop, so the label offers none."""
     T = dace.symbol("T")
 
     @dace.program
@@ -665,12 +665,8 @@ def test_a_time_loop_over_a_stencil_is_proven_and_names_the_skew_it_is_not_given
     hints = [loop.specialization_hint.splitlines() for loop in loops_of(sdfg)]
     assert len(hints) == 1, hints
     assert hints[0][0].startswith(f"{PROVEN_PREFIX} on ") and "T=" in hints[0][0], hints
-    # The alternative says what was not done and why, and does not contradict itself (review #17)
     assert CONFLICT_MEANING["RAW"] in hints[0][0], hints
-    assert hints[0][0].endswith(
-        "alt: a wavefront that skews this loop with the parallel loops inside it, not applied because those loops "
-        "are parallel already at each iteration of this one"
-    ), hints
+    assert "alt:" not in hints[0][0], hints
 
 
 def test_a_read_ahead_dependence_is_named_war_not_raw():
