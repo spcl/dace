@@ -75,7 +75,7 @@ class StorageType(ExtensibleAttributeEnum):
 
 
 class OMPScheduleType(Enum):
-    """Available OpenMP shedule types for Maps with CPU-Multicore schedule."""
+    """OpenMP schedule types of CPU-Multicore maps; dynamic GPU thread-block maps read Guided."""
 
     Default = auto()  #: OpenMP library default
     Static = auto()  #: Static schedule

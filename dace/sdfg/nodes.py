@@ -1370,7 +1370,7 @@ class Map:
         default=dtypes.OMPScheduleType.Default,
         category="Scheduling",
         desc="OpenMP schedule {static, dynamic, guided}",
-        serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES,
+        serialize_if=lambda m: m.schedule in (*dtypes.CPU_SCHEDULES, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic),
     )
     omp_chunk_size = SymbolicProperty(
         default=0,
@@ -1380,7 +1380,7 @@ class Map:
         "run time, so a chunk derived from the map's own trip count and "
         "omp_get_max_threads() adapts to the problem and the team instead of "
         "baking one machine's constant into the graph",
-        serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES,
+        serialize_if=lambda m: m.schedule in (*dtypes.CPU_SCHEDULES, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic),
     )
     omp_team_work = SymbolicProperty(
         default=0,

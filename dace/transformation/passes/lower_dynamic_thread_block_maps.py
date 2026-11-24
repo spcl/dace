@@ -195,7 +195,7 @@ class LowerDynamicThreadBlockMaps(ppl.Pass):
         listed = fine_grained and common.get_gpu_backend() != "hip"
         queue = (
             f"dace::DynamicMap<{'true' if fine_grained else 'false'}, {block_size}, {common.gpu_warp_size()}, "
-            f"{index_type.ctype}>"
+            f"{index_type.ctype}"
         )
 
         # One thread per iteration of the last parameter, in blocks of ``block_size``: the thread-block map covers the
@@ -295,10 +295,24 @@ class QueueProgram:
         return work
 
 
+def queue_type(head: str, dynamic_map: nodes.Map) -> str:
+    """The ``dace::DynamicMap`` of one dynamic map: ``head`` with the map's chunk (``omp_chunk_size``, in round widths;
+    0 takes a whole range per round) and, for ``omp_schedule`` guided, batches that halve.
+
+    :raises NotImplementedError: The chunk is not an integer constant."""
+    chunk = dynamic_map.omp_chunk_size
+    if not symbolic.issymbolic(chunk) and int(chunk) == chunk and int(chunk) >= 0:
+        chunk = int(chunk)
+    else:
+        raise NotImplementedError(f"The chunk of the dynamic map {dynamic_map.label} is not a constant: {chunk}")
+    guided = "true" if dynamic_map.omp_schedule == dtypes.OMPScheduleType.Guided else "false"
+    return f"{head}, {chunk}, {guided}>"
+
+
 class KernelLowering:
     """Lowers the dynamic maps below the thread-block map of one kernel."""
 
-    __slots__ = ("guard", "guard_names", "param", "queue", "shared", "listed", "index_type", "lowered")
+    __slots__ = ("guard", "guard_names", "param", "queue_head", "queue", "shared", "listed", "index_type", "lowered")
 
     def __init__(self, guard: str, param: str, queue: str, listed: bool, index_type: dtypes.typeclass) -> None:
         #: The condition selecting the threads of in-bounds iterations, over ``param`` and symbols of the kernel
@@ -306,10 +320,12 @@ class KernelLowering:
         self.guard_names = sorted(str(s) for s in symbolic.pystr_to_symbolic(guard).free_symbols)
         #: The kernel parameter that identifies the iteration of a thread
         self.param = param
-        #: The ``dace::DynamicMap`` instantiation
-        self.queue = queue
-        #: The queue's state as a tasklet of the queue sees it
-        self.shared = f"*reinterpret_cast<{queue}::shared_type *>(__state)"
+        #: The ``dace::DynamicMap`` template arguments every map of the kernel shares, without the closing ``>``
+        self.queue_head = queue
+        #: The ``dace::DynamicMap`` instantiation of the map being lowered, with its chunk and guided flag
+        self.queue = f"{queue}>"
+        #: The queue's state as a tasklet of the queue sees it; its type is the same for every chunk and guided flag
+        self.shared = f"*reinterpret_cast<{queue}>::shared_type *>(__state)"
         #: Whether the warps list their remaining items in the shared state (fine-grained on CUDA)
         self.listed = listed
         self.index_type = index_type
@@ -408,6 +424,7 @@ class KernelLowering:
         exit_ = state.exit_node(entry)
         if len(entry.map.params) != 1:
             raise NotImplementedError(f"The dynamic map {entry.map.label} is not one-dimensional")
+        self.queue = queue_type(self.queue_head, entry.map)
         begin, end, step = entry.map.range[0]
         defined = state.symbols_defined_at(entry)
         dynamic_inputs = sdutil.dynamic_map_inputs(state, entry)

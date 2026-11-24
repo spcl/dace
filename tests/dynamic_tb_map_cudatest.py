@@ -41,17 +41,31 @@ def spmv(
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("fine_grained", [True, False])
-def test_dynamic_map(fine_grained: bool):
+@pytest.mark.parametrize(
+    "omp_schedule,chunk",
+    [
+        (dace.OMPScheduleType.Default, 0),
+        (dace.OMPScheduleType.Dynamic, 1),
+        (dace.OMPScheduleType.Dynamic, 3),
+        (dace.OMPScheduleType.Guided, 0),
+        (dace.OMPScheduleType.Guided, 2),
+    ],
+)
+def test_dynamic_map(fine_grained: bool, omp_schedule: dace.OMPScheduleType, chunk: int):
+    """The rows of a CSR product come out right whatever share of a range a block or warp round takes."""
     height = 1024
     width = 1024
 
     # Prepare spmv SDFG for GPU
     sdfg = spmv.to_sdfg()
+    sdfg.name = f"{sdfg.name}_{omp_schedule.name}_{chunk}"
     sdfg.apply_gpu_transformations()
 
     for node in sdfg.all_nodes_recursive():
         if isinstance(node[0], dace.sdfg.nodes.MapEntry) and node[0].schedule == dace.dtypes.ScheduleType.Sequential:
             node[0].schedule = dace.dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
+            node[0].map.omp_schedule = omp_schedule
+            node[0].map.omp_chunk_size = chunk
 
     # Fill input data
     # each row has up (including) 256 elements
