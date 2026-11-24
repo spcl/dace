@@ -240,6 +240,18 @@ def test_a_versioned_loop_counts_as_proven_and_lists_its_guarded_arm():
     assert summary[-2:] == ["// cpf: proven: all", "// cpf: guarded: i"], summary
 
 
+def test_a_unit_whose_only_loop_is_a_helper_is_proven():
+    """argmax_with_index: the one loop is the argmax helper's, so nothing is open and the bench's v2 note needs the
+    proven line."""
+    code = (
+        "// head\nvoid f(const double* a, int64_t n) {\n"
+        "    // parallel -- implementation loop of argmax: the team's threads split these iterations (omp for)\n"
+        "    for (int64_t i = 0; i < n; ++i) {\n    }\n}\n"
+    )
+    header = cpf_summary.with_summary(code, ("// head",)).splitlines()[1:3]
+    assert header[0].startswith(CLOSING) and header[1] == "// cpf: proven: all", header
+
+
 def test_a_unit_without_a_versioned_loop_has_no_guarded_line():
     summary = cpf_summary.summary_lines(cpf_summary.loops_of(NESTS))
     assert not any(line.startswith("// cpf: guarded") for line in summary), summary
@@ -477,6 +489,7 @@ if __name__ == "__main__":
     test_only_unknown_loops_are_open()
     test_a_loop_over_a_few_fixed_iterations_gets_a_real_class()
     test_a_versioned_loop_counts_as_proven_and_lists_its_guarded_arm()
+    test_a_unit_whose_only_loop_is_a_helper_is_proven()
     test_a_unit_without_a_versioned_loop_has_no_guarded_line()
     test_a_fusion_note_names_only_intermediates_the_code_holds()
     test_a_respelled_accumulator_between_comment_and_loop_keeps_the_comment_on_the_loop()

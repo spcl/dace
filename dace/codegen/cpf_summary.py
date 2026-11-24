@@ -297,12 +297,14 @@ def reason_head(reason: str) -> str:
 
 def summary_lines(loops: list[Loop]) -> list[str]:
     """The header: per class, the loops by name; the ``unknown`` loops with what failed and what would settle them;
-    the closing line and ``cpf: proven: all`` only when every loop is proven parallel or a proven recurrence."""
+    the closing line and ``cpf: proven: all`` only when every loop is proven parallel or a proven recurrence. A unit
+    without a program loop (its loops are a lowering's, such as a find-first or argmax helper) has nothing open: just
+    the closing line and ``cpf: proven: all``."""
     parallel = [loop for loop in loops if loop.kind == "parallel"]
     reductions = [REDUCTION.match(loop.reason) for loop in parallel]
     scans = [loop.name for loop in parallel if loop.reason.startswith("scan")]
     private = [m.group(1) for loop in loops for m in [PRIVATE.search(loop.reason)] if m]
-    lines = ["// Summary of the loop comments below."]
+    lines = ["// Summary of the loop comments below."] if loops else []
     if parallel:
         names = ", ".join(dict.fromkeys(loop.name for loop in parallel))
         lines.append(f"//   parallel: {names}")
@@ -414,10 +416,9 @@ def drop_missing_fusion_names(code: str) -> str:
 
 def with_summary(code: str, anchors: tuple[str, ...]) -> str:
     """``code`` with the summary of its loops inserted after the first line of ``anchors`` it holds; unchanged when
-    ``code`` has no loop or none of those lines."""
-    loops = loops_of(code)
+    ``code`` has none of those lines."""
     after = next((line for line in anchors if line in code), None)
-    if not loops or after is None:
+    if after is None:
         return code
     head, tail = code.split(after, 1)
-    return head + after + "\n" + "\n".join(summary_lines(loops)) + tail
+    return head + after + "\n" + "\n".join(summary_lines(loops_of(code))) + tail
