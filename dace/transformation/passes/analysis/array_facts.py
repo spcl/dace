@@ -624,10 +624,24 @@ def extreme(value: Any, ranges: list[tuple[str, Any, Any]], upper: bool) -> Any 
     return value
 
 
-def stored_value(state: SDFGState, edge: Any) -> Any | None:
+#: The conditional expressions a tasklet's right-hand side spells a select with: ``(condition, then, else)``.
+SELECTS = (symbolic.IfExpr, symbolic.ITE)
+
+
+def integer_polynomial(value: Any, clamps: bool) -> bool:
+    """Whether ``value`` is a polynomial with integer constants, or (``clamps``) a ``Min``, ``Max`` or select of such."""
+    if clamps and isinstance(value, (sympy.Min, sympy.Max)):
+        return all(integer_polynomial(a, clamps) for a in value.args)
+    if clamps and isinstance(value, SELECTS):
+        return all(integer_polynomial(a, clamps) for a in value.args[1:])
+    return value.is_polynomial() and all(number.is_Integer for number in value.atoms(sympy.Number))
+
+
+def stored_value(state: SDFGState, edge: Any, clamps: bool = False) -> Any | None:
     """What ``edge`` stores, when it is the same integer polynomial every time: a constant fill, or the expression a
     tasklet without inputs (or a nested SDFG's one store, see :func:`nested_store`) assigns. A stored float would be
-    truncated, a ``Mod`` or ``floor`` has no slope."""
+    truncated, a ``Mod`` or ``floor`` has no slope. With ``clamps``, a ``Min``, ``Max`` or select of polynomials
+    also counts."""
     node, inner = producer(state, edge)
     if node is None or edge.data.wcr is not None or inner.data.wcr is not None:
         return None
@@ -640,9 +654,22 @@ def stored_value(state: SDFGState, edge: Any) -> Any | None:
     else:
         text = assignment_value(node) if isinstance(node, nodes.Tasklet) and not node.in_connectors else None
         value = None if text is None else symbolic.pystr_to_symbolic(text)
-    if not isinstance(value, sympy.Expr) or not value.is_polynomial():
+    return value if isinstance(value, sympy.Expr) and integer_polynomial(value, clamps) else None
+
+
+def clamped_range(value: Any, ranges: list[tuple[str, Any, Any]]) -> tuple[Any, Any] | None:
+    """The smallest and largest value of ``value``, a polynomial or a ``Min``, ``Max`` or select of them, while each of
+    ``ranges`` ranges over its bounds (:func:`extreme`); None unless every polynomial in it is affine."""
+    if not isinstance(value, (sympy.Min, sympy.Max, *SELECTS)):
+        lo, hi = extreme(value, ranges, False), extreme(value, ranges, True)
+        return None if lo is None or hi is None else (lo, hi)
+    select = isinstance(value, SELECTS)
+    parts = [clamped_range(a, ranges) for a in (value.args[1:] if select else value.args)]
+    if None in parts:
         return None
-    return value if all(number.is_Integer for number in value.atoms(sympy.Number)) else None
+    # A select takes either branch; Min and Max are monotone in each argument
+    low, high = (sympy.Min, sympy.Max) if select else (type(value), type(value))
+    return low(*(p[0] for p in parts)), high(*(p[1] for p in parts))
 
 
 def scope_ranges(sdfg: SDFG, state: SDFGState, node: nodes.Node) -> list[tuple[str, Any, Any]] | None:
@@ -672,13 +699,12 @@ def scope_ranges(sdfg: SDFG, state: SDFGState, node: nodes.Node) -> list[tuple[s
 def store_bounds(sdfg: SDFG, state: SDFGState, edge: Any, invariant: set[str]) -> tuple[Any, Any] | None:
     """``(lo, hi)`` of every value ``edge`` stores (:func:`stored_value`), affine in the enclosing map parameters and
     loop iterators (:func:`scope_ranges`), at their extremes; None unless both read only ``invariant`` names."""
-    value = stored_value(state, edge)
+    value = stored_value(state, edge, clamps=True)
     ranges = None if value is None else scope_ranges(sdfg, state, producer(state, edge)[0])
-    if ranges is None:
+    bounds = None if ranges is None else clamped_range(value, ranges)
+    if bounds is None or any(b.atoms(symbolic.Subscript) for b in bounds):
         return None
-    lo, hi = extreme(value, ranges, False), extreme(value, ranges, True)
-    if lo is None or hi is None or lo.atoms(symbolic.Subscript) or hi.atoms(symbolic.Subscript):
-        return None
+    lo, hi = bounds
     return (lo, hi) if {str(s) for b in (lo, hi) for s in b.free_symbols} <= invariant else None
 
 
@@ -926,20 +952,12 @@ def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[A
     return facts
 
 
-def selects(term: Any, found: dict[str, list[Any]]) -> None:
-    """Collect every ``Select(array, index)`` in ``term`` by array name."""
-    if required(z3).is_select(term):
-        found.setdefault(str(term.arg(0)), []).append(term.arg(1))
-    for child in term.children():
-        selects(child, found)
-
-
 def fact_axioms(facts: list[ArrayFact], arrays: dict[str, Any], terms: list[Any], sym_cache: dict[str, Any]) -> list:
     """The instances of each fact over the array reads appearing in ``terms``."""
     z = required(z3)
     reads: dict[str, list[Any]] = {}
     for term in terms:
-        selects(term, reads)
+        smt_dependence.selects(term, reads)
     axioms = []
     for fact in facts:
         if fact.array not in reads:

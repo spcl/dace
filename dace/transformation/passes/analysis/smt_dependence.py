@@ -7,7 +7,8 @@ When z3 is unavailable, every query returns ``None`` and callers fall back to
 their existing safe refusal.
 """
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, NamedTuple
 
 import sympy as sp
 
@@ -761,6 +762,45 @@ def encode_side(suffix: str, index: tuple[sp.Basic, ...], iters: tuple[IterRange
     return bounds, terms
 
 
+class NeedsComputed(NamedTuple):
+    """A conflict exists, but only for values of ``values`` (``iphase[1]=7``): elements of arrays the program computes
+    before the loop, which the solver could not show are reachable."""
+
+    values: str
+
+
+def selects(term: Any, found: dict[str, list[Any]]) -> None:
+    """Collect every ``Select(array, index)`` in ``term`` by array name."""
+    if required(z3).is_select(term):
+        found.setdefault(str(term.arg(0)), []).append(term.arg(1))
+    for child in term.children():
+        selects(child, found)
+
+
+def table_term(values: tuple[int, ...]) -> Any:
+    """The array that holds ``values`` at ``0..len - 1``."""
+    table = required(z3).K(required(z3).IntSort(), required(z3).IntVal(0))
+    for index, value in enumerate(values):
+        table = required(z3).Store(table, index, int(value))
+    return table
+
+
+def element_range(fact: Any, sym_cache: dict[str, Any]) -> tuple[Any, Any] | None:
+    """``(low, high)`` z3 bounds (``None`` for an open end) every element of the array of ``fact`` lies in, else None
+    for a fact that is not a range."""
+    if fact.kind is symbolic.DataFactKind.NONNEGATIVE:
+        return required(z3).IntVal(0), None
+    if fact.kind is not symbolic.DataFactKind.BOUNDED:
+        return None
+    bounds = [
+        None if b is None else _sympy_to_z3(symbolic.pystr_to_symbolic(str(b)), sym_cache, {})
+        for b in (fact.lo, fact.hi)
+    ]
+    if any(b is not None and not required(z3).is_int(b) for b in bounds):
+        return None
+    return bounds[0], bounds[1]
+
+
 def find_conflict_witness(
     first: tuple[sp.Basic, ...],
     second: tuple[sp.Basic, ...],
@@ -773,7 +813,10 @@ def find_conflict_witness(
     fixed: set[str] = frozenset(),
     kills: tuple[tuple[tuple[sp.Basic, ...], tuple[IterRange, ...], bool, Guard], ...] = (),
     guards: tuple[Guard, Guard] = ((), ()),
-) -> dict[str, int] | None:
+    tables: Mapping[str, tuple[int, ...]] | None = None,
+    computed: frozenset[str] = frozenset(),
+    facts: Any = None,
+) -> dict[str, int] | NeedsComputed | None:
     """Values under which ``first``, at an earlier iteration of the carrying loop, and ``second``, at a later one,
     touch the same element; ``None`` when there are none, the solver gives up, or something cannot be encoded.
 
@@ -791,6 +834,10 @@ def find_conflict_witness(
     reads, except the very instance of the read's own statement when ``same`` (it writes after it reads).
     ``guards`` are the branch conditions ``first`` and ``second`` run under, each at its own iteration; an array they
     read is input the witness may choose, and its chosen elements are part of the witness (``flag[1]``).
+    ``tables`` are guard arrays whose every element is known (constants of the SDFG): the guard reads them as they
+    are. ``computed`` are guard arrays the program fills before the loop: the witness may not choose their elements,
+    so the conflict must hold for every content the ``facts`` (:class:`SolverFacts`: the ranges of those arrays and of
+    the parameters) allow, else a :class:`NeedsComputed` names the values the one found rests on.
     """
     exprs = [sp.sympify(e) for e in first + second]
     exprs += [sp.sympify(b) for _, start, end, _ in outer + first_iters + second_iters for b in (start, end)]
@@ -844,6 +891,38 @@ def find_conflict_witness(
             continue
         in_bounds += [term >= 0 for term in (sides[0][1][dim], sides[1][1][dim])]
         in_bounds += [term < bound for term in (sides[0][1][dim], sides[1][1][dim])]
+    tables = tables or {}
+    reads: dict[str, list[Any]] = {}
+    for term in (t for guard in held for t in guard):
+        selects(term, reads)
+    universal = []
+    for name in sorted(tables.keys() & reads.keys()):
+        table = table_term(tables[name])
+        for x in reads[name]:
+            conflict += [
+                0 <= x,
+                x < len(tables[name]),
+                required(z3).Select(arr_cache[name], x) == required(z3).Select(table, x),
+            ]
+    for fact in facts.array_facts(set(computed) & reads.keys()) if facts is not None else ():
+        bounds = element_range(fact, sym_cache)
+        if bounds is None or fact.array not in reads:
+            continue
+        everywhere = required(z3).Int("__element")
+        for x in (*reads[fact.array], everywhere):
+            element = required(z3).Select(arr_cache[fact.array], x)
+            held_range = [
+                c
+                for c in (bounds[0] is None or bounds[0] <= element, bounds[1] is None or element <= bounds[1])
+                if c is not True
+            ]
+            if x is everywhere:
+                universal.append(required(z3).ForAll([everywhere], required(z3).And(*held_range)))
+            else:
+                conflict += held_range
+    quantified = sorted(set(computed) & reads.keys())
+    # What the caller knows of the parameters' values: a loop runs only under them
+    domain += facts.symbol_axioms(set(params)) if facts is not None and params else []
     solver = bounded_solver(rlimit)
     domain += in_bounds
     solver.add(*domain, *conflict, *(required(z3).Int(name) >= 1 for name in sorted(sizes)))
@@ -853,7 +932,18 @@ def find_conflict_witness(
     except Exception:
         return None
     model = solver.model()
-    if params and not conflicts_for_every(domain, conflict, model, params, sizes, rlimit):
+    if (params or quantified) and not conflicts_for_every(
+        domain, conflict, model, params, sizes, rlimit, quantified, universal
+    ):
+        if quantified and conflicts_for_every(domain, conflict, model, params, sizes, rlimit):
+            return NeedsComputed(
+                ", ".join(
+                    f"{k}={v}"
+                    for k, v in guard_elements(
+                        model, guards, first_iters, second_iters, sym_cache, arr_cache, computed
+                    ).items()
+                )
+            )
         return None
     shown = [name for name, *_ in outer] + [carrier + "__a", carrier + "__b"]
     shown += sorted({s.name for e in exprs for s in e.free_symbols} & sizes)
@@ -861,15 +951,37 @@ def find_conflict_witness(
     bounds = [sp.sympify(b) for it in outer + first_iters + second_iters for b in it[1:3]]
     shown += sorted({s.name for e in bounds for s in e.free_symbols} & set(params))
     witness = {name: model.eval(required(z3).Int(name), model_completion=True).as_long() for name in shown}
+    witness.update(
+        guard_elements(model, guards, first_iters, second_iters, sym_cache, arr_cache, set(), computed | tables.keys())
+    )
+    return witness
+
+
+def guard_elements(
+    model: Any,
+    guards: tuple[Guard, Guard],
+    first_iters: tuple[IterRange, ...],
+    second_iters: tuple[IterRange, ...],
+    sym_cache: dict[str, Any],
+    arr_cache: dict[str, Any],
+    only: Any,
+    skip: Any = (),
+) -> dict[str, int]:
+    """The elements of the arrays the guards read, as the ``model`` chose them (``flag[1]``): those named in ``only``
+    when it is not empty, else all but those named in ``skip``."""
+    found = {}
     for suffix, guard, iters in (("__a", guards[0], first_iters), ("__b", guards[1], second_iters)):
         for term in guard:
             for element in sorted(local_names(term[0], iters, suffix).atoms(symbolic.Subscript), key=str):
+                array = str(element.args[0])
+                if (array not in only) if only else (array in skip):
+                    continue
                 index = [
                     model.eval(_sympy_to_z3(i, sym_cache, arr_cache), model_completion=True) for i in element.args[1:]
                 ]
                 value = model.eval(_sympy_to_z3(element, sym_cache, arr_cache), model_completion=True)
-                witness[f"{element.args[0]}[{', '.join(str(i) for i in index)}]"] = value.as_long()
-    return witness
+                found[f"{array}[{', '.join(str(i) for i in index)}]"] = value.as_long()
+    return found
 
 
 def local_names(expr: sp.Basic, iters: tuple[IterRange, ...], suffix: str) -> sp.Basic:
@@ -902,22 +1014,29 @@ def encode_guard(
 
 
 def conflicts_for_every(
-    domain: list[Any], conflict: list[Any], model: Any, params: list[str], sizes: set[str], rlimit: int
+    domain: list[Any],
+    conflict: list[Any],
+    model: Any,
+    params: list[str],
+    sizes: set[str],
+    rlimit: int,
+    arrays: list[str] = (),
+    premises: list[Any] = (),
 ) -> bool:
-    """Whether, with the sizes of ``model``, every value of ``params`` under which the loops run in bounds
-    (``domain`` holds for some pair of iterations, the carrying loop running at least twice) also has iterations that
-    ``conflict``."""
+    """Whether, with the sizes of ``model``, every value of ``params`` and every content of ``arrays`` that satisfies
+    ``premises``, under which the loops run in bounds (``domain`` holds for some pair of iterations, the carrying loop
+    running at least twice), also has iterations that ``conflict``."""
     z3m = required(z3)
     variables = {str(v): v for v in z3m.z3util.get_vars(z3m.And(*domain, *conflict))}
     names = set(variables)
     # Iterators and the input arrays a branch condition reads: chosen per value of the parameters
-    iters = [variables[name] for name in sorted(names - set(params) - sizes)]
+    iters = [variables[name] for name in sorted(names - set(params) - set(arrays) - sizes)]
     solver = bounded_solver(rlimit)
     for name in sorted(names & sizes):
         solver.add(z3m.Int(name) == model.eval(z3m.Int(name), model_completion=True))
     runs = z3m.Exists(iters, z3m.And(*domain)) if iters else z3m.And(*domain)
     meets = z3m.Exists(iters, z3m.And(*domain, *conflict)) if iters else z3m.And(*domain, *conflict)
-    solver.add(runs, z3m.Not(meets))
+    solver.add(runs, *premises, z3m.Not(meets))
     try:
         return solver.check() == z3m.unsat
     except Exception:
