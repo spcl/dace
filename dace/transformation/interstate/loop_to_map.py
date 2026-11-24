@@ -239,6 +239,78 @@ def meet_within_one_iteration(
     )
 
 
+def exact_accesses(state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet]) -> list[subsets.Subset] | None:
+    """The subsets of ``e``'s array that a nested SDFG behind the map scope ``e`` leaves or enters really accesses, each
+    propagated over the map, when ``e`` is a MapExit's output (writes) or a MapEntry's input (reads) whose connector
+    carries nested SDFGs only; ``None`` (the caller keeps ``e``'s bounding box) when an access is a write-conflict, sits
+    in a deeper SDFG, or names a symbol the nested SDFG assigns.
+
+    Propagation unions the accesses behind one connector into a box: ``a[jm, c, jl]`` and ``a[c, jm, jl]`` in a map over
+    ``jl`` leave it as ``a[Min(c, jm):Max(c, jm) + 1, ..., 0:L]``, which meets every other ``jm`` though no element is
+    shared."""
+    from dace.sdfg.propagation import propagate_memlet  # avoid an import cycle
+
+    write = isinstance(e.src, nodes.MapExit)
+    scope = e.src if write else e.dst
+    if not isinstance(scope, nodes.MapExit if write else nodes.MapEntry) or e.data.is_empty() or e.data.wcr is not None:
+        return None
+    entry = state.entry_node(scope) if write else scope
+    suffix = (e.src_conn if write else e.dst_conn or "")[len("OUT_" if write else "IN_") :]
+    inner = list(
+        state.in_edges_by_connector(scope, "IN_" + suffix)
+        if write
+        else state.out_edges_by_connector(scope, "OUT_" + suffix)
+    )
+    found: dict[str, subsets.Subset] = {}
+    for ie in inner:
+        ns, conn = (ie.src, ie.src_conn) if write else (ie.dst, ie.dst_conn)
+        if not isinstance(ns, nodes.NestedSDFG) or ie.data.is_empty() or ie.data.data != e.data.data:
+            return None
+        assigned = {name for edge in ns.sdfg.all_interstate_edges() for name in edge.data.assignments}
+        accessed: list[subsets.Subset] = []
+        for block in ns.sdfg.all_control_flow_blocks():
+            if isinstance(block, SDFGState):
+                for dn in block.data_nodes():
+                    if dn.data != conn:
+                        continue
+                    for ne in block.in_edges(dn) if write else block.out_edges(dn):
+                        if ne.data.is_empty():
+                            continue
+                        if ne.data.wcr is not None or isinstance(ne.src if write else ne.dst, nodes.NestedSDFG):
+                            return None
+                        accessed.append(
+                            ne.data.get_dst_subset(ne, block) if write else ne.data.get_src_subset(ne, block)
+                        )
+            elif not write and isinstance(block, (LoopRegion, ConditionalBlock)):
+                accessed += [m.subset for m in block.get_meta_read_memlets() if m.data == conn]
+        if not write:
+            accessed += [
+                m.subset
+                for edge in ns.sdfg.all_interstate_edges()
+                for m in edge.data.get_read_memlets(ns.sdfg.arrays)
+                if m.data == conn
+            ]
+        for subset in accessed:
+            if subset is None:
+                return None
+            outer = through_symbol_mapping(subset, ns)
+            if assigned & {str(x) for x in outer.free_symbols}:
+                return None
+            box = propagate_memlet(state, memlet.Memlet(data=e.data.data, subset=outer), entry, False).subset
+            found[str(box)] = box
+    return list(found.values()) or None
+
+
+def read_subsets(
+    state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet], closed_forms: dict[str, Any] | None
+) -> list[subsets.Subset | None]:
+    """The subsets to check for the read ``e``: what a nested SDFG behind it really reads, else ``e``'s own subset."""
+    exact = exact_accesses(state, e)
+    if exact is None:
+        return [in_closed_form(e.data.get_src_subset(e, state), closed_forms)]
+    return [in_closed_form(subset, closed_forms) for subset in exact]
+
+
 def nested_write_subsets(nsdfg_node, conn) -> list[subsets.Subset]:
     """The writes to ``conn``'s array in ``nsdfg_node``'s own states, through its symbol mapping."""
     return [
@@ -672,15 +744,17 @@ def write_refusal(
     facts: Any = None,
     closed_forms: dict[str, Any] | None = None,
     lift: Optional["LoopLift"] = None,
+    exact: subsets.Subset | None = None,
 ) -> "tuple[Refusal, str] | None":
     """Why (kind and message) :meth:`LoopToMap.can_be_applied` refuses the loop on the write ``e`` into ``dn``, or
-    ``None``; ``closed_forms`` as :attr:`LoopToMap.closed_forms`. A Z3 proof marks ``lift``'s probe."""
+    ``None``; ``closed_forms`` as :attr:`LoopToMap.closed_forms`. A Z3 proof marks ``lift``'s probe. ``exact`` is one
+    subset really written behind ``e`` (:func:`exact_accesses`), checked in place of ``e``'s bounding box."""
     if e.data.dynamic and e.data.wcr is None:
         # Dynamic write (no WCR) is safe across iterations if its dst subset
         # pins an axis to the iter var (same ``a*i+b`` as non-dynamic below):
         # each iteration writes a disjoint slab, so a lane firing or not can't
         # race another iteration's write.
-        dst_subset = in_closed_form(e.data.get_dst_subset(e, state), closed_forms)
+        dst_subset = in_closed_form(e.data.get_dst_subset(e, state) if exact is None else exact, closed_forms)
         ranges = None if ctx is None else ctx.invariants.check_range
         if not (dst_subset and _check_range(dst_subset, a, itersym, b, step, end - start, ranges)):
             return (
@@ -691,7 +765,7 @@ def write_refusal(
     # Unique write index per iteration: match ``a*i+b``, ``|a| >= 1``, i the
     # iteration variable (which must be used).
     if e.data.wcr is None:
-        dst_subset = in_closed_form(e.data.get_dst_subset(e, state), closed_forms)
+        dst_subset = in_closed_form(e.data.get_dst_subset(e, state) if exact is None else exact, closed_forms)
         ranges = None if ctx is None else ctx.invariants.check_range
         ok = bool(dst_subset) and _check_range(dst_subset, a, itersym, b, step, end - start, ranges)
         # NestedSDFG body propagates a whole-array external write hiding an
@@ -2638,51 +2712,66 @@ class LoopLift:
                             accumulated.wcr = "lambda a, b: a + b"
                             write_memlets[dn.data].append(accumulated)
                             continue
-                        reason = write_refusal(
-                            sdfg,
-                            state,
-                            dn,
-                            e,
-                            itersym,
-                            a,
-                            b,
-                            start,
-                            end,
-                            step,
-                            varying,
-                            self.waives(dn.data, permissive),
-                            ctx,
-                            self.solver_facts,
-                            closed_forms,
-                            self,
-                        )
-                        stored = in_closed_form(e.data.get_dst_subset(e, state), closed_forms)
-                        if (
-                            reason is None
-                            and not self.waives(dn.data, permissive)
-                            # A reduction (WCR) combines colliding writes in any order
-                            and e.data.wcr is None
-                            and moves_within_an_iteration(stored, itersym, varying)
-                            # One iteration's writes, over its inner iterators, must stay clear of another's
-                            and not _check_range(
-                                pinned_once_swept(sdfg, dn.data, stored, self.loop, varying, self.solver_facts.symbols),
-                                a,
+                        # Each access behind a nested SDFG's bounding box is checked alone: the box meets other iterations'
+                        for exact in exact_accesses(state, e) or [None]:
+                            reason = write_refusal(
+                                sdfg,
+                                state,
+                                dn,
+                                e,
                                 itersym,
+                                a,
                                 b,
+                                start,
+                                end,
                                 step,
-                                end - start,
+                                varying,
+                                self.waives(dn.data, permissive),
+                                ctx,
+                                self.solver_facts,
+                                closed_forms,
+                                self,
+                                exact,
                             )
-                        ):
-                            reason = (
-                                Refusal.NON_UNIQUE_WRITE,
-                                f"write to {dn.data} is offset by a symbol varying inside an iteration",
+                            stored = in_closed_form(
+                                e.data.get_dst_subset(e, state) if exact is None else exact, closed_forms
                             )
-                        if reason is not None:
-                            if facts is not None:
-                                facts.refusal_witness = ("write", dn.data)
-                            return refuse(*reason, dn.data, writes=[e.data.get_dst_subset(e, state)])
+                            if (
+                                reason is None
+                                and not self.waives(dn.data, permissive)
+                                # A reduction (WCR) combines colliding writes in any order
+                                and e.data.wcr is None
+                                and moves_within_an_iteration(stored, itersym, varying)
+                                # One iteration's writes, over its inner iterators, must stay clear of another's
+                                and not _check_range(
+                                    pinned_once_swept(
+                                        sdfg, dn.data, stored, self.loop, varying, self.solver_facts.symbols
+                                    ),
+                                    a,
+                                    itersym,
+                                    b,
+                                    step,
+                                    end - start,
+                                )
+                            ):
+                                reason = (
+                                    Refusal.NON_UNIQUE_WRITE,
+                                    f"write to {dn.data} is offset by a symbol varying inside an iteration",
+                                )
+                            if reason is not None:
+                                if facts is not None:
+                                    facts.refusal_witness = ("write", dn.data)
+                                return refuse(
+                                    *reason,
+                                    dn.data,
+                                    writes=[e.data.get_dst_subset(e, state) if exact is None else exact],
+                                )
 
-                        write_memlets[dn.data].append(destination_memlet(e, state, dn, closed_forms))
+                            write_memlets[dn.data].append(
+                                destination_memlet(e, state, dn, closed_forms)
+                                if exact is None
+                                else memlet.Memlet(data=dn.data, subset=in_closed_form(exact, closed_forms))
+                            )
 
         # Carried-read check: for every array also written, each in-loop READ subset must be
         # loop-invariant (no itersym) or match the writes' ``a*i+b``. A read at a DIFFERENT iter
@@ -2697,40 +2786,41 @@ class LoopLift:
                 for e in state.out_edges(dn):
                     if e.data is None or id(e) in rmw_reads:
                         continue
-                    src_subset = in_closed_form(e.data.get_src_subset(e, state), closed_forms)
-                    if src_subset is None:
-                        continue
-                    # Loop-invariant read (no itersym) -- safe, same input every iteration.
-                    free = set()
-                    for rb, re_, _ in src_subset.ndrange():
-                        for expr in (rb, re_):
-                            if isinstance(expr, (sp.Basic, symbolic.SymExpr)):
-                                free |= set(as_basic(expr).free_symbols)
-                    if itersym not in free:
-                        continue
-                    # itersym-dependent read: must match a*i+b like the writes, else this
-                    # iteration reads a value another iteration writes.
-                    ranges = None if ctx is None else ctx.invariants.check_range
-                    boxes = None if ctx is None else ctx.invariants.smt_disjoint_boxes
-                    if (
-                        not _check_range(src_subset, a, itersym, b, step, memo=ranges)
-                        and not self.waives(data, permissive)
-                        # A non-affine read no write of another iteration reaches (a bitonic stage's comparator pairs)
-                        and not all(
-                            _smt_proves_disjoint_boxes(
-                                src_subset, m.subset, itersym, start, end, step, varying, boxes, self.solver_facts
+                    # Each access behind a nested SDFG's bounding box is checked alone (see ``exact_accesses``)
+                    for src_subset in read_subsets(state, e, closed_forms):
+                        if src_subset is None:
+                            continue
+                        # Loop-invariant read (no itersym) -- safe, same input every iteration.
+                        free = set()
+                        for rb, re_, stride in src_subset.ndrange():
+                            for expr in (rb, re_):
+                                if isinstance(expr, (sp.Basic, symbolic.SymExpr)):
+                                    free |= set(as_basic(expr).free_symbols)
+                        if itersym not in free:
+                            continue
+                        # itersym-dependent read: must match a*i+b like the writes, else this
+                        # iteration reads a value another iteration writes.
+                        ranges = None if ctx is None else ctx.invariants.check_range
+                        boxes = None if ctx is None else ctx.invariants.smt_disjoint_boxes
+                        if (
+                            not _check_range(src_subset, a, itersym, b, step, memo=ranges)
+                            and not self.waives(data, permissive)
+                            # A non-affine read no write of another iteration reaches (a bitonic stage's comparator pairs)
+                            and not all(
+                                _smt_proves_disjoint_boxes(
+                                    src_subset, m.subset, itersym, start, end, step, varying, boxes, self.solver_facts
+                                )
+                                for m in write_memlets[data]
                             )
-                            for m in write_memlets[data]
-                        )
-                    ):
-                        return refuse(
-                            Refusal.CARRIED_DEPENDENCE,
-                            f"read of {data} at {src_subset} is iter-indexed but does not match the "
-                            f"write pattern a*i+b -- loop-carried forward/backward dependency",
-                            data,
-                            writes=[m.subset for m in write_memlets.get(data, ())],
-                            reads=[src_subset],
-                        )
+                        ):
+                            return refuse(
+                                Refusal.CARRIED_DEPENDENCE,
+                                f"read of {data} at {src_subset} is iter-indexed but does not match the "
+                                f"write pattern a*i+b -- loop-carried forward/backward dependency",
+                                data,
+                                writes=[m.subset for m in write_memlets.get(data, ())],
+                                reads=[src_subset],
+                            )
 
         # Two distinct-affine writes to the same container can hit the same element on different
         # iterations even when each is individually injective (``A[5*i]`` and ``A[3*i]`` collide
@@ -2804,30 +2894,31 @@ class LoopLift:
                             continue
 
                         # Container read AND written: match only if the locations can't race.
-                        src_subset = in_closed_form(e.data.get_src_subset(e, state), closed_forms)
-                        if data not in self.contract_reads and not self.test_read_memlet(
-                            sdfg,
-                            state,
-                            e,
-                            itersym,
-                            itervar,
-                            start,
-                            end,
-                            step,
-                            write_memlets,
-                            memlet_in_closed_form(e.data, closed_forms),
-                            src_subset,
-                            varying,
-                        ):
-                            if facts is not None:
-                                facts.refusal_witness = ("read", data)
-                            return refuse(
-                                Refusal.CARRIED_DEPENDENCE,
-                                f"read-after-write conflict on {data} within the loop body - src_subset={src_subset}",
-                                data,
-                                writes=[m.subset for m in write_memlets.get(data, ())],
-                                reads=[src_subset],
-                            )
+                        # Each access behind a nested SDFG's bounding box is checked alone (see ``exact_accesses``)
+                        for src_subset in read_subsets(state, e, closed_forms):
+                            if data not in self.contract_reads and not self.test_read_memlet(
+                                sdfg,
+                                state,
+                                e,
+                                itersym,
+                                itervar,
+                                start,
+                                end,
+                                step,
+                                write_memlets,
+                                memlet_in_closed_form(e.data, closed_forms),
+                                src_subset,
+                                varying,
+                            ):
+                                if facts is not None:
+                                    facts.refusal_witness = ("read", data)
+                                return refuse(
+                                    Refusal.CARRIED_DEPENDENCE,
+                                    f"read-after-write conflict on {data} within the loop body - src_subset={src_subset}",
+                                    data,
+                                    writes=[m.subset for m in write_memlets.get(data, ())],
+                                    reads=[src_subset],
+                                )
 
         # Consider reads in inter-state edges (could be in assignments or in condition)
         isread_set: set[memlet.Memlet] = set()
