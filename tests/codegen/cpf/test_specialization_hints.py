@@ -27,8 +27,10 @@ import pytest
 
 import dace
 from dace import cpf_lowering
-from dace.codegen.cpf import CONTRACT_LINES, render
+from dace.codegen.cpf import CONTRACT_KINDS, CONTRACT_LINES, render
+from dace.codegen.cpf_summary import LIBRARY_LINE
 from dace.codegen.targets.experimental_cpu import map_hint
+from dace.cpf_lowering import LoopClass
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.nodes.scan import PARALLEL_SCAN_HINT, SEQUENTIAL_SCAN_HINT, Scan, ScanOp
 from dace.properties import CodeBlock
@@ -89,7 +91,7 @@ def test_the_rendering_states_which_verdicts_are_settled_and_which_are_open():
     """Proven verdicts need no more reasoning, so the head of the unit says so once, before any loop."""
     lines = render(scaling_sdfg("cpf_contract")).code.splitlines()
     # A unit of parallel loops explains the parallel class only: no line for a class it does not use
-    assert lines[1:5] == [CONTRACT_LINES[0], *CONTRACT_LINES[1:3], CONTRACT_LINES[-1]], lines[:8]
+    assert lines[1:6] == [CONTRACT_LINES[0], *CONTRACT_KINDS[LoopClass.PARALLEL], CONTRACT_LINES[-1]], lines[:8]
 
 
 def test_a_map_hint_is_rendered_one_comment_line_per_line():
@@ -648,9 +650,9 @@ def test_an_inner_loop_carried_dependence_is_proven_in_one_outer_iteration():
     assert "(example the solver found: i=" in inner[0], inner
 
 
-def test_a_time_loop_over_a_stencil_is_proven_and_names_the_skew_it_is_not_given():
+def test_a_time_loop_over_a_stencil_is_proven_and_names_no_skew_the_wavefront_pass_did_not_prove():
     """heat_3d: ``TSTEPS`` only bounds the time loop, so a witness may choose it like an array size. The loop carries
-    a dependence, but a skew with the parallel nest inside would parallelize it, so the label says so."""
+    a dependence; the wavefront pass models no skew of a time loop, so the label offers none."""
     T = dace.symbol("T")
 
     @dace.program
@@ -665,12 +667,8 @@ def test_a_time_loop_over_a_stencil_is_proven_and_names_the_skew_it_is_not_given
     hints = [loop.specialization_hint.splitlines() for loop in loops_of(sdfg)]
     assert len(hints) == 1, hints
     assert hints[0][0].startswith(f"{PROVEN_PREFIX} on ") and "T=" in hints[0][0], hints
-    # The alternative says what was not done and why, and does not contradict itself (review #17)
     assert CONFLICT_MEANING["RAW"] in hints[0][0], hints
-    assert hints[0][0].endswith(
-        "alt: a wavefront that skews this loop with the parallel loops inside it, not applied because those loops "
-        "are parallel already at each iteration of this one"
-    ), hints
+    assert "alt:" not in hints[0][0], hints
 
 
 def test_a_read_ahead_dependence_is_named_war_not_raw():
@@ -849,10 +847,16 @@ def test_a_guarded_loop_names_its_guard_on_both_arms():
     ]
     loops = [loop.specialization_hint.splitlines()[0] for loop in loops_of(sdfg)]
     assert any(
-        re.match(r"parallel -- the runtime check found .*inc.*, so no iteration writes", line) for line in maps
+        re.match(
+            r"parallel -- guarded by if \(inc != 0\) \(one test per call\): when it holds, no iteration writes", line
+        )
+        for line in maps
     ), maps
     assert any(
-        re.match(r"sequential -- the runtime check found .*inc.*: .*, so this arm keeps the order", line)
+        re.match(
+            r"sequential -- the else arm of if \(inc != 0\), taken when inc == 0 \(the loop then makes a sum into a\[0\]\): .*, so this arm keeps the order",
+            line,
+        )
         for line in loops
     ), loops
     # The fallback names the failing guard itself, never a negation of a negation
@@ -1035,8 +1039,9 @@ def trapped_sdfg(name: str, inner_symbol: str, outer_value: str) -> dace.SDFG:
 
 def test_an_entry_trap_reaches_a_nested_function_in_its_own_names():
     """vexx_k: "independent only if nkb > 0" inside a function that has no ``nkb``. A trap enters a nested SDFG
-    through its symbol mapping, renamed, and is dropped where the inner name means something else."""
-    for inner_symbol, outer_value, expected in (("n", "nkb", "n > 0"), ("nkb", "K", None)):
+    through its symbol mapping, renamed, and is dropped where the inner name means something else. A function that
+    keeps the name repeats the entry's own precondition, which the header already lists."""
+    for inner_symbol, outer_value, expected in (("n", "nkb", "n > 0"), ("nkb", "K", None), ("nkb", "nkb", None)):
         sdfg = trapped_sdfg(f"cpf_kind_trap_{inner_symbol}", inner_symbol, outer_value)
         AnnotateLoopKinds().apply_pass(sdfg, {})
         (hint,) = [n.specialization_hint for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
@@ -1128,7 +1133,8 @@ def test_the_kinds_rendering_says_its_class_words_and_nothing_else():
     assert all(":" not in line for line in words if line.removeprefix("// ").startswith("parallel")), kinds
     assert all(": " in line for line in words if line.removeprefix("// ").startswith("sequential")), kinds
     # What is left is the unit's own section labels, which the proofs rendering carries word for word.
-    assert all(line in proofs for line in kinds if line not in words), kinds
+    # A library loop's comment names its construct from the provenance comment above it, which this rendering omits
+    assert all(line in proofs for line in kinds if line not in words and not LIBRARY_LINE.match(line)), kinds
     extras = ("--", "witness", "settled", "open:", "example", "alt:", "CPU:", "GPU:")
     assert not [line for line in kinds if any(term in line for term in extras)], kinds
     assert any("example" in line for line in proofs), proofs
@@ -1206,7 +1212,7 @@ def test_the_none_rendering_has_no_loop_comment_and_the_same_code():
     canonicalize(sdfg)
     none, kinds, proofs = (render(sdfg, hints=detail).code for detail in ("none", "kinds", "proofs"))
     known = set(dict(cpf_lowering.KIND_WORDS).values())
-    is_class = lambda line: line.removeprefix("// ").split(":", 1)[0] in known
+    is_class = lambda line: line.removeprefix("// ").split(":", 1)[0] in known or LIBRARY_LINE.match(line)
     assert not [line for line in comment_lines(none) if is_class(line)], none
     assert [line for line in comment_lines(kinds) if not is_class(line)] == comment_lines(none), none
     assert not [line for line in none.splitlines() if "//" in line and line.split("//")[0].strip()], none

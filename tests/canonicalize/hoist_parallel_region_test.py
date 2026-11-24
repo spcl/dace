@@ -376,6 +376,7 @@ def test_a_map_the_team_shares_out_drops_its_no_thread_pragma_note():
     ]
     assert shared.map.schedule == dtypes.ScheduleType.CPU_Multicore
     assert SEQUENTIAL_ON_CPU.split("{")[0] not in (shared.specialization_hint or ""), shared.specialization_hint
+    assert shared.specialization_hint.startswith("parallel -- "), shared.specialization_hint
 
 
 def test_sequential_map_around_a_parallel_map_is_refused():

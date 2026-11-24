@@ -195,13 +195,57 @@ class HintDetail(enum.Enum):
     NONE = "none"
 
 
-#: A hint's class prefix (``annotate_loop_kinds.CLASS_PREFIXES``) -> the one word :attr:`HintDetail.KINDS` writes.
+class LoopClass(enum.Enum):
+    """The class a loop comment opens with. Every pass that writes a comment and every reader of one (the kinds
+    rendering, the header, the contract legend) goes through this enum, so no pass matches another's text."""
+
+    PARALLEL = "parallel"
+    SEQUENTIAL = "sequential"
+    UNKNOWN = "unknown"
+    #: A loop a library call's lowering writes (a zero fill, a helper's pass): no program loop, so no verdict on the
+    #: program and no tuning target. Its comment is ``library loop (<what>): ...``, not ``<class> -- <reason>``.
+    LIBRARY = "library loop"
+
+    @property
+    def prefix(self) -> str:
+        """What a hint's first line starts with: ``parallel -- ``."""
+        return f"{self.value} -- "
+
+
+class Reason(enum.Enum):
+    """The opening words of a comment's reason, for the reasons the renderers tell apart from the proof texts: what
+    the kinds rendering names, what the header lists apart or leaves out. A reason of any other opening is a proof
+    text and has no member."""
+
+    INDEPENDENT = "independent"
+    REDUCTION = "reduction"
+    SCAN = "scan"
+    GUARDED = "guarded by if ("
+    CHECKED = "the runtime check found "
+    SMALL_EXTENT = "small extent"
+    THREAD_TEAM = "thread team"
+    NOT_A_LOOP = "not a loop"
+    DIMENSION = "dimension "
+    TILE = "tile loop"
+    INNER_TILE = "inner tile of loop "
+    IMPLEMENTATION = "implementation loop of "
+
+
+#: What a pass or the renderer appends to the class line of a proven-parallel loop that has no thread pragma (or, on a
+#: GPU, no kernel), followed by why: the loop stays ``parallel``, because it is; this says it is not run in parallel.
+NOT_PARALLELIZED = "; not parallelized: "
+
+
+def reason_of(reason: str) -> Reason | None:
+    """The :class:`Reason` ``reason`` opens with, or ``None`` for a proof text."""
+    return next((kind for kind in Reason if reason.startswith(kind.value)), None)
+
+
+#: A hint's class prefix -> the one word :attr:`HintDetail.KINDS` writes; a reduction or a scan is a kind of parallel loop.
 KIND_WORDS: tuple[tuple[str, str], ...] = (
-    ("parallel -- reduction", "parallel reduction"),
-    ("parallel -- scan", "parallel scan"),
-    ("parallel -- ", "parallel"),
-    ("sequential -- ", "sequential"),
-    ("unknown -- ", "unknown"),
+    (LoopClass.PARALLEL.prefix + Reason.REDUCTION.value, "parallel reduction"),
+    (LoopClass.PARALLEL.prefix + Reason.SCAN.value, "parallel scan"),
+    *((cls.prefix, cls.value) for cls in LoopClass if cls is not LoopClass.LIBRARY),
 )
 
 #: Lines an older hint carried under its class line, before the rendering's header (``cpf.CONTRACT_LINES``) took
@@ -269,7 +313,10 @@ def kind_line(hint: str) -> str | None:
     """The kinds rendering of ``hint``: its class word, and for a ``sequential`` or ``unknown`` loop the reason (its
     class line without the example iterations and the alternative); ``None`` if no line names a class."""
     word = kind_word(hint)
-    if word not in ("sequential", "unknown"):
+    first = str(hint).split("\n", 1)[0]
+    if word == LoopClass.PARALLEL.value and NOT_PARALLELIZED in first:
+        return f"{word}: {first.split(NOT_PARALLELIZED, 1)[1].strip()}"
+    if word not in (LoopClass.SEQUENTIAL.value, LoopClass.UNKNOWN.value):
         return word
     for line in str(hint).splitlines():
         if " -- " in line and kind_word(line) == word:

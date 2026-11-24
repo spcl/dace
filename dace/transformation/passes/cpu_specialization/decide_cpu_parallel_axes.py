@@ -46,7 +46,7 @@ from typing import Any
 
 import sympy
 
-from dace import SDFG, Memlet, data, dtypes, properties, subsets, symbolic
+from dace import SDFG, Memlet, cpf_lowering, data, dtypes, properties, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
 from dace.symbolic_facts import SMALL_CONSTANT_EXTENT, prove
@@ -67,11 +67,12 @@ CPU_PARALLEL_SCHEDULES = (dtypes.ScheduleType.Default, dtypes.ScheduleType.CPU_M
 SEQUENTIAL_UNDER_A_MAP = (dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential)
 
 
-#: The line a map made sequential here adds under its ``parallel`` class line, so the rendered loop -- which loses
-#: its pragma -- says why. Each rule fills in its own reason.
-SEQUENTIAL_ON_CPU = "no thread pragma on CPU (running it in parallel is legal): {reason}"
-NESTED_REASON = "it is inside a parallel loop"
-SMALL_REASON = "only {count} iterations"
+#: What a map made sequential here adds to its ``parallel`` class line, so the rendered loop -- which loses its
+#: pragma -- says why. Each rule fills in its own reason; the loop stays ``parallel``, because it is.
+SEQUENTIAL_ON_CPU = cpf_lowering.NOT_PARALLELIZED + "{reason}"
+#: The renderer appends the name of the enclosing loop, which the generator names last.
+NESTED_REASON = "inside parallel loop"
+SMALL_REASON = "{count} iterations, too short to pay for a fork"
 ONE_TRIP_REASON = "at most one iteration"
 FEW_TRIPS_REASON = "only {count} iterations; the parallel loops inside it use the threads"
 DATA_SEGMENT_REASON = "its range {begin}:{end} is read from data inside a sequential loop"
@@ -92,15 +93,15 @@ def pinned_inner_trips(entry: nodes.MapEntry, children: dict[Any, list[nodes.Nod
 def note_sequential(state: SDFGState, entry: nodes.MapEntry, reason: str) -> None:
     """Make ``entry``'s map ``Sequential`` and add the reason under its class line; a map without one (made after the
     labels, as a lifted reduction is) gets the line the labels would give it, a reduction where it accumulates."""
-    first = entry.specialization_hint or parallel_hint(state, entry, [])
+    first, newline, notes = (entry.specialization_hint or parallel_hint(state, entry, [])).partition("\n")
     entry.map.schedule = dtypes.ScheduleType.Sequential
-    entry.specialization_hint = f"{first}\n{SEQUENTIAL_ON_CPU.format(reason=reason)}"
+    entry.specialization_hint = f"{first}{SEQUENTIAL_ON_CPU.format(reason=reason)}{newline}{notes}"
 
 
 def without_sequential_note(hint: str | None) -> str | None:
-    """``hint`` without the :data:`SEQUENTIAL_ON_CPU` line, for a map a later pass shares out after all."""
-    prefix = SEQUENTIAL_ON_CPU.split("{")[0]
-    return "\n".join(line for line in (hint or "").splitlines() if not line.startswith(prefix)) or None
+    """``hint`` without the :data:`SEQUENTIAL_ON_CPU` reason, for a map a later pass shares out after all."""
+    first, newline, notes = (hint or "").partition("\n")
+    return f"{first.split(cpf_lowering.NOT_PARALLELIZED)[0]}{newline}{notes}" or None
 
 
 def data_derived(sdfg: SDFG, names: set[str], seen: set[tuple[int, str]] | None = None) -> bool:

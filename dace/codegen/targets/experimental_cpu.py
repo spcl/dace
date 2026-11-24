@@ -37,6 +37,7 @@ from dace.codegen.targets.cpu import (
     use_aligned_operator_new,
 )
 from dace.config import Config
+from dace.cpf_lowering import LoopClass, Reason
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.optionals import required
@@ -48,6 +49,7 @@ from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.state import SDFGState
 from dace.sdfg.utils import dynamic_map_inputs
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import MAP_DIMENSIONS, PARALLEL
+from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import NESTED_REASON
 from dace.utils import find_new_name
 
 # ``<array>_idx`` / symbolic ``<array>_size`` qualifier: host+device callable, inlined, constexpr.
@@ -84,13 +86,34 @@ def scalar_decl() -> str:
 
 #: A one-trip map in a thread team, which renders as thread 0's block.
 THREAD_ZERO = (
-    "sequential -- not a loop: the map's one iteration runs on thread 0 of the team, and the other threads wait at "
+    LoopClass.SEQUENTIAL.prefix
+    + Reason.NOT_A_LOOP.value
+    + ": the map's one iteration runs on thread 0 of the team, and the other threads wait at "
     "the barrier after it"
 )
 THREAD_ZERO_NOWAIT = (
-    "sequential -- not a loop: the map's one iteration runs on thread 0 of the team; the other threads do not wait "
+    LoopClass.SEQUENTIAL.prefix
+    + Reason.NOT_A_LOOP.value
+    + ": the map's one iteration runs on thread 0 of the team; the other threads do not wait "
     "for it (nowait)"
 )
+
+
+def enclosing_parallel_map(sdfg: SDFG, state: SDFGState, node: nodes.MapEntry) -> nodes.MapEntry | None:
+    """The nearest map around ``node`` that runs in parallel (a thread team's loop, a GPU kernel or thread-level map),
+    looking through the nested SDFGs that hold it; ``None`` if there is none."""
+    parallel = (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent, *dtypes.GPU_SCHEDULES)
+    scope: nodes.Node | None = node
+    while True:
+        scope = state.entry_node(scope)
+        while scope is None:
+            holder = sdfg.parent_nsdfg_node
+            if holder is None:
+                return None
+            state, sdfg = sdfg.parent, sdfg.parent_sdfg
+            scope = state.entry_node(holder)
+        if isinstance(scope, nodes.MapEntry) and scope.map.schedule in parallel:
+            return scope
 
 
 def map_hint(node: nodes.MapEntry) -> str:
@@ -441,10 +464,37 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         if self.thread_zero_block(sdfg, cfg.state(state_id), node):
             # Rendered as thread 0's block, not a loop: the comment says what runs, not what a loop would be.
             text = "\n".join([THREAD_ZERO_NOWAIT if node.map.omp_nowait else THREAD_ZERO, *text.split("\n")[1:]])
-        hint = cpf_lowering.hint_comment(text)
+        hint = cpf_lowering.hint_comment(self.with_not_parallelized(sdfg, cfg.state(state_id), node, text))
         if hint:
             callsite_stream.write(hint.rstrip("\n"), cfg, state_id, node)
         super()._generate_MapEntry(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+
+    def with_not_parallelized(self, sdfg: SDFG, state: SDFGState, node: nodes.MapEntry, text: str) -> str:
+        """``text`` with, on its class line, why a ``parallel`` map that renders as a plain loop (schedule
+        ``Sequential``: no thread pragma on CPU, no kernel on GPU) is not run in parallel. The loop stays ``parallel``
+        because it is; a pass that made it sequential gave its own reason, and only the enclosing loop's name is
+        added here."""
+        first, newline, notes = text.partition("\n")
+        if not first.startswith(LoopClass.PARALLEL.prefix) or node.map.schedule != dtypes.ScheduleType.Sequential:
+            return text
+        outer = enclosing_parallel_map(sdfg, state, node)
+        if cpf_lowering.NOT_PARALLELIZED in first:
+            if outer is not None and first.endswith(NESTED_REASON):
+                first = f"{first} {outer.map.params[0]}"
+            return f"{first}{newline}{notes}"
+        if outer is None:
+            if state.entry_node(node) is None and any(
+                isinstance(child, nodes.MapEntry) and child.map.schedule == dtypes.ScheduleType.CPU_Multicore
+                for child in state.scope_children()[node]
+            ):
+                reason = "generated as sequential (small dimension): the loop inside it shares out the threads"
+            else:
+                reason = "generated as sequential: no thread pragma or kernel was chosen for it"
+        elif outer.map.schedule in dtypes.GPU_SCHEDULES:
+            reason = f"inside GPU kernel loop {outer.map.params[0]}: each thread runs these iterations in order"
+        else:
+            reason = f"{NESTED_REASON} {outer.map.params[0]}"
+        return f"{first}{cpf_lowering.NOT_PARALLELIZED}{reason}{newline}{notes}"
 
     def thread_zero_block(self, sdfg: SDFG, state: SDFGState, node: nodes.MapEntry) -> bool:
         """Whether ``CPUCodeGen._generate_MapEntry`` renders ``node`` as ``if (omp_get_thread_num() == 0)``."""

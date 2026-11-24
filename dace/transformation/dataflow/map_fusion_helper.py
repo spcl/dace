@@ -9,6 +9,7 @@ import sympy
 
 import dace
 from dace import subsets, symbolic
+from dace.cpf_lowering import LoopClass
 from dace.sdfg import graph, propagation, validation
 from dace.sdfg import nodes as nodes
 from dace.sdfg import utils as sdutils
@@ -347,7 +348,9 @@ def keep_class_line(from_entry: nodes.MapEntry, to_entry: nodes.MapEntry) -> Non
     """Carry the class line a pass gave ``from_entry`` (``parallel -- last write wins: ...``) onto ``to_entry``, which
     absorbs its body and has none of its own: the fused map does what both did."""
     hint = from_entry.specialization_hint or ""
-    if hint.startswith("parallel -- ") and not (to_entry.specialization_hint or "").startswith("parallel -- "):
+    if hint.startswith(LoopClass.PARALLEL.prefix) and not (to_entry.specialization_hint or "").startswith(
+        LoopClass.PARALLEL.prefix
+    ):
         to_entry.specialization_hint = hint
 
 

@@ -8,7 +8,8 @@ from typing import Any, NamedTuple
 
 import sympy
 
-from dace import SDFG, data, dtypes, symbolic
+from dace import SDFG, data, dtypes, symbolic, symbolic_facts
+from dace.cpf_lowering import LoopClass, Reason
 from dace.frontend.operations import detect_reduction_type
 from dace.memlet import Memlet
 from dace.optionals import required
@@ -35,14 +36,18 @@ from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_
 # further dependence reasoning, ``unknown`` is the only open one.
 
 #: The first words of every loop hint: its class (see the three below).
-CLASS_PREFIXES = ("parallel -- ", "sequential -- ", "unknown -- ")
+CLASS_PREFIXES = tuple(cls.prefix for cls in LoopClass)
 
 #: A Map.
-PARALLEL = "parallel -- independent: no iteration writes an element another iteration reads or writes"
+PARALLEL = (
+    LoopClass.PARALLEL.prefix
+    + Reason.INDEPENDENT.value
+    + ": no iteration writes an element another iteration reads or writes"
+)
 
 #: The class line of a Map that accumulates into a container through a WCR edge: its iterations are not independent,
 #: they reduce, and the operator and the accumulator are the evidence.
-REDUCTION = "parallel -- reduction: {reductions}; the other accesses are independent"
+REDUCTION = LoopClass.PARALLEL.prefix + Reason.REDUCTION.value + ": {reductions}; the other accesses are independent"
 
 #: Appended to a parallel loop's class line: loop-local containers the rendering declares once, outside the loop,
 #: which every iteration writes before it reads them, so a parallel version needs a copy per iteration.
@@ -50,7 +55,8 @@ PRIVATE = "; private per iteration: {names}"
 
 #: A ``CPU_Persistent`` map: one ``#pragma omp parallel`` region, not a loop over independent iterations.
 TEAM = (
-    "parallel -- thread team: every thread runs the code inside, in order; only the omp for loops in it split "
+    LoopClass.PARALLEL.prefix
+    + "thread team: every thread runs the code inside, in order; only the omp for loops in it split "
     "their iterations"
 )
 
@@ -72,24 +78,20 @@ REDUCTION_SYMBOLS = {
 MAP_DIMENSIONS = "the {count} nested loops over {params} are all parallel"
 
 #: A loop whose carried dependence was proven.
-PROVEN_PREFIX = "sequential -- proven dependence"
+PROVEN_PREFIX = LoopClass.SEQUENTIAL.prefix + "proven dependence"
 SEQUENTIAL_PROVEN = PROVEN_PREFIX + " {reason}"
 
-#: A carried dependence on a loop whose body is a Do-All nest (a time loop over a stencil): proven too, but a skew
-#: of the loop with the nest inside it would parallelize it -- canonicalization does not skew a time loop.
-SEQUENTIAL_PROVEN_OVER_DOALL = (
-    PROVEN_PREFIX + " {reason}; alt: a wavefront that skews this loop with the parallel loops inside it, not applied "
-    "because those loops are parallel already at each iteration of this one"
-)
-
 #: A loop the dependence test declined to answer, or never examined.
-UNKNOWN = "unknown -- {reason}"
+UNKNOWN = LoopClass.UNKNOWN.prefix + "{reason}"
 
 #: An unproven loop over a literal trip count ``symbolic.is_small_extent`` calls small: too few iterations to share
-#: out, so a parallel version is not worth a runtime check; ``{reason}`` is what the dependence test left open.
+#: out, so a parallel version is not worth a runtime check. It stays ``unknown``: the dependence test did not settle
+#: it, whatever its length; ``{reason}`` is what the test left open.
 SMALL_EXTENT = (
-    "sequential -- small extent: {trips} iterations, too few to share out among threads, so no parallel version is "
-    "worth a runtime check; not proven: {reason}"
+    LoopClass.UNKNOWN.prefix
+    + Reason.SMALL_EXTENT.value
+    + " ({trips} iterations), not proven: {reason}; the loop is too short to share out among threads, so no "
+    "parallel version is worth a runtime check"
 )
 
 #: The ``UNKNOWN`` reason of a loop the dependence test never answered for; the specific cause follows a colon.
@@ -98,28 +100,36 @@ NEVER_EXAMINED = "not analyzed for dependences"
 NO_COUNTER = f"{NEVER_EXAMINED}: a while loop has no single counter to test"
 
 #: A while loop: its condition reads what the previous trip computed, so the trips run in order.
-WHILE_LOOP = "sequential -- while loop: each test of the condition reads what the previous iteration computed"
+WHILE_LOOP = (
+    LoopClass.SEQUENTIAL.prefix + "while loop: each test of the condition reads what the previous iteration computed"
+)
 #: A loop the dependence test finds independent that an earlier pass pinned sequential anyway (the
 #: fallback arm of a specialization). Rendered without a pragma, so it must not read as parallel.
 SEQUENTIAL_PINNED = (
-    "sequential -- kept in order by an earlier pass; the dependence test finds its iterations independent"
+    LoopClass.SEQUENTIAL.prefix
+    + "kept in order by an earlier pass; the dependence test finds its iterations independent"
 )
 
 #: The untiled skew: a sequential diagonal over a parallel front; ``alt`` names the other correct shape. ``{skew}`` is
 #: :func:`skew_label` on the diagonal and :func:`front_label` on the front, both in the loops' own names: the skew
 #: replaced the original counters, so the rendering has no name for them.
 WAVEFRONT_DIAGONAL = (
-    "sequential -- wavefront step: each step reads what the previous step wrote; {skew}; alt: the unskewed nest"
+    LoopClass.SEQUENTIAL.prefix
+    + "wavefront step: each step reads what the previous step wrote; {skew}; alt: the unskewed nest"
 )
-WAVEFRONT_FRONT = "parallel -- one wavefront step: its points do not depend on each other; {skew}"
+WAVEFRONT_FRONT = LoopClass.PARALLEL.prefix + "one wavefront step: its points do not depend on each other; {skew}"
 
 #: The tiled skew: a sequential tile diagonal over a parallel tile column over a sequential interior.
 WAVEFRONT_TILE_DIAGONAL = (
-    "sequential -- wavefront of tiles {tile}: each step reads what the previous step wrote; {skew}; "
+    LoopClass.SEQUENTIAL.prefix + "wavefront of tiles {tile}: each step reads what the previous step wrote; {skew}; "
     "alt: the element wavefront or the unskewed nest"
 )
-WAVEFRONT_TILE_COLUMN = "parallel -- the tiles {tile} of one wavefront step do not depend on each other; {skew}"
-WAVEFRONT_TILE_INTERIOR = "sequential -- inside one wavefront tile {tile}: the original order carries the dependence"
+WAVEFRONT_TILE_COLUMN = (
+    LoopClass.PARALLEL.prefix + "the tiles {tile} of one wavefront step do not depend on each other; {skew}"
+)
+WAVEFRONT_TILE_INTERIOR = (
+    LoopClass.SEQUENTIAL.prefix + "inside one wavefront tile {tile}: the original order carries the dependence"
+)
 
 
 def skew_label(a: int, b: int, step: str, unit: str = "") -> str:
@@ -222,8 +232,8 @@ def carried_symbol_text(refusal: LoopRefusal) -> str:
 
 #: A loop whose order the program itself requires, by the body's structure rather than an access pair: a call with
 #: an ordered side effect, or an exit after which no iteration may run.
-ORDERED_CALL = "sequential -- ordered call: {name} must run in iteration order"
-EARLY_EXIT = "sequential -- early exit ({statement}): iterations after the exit must not run"
+ORDERED_CALL = LoopClass.SEQUENTIAL.prefix + "ordered call: {name} must run in iteration order"
+EARLY_EXIT = LoopClass.SEQUENTIAL.prefix + "early exit ({statement}): iterations after the exit must not run"
 
 #: ``LoopToMap``'s ordered-side-effect message starts with the node's name.
 ORDERED_EFFECT = re.compile(r"^(.+?) has an ordered side effect")
@@ -264,13 +274,28 @@ UNSHOWN_TAIL = (
 )
 
 
-def unproven_reason(refusal: LoopRefusal) -> str:
+def unproven_reason(refusal: LoopRefusal, loop: LoopRegion | None = None) -> str:
     """The reason of an ``unknown`` loop, one template for every refusal: what the test could not show, naming the
-    array or symbol; ``parallel if`` the condition that would settle it; ``otherwise`` what goes wrong."""
+    array or symbol; ``parallel if`` the condition that would settle it; ``otherwise`` what goes wrong.
+    ``loop`` tells a write that stays on the same elements in every iteration from one the test could not show
+    distinct: only a subset made of values fixed before the loop (a constant, a size) is the same in every iteration,
+    an index loaded from an array is not."""
     kind = refusal.kind
     written = quoted(refusal.container, refusal.writes[0] if refusal.writes else None)
     read = quoted(refusal.container, refusal.reads[0] if refusal.reads else None)
     later_wins = "otherwise a later iteration's write must win, so keep the order"
+    container = refusal.container or "an array"
+    if (
+        kind is Refusal.NON_UNIQUE_WRITE
+        and loop is not None
+        and refusal.writes
+        and all(free_names(w) <= fixed_symbols(loop) for w in refusal.writes)
+    ):
+        return (
+            f"every iteration writes the same elements of {container} (the write to {written} does not depend "
+            f"on the loop counter {loop.loop_variable}); parallel only if {container} is private per iteration or "
+            f"the update is a reduction; {later_wins}"
+        )
     if kind is Refusal.NON_UNIQUE_WRITE:
         return (
             f"the solver could not show that each iteration writes a different element of {written}; parallel if no "
@@ -288,9 +313,9 @@ def unproven_reason(refusal: LoopRefusal) -> str:
         )
     if kind is Refusal.CARRIED_DEPENDENCE:
         return (
-            f"the dependence test could not show that a read of {read} never sees another iteration's write; "
-            "parallel if no iteration reads an element another iteration writes; otherwise that read must see the "
-            "earlier iteration's value, so keep the order"
+            f"the loop reads {read} and also writes {container}: the dependence test could not show that an "
+            "earlier iteration never writes an element this read touches; parallel if none does; otherwise that read "
+            "must see the earlier iteration's value, so keep the order"
         )
     if kind is Refusal.CARRIED_SYMBOL:
         return (
@@ -811,7 +836,21 @@ def is_scratch(sdfg: SDFG, name: str) -> bool:
     return all(is_scratch(state.sdfg, n.data) for n in outer)
 
 
-def witnessed_carrying_access(loop: LoopRegion) -> str | None:
+def declared_conditions(loop: LoopRegion, traps: list[tuple[str, set[str]]]) -> smt_dependence.Guard:
+    """What ``loop``'s program declares of its symbols, as conditions a witness must satisfy: the entry ``abort()``
+    guards that reach ``loop``'s function (``traps``), and the relations assumed of its symbols."""
+    relations = {
+        symbolic_facts.RelationKind.LT: sympy.Lt,
+        symbolic_facts.RelationKind.LE: sympy.Le,
+        symbolic_facts.RelationKind.EQ: sympy.Eq,
+        symbolic_facts.RelationKind.NE: sympy.Ne,
+    }
+    declared = [(symbolic.pystr_to_symbolic(held), True) for held, names in traps]
+    declared += [(relations[r.kind](r.lhs, r.rhs), True) for r in loop.sdfg.facts().known() if r.kind in relations]
+    return tuple(declared)
+
+
+def witnessed_carrying_access(loop: LoopRegion, traps: list[tuple[str, set[str]]] | None = None) -> str | None:
     """``RAW on A[k, j] (witness: N=3, k=0 and k=1)`` when the solver finds two iterations of ``loop`` that touch one
     element of an argument array, choosing values for array sizes only; a parameter the caller fixes may appear
     when the conflict holds for every in-bounds value of it."""
@@ -839,6 +878,7 @@ def witnessed_carrying_access(loop: LoopRegion) -> str | None:
     sites = [site for site in sites if site.access.array not in scratch & unseen]
     sizes = size_symbols(loop.sdfg)
     fixed = fixed_symbols(loop) - sizes
+    declared = declared_conditions(loop, traps or [])
     pairs = [(w, o) for w in sites if w.access.write for o in sites if o.access.array == w.access.array]
     pairs.sort(key=lambda pair: pair[1].access.write)
     for write, other in pairs:
@@ -868,6 +908,7 @@ def witnessed_carrying_access(loop: LoopRegion) -> str | None:
                     fixed=fixed,
                     kills=kills,
                     guards=(first.guard, second.guard),
+                    assumptions=declared,
                 )
             if found is not None:
                 return conflict_label(first, second, found, counter[0])
@@ -1003,8 +1044,9 @@ def conflict_label(first: Site, second: Site, witness: dict[str, int], carrier: 
     return f"{kind} on {site_text(named)} (example the solver found: {where})"
 
 
-def loop_hint(loop: LoopRegion, session: Any = None) -> str:
-    """The hint text naming what kind of loop ``loop`` is; ``session`` as :func:`refusal_reason`."""
+def loop_hint(loop: LoopRegion, session: Any = None, traps: list[tuple[str, set[str]]] | None = None) -> str:
+    """The hint text naming what kind of loop ``loop`` is; ``session`` as :func:`refusal_reason`; ``traps`` the entry
+    ``abort()`` guards its function rests on, which a witness must satisfy."""
     reason = refusal_reason(loop, session)
     if reason is None:
         return SEQUENTIAL_PINNED if loop.pinned_sequential else parallel_loop_hint(loop)
@@ -1015,11 +1057,10 @@ def loop_hint(loop: LoopRegion, session: Any = None) -> str:
     required = order_requirement(reason)
     if required is not None:
         return required
-    access = proof_of_carry(loop, reason)
+    access = proof_of_carry(loop, reason, traps)
     if access is not None:
-        text = SEQUENTIAL_PROVEN_OVER_DOALL if over_doall_nest(loop) else SEQUENTIAL_PROVEN
-        return text.format(reason=proven_reason(access))
-    return unproven_hint(loop, unproven_reason(reason))
+        return SEQUENTIAL_PROVEN.format(reason=proven_reason(access)) + carrier_note(loop, access)
+    return unproven_hint(loop, unproven_reason(reason, loop))
 
 
 def unproven_hint(loop: LoopRegion, reason: str) -> str:
@@ -1141,21 +1182,50 @@ def loop_private(loop: LoopRegion, states: list[SDFGState]) -> list[str]:
     return sorted(found)
 
 
-def over_doall_nest(loop: LoopRegion) -> bool:
-    """Whether ``loop``'s body is a Do-All nest: maps, no reduction and no loop of its own (a time loop over a stencil)."""
-    blocks = list(loop.all_control_flow_blocks())
-    states = [block for block in blocks if isinstance(block, SDFGState)]
-    return (
-        not any(isinstance(block, LoopRegion) for block in blocks)
-        and any(isinstance(node, nodes.MapEntry) for state in states for node in state.nodes())
-        and not any(edge.data.wcr is not None for state in states for edge in state.edges())
-    )
+def carriers(loop: LoopRegion) -> dict[str, str | None]:
+    """The containers that carry values from one iteration of ``loop`` to the next, each with the container a whole
+    copy writes it from (``x`` carried as ``x = y``) or ``None``: written in the body, and read as input by the first
+    state of the body that touches them, so the read sees the previous iteration's write."""
+    seen: OrderedSet[str] = OrderedSet()
+    exposed: OrderedSet[str] = OrderedSet()
+    written: dict[str, str | None] = {}
+    for block in loop.bfs_nodes(loop.start_block):
+        inside = [block] if isinstance(block, SDFGState) else list(block.all_control_flow_blocks())
+        for state in (b for b in inside if isinstance(b, SDFGState)):
+            first = {n.data for n in state.data_nodes()} - seen
+            exposed |= {
+                n.data
+                for n in state.data_nodes()
+                if n.data in first and state.in_degree(n) == 0 and state.out_degree(n) > 0
+            }
+            seen |= first
+            for node in state.data_nodes():
+                for edge in state.in_edges(node):
+                    if not edge.data.is_empty():
+                        copied = edge.src.data if isinstance(edge.src, nodes.AccessNode) else None
+                        written[node.data] = copied if written.get(node.data) is None else written[node.data]
+    return {
+        name: written[name] for name in exposed if name in written and not isinstance(loop.sdfg.arrays[name], data.View)
+    }
 
 
-def proof_of_carry(loop: LoopRegion, reason: LoopRefusal) -> str | None:
+def carrier_note(loop: LoopRegion, access: str) -> str:
+    """``; x carries the values to the next iteration (x = y)`` for the carriers of ``loop`` other than the container
+    ``access`` names, or ``""``."""
+    named = re.search(r"on (\w+)\[", access) or re.search(r"on (\w+)", access)
+    found = [(name, copy) for name, copy in carriers(loop).items() if named is None or name != named.group(1)]
+    if not found:
+        return ""
+    text = ", ".join(f"{name} ({name} = {copy})" if copy else name for name, copy in found)
+    return f"; {text} carr{'ies' if len(found) == 1 else 'y'} the values from one iteration to the next"
+
+
+def proof_of_carry(
+    loop: LoopRegion, reason: LoopRefusal, traps: list[tuple[str, set[str]]] | None = None
+) -> str | None:
     """The access that proves ``loop`` carries a dependence, or ``None``: a solver witness, else a constant distance or
     a carried symbol ``LoopToMap`` named."""
-    witnessed = witnessed_carrying_access(loop)
+    witnessed = witnessed_carrying_access(loop, traps)
     if witnessed is not None:
         return witnessed
     # The element-level proof also names the direction: LoopToMap's "read-after-write conflict" is
@@ -1283,13 +1353,13 @@ def nested_outputs(state: SDFGState, entry: nodes.MapEntry) -> list[NestedOutput
 
 def writes_through(state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> list[Subset | None]:
     """The subsets the nested SDFG at the source of ``edge`` writes through it, in the caller's indices and through
-    any deeper nested SDFG; ``None`` for a write whose elements are not known there (a view of part of the container,
-    whose indices start elsewhere, or a dynamic write)."""
+    any deeper nested SDFG; ``None`` for a dynamic write whose elements are not known there. Through a view of part of
+    the container the inner indices start elsewhere, so the memlet of ``edge`` bounds the writes instead."""
     node = edge.src
     outer, inner = state.sdfg.arrays[edge.data.data], node.sdfg.arrays[edge.src_conn]
     whole = str(edge.data.subset) == str(Range.from_array(outer))
     if not whole or len(inner.shape) != len(outer.shape) or list(inner.offset) != list(outer.offset):
-        return [None]
+        return [required(edge.data.subset)]
     found: list[Subset | None] = []
     for inner_state in node.sdfg.states():
         for access in inner_state.data_nodes():
@@ -1354,7 +1424,9 @@ def expanded_map_hint(state: SDFGState, entry: nodes.MapEntry, original: str | N
     re-derived for its own parameters, as :func:`parallel_hint` would, keeping the entry traps the original line rests
     on; the outermost map keeps the original's notes. ``None`` when the original had no class line."""
     lines = (original or "").split("\n")
-    if not lines[0].startswith(("parallel -- independent", "parallel -- reduction")):
+    if not lines[0].startswith(
+        (LoopClass.PARALLEL.prefix + Reason.INDEPENDENT.value, LoopClass.PARALLEL.prefix + Reason.REDUCTION.value)
+    ):
         return None
     first = parallel_hint(state, entry, [])
     assumed = lines[0].find(ASSUMES.split("{")[0])
@@ -1430,6 +1502,8 @@ class AnnotateLoopKinds(ppl.Pass):
         labelled = 0
         traps: dict[int, list] = {}
         function_traps(sdfg, [], traps)
+        # The header lists the entry's own abort() preconditions: a loop comment repeats only one a function renamed
+        entry_held = OrderedSet(held for held, names in entry_traps(sdfg))
         # Labelling changes only the hints, which no probe reads
         session = ProbeSession()
         for node, parent_graph in list(sdfg.all_nodes_recursive()):
@@ -1445,9 +1519,13 @@ class AnnotateLoopKinds(ppl.Pass):
             # A note another pass left (an anti-dependence it broke) says what it did, not what the loop is: the
             # verdict goes first, so every loop still opens with its class.
             kind = (
-                parallel_hint(parent_graph, node, traps.get(id(parent_graph.sdfg), []))
+                parallel_hint(
+                    parent_graph,
+                    node,
+                    [trap for trap in traps.get(id(parent_graph.sdfg), []) if trap[0] not in entry_held],
+                )
                 if isinstance(node, nodes.MapEntry)
-                else loop_hint(node, session)
+                else loop_hint(node, session, traps.get(id(parent_graph.sdfg), []))
             )
             node.specialization_hint = f"{kind}\n{hint}" if hint else kind
             labelled += 1

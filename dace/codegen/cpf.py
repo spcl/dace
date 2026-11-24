@@ -54,6 +54,7 @@ from dace import data as dt
 from dace.codegen import codegen, cpf_compact, cpf_summary
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config, set_temporary
+from dace.cpf_lowering import LoopClass
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.fft.environments import fftw3
 from dace.libraries.tileops.dispatch import FUNCTION_ISAS, ISA, isa_implementation, widest_function_isa
@@ -1613,20 +1614,29 @@ RENDERED_BY = "// Rendered by DaCe CPF (canonical parallel form): self-contained
 CONTRACT_LINES = [
     "// Each loop comment gives the loop's class, then the reason.",
     "//   parallel: proven; no iteration writes an element another one reads or writes. A reduction or scan",
-    "//     line names how iterations combine (a reduction clause, per-thread copies, or the scan's two passes).",
+    "//     line names how iterations combine (a reduction clause, per-thread copies, or the scan's two passes); a",
+    "//     'not parallelized' note says why a proven loop has no thread pragma or kernel.",
     "//   sequential: keep the order; names the dependence (with an example) or why the order is kept.",
     "//   unknown: not proven; runs in order; names what failed and what would make it parallel.",
+    "//   library loop: a loop a library call's lowering writes (a zero fill, a helper's pass); no verdict, not a tuning target.",
     "// A proof covers one loop as written: fusing or reordering loops needs its own dependence check.",
 ]
 
 #: The lines of :data:`CONTRACT_LINES` that explain each class, by class; the first and the last explain all.
-CONTRACT_KINDS = {"parallel": CONTRACT_LINES[1:3], "sequential": CONTRACT_LINES[3:4], "unknown": CONTRACT_LINES[4:5]}
+CONTRACT_KINDS = {
+    LoopClass.PARALLEL: CONTRACT_LINES[1:4],
+    LoopClass.SEQUENTIAL: CONTRACT_LINES[4:5],
+    LoopClass.UNKNOWN: CONTRACT_LINES[5:6],
+    LoopClass.LIBRARY: CONTRACT_LINES[6:7],
+}
 
 
 def contract_lines(code: str) -> list[str]:
     """:data:`CONTRACT_LINES` for the classes ``code``'s loop comments use: a legend line for a class no loop has
     would explain nothing in the unit; none at all without a classed comment."""
-    used = OrderedSet(found.group(1) for found in re.finditer(r"// (parallel|sequential|unknown) -- ", code))
+    used = OrderedSet(
+        LoopClass(found.group(1) or found.group(2)) for found in re.finditer(cpf_summary.CLASS_LINE_ANYWHERE, code)
+    )
     if not used:
         return []
     return [CONTRACT_LINES[0], *(line for kind in CONTRACT_KINDS if kind in used for line in CONTRACT_KINDS[kind])] + [
@@ -2440,9 +2450,14 @@ def render_unit(
         code, names = compacted.code, tuple(sorted(compacted.names.items()))
     proofs = cpf_lowering.hint_detail() is cpf_lowering.HintDetail.PROOFS
     if proofs:
+        commented = cpf_summary.comment_every_loop(code)
         code = cpf_summary.with_summary(
-            cpf_summary.drop_missing_fusion_names(
-                cpf_summary.drop_inner_reductions(cpf_summary.drop_inner_privates(cpf_summary.comment_every_loop(code)))
+            cpf_summary.note_blas_threads(
+                cpf_summary.note_forks(
+                    cpf_summary.drop_missing_fusion_names(
+                        cpf_summary.drop_inner_reductions(cpf_summary.drop_inner_privates(commented))
+                    )
+                )
             ),
             (CONTRACT_LINES[-1], RENDERED_BY),
         )

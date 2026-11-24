@@ -10,7 +10,7 @@ import re
 import dace
 from dace import cpf_lowering
 from dace.codegen import cpf_summary
-from dace.codegen.cpf import CONTRACT_LINES, render
+from dace.codegen.cpf import CONTRACT_KINDS, render
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
 from tests.codegen.cpf.test_specialization_hints import carried_sdfg, named, scaling_sdfg
 
@@ -88,7 +88,7 @@ def test_a_label_over_the_bounds_of_a_range_read_from_data_names_its_loop():
     """A map over ``ptr[i]:ptr[i + 1]`` loads its bounds between label and loop: the summary said ``statement`` and
     listed ``k`` open, uncommented."""
     (loop,) = cpf_summary.loops_of(DATA_RANGE)
-    assert (loop.name, loop.kind) == ("k", "parallel"), loop
+    assert (loop.name, loop.kind) == ("k", cpf_lowering.LoopClass.PARALLEL), loop
 
 
 def summary(code: str) -> list[str]:
@@ -184,7 +184,11 @@ def test_the_proven_line_keeps_the_format_the_bench_parses():
 def test_the_legend_explains_only_the_classes_the_unit_uses():
     """s2233: the header explained ``unknown`` loops in a unit that has none."""
     code = named(carried_sdfg("cpf_audit_legend"))
-    assert CONTRACT_LINES[3] in code and CONTRACT_LINES[4] not in code, code
+    sequential, unknown = (
+        CONTRACT_KINDS[cpf_lowering.LoopClass.SEQUENTIAL][0],
+        CONTRACT_KINDS[cpf_lowering.LoopClass.UNKNOWN][0],
+    )
+    assert sequential in code and unknown not in code, code
 
 
 def test_only_unknown_loops_are_open():
@@ -227,14 +231,16 @@ def scattered_species(a: dace.float64[N], order: dace.int64[5], b: dace.float64[
         b[order[i % 5]] = b[order[i % 5]] + 1.0
 
 
-def test_an_unproven_loop_over_a_few_fixed_iterations_is_sequential_and_settled():
-    """Owner 11-24 (CloudSC's nclv = 5 species loops): too few iterations to share out, so no check is worth it; the
-    same body over ``N`` iterations stays open."""
+def test_an_unproven_loop_over_a_few_fixed_iterations_is_unknown_and_open():
+    """CloudSC's nclv = 5 species loops: too few iterations to share out, so no check is worth it, but the dependence
+    test did not settle them, so they are open like the same body over ``N`` iterations."""
     sdfg = scattered_species.to_sdfg(simplify=True)
     sdfg.name = "cpf_audit_summary_small_extent"
     header = summary(named(sdfg))
-    assert any(re.match(r"//   sequential: s, small extent: 5 iterations", line) for line in header), header
-    assert header[-1] == "// cpf: proven: partial; open: i", header
+    assert any(re.match(r"//   unknown: s, small extent \(5 iterations\), not proven: ", line) for line in header), (
+        header
+    )
+    assert header[-1] == "// cpf: proven: partial; open: s, i", header
 
 
 VERSIONED_LOOP = """\
@@ -312,7 +318,7 @@ def test_a_respelled_accumulator_between_comment_and_loop_keeps_the_comment_on_t
     """cfd, lavamd: ``cpf_compact`` respells ``__acc_1_0_arr14`` to ``arr14_acc0``, the label landed on that
     declaration (``statement``), and the header listed the reduction loop ``j`` as unknown with no comment."""
     (loop,) = cpf_summary.loops_of(READABLE_ACCUMULATOR)
-    assert (loop.name, loop.kind) == ("j", "parallel"), loop
+    assert (loop.name, loop.kind) == ("j", cpf_lowering.LoopClass.PARALLEL), loop
 
 
 UNCOMMENTED = """\
@@ -360,10 +366,15 @@ def class_lines(code: str) -> list[tuple[str, str]]:
     for n, line in enumerate(lines):
         if cpf_summary.ANY_LOOP_HEAD.match(line):
             k = n - 1
-            while k >= 0 and cpf_summary.holds_label(lines[k].strip()) and not cpf_summary.CLASS_LINE.match(lines[k]):
+            while k >= 0 and cpf_summary.holds_label(lines[k].strip()) and not classed(lines[k]):
                 k -= 1
-            found.append((lines[k].strip() if k >= 0 and cpf_summary.CLASS_LINE.match(lines[k]) else "", line.strip()))
+            found.append((lines[k].strip() if k >= 0 and classed(lines[k]) else "", line.strip()))
     return found
+
+
+def classed(line: str) -> bool:
+    """Whether ``line`` is a loop's class comment or a library loop's."""
+    return bool(cpf_summary.CLASS_LINE.match(line) or cpf_summary.LIBRARY_LINE.match(line))
 
 
 def test_every_loop_gets_a_comment_naming_its_role():
@@ -373,9 +384,9 @@ def test_every_loop_gets_a_comment_naming_its_role():
     assert comments == [
         "// parallel -- independent: no iteration writes an element another iteration reads or writes",
         "// parallel -- dimension 2 of the 2 nested loops from i; the comment above proves them all",
-        "// sequential -- implementation loop of scan: runs in order as written",
+        "// library loop (scan): not a tuning target",
         "// parallel -- implementation loop of scan: the team's threads split these iterations (omp for)",
-        "// sequential -- implementation loop of pass 1: runs in order as written",
+        "// library loop (pass 1): not a tuning target",
         "// sequential -- tile loop: its tiles run in order; the loops inside class the iterations of each tile",
         "// unknown -- not proven; parallel if no two iterations write one element; otherwise keep the order",
         "// sequential -- inner tile of loop i2: runs one tile of its range in order",
@@ -464,7 +475,7 @@ static inline void cpf_helper(double *a, long n) {
 """
     lines = cpf_summary.comment_every_loop(code).splitlines()
     barrier = next(n for n, line in enumerate(lines) if "#pragma omp barrier" in line)
-    assert cpf_summary.CLASS_LINE.match(lines[barrier + 1]), lines
+    assert classed(lines[barrier + 1]), lines
     assert cpf_summary.ANY_LOOP_HEAD.match(lines[barrier + 2]), lines
 
 
@@ -488,7 +499,7 @@ static inline void cpf_fill(double *a, long n) {
     lines = cpf_summary.comment_every_loop(code, kinds=True).splitlines()
     above = [lines[n - 1].strip() for n, line in enumerate(lines) if cpf_summary.ANY_LOOP_HEAD.match(line)]
     assert above[1] == "// parallel", lines
-    assert above[2] == "// sequential: implementation loop of helper cpf_fill: runs in order as written", lines
+    assert above[2] == "// library loop (helper cpf_fill zero fill): not a tuning target", lines
     assert not [line for line in lines if " -- " in line], lines
 
 
