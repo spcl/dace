@@ -287,15 +287,64 @@ def argument_extents(sdfg: SDFG) -> set[str]:
     return {str(s) for desc in sdfg.arrays.values() if not desc.transient for s in desc.free_symbols}
 
 
-def access_bounds(sdfg: SDFG, assigned: set[str], desc: dt.Array) -> dict[str, Any]:
-    """For each symbol of ``assigned`` that ``sdfg`` assigns once on every path, an upper bound in symbols it does not
-    assign, from an in-bounds access every path runs: ``nl[l, 0:count]``, of ``nl`` shaped ``(n, w)``, gives
-    ``count <= w``. A trip count among ``desc``'s own extents counts as nonzero, as one that is zero leaves ``desc``
-    empty; another transient's extent proves nothing about ``desc``."""
+def chain(region: ControlFlowRegion) -> list:
+    """The blocks of a straight ``region`` in execution order."""
+    blocks = [region.start_block]
+    while region.out_degree(blocks[-1]) == 1:
+        blocks.append(region.out_edges(blocks[-1])[0].dst)
+    return blocks
+
+
+def mentions(block: Any, name: str) -> bool:
+    """Whether anything in ``block`` reads ``name``, a read after an assignment inside it included."""
+    if isinstance(block, SDFGState):
+        return name in block.used_symbols(all_symbols=True)
+    regions = [block, *block.all_control_flow_regions(recursive=True)]
+    return any(
+        name in region.used_symbols(all_symbols=True, with_contents=False)
+        or any(name in edge.data.read_symbols() for edge in region.edges())
+        or any(isinstance(inner, SDFGState) and mentions(inner, name) for inner in region.nodes())
+        for region in regions
+    )
+
+
+def assigns(block: Any, name: str) -> bool:
+    regions = [] if isinstance(block, SDFGState) else [block, *block.all_control_flow_regions(recursive=True)]
+    return any(name in edge.data.assignments for region in regions for edge in region.edges())
+
+
+def settled_before_read(sdfg: SDFG, assigned: set[str]) -> set[str]:
+    """The names of ``assigned`` that ``sdfg``'s top-level chain assigns only before it first reads them (ICON's
+    ``get_indices``: a branch sets ``i_endidx``, the last block overwrites it): one value wherever they are read."""
+    if not array_facts.straight(sdfg):
+        return set()
+    blocks = chain(sdfg)
+    settled = set()
+    for name in assigned:
+        # Block ``i`` at ``2 * i``, the edge after it at ``2 * i + 1``: an edge reads before it assigns.
+        writes, reads = [], []
+        for index, block in enumerate(blocks):
+            writes += [2 * index] if assigns(block, name) else []
+            reads += [2 * index] if mentions(block, name) else []
+            for edge in sdfg.out_edges(block):
+                writes += [2 * index + 1] if name in edge.data.assignments else []
+                reads += [2 * index + 1] if name in edge.data.read_symbols() else []
+        if writes and reads and max(writes) < min(reads):
+            settled.add(name)
+    return settled
+
+
+def access_bounds(sdfg: SDFG, assigned: set[str], desc: dt.Array) -> tuple[dict[str, Any], dict[str, Any]]:
+    """For each symbol of ``assigned`` that has one value wherever ``sdfg`` reads it, an upper and a lower bound in
+    symbols it does not assign, from an in-bounds access every path runs: ``nl[l, lo - 1:count]``, of ``nl`` shaped
+    ``(n, w)``, gives ``count <= w`` and ``1 <= lo``. A trip count among ``desc``'s own extents counts as nonzero, as
+    one that is zero leaves ``desc`` empty; another transient's extent proves nothing about ``desc``."""
     ranges, _, single = one_value_per_path(sdfg)
+    single = single | settled_before_read(sdfg, assigned)
     nonempty = {str(parsed(extent)) for extent in desc.shape}
     extents = argument_extents(sdfg)
-    bounds: dict[str, Any] = {}
+    upper: dict[str, Any] = {}
+    lower: dict[str, Any] = {}
     for relation in guaranteed_relations(sdfg, ranges, nonempty, assigned):
         if relation.kind is not symbolic.RelationKind.LE:
             continue
@@ -305,34 +354,46 @@ def access_bounds(sdfg: SDFG, assigned: set[str], desc: dt.Array) -> dict[str, A
             continue
         name = next(iter(names))
         coefficients = symbolic.affine_coefficients(difference, name)
-        if (
-            coefficients is None
-            or coefficients[0] != 1
-            or not {str(s) for s in coefficients[1].free_symbols} <= extents
-        ):
+        if coefficients is None or not {str(s) for s in coefficients[1].free_symbols} <= extents:
             continue
-        bounds.setdefault(name, -coefficients[1])
-    return bounds
+        # ``name + c <= 0`` bounds it from above, ``c - name <= 0`` from below
+        if coefficients[0] == 1:
+            upper.setdefault(name, -coefficients[1])
+        elif coefficients[0] == -1:
+            lower.setdefault(name, coefficients[1])
+    return upper, lower
 
 
-def extent_access_bound(extent: Any, assigned: set[str], bounds: dict[str, Any], extents: set[str]) -> Any | None:
-    """``extent`` with every name of ``assigned`` it holds replaced by its bound in ``bounds``, when each enters
-    linearly with a nonnegative coefficient, a constant or a product of ``extents`` (so the bound maximizes it):
-    ``(1 + count) * ppb`` takes ``(1 + w) * ppb``. ``None`` otherwise."""
+def extent_access_bound(
+    extent: Any, assigned: set[str], bounds: tuple[dict[str, Any], dict[str, Any]], extents: set[str]
+) -> Any | None:
+    """``extent`` with every name of ``assigned`` it holds replaced by the bound in ``bounds`` (upper, lower) that
+    maximizes it: the upper one when the name enters linearly with a nonnegative coefficient, a constant or a product
+    of ``extents``, the lower one under a negative constant: ``(1 + count) * ppb`` takes ``(1 + w) * ppb``,
+    ``hi - lo + 1`` takes ``w``. A ``Max`` is bounded by its arguments. ``None`` otherwise."""
     expr = symbolic.pystr_to_symbolic(extent)
+    if isinstance(expr, sympy.Max):
+        arguments = [extent_access_bound(argument, assigned, bounds, extents) for argument in expr.args]
+        return None if None in arguments else sympy.Max(*arguments)
+    upper, lower = bounds
     for name in sorted({str(s) for s in expr.free_symbols} & assigned):
         coefficients = symbolic.affine_coefficients(expr, name)
-        if name not in bounds or coefficients is None:
+        if coefficients is None:
             return None
         lead = coefficients[0]
         if lead.is_number and lead < 0:
+            if name not in lower:
+                return None
+            expr = lead * lower[name] + coefficients[1]
+            continue
+        if name not in upper:
             return None
         if not lead.is_number and not (
             {str(s) for s in lead.free_symbols} <= extents
             and all(f.is_number and f > 0 or f.is_Symbol for f in sympy.Mul.make_args(lead))
         ):
             return None
-        expr = coefficients[0] * bounds[name] + coefficients[1]
+        expr = coefficients[0] * upper[name] + coefficients[1]
     return expr
 
 

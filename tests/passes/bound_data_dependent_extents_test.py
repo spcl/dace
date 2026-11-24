@@ -246,6 +246,47 @@ def test_a_symbol_assigned_twice_in_one_arm_bounds_nothing():
     assert [str(extent) for extent in sdfg.arrays["vals"].shape] == ["n"]
 
 
+def test_bounds_set_then_overwritten_before_any_read_bound_a_trip_count_extent():
+    """ICON's ``get_indices``: ``lo``/``hi`` set by a three-way branch, ``hi`` overwritten on the last block, then
+    ``A[lo - 1:hi]`` of ``A[m]`` shows ``1 <= lo`` and ``hi <= m``: ``vals[Max(0, hi - lo + 1)]`` takes ``m``."""
+    sdfg = dace.SDFG("get_indices_window")
+    for symbol in ("lo", "hi", "m", "b"):
+        sdfg.add_symbol(symbol, dace.int64)
+    sdfg.add_array("sizes", [2], dace.int64)
+    sdfg.add_array("A", ["m"], dace.float64)
+    sdfg.add_transient("vals", ["Max(0, hi - lo + 1)"], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    previous = first
+    for label, arms in (
+        (
+            "bounds",
+            (
+                ("b == 0", {"lo": "sizes[0]", "hi": "m"}),
+                ("b == 1", {"lo": "1", "hi": "sizes[1]"}),
+                (None, {"lo": "1", "hi": "m"}),
+            ),
+        ),
+        ("last", (("b == 1", {"hi": "sizes[1]"}),)),
+    ):
+        branch = ConditionalBlock(label)
+        sdfg.add_node(branch)
+        sdfg.add_edge(previous, branch, dace.InterstateEdge())
+        for index, (condition, assignments) in enumerate(arms):
+            arm = ControlFlowRegion(f"{label}_{index}", sdfg=sdfg)
+            branch.add_branch(None if condition is None else CodeBlock(condition), arm)
+            head = arm.add_state(f"{label}_{index}_head", is_start_block=True)
+            arm.add_state_after(head, f"{label}_{index}_set", assignments=assignments)
+        previous = branch
+    copy = sdfg.add_state("copy")
+    sdfg.add_edge(previous, copy, dace.InterstateEdge())
+    copy.add_edge(
+        copy.add_read("A"), None, copy.add_write("vals"), None, dace.Memlet("A[lo - 1:hi] -> [0:hi - lo + 1]")
+    )
+    sdfg.reset_cfg_list()
+    assert BoundDataDependentExtents().apply_pass(sdfg, {}) == 1
+    assert [str(extent) for extent in sdfg.arrays["vals"].shape] == ["Max(0, m)"]
+
+
 if __name__ == "__main__":
     test_an_in_bounds_access_of_a_literal_array_gives_a_capacity_and_keeps_the_shape()
     test_an_access_of_a_symbolic_array_gives_no_capacity()
@@ -259,3 +300,4 @@ if __name__ == "__main__":
     test_a_loop_over_another_transients_extent_bounds_nothing()
     test_a_loop_of_no_trips_bounds_nothing()
     test_a_symbol_assigned_twice_in_one_arm_bounds_nothing()
+    test_bounds_set_then_overwritten_before_any_read_bound_a_trip_count_extent()
