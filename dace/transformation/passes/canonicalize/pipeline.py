@@ -42,6 +42,7 @@ from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import
     HoistAssignmentsToLoopBodyHead,
 )
 from dace.transformation.passes.canonicalize.collapse_noop_cast import CollapseNoOpCast
+from dace.transformation.passes.canonicalize.constant_store_to_logical_reduction import ConstantStoreToLogicalReduction
 from dace.transformation.passes.canonicalize.dead_carried_store import DeadCarriedStoreElimination
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
 from dace.transformation.passes.canonicalize.eliminate_copy_back import EliminateCopyBack
@@ -96,6 +97,7 @@ from dace.transformation.passes.canonicalize.revert_nonreduction_wcr import Reve
 from dace.transformation.passes.canonicalize.route_ordering_through_data import RouteOrderingThroughData
 from dace.transformation.passes.canonicalize.segment_confined_loops import SegmentConfinedLoops
 from dace.transformation.passes.canonicalize.select_branch_maps import SelectBranchMaps
+from dace.transformation.passes.canonicalize.select_same_element_stores import SelectSameElementStores
 from dace.transformation.passes.canonicalize.sink_last_only_scan_store import SinkLastOnlyScanStore
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNumThreads
@@ -670,6 +672,8 @@ def normalize_statements(
     # Whether or not short loops unrolled: the statement round's induction-variable substitution closes a counter
     # bumped several times per iteration (``k = k + 1`` before each unrolled copy) only once it is in SSA form.
     s += [(label, UniqueLoopIterators()), (label, SymbolSSA())]
+    # An if/else-if chain storing one element is one statement for the split below
+    s += [(label, SelectSameElementStores())]
     s += [
         (
             label,
@@ -761,6 +765,8 @@ def derive_parallelism(
     # Before the lift, after the lifts of last-value recurrences: a constant slot every iteration writes is private
     # per iteration, copied out after the loop from the last iteration that wrote it
     s += [(label, PromoteConstantIndexAccess(last_write=True))]
+    # Before the lift: a guarded store of one truth value into one element is a logical reduction, not a conflict
+    s += [(label, ConstantStoreToLogicalReduction())]
     # Before the lift: a wrapping modulo the dependence proof would map as a modular scatter maps as its affine bands.
     segments: list = []
     split: list[tuple[ppl.Pass, bool]] = []

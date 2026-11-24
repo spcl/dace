@@ -790,7 +790,11 @@ def bound_expression(expr: Any, bindings: dict[str, Any], assigned: Counter) -> 
         pending = {n: sympy_logic(bindings[n]) for n in names if n in bindings}
         if not pending:
             break
-        expr = expr.subs({symbolic.symbol(n): v for n, v in pending.items()})
+        try:
+            expr = expr.subs({symbolic.symbol(n): v for n, v in pending.items()})
+        except TypeError:
+            # A guard name bound to a non-boolean value (``if_cond = clipping[i]``, a truth test) inside ``And``
+            return None
     names = {str(s) for s in expr.free_symbols}
     if any(n in assigned and n not in bindings for n in names) or names & bindings.keys():
         return None
