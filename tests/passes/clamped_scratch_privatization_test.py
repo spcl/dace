@@ -35,7 +35,8 @@ def row_counts_sdfg() -> dace.SDFG:
     )
     reduce = Reduce("count_positive", "lambda x, y: x + y", identity=0)
     body.add_node(reduce)
-    body.add_edge(mask, None, reduce, None, dace.Memlet("mask[0:N]"))
+    # The reduction reads the whole mask, clamped extent and all
+    body.add_edge(mask, None, reduce, None, dace.Memlet.from_array("mask", sdfg.arrays["mask"]))
     body.add_edge(reduce, None, body.add_write("count"), None, dace.Memlet("count[k]"))
     return sdfg
 
