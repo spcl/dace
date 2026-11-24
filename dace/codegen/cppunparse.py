@@ -1195,6 +1195,9 @@ class CPPUnparser:
                 repr_n += "LL"
             elif bits == 64 and t_n >= 0:
                 repr_n += "ULL"
+            elif t_n == -(2**63):
+                # INT64_MIN has no literal: 9223372036854775808 does not fit a signed 64-bit integer
+                repr_n = "(-9223372036854775807LL - 1)"
             elif bits >= 64:
                 warnings.warn(f"Value wider than 64 bits encountered in expression ({t_n}), emitting as-is")
 

@@ -3616,6 +3616,9 @@ class LoopLift:
 
         # Integrate the nested SDFG into the parent SDFG
         dealias.integrate_nested_sdfg(nsdfg.sdfg)
+        # A class line a pass gave the loop before lifting it (a last-write copy-out) describes the map
+        if (self.loop.specialization_hint or "").startswith("parallel -- "):
+            entry.specialization_hint = self.loop.specialization_hint
         self.lifted_entry, self.lifted_state = entry, body
 
 

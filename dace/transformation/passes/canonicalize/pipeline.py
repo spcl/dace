@@ -758,6 +758,9 @@ def derive_parallelism(
     # Before the lift: a workspace whose pre-loop fill no iteration observes is then the loop's own, privatized per
     # iteration
     s += [(label, DeadFillElimination())]
+    # Before the lift, after the lifts of last-value recurrences: a constant slot every iteration writes is private
+    # per iteration, copied out after the loop from the last iteration that wrote it
+    s += [(label, PromoteConstantIndexAccess(last_write=True))]
     # Before the lift: a wrapping modulo the dependence proof would map as a modular scatter maps as its affine bands.
     segments: list = []
     split: list[tuple[ppl.Pass, bool]] = []
