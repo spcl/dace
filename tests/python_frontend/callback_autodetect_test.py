@@ -10,6 +10,10 @@ import dace
 from dace import config
 from dace.frontend.python.common import DaceSyntaxError
 
+# ctypes-pinned here: nanobind ndarray arguments accept numpy/DLPack only (no __array_interface__-style
+# coercion).
+# (The shared `ctypes_interface` fixture lives in tests/conftest.py.)
+
 N = dace.symbol("N")
 
 
@@ -1051,6 +1055,7 @@ class _MyArrayLike:
         return dace.float64[10]
 
 
+@pytest.mark.usefixtures("ctypes_interface")
 def test_callback_with_arraylike_closure_object():
     test = False
 
@@ -1070,6 +1075,7 @@ def test_callback_with_arraylike_closure_object():
     assert test
 
 
+@pytest.mark.usefixtures("ctypes_interface")
 def test_callback_with_arraylike_object():
     test = False
 
@@ -1087,6 +1093,7 @@ def test_callback_with_arraylike_object():
     assert test
 
 
+@pytest.mark.usefixtures("ctypes_interface")
 def test_callback_with_arraylike_object_typehints():
     test = False
 
@@ -1104,6 +1111,7 @@ def test_callback_with_arraylike_object_typehints():
     assert test
 
 
+@pytest.mark.usefixtures("ctypes_interface")
 def test_nested_callback_with_nested_arraylike_object():
     test = False
 

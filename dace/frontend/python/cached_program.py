@@ -95,7 +95,7 @@ class ProgramCacheEntry:
     """
 
     sdfg: SDFG
-    compiled_sdfg: "dace.codegen.compiled_sdfg.CompiledSDFG"
+    compiled_sdfg: "dace.codegen.compiled_sdfg.CompiledSDFGProtocol"
 
 
 class DaceProgramCache:
@@ -139,7 +139,9 @@ class DaceProgramCache:
         key = ProgramCacheKey(argtypes, adescs, cvals, specified_args)
         return key
 
-    def add(self, key: ProgramCacheKey, sdfg: SDFG, compiled_sdfg: "dace.codegen.compiled_sdfg.CompiledSDFG") -> None:
+    def add(
+        self, key: ProgramCacheKey, sdfg: SDFG, compiled_sdfg: "dace.codegen.compiled_sdfg.CompiledSDFGProtocol"
+    ) -> None:
         """Adds a new entry to the program cache."""
         self.cache[key] = ProgramCacheEntry(sdfg, compiled_sdfg)
 

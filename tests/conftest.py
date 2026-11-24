@@ -28,3 +28,20 @@ def pytest_generate_tests(metafunc):
                 pytest.param(False, id="no_use_cpp_dispatcher"),
             ],
         )
+
+
+@pytest.fixture
+def ctypes_interface(monkeypatch):
+    """Pins ``compiler.interface`` to ctypes for tests that assert ctypes-specific behavior.
+
+    A comment at each use site names the per-file divergence.
+    ``DACE_compiler_interface`` is dropped as well: the environment is
+    re-applied whenever the configuration is LOADED (``temporary_config()``
+    restores by loading), so the pin must outlive such a reload - see
+    tests/compile_folder_mode_test.py.
+    """
+    import dace
+
+    monkeypatch.delenv("DACE_compiler_interface", raising=False)
+    with dace.config.set_temporary("compiler", "interface", value="ctypes"):
+        yield

@@ -290,16 +290,14 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context
                 raise InvalidSDFGError("Found multiple blocks with the same name in " + cfg.name, sdfg, None)
 
         # Check the names of data descriptors and co.
-        seen_names: set[str] = set()
-        for obj_names in [sdfg.arrays.keys(), sdfg.symbols.keys()]:
-            if not seen_names.isdisjoint(obj_names):
-                raise InvalidSDFGError(
-                    f'Found duplicated names: "{seen_names.intersection(obj_names)}". Please ensure '
-                    "that the names of symbols and data descriptors are unique.",
-                    sdfg,
-                    None,
-                )
-            seen_names.update(obj_names)
+        duplicated_names = sdfg.arrays.keys() & sdfg.symbols.keys()
+        if duplicated_names:
+            raise InvalidSDFGError(
+                f'Found duplicated names: "{duplicated_names}". Please ensure '
+                "that the names of symbols and data descriptors are unique.",
+                sdfg,
+                None,
+            )
 
         # Ensure that there is a mentioning of constants in either the array or symbol.
         for const_name, (const_type, _) in sdfg.constants_prop.items():

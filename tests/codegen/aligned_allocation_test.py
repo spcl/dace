@@ -89,8 +89,10 @@ def test_heap_transient_end_to_end():
     assert np.allclose(result, (p1 + p2) / 2.0 + 1.0)
 
 
-def test_heap_transient_with_destructor():
+def test_heap_transient_with_destructor(ctypes_interface):
     """A heap array of a type with a destructor compiles, and every element is destroyed."""
+    # ctypes pin: the live-count probe dlsyms the DACE_EXPORTED symbol through the
+    # ctypes wrapper's `_lib`; the SDFG itself (argument-free) would select nanobind.
     sdfg = dace.SDFG("aligned_alloc_destructor")
     sdfg.append_global_code("""
 struct counted {

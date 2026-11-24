@@ -8,8 +8,9 @@ from . import serialize
 # Import built-in hooks
 from .builtin_hooks import *
 
-from . import data, hooks, subsets
+from . import data, hooks, subsets, generated
 from .codegen.compiled_sdfg import CompiledSDFG
+from .codegen.ctypes_compiled_sdfg import CtypesCompiledSDFG
 from .config import Config
 from .sdfg import SDFG, SDFGState, InterstateEdge, nodes, ControlFlowRegion
 from .sdfg.propagation import propagate_memlets_sdfg, propagate_memlet
