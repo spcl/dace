@@ -2400,6 +2400,9 @@ def render_unit(
                 # Type names reach the text from the entry signature and from declarations, neither
                 # of which goes through an expression printer, so the rename runs over the whole unit.
                 body = cpf_lowering.rewrite_ctypes(body, dialect)
+                if dialect in cpf_lowering.DEVICE_DIALECTS:
+                    # before the device unit copies the state struct, so both units declare it alike
+                    body = cpf_lowering.share_library_handles(body)
                 device_body = ""
                 if device is not None:
                     device_body = state_struct(body, sdfg.name) + cpf_lowering.rewrite_ctypes(

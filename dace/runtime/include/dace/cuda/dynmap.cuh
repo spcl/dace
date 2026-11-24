@@ -43,38 +43,9 @@ namespace dace {
 #endif
     }  // namespace dynmap_warp
 
-    /**
-     * Load-balances the iterations of a dynamic thread-block map over a one-dimensional thread block. Every thread
-     * owns a range ``[start, end)`` of iterations of the item ``src``; the block executes the iterations of all ranges
-     * in rounds, in each of which a thread receives a strided batch of the iterations of one item. No step
-     * synchronizes: the caller places the barriers (``block`` for ``__syncthreads``, ``warp`` for ``__syncwarp``):
-     *
-     *     cursor = DynamicMap::open(start, end, src); DynamicMap::reset(state); block;
-     *     do {
-     *         DynamicMap::block_elect(state, cursor); block;
-     *         more = DynamicMap::block_claim(state, cursor);
-     *         if (more) { block; DynamicMap::block_take(state, cursor, src, first, count, stride); block;
-     *                     batch(src, first, count, stride); }
-     *     } while (more);
-     *     if (LISTED) block;
-     *     do { more = DynamicMap::warp_round(state, cursor, src, first, count, stride); batch(...); } while (more);
-     *     if (LISTED) warp;
-     *     do { more = DynamicMap::thread_round(state, cursor, src, first, count); batch(src, first, count, 1); }
-     *     while (more);
-     *     if (LISTED) block;
-     *
-     * where ``batch`` runs the body for ``first + k * stride``, ``k < count``. Ranges of at least ``BLOCK_SIZE``
-     * iterations are shared by the whole block, then ranges of at least a warp by their warp; the rest are either
-     * spread over the warp one iteration per thread (``FINE_GRAINED``) or run by their thread. In the block and warp
-     * rounds, the item is the same for the whole warp. The shared state is the range of the current block round and,
-     * fine-grained on CUDA (``LISTED``), the list of the items each warp spreads; HIP's 64-wide warps find each item's
-     * owner by shuffles instead, as their lists would not fit in shared memory. Every thread of the block takes every
-     * step, out-of-range threads with an empty range. A body may not synchronize.
-     */
-    template<bool FINE_GRAINED, int BLOCK_SIZE, int WARP_SIZE = 32, typename INDEX_TYPE = int32_t>
-    struct DynamicMap {
-        static_assert(BLOCK_SIZE % WARP_SIZE == 0, "The block size of a dynamic map must be a multiple of the warp size");
-
+    // The state types of a dynamic map: the same for every chunk and schedule, so the maps of a kernel share one state
+    template<bool FINE_GRAINED, int BLOCK_SIZE, int WARP_SIZE, typename INDEX_TYPE>
+    struct DynamicMapState {
 #if defined(__HIPCC__)
         static constexpr bool LISTED = false;
 #else
@@ -109,6 +80,49 @@ namespace dace {
             INDEX_TYPE start;                               // fine-grained on CUDA: the warp's part of the lists
             bool won;                                       // whether the thread owns the range of the block round
         };
+    };
+
+    /**
+     * Load-balances the iterations of a dynamic thread-block map over a one-dimensional thread block. Every thread
+     * owns a range ``[start, end)`` of iterations of the item ``src``; the block executes the iterations of all ranges
+     * in rounds, in each of which a thread receives a strided batch of the iterations of one item. No step
+     * synchronizes: the caller places the barriers (``block`` for ``__syncthreads``, ``warp`` for ``__syncwarp``):
+     *
+     *     cursor = DynamicMap::open(start, end, src); DynamicMap::reset(state); block;
+     *     do {
+     *         DynamicMap::block_elect(state, cursor); block;
+     *         more = DynamicMap::block_claim(state, cursor);
+     *         if (more) { block; DynamicMap::block_take(state, cursor, src, first, count, stride); block;
+     *                     batch(src, first, count, stride); }
+     *     } while (more);
+     *     if (LISTED) block;
+     *     do { more = DynamicMap::warp_round(state, cursor, src, first, count, stride); batch(...); } while (more);
+     *     if (LISTED) warp;
+     *     do { more = DynamicMap::thread_round(state, cursor, src, first, count); batch(src, first, count, 1); }
+     *     while (more);
+     *     if (LISTED) block;
+     *
+     * where ``batch`` runs the body for ``first + k * stride``, ``k < count``. ``CHUNK`` and ``GUIDED`` set how much
+     * of a range one block or warp round takes: all of it (the default), ``CHUNK`` times the round's width, or, guided,
+     * half of what is left and at least ``CHUNK`` widths, so the batches shrink; the owner keeps the rest for later
+     * rounds, where other ranges compete again. Ranges of at least ``BLOCK_SIZE``
+     * iterations are shared by the whole block, then ranges of at least a warp by their warp; the rest are either
+     * spread over the warp one iteration per thread (``FINE_GRAINED``) or run by their thread. In the block and warp
+     * rounds, the item is the same for the whole warp. The shared state is the range of the current block round and,
+     * fine-grained on CUDA (``LISTED``), the list of the items each warp spreads; HIP's 64-wide warps find each item's
+     * owner by shuffles instead, as their lists would not fit in shared memory. Every thread of the block takes every
+     * step, out-of-range threads with an empty range. A body may not synchronize.
+     */
+    template<bool FINE_GRAINED, int BLOCK_SIZE, int WARP_SIZE = 32, typename INDEX_TYPE = int32_t, int CHUNK = 0,
+             bool GUIDED = false>
+    struct DynamicMap {
+        static_assert(CHUNK >= 0, "The chunk of a dynamic map is a number of round widths, at least 0");
+        static_assert(BLOCK_SIZE % WARP_SIZE == 0, "The block size of a dynamic map must be a multiple of the warp size");
+
+        using state = DynamicMapState<FINE_GRAINED, BLOCK_SIZE, WARP_SIZE, INDEX_TYPE>;
+        static constexpr bool LISTED = state::LISTED;
+        using shared_type = typename state::shared_type;
+        using cursor_type = typename state::cursor_type;
 
         /// The cursor of a thread over its range ``[start, end)`` of the item ``src``.
         __device__ static cursor_type open(INDEX_TYPE start, INDEX_TYPE end, INDEX_TYPE src) {
@@ -136,10 +150,12 @@ namespace dace {
             const INDEX_TYPE owner = s.tb.owner;
             c.won = owner == static_cast<INDEX_TYPE>(threadIdx.x);
             if (c.won) {
+                const INDEX_TYPE taken = share(c.local_size, BLOCK_SIZE);
                 s.tb.src = c.local_src;
                 s.tb.start = c.local_start;
-                s.tb.size = c.local_size;
-                c.local_size = 0;
+                s.tb.size = taken;
+                c.local_start += taken;
+                c.local_size -= taken;
             }
             return owner != BLOCK_SIZE;
         }
@@ -174,9 +190,10 @@ namespace dace {
             const int owner = dynmap_warp::uniform(dynmap_warp::first_lane(mask));
             src = dynmap_warp::uniform(dynmap_warp::shfl(c.local_src, owner));
             const INDEX_TYPE start = dynmap_warp::uniform(dynmap_warp::shfl(c.local_start, owner));
-            const INDEX_TYPE size = dynmap_warp::uniform(dynmap_warp::shfl(c.local_size, owner));
+            const INDEX_TYPE size = share(dynmap_warp::uniform(dynmap_warp::shfl(c.local_size, owner)), WARP_SIZE);
             if (owner == lane) {
-                c.local_size = 0;
+                c.local_start += size;
+                c.local_size -= size;
             }
             batch(start, size, lane, WARP_SIZE, first, count, stride);
             return true;
@@ -224,6 +241,17 @@ namespace dace {
         }
 
     private:
+        // How many of a range's ``size`` remaining iterations one round of ``width`` threads takes
+        __device__ static INDEX_TYPE share(INDEX_TYPE size, INDEX_TYPE width) {
+            if (!GUIDED && CHUNK == 0) {
+                return size;
+            }
+            const INDEX_TYPE least = static_cast<INDEX_TYPE>(CHUNK > 0 ? CHUNK : 1) * width;
+            const INDEX_TYPE wanted = GUIDED ? ((size / 2 + width - 1) / width) * width : least;
+            const INDEX_TYPE taken = wanted > least ? wanted : least;
+            return taken < size ? taken : size;
+        }
+
         // The iterations ``offset, offset + width, ...`` of a range of ``size`` iterations from ``start``
         __device__ static void batch(INDEX_TYPE start, INDEX_TYPE size, INDEX_TYPE offset, INDEX_TYPE width,
                                      INDEX_TYPE& first, INDEX_TYPE& count, INDEX_TYPE& stride) {

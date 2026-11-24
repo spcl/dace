@@ -163,7 +163,6 @@ def _subprocess_measure(cutout_json: dict, dreport, repetitions: int, q: mp.Queu
     with dace.config.set_temporary("debugprint", value=False):
         with dace.config.set_temporary("instrumentation", "report_each_invocation", value=False):
             with dace.config.set_temporary("compiler", "allow_view_arguments", value=True):
-                cutout.build_folder = "/dev/shm"
                 csdfg = cutout.compile()
                 for _ in range(repetitions):
                     csdfg(**arguments)

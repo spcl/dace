@@ -134,6 +134,41 @@ def test_what_is_ordered_after_a_dynamic_map_still_runs_after_it():
     assert order.index(queue) < order.index(guarded)
 
 
+@pytest.mark.old_gpu_codegen_only  # GPU_ThreadBlock_Dynamic maps: not supported by the experimental CUDA codegen
+@pytest.mark.parametrize(
+    "schedule,chunk,flag",
+    [
+        (dace.OMPScheduleType.Default, 0, "false"),
+        (dace.OMPScheduleType.Dynamic, 2, "false"),
+        (dace.OMPScheduleType.Guided, 4, "true"),
+    ],
+)
+def test_the_queue_takes_the_chunk_and_guided_schedule_of_its_map(
+    schedule: dace.OMPScheduleType, chunk: int, flag: str
+):
+    """A dynamic map's ``omp_chunk_size`` and guided ``omp_schedule`` become template arguments of its queue."""
+    sdfg = spmv_sdfg(f"lower_dynamic_chunk_{chunk}_{flag}")
+    (dynamic,) = maps_of(sdfg, dace.ScheduleType.GPU_ThreadBlock_Dynamic)
+    dynamic.map.omp_schedule = schedule
+    dynamic.map.omp_chunk_size = chunk
+    with dace.config.temporary_config():
+        dace.config.Config.set("compiler", "cuda", "backend", value="cuda")
+        dace.config.Config.set("compiler", "cuda", "dynamic_map_block_size", value="128,1,1")
+        code = "\n".join(c.code for c in sdfg.generate_code())
+    arguments = "" if chunk == 0 and flag == "false" else f", {chunk}, {flag}"
+    assert f"dace::DynamicMap<true, 128, 32, int{arguments}>::block_claim(" in code
+    # Every map of the kernel reads the one queue state through the type without chunk and schedule
+    assert "reinterpret_cast<dace::DynamicMap<true, 128, 32, int>::shared_type *>" in code
+
+
+def test_a_symbolic_chunk_is_refused():
+    sdfg = spmv_sdfg("lower_dynamic_symbolic_chunk")
+    (dynamic,) = maps_of(sdfg, dace.ScheduleType.GPU_ThreadBlock_Dynamic)
+    dynamic.map.omp_chunk_size = dace.symbol("C")
+    with pytest.raises(NotImplementedError, match="not a constant"):
+        LowerDynamicThreadBlockMaps().apply_pass(sdfg, {})
+
+
 if __name__ == "__main__":
     test_the_kernel_gets_a_thread_block_map_and_the_dynamic_map_a_queue()
     test_the_queue_follows_the_warp_size("cuda", 32, 8192)
