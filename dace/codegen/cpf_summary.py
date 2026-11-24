@@ -24,7 +24,23 @@ PRIVATE = re.compile(r"private per iteration: ([\w, ]+)")
 EXAMPLE = re.compile(r" \(example[^)]*\)")
 #: Lines codegen puts between a loop's comment and its head: an accumulator load, the bounds of a range read from
 #: data, a step check, a lone brace.
-BEFORE_LOOP = re.compile(r"^(?:[\w\s]+ __(?:acc|map)_\w* = .*;|assert\(.*\);|\{)$")
+#: A line between a loop's comment and its head: an opening brace, an assert, or the declaration of a reduction
+#: accumulator or map buffer, spelled ``__acc_*`` / ``__map_*`` by the generator and ``<container>_acc<n>`` once
+#: ``cpf_compact`` respells it (``__acc_1_0_out`` -> ``out_acc0``).
+BEFORE_LOOP = re.compile(r"^(?:[\w\s]+ (?:__(?:acc|map)_\w*|\w+_acc\d+) = .*;|assert\(.*\);|\{)$")
+#: A loop head: ``for (``, ``while (`` or ``do`` opening a statement; a ``} while (c);`` tail starts with ``}``.
+ANY_LOOP_HEAD = re.compile(r"^\s*(?:for|while)\s*\(|^\s*do\b")
+#: The counter a ``for`` head declares or steps: ``for (long i = 0; ...``, or ``for (; i < n; ...`` (first name in
+#: the condition).
+FOR_COUNTER = re.compile(r"^\s*for\s*\(\s*(?:(?:[\w:<>]+\s+)*\**(\w+)\s*=|;\s*(\w+))")
+#: The reasons :func:`comment_every_loop` writes. They describe a loop's role, not a proof of its own, so the header
+#: does not list them: a dimension belongs to the nest the comment above proves, the others to a lowering's
+#: implementation (a scan's passes, a BLAS call's zero fill, a helper function).
+DIMENSION = "dimension "
+TILE = "tile loop"
+INNER_TILE = "inner tile of loop "
+IMPLEMENTATION = "implementation loop of "
+ADDED_REASONS = (DIMENSION, TILE, INNER_TILE, IMPLEMENTATION)
 #: Labels on a construct that is not a loop: a thread team, a one-trip block on thread 0.
 NOT_A_LOOP = ("thread team", "not a loop")
 
@@ -66,7 +82,9 @@ def loops_of(code: str) -> list[Loop]:
             continue
         name = loop_name(stripped)
         if label is not None:
-            if not label[1].startswith(NOT_A_LOOP):
+            if label[1].startswith(DIMENSION) and name:
+                names.unique(name)
+            elif not label[1].startswith((*NOT_A_LOOP, *ADDED_REASONS)):
                 found.append(Loop(names.unique(name or call_name(stripped)), label[0], label[1]))
             label = None
         elif name and covered:
@@ -89,6 +107,153 @@ class Names:
     def unique(self, name: str) -> str:
         self.seen[name] = self.seen.get(name, 0) + 1
         return name if self.seen[name] == 1 else f"{name}#{self.seen[name]}"
+
+
+def holds_label(stripped: str) -> bool:
+    """Whether a line between a loop's comment and its head keeps the comment on that loop."""
+    return not stripped or stripped.startswith(("//", "#")) or BEFORE_LOOP.match(stripped) is not None
+
+
+def indent_of(line: str) -> int:
+    return len(line) - len(line.lstrip())
+
+
+def loop_counter(line: str) -> str:
+    counter = FOR_COUNTER.match(line)
+    return (counter.group(1) or counter.group(2)) if counter is not None else ""
+
+
+def construct_of(lines: list[str], index: int, function: str) -> str:
+    """What an implementation loop belongs to: the title of the nearest comment block above it at a smaller
+    indentation, the text before the ``:`` of its first line (``// BLAS gemv: y = ...`` -> ``BLAS gemv``, ``// pass
+    1: ...`` -> ``pass 1``), searched back to the enclosing function's head; else that function."""
+    own = indent_of(lines[index])
+    for n in range(index - 1, -1, -1):
+        line = lines[n]
+        stripped = line.strip()
+        if stripped and not stripped.startswith(("//", "#")) and indent_of(line) == 0:
+            break  # the enclosing function's head, or code before it
+        if not stripped.startswith("// ") or indent_of(line) >= own:
+            continue
+        if CLASS_LINE.match(line) is not None or NESTED_LOOPS.search(line) is not None:
+            continue
+        above = lines[n - 1] if n > 0 else ""
+        if above.strip().startswith("//") and indent_of(above) == indent_of(line):
+            continue  # a continuation line of a longer comment
+        title, colon, text = stripped[3:].partition(":")
+        title = title.strip()
+        if colon and title and ";" not in title and not title.startswith(("alt", "cpf")):
+            return title
+    if not function:
+        return "the code above"
+    return f"{'helper' if function.startswith('cpf_') else 'function'} {function}"
+
+
+def bounds_of(line: str) -> tuple[str, str]:
+    """The start and the condition of a ``for`` head (``for (long i = a; i < b; ...)`` -> ``("long i = a", "i < b")``),
+    empty for any other loop."""
+    parts = line.split("(", 1)[1].split(";") if FOR_COUNTER.match(line) else []
+    return (parts[0], parts[1]) if len(parts) >= 3 else ("", "")
+
+
+def uses(name: str, text: str) -> bool:
+    return bool(name) and re.search(rf"\b{re.escape(name)}\b", text) is not None
+
+
+def tiles(inner: str, counter: str) -> bool:
+    """Whether the ``for`` head ``inner`` walks one tile of loop ``counter``: both its start and its condition use
+    ``counter`` (a triangular ``j = i; j < n`` uses only the start)."""
+    start, condition = bounds_of(inner)
+    return uses(counter, start.split("=", 1)[-1]) and uses(counter, condition)
+
+
+def added_comment(lines: list[str], index: int, parent: str, function: str) -> str:
+    """The class and role of the uncommented loop at ``lines[index]`` inside loop ``parent`` ("" at the top of a
+    function; see :data:`ADDED_REASONS`)."""
+    line = lines[index]
+    child = next((lines[n] for n in range(index + 1, len(lines)) if ANY_LOOP_HEAD.match(lines[n])), "")
+    if indent_of(child) > indent_of(line) and tiles(child, loop_counter(line)):
+        return f"sequential -- {TILE}: its tiles run in order; the loops inside class the iterations of each tile"
+    if tiles(line, parent):
+        return f"sequential -- {INNER_TILE}{parent}: runs one tile of its range in order"
+    if (
+        line.strip().startswith("for (int64_t ")
+        and not function.startswith("cpf_")
+        and not loop_counter(line).startswith("_")
+    ):
+        # A program loop no pass labelled: open, as the header has always counted it.
+        return (
+            "unknown -- not analyzed for dependences: no pass classed this loop; parallel if no iteration writes an "
+            "element another iteration reads or writes; otherwise keep the order"
+        )
+    construct = construct_of(lines, index, function)
+    pragmas = " ".join(lines[n] for n in range(pragma_start(lines, index), index))
+    if re.search(r"#pragma omp\b[^\n]*\bfor\b", pragmas):
+        return f"parallel -- {IMPLEMENTATION}{construct}: the team's threads split these iterations (omp for)"
+    if re.search(r"#pragma omp\b[^\n]*\bsimd\b", pragmas):
+        return f"parallel -- {IMPLEMENTATION}{construct}: vectorized (omp simd)"
+    return f"sequential -- {IMPLEMENTATION}{construct}: runs in order as written"
+
+
+def pragma_start(lines: list[str], index: int) -> int:
+    """The first line of the run of ``#pragma`` lines right above ``lines[index]`` (``index`` when there is none)."""
+    start = index
+    while start > 0 and lines[start - 1].strip().startswith("#pragma"):
+        start -= 1
+    return start
+
+
+def comment_every_loop(code: str) -> str:
+    """``code`` with a comment on every loop that has none. The CPU generator labels a map's or loop's first ``for``;
+    the other dimensions of a multi-dimensional map, and the loops a lowering writes out by hand (a scan's passes, a
+    BLAS call's zero fill, a helper function), had none, so a reader could not tell a proven loop from an unread
+    one."""
+    lines = code.splitlines()
+    out: list[str] = []
+    labelled, nest, covered, dimension, total, first = False, 0, 0, 0, 0, ""
+    function = ""
+    parents: list[tuple[int, str]] = []
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        head = FUNCTION_HEAD.match(line)
+        if head is not None:
+            function, parents = head.group(1), []
+        classed = CLASS_LINE.match(line)
+        if classed is not None:
+            # A thread team's or a one-trip block's comment is not a loop's: the loop inside gets its own.
+            labelled = not classed.group(2).startswith(NOT_A_LOOP)
+        nested = NESTED_LOOPS.search(line)
+        if nested is not None:
+            nest = int(nested.group(1))
+        if stripped and not stripped.startswith(("//", "#")):
+            # A code line at or left of an open loop's head ends that loop's body.
+            while parents and parents[-1][0] >= indent_of(line):
+                parents.pop()
+        if ANY_LOOP_HEAD.match(line):
+            indent = line[: indent_of(line)]
+            if labelled:
+                covered, dimension, total, first = (
+                    (nest - 1, 1, nest, loop_counter(line)) if nest > 1 else (0, 0, 0, "")
+                )
+            else:
+                if covered:
+                    dimension += 1
+                    covered -= 1
+                    comment = (
+                        f"parallel -- {DIMENSION}{dimension} of the {total} nested loops from {first}; the comment "
+                        "above proves them all"
+                    )
+                else:
+                    comment = added_comment(lines, index, parents[-1][1] if parents else "", function)
+                # Above the loop's pragmas, as every generated comment is, so each pragma stays next to its loop.
+                pragmas = index - pragma_start(lines, index)
+                out[len(out) - pragmas : len(out) - pragmas] = [f"{indent}// {comment}"]
+            parents.append((indent_of(line), loop_counter(line)))
+            labelled, nest = False, 0
+        elif not holds_label(stripped):
+            labelled, nest, covered = False, 0, 0
+        out.append(line)
+    return "\n".join(out) + ("\n" if code.endswith("\n") else "")
 
 
 def loop_name(line: str) -> str:

@@ -2433,16 +2433,19 @@ def render_unit(
         entry_names = tuple(signature.order) if signature is not None else tuple(entry_arglist)
         compacted = cpf_compact.compact(code, prepared, {prepared.name, sdfg.name, *entry_names})
         code, names = compacted.code, tuple(sorted(compacted.names.items()))
-    if cpf_lowering.hint_detail() is cpf_lowering.HintDetail.PROOFS:
+    proofs = cpf_lowering.hint_detail() is cpf_lowering.HintDetail.PROOFS
+    if proofs:
         code = cpf_summary.with_summary(
             cpf_summary.drop_missing_fusion_names(
-                cpf_summary.drop_inner_reductions(cpf_summary.drop_inner_privates(code))
+                cpf_summary.drop_inner_reductions(cpf_summary.drop_inner_privates(cpf_summary.comment_every_loop(code)))
             ),
             (CONTRACT_LINES[-1], RENDERED_BY),
         )
     # The device unit repeats the frame's state struct, whose vendor handles and plans need their declarations.
     device_environments = (set(device.environments) | set(frame.environments)) if device is not None else set()
     device_code = preamble(device_body, dialect, device_environments) + device_body if device_body else ""
+    if proofs and device_code:
+        device_code = cpf_summary.comment_every_loop(device_code)
     for unit in filter(None, (code, device_code)):
         verify(unit, sdfg.name, dialect)
         if check_compiles:

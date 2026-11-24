@@ -266,6 +266,158 @@ def test_a_fusion_note_names_only_intermediates_the_code_holds():
     ], notes
 
 
+READABLE_ACCUMULATOR = """\
+    // parallel -- reduction: + into arr14; the other accesses are independent
+    {
+        double arr14_acc0 = arr14[i];
+        #pragma omp simd reduction(+:arr14_acc0)
+        for (int64_t j = 0; j < 4; j += 1) {
+            arr14_acc0 = arr14_acc0 + a[j];
+        }
+    }
+"""
+
+
+def test_a_respelled_accumulator_between_comment_and_loop_keeps_the_comment_on_the_loop():
+    """cfd, lavamd: ``cpf_compact`` respells ``__acc_1_0_arr14`` to ``arr14_acc0``, the label landed on that
+    declaration (``statement``), and the header listed the reduction loop ``j`` as unknown with no comment."""
+    (loop,) = cpf_summary.loops_of(READABLE_ACCUMULATOR)
+    assert (loop.name, loop.kind) == ("j", "parallel"), loop
+
+
+UNCOMMENTED = """\
+void f0(double *a, double *b, int64_t N, int64_t M) {
+    // parallel -- independent: no iteration writes an element another iteration reads or writes
+    // the 2 nested loops over i, j are all parallel
+    #pragma omp parallel for collapse(2)
+    for (int64_t i = 0; i < N; i += 1) {
+        for (int64_t j = 0; j < M; j += 1) {
+            a[i * M + j] = b[i * M + j];
+        }
+    }
+    // scan: running (prefix) fold along an axis
+    {
+        #pragma omp parallel
+        for (long t = 0; t < 4; t += 1) {
+            // pass 1: each chunk's total
+            #pragma omp for schedule(static)
+            for (long c = t; c < 4; ++c) {
+                for (long k = 0; k < 8; ++k) b[c] += a[k];
+            }
+        }
+    }
+    for (int64_t c2 = 0; c2 < 256; c2 += 1) {
+        // unknown -- not proven; parallel if no two iterations write one element; otherwise keep the order
+        for (int64_t i2 = c2 * 16; i2 < (c2 + 1) * 16; i2 += 1) {
+            for (int64_t k2 = i2 * 2; k2 < i2 * 2 + 2; k2 += 1) a[k2] = b[i2];
+        }
+    }
+}
+static inline double cpf_sum(const double *in, long count) {
+    double acc = 0;
+    #pragma omp simd reduction(+:acc)
+    for (long i = 0; i < count; ++i) acc = acc + in[i];
+    return acc;
+}
+"""
+
+
+def class_lines(code: str) -> list[tuple[str, str]]:
+    """Each loop head of ``code`` with the class line above it, skipping the pragma, comment, and brace lines between
+    them; ``("", head)`` for a loop without one."""
+    lines = code.splitlines()
+    found = []
+    for n, line in enumerate(lines):
+        if cpf_summary.ANY_LOOP_HEAD.match(line):
+            k = n - 1
+            while k >= 0 and cpf_summary.holds_label(lines[k].strip()) and not cpf_summary.CLASS_LINE.match(lines[k]):
+                k -= 1
+            found.append((lines[k].strip() if k >= 0 and cpf_summary.CLASS_LINE.match(lines[k]) else "", line.strip()))
+    return found
+
+
+def test_every_loop_gets_a_comment_naming_its_role():
+    """A map's other dimensions, a lowering's hand-written loops, a tile loop and a helper's loop had no comment, so
+    a reader could not tell a proven loop from an unread one."""
+    comments = [comment for comment, head in class_lines(cpf_summary.comment_every_loop(UNCOMMENTED))]
+    assert comments == [
+        "// parallel -- independent: no iteration writes an element another iteration reads or writes",
+        "// parallel -- dimension 2 of the 2 nested loops from i; the comment above proves them all",
+        "// sequential -- implementation loop of scan: runs in order as written",
+        "// parallel -- implementation loop of scan: the team's threads split these iterations (omp for)",
+        "// sequential -- implementation loop of pass 1: runs in order as written",
+        "// sequential -- tile loop: its tiles run in order; the loops inside class the iterations of each tile",
+        "// unknown -- not proven; parallel if no two iterations write one element; otherwise keep the order",
+        "// sequential -- inner tile of loop i2: runs one tile of its range in order",
+        "// parallel -- implementation loop of helper cpf_sum: vectorized (omp simd)",
+    ], comments
+
+
+def test_an_added_comment_sits_above_the_loop_pragmas_and_the_header_lists_only_program_loops():
+    """The added roles (a dimension, a tile, an implementation loop) belong to a loop the header already accounts
+    for, so only the classed program loops stay listed and the open one keeps the unit partial."""
+    code = cpf_summary.comment_every_loop(UNCOMMENTED)
+    lines = code.splitlines()
+    for n, line in enumerate(lines[1:], 1):
+        if cpf_summary.CLASS_LINE.match(line):
+            assert not lines[n - 1].strip().startswith("#pragma omp"), (lines[n - 1], line)
+    header = cpf_summary.summary_lines(cpf_summary.loops_of(code))
+    assert header[1] == "//   parallel: i", header
+    assert header[-1] == "// cpf: proven: partial; open: i2", header
+
+
+def test_a_program_loop_no_pass_classed_stays_open_with_its_guard():
+    """An uncommented ``int64_t`` loop of the program was open in the header; its added comment keeps it open and
+    says what would make it parallel, so the unit cannot read as proven."""
+    code = """\
+void f0(double *a, int64_t N) {
+    for (int64_t i = 0; i < N; i += 1) {
+        a[i] = 0;
+    }
+}
+"""
+    ((comment, head),) = class_lines(cpf_summary.comment_every_loop(code))
+    assert comment.startswith("// unknown -- not analyzed for dependences") and "parallel if " in comment, comment
+    assert "; otherwise " in comment, comment
+    header = cpf_summary.summary_lines(cpf_summary.loops_of(cpf_summary.comment_every_loop(code)))
+    assert header[-1] == "// cpf: proven: partial; open: i", header
+
+
+def test_a_triangular_loop_is_not_a_tile():
+    """Only a loop whose start and bound both use the parent's counter walks one tile of it: ``j = i; j < n`` does
+    not."""
+    code = """\
+for (long i = 0; i < n; ++i) {
+    for (long j = i; j < n; ++j) a[j] += b[i];
+}
+"""
+    comments = [comment for comment, head in class_lines(cpf_summary.comment_every_loop(code))]
+    assert all("tile" not in comment for comment in comments), comments
+
+
+@dace.program
+def two_dims(a: dace.float64[N, M], b: dace.float64[N, M]):
+    for i, j in dace.map[0:N, 0:M]:
+        b[i, j] = 2 * a[i, j]
+
+
+def test_a_rendered_unit_comments_every_loop_above_its_pragmas():
+    sdfg = two_dims.to_sdfg(simplify=True)
+    sdfg.name = "cpf_audit_every_loop"
+    code = named(sdfg)
+    found = class_lines(code)
+    assert found and all(comment for comment, head in found), found
+    lines = code.splitlines()
+    for n, line in enumerate(lines[1:], 1):
+        if cpf_summary.CLASS_LINE.match(line):
+            assert (
+                not lines[n - 1].strip().startswith(("#pragma omp parallel", "#pragma omp for", "#pragma omp simd"))
+            ), (
+                lines[n - 1],
+                line,
+            )
+
+
 if __name__ == "__main__":
     test_a_private_name_the_loop_body_declares_is_dropped()
     test_a_private_buffer_declared_before_the_loop_stays_named()
@@ -283,3 +435,9 @@ if __name__ == "__main__":
     test_a_versioned_loop_counts_as_proven_and_lists_its_guarded_arm()
     test_a_unit_without_a_versioned_loop_has_no_guarded_line()
     test_a_fusion_note_names_only_intermediates_the_code_holds()
+    test_a_respelled_accumulator_between_comment_and_loop_keeps_the_comment_on_the_loop()
+    test_every_loop_gets_a_comment_naming_its_role()
+    test_an_added_comment_sits_above_the_loop_pragmas_and_the_header_lists_only_program_loops()
+    test_a_program_loop_no_pass_classed_stays_open_with_its_guard()
+    test_a_triangular_loop_is_not_a_tile()
+    test_a_rendered_unit_comments_every_loop_above_its_pragmas()
