@@ -1307,6 +1307,15 @@ class ScalarWriteShadowScopes(ppl.Pass):
         access_state, access_node = access
         # A branch condition reads on entry to its conditional, a block the state flow has an entry for.
         condition_read = isinstance(access_state, ConditionalBlock) and access_node is access_state
+        if isinstance(access_state, ConditionalBlock) and isinstance(access_node, InterstateEdge):
+            # An edge leaving a conditional reads at its exit: the value either was written inside the conditional
+            # or entered it, so ask about the entry, ignoring any kill inside (more merges, never fewer).
+            inside = write_state.parent_graph
+            while inside is not None and inside is not access_state:
+                inside = inside.parent_graph
+            if inside is access_state:
+                return True
+            condition_read = True
         if not all(isinstance(b, SDFGState) for b in (write_state, *(k[0] for k in kills))) or not (
             condition_read or isinstance(access_state, SDFGState)
         ):

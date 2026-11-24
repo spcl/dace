@@ -220,8 +220,58 @@ def test_sibling_loops_branching_on_the_temporary_each_get_their_own_copy():
     np.testing.assert_allclose(o2, r2, rtol=1e-14, atol=0)
 
 
+def test_a_read_on_the_edge_leaving_a_branch_does_not_tie_the_sibling_loops_together():
+    """CloudSC's ``zqe``: the first loop reads the temporary on the edge leaving a branch (``big = zqe >= 0.5``). That
+    read sits in no state, so the analysis merged every write the outer back edge reaches into its scope, the second
+    loop's included, and three column loops of CloudSC shared one ``zqe``. The value of the second loop's write
+    cannot reach that edge without passing the first loop's ``zqe = 0``, so the second loop keeps its own copy."""
+    from dace.properties import CodeBlock
+    from dace.transformation import pass_pipeline as ppl
+    from dace.transformation.passes import analysis as ap
+
+    sdfg = dace.SDFG("shared_scalar_edge_read")
+    sdfg.add_array("out", [10], dace.float64)
+    sdfg.add_scalar("zqe", dace.float64, transient=True)
+    sdfg.add_symbol("big", dace.bool)
+    level = LoopRegion("level", "t < 4", "t", "t = 0", "t = t + 1")
+    sdfg.add_node(level, is_start_block=True)
+    first = LoopRegion("first", "k < 10", "k", "k = 0", "k = k + 1")
+    second = LoopRegion("second", "k < 10", "k", "k = 0", "k = k + 1")
+    level.add_node(first, is_start_block=True)
+    level.add_node(second)
+    level.add_edge(first, second, dace.InterstateEdge())
+    init = first.add_state("init", is_start_block=True)
+    add_assign(init, "y = 0.0", {}, ("zqe", "zqe[0]"))
+    branch = ConditionalBlock("branch")
+    first.add_node(branch)
+    arm = ControlFlowRegion("arm")
+    add_assign(arm.add_state("set", is_start_block=True), "y = 1.0", {}, ("zqe", "zqe[0]"))
+    branch.add_branch(CodeBlock("t > 1"), arm)
+    first.add_edge(init, branch, dace.InterstateEdge())
+    use = first.add_state("use")
+    first.add_edge(branch, use, dace.InterstateEdge(assignments={"big": "zqe >= 0.5"}))
+    add_assign(use, "y = x", {"x": "zqe[0]"}, ("out", "out[k]"))
+    body = second.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("w", {}, {"y"}, "y = 2.0")
+    node = body.add_access("zqe")
+    body.add_edge(tasklet, "y", node, None, dace.Memlet("zqe[0]"))
+    reader = body.add_tasklet("r", {"x"}, {"y"}, "y = x")
+    body.add_edge(node, None, reader, "x", dace.Memlet("zqe[0]"))
+    body.add_edge(reader, "y", body.add_write("out"), None, dace.Memlet("out[k]"))
+    sdfg.validate()
+
+    results = ppl.Pipeline([ap.FissionableScalarWriteShadowScopes()]).apply_pass(sdfg, {})
+    scopes = results["FissionableScalarWriteShadowScopes"][sdfg.cfg_id]["zqe"]
+    assert {write[0].label for write in scopes if write is not None} == {"init", "body"}, scopes
+    PrivatizeScalars().apply_pass(sdfg, {})
+    names = {n.data for n in body.data_nodes() if n.data.startswith("zqe")}
+    assert names and "zqe" not in names, names
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_sibling_loops_each_get_their_own_copy_of_a_shared_temporary()
     test_a_temporary_carried_around_the_outer_loop_keeps_its_value()
     test_sibling_loops_writing_the_temporary_in_both_arms_each_get_their_own_copy()
     test_sibling_loops_branching_on_the_temporary_each_get_their_own_copy()
+    test_a_read_on_the_edge_leaving_a_branch_does_not_tie_the_sibling_loops_together()
