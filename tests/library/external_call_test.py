@@ -566,7 +566,7 @@ def test_a_kernel_cut_from_a_program_with_array_reductions_reduces_its_accumulat
     assert call.standalone_sdfg.openmp_array_reductions
     # the one-element accumulator reduces in a local scalar stored back to the argument
     (local,) = set(re.findall(r"reduction\(\+:(__red_0_\w*_out_out)\)", code))
-    assert f"*(_out_out) = {local};" in code
+    assert f"_out_out[0] = {local};" in code
     assert "omp atomic" not in code
 
 
