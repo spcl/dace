@@ -766,6 +766,8 @@ def find_conflict_witness(
     rlimit: int = DEFAULT_RLIMIT,
     outer: tuple[IterRange, ...] = (),
     shape: tuple[sp.Basic | None, ...] = (),
+    fixed: set[str] = frozenset(),
+    kills: tuple[tuple[tuple[sp.Basic, ...], tuple[IterRange, ...], bool], ...] = (),
 ) -> dict[str, int] | None:
     """Values under which ``first``, at an earlier iteration of the carrying loop, and ``second``, at a later one,
     touch the same element; ``None`` when there are none, the solver gives up, or something cannot be encoded.
@@ -773,16 +775,26 @@ def find_conflict_witness(
     The iterator lists run outermost first, and both start with the carrying loop. Each side gets its own copy of
     every iterator. The only other symbols the witness may choose are ``sizes``, at least 1: a symbol outside
     them is a fixed value nobody knows, and a conflict for one chosen value of it proves nothing about the
-    program, so its presence refuses the query. ``outer`` are the counters of the loops around the carrying one,
+    program, so its presence refuses the query, unless it is in ``fixed``. ``outer`` are the counters of the loops around the carrying one,
     outermost first: both accesses share one copy, an iteration of those loops in which the carrying loop runs.
     ``shape`` is the accessed array's extent per dimension (``None`` where it is not in ``sizes``): both accesses
-    must lie inside it, so no witness rests on an index no valid input reaches.
+    must lie inside it, so no witness rests on an index no valid input reaches. ``fixed`` are parameters the
+    program never changes while the carrying loop runs but whose value nobody knows (a column index a caller
+    passes in): one may appear only if, for EVERY value of it under which the loops run with both accesses inside
+    ``shape``, some iterations conflict (:func:`conflicts_for_every`), so the witness rests on no chosen value of it. ``kills`` are the writes ``(index, iters,
+    same)`` of the array in one iteration: none of them, at the later iteration, may store the element ``second``
+    reads, except the very instance of the read's own statement when ``same`` (it writes after it reads).
     """
     exprs = [sp.sympify(e) for e in first + second]
     exprs += [sp.sympify(b) for _, start, end, _ in outer + first_iters + second_iters for b in (start, end)]
-    allowed = {name for name, *_ in outer + first_iters + second_iters} | sizes
+    kill_iters = tuple(it for kill in kills for it in kill[1])
+    exprs += [sp.sympify(e) for kill in kills for e in kill[0]]
+    exprs += [sp.sympify(b) for it in kill_iters for b in it[1:3]]
+    iterators = {it[0] for it in outer + first_iters + second_iters + kill_iters}
+    allowed = iterators | sizes | set(fixed)
     if not _HAS_Z3 or len(first) != len(second) or not admissible(exprs, allowed):
         return None
+    params = sorted({s.name for e in exprs for s in e.free_symbols} - iterators - sizes)
     sym_cache: dict[str, Any] = {}
     sides = [encode_side("__a", first, first_iters, sym_cache), encode_side("__b", second, second_iters, sym_cache)]
     shared = encode_side("", (), outer, sym_cache)
@@ -790,28 +802,65 @@ def find_conflict_witness(
         return None
     carrier, _, _, step = first_iters[0]
     earlier, later = required(z3).Int(carrier + "__a"), required(z3).Int(carrier + "__b")
-    solver = bounded_solver(rlimit)
-    solver.add(*shared[0], *sides[0][0], *sides[1][0], *(a == b for a, b in zip(sides[0][1], sides[1][1])))
-    solver.add(earlier < later if int(symbolic.evaluate(step, {})) > 0 else earlier > later)
-    solver.add(*(required(z3).Int(name) >= 1 for name in sorted(sizes)))
+    domain = [*shared[0], *sides[0][0], *sides[1][0]]
+    conflict = [*(a == b for a, b in zip(sides[0][1], sides[1][1]))]
+    conflict.append(earlier < later if int(symbolic.evaluate(step, {})) > 0 else earlier > later)
+    for number, (index, iters, same) in enumerate(kills):
+        suffix = f"__k{number}"
+        side = encode_side(suffix, index, iters, sym_cache)
+        if side is None or len(index) != len(second):
+            return None
+        hit = [*side[0], *(a == b for a, b in zip(side[1], sides[1][1]))]
+        if same:
+            hit.append(
+                required(z3).Or(*(required(z3).Int(it[0] + suffix) != required(z3).Int(it[0] + "__b") for it in iters))
+            )
+        bound = [required(z3).Int(it[0] + suffix) for it in iters]
+        hit = required(z3).And(required(z3).Int(carrier + suffix) == later, *hit)
+        conflict.append(required(z3).Not(required(z3).Exists(bound, hit)))
+    in_bounds = []
     for dim, extent in enumerate(shape):
         if extent is None or not admissible([sp.sympify(extent)], sizes):
             continue
         bound = _sympy_to_z3(sp.sympify(extent), sym_cache, {})
         if bound is None:
             continue
-        solver.add(*(term >= 0 for term in (sides[0][1][dim], sides[1][1][dim])))
-        solver.add(*(term < bound for term in (sides[0][1][dim], sides[1][1][dim])))
+        in_bounds += [term >= 0 for term in (sides[0][1][dim], sides[1][1][dim])]
+        in_bounds += [term < bound for term in (sides[0][1][dim], sides[1][1][dim])]
+    solver = bounded_solver(rlimit)
+    domain += in_bounds
+    solver.add(*domain, *conflict, *(required(z3).Int(name) >= 1 for name in sorted(sizes)))
     try:
-        verdict = solver.check()
-        if verdict != required(z3).sat:
+        if solver.check() != required(z3).sat:
             return None
     except Exception:
         return None
     model = solver.model()
+    if params and not conflicts_for_every(domain, conflict, model, params, sizes, rlimit):
+        return None
     shown = [name for name, *_ in outer] + [carrier + "__a", carrier + "__b"]
     shown += sorted({s.name for e in exprs for s in e.free_symbols} & sizes)
     return {name: model.eval(required(z3).Int(name), model_completion=True).as_long() for name in shown}
+
+
+def conflicts_for_every(
+    domain: list[Any], conflict: list[Any], model: Any, params: list[str], sizes: set[str], rlimit: int
+) -> bool:
+    """Whether, with the sizes of ``model``, every value of ``params`` under which the loops run in bounds
+    (``domain`` holds for some iterations) also has iterations that ``conflict``."""
+    z3m = required(z3)
+    names = {str(v) for v in z3m.z3util.get_vars(z3m.And(*domain, *conflict))}
+    iters = [z3m.Int(name) for name in sorted(names - set(params) - sizes)]
+    solver = bounded_solver(rlimit)
+    for name in sorted(names & sizes):
+        solver.add(z3m.Int(name) == model.eval(z3m.Int(name), model_completion=True))
+    runs = z3m.Exists(iters, z3m.And(*domain)) if iters else z3m.And(*domain)
+    meets = z3m.Exists(iters, z3m.And(*domain, *conflict)) if iters else z3m.And(*domain, *conflict)
+    solver.add(runs, z3m.Not(meets))
+    try:
+        return solver.check() == z3m.unsat
+    except Exception:
+        return False
 
 
 __all__ = [

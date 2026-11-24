@@ -537,6 +537,10 @@ class Site(NamedTuple):
 
     access: Access
     iters: tuple[smt_dependence.IterRange, ...]
+    #: The node that reads or writes the element (a copy's destination) and its state: a write the read flows into
+    #: happens after it.
+    node: nodes.Node | None = None
+    state: SDFGState | None = None
 
 
 def loop_range(loop: LoopRegion, mapping: dict[str, sympy.Expr]) -> smt_dependence.IterRange | None:
@@ -601,7 +605,7 @@ def copy_sites(
                 extra.append((var, begin, end, step))
                 element = sympy.Symbol(var)
             index.append(element + offset[dim] if offset else element)
-        sites.append(Site(Access(outer, write, tuple(index)), iters + tuple(extra)))
+        sites.append(Site(Access(outer, write, tuple(index)), iters + tuple(extra), edge.dst, state))
     return sites
 
 
@@ -613,7 +617,8 @@ def state_sites(
         scoped = edge.dst if isinstance(edge.dst, nodes.Tasklet) else edge.src
         inner = iters + map_ranges(state, scoped, mapping)
         copies = copy_sites(edge, state, arrays, mapping, inner, len(out))
-        out.extend(copies or (Site(access, inner) for access in edge_accesses(edge, state, arrays, mapping)))
+        node = scoped if isinstance(scoped, nodes.Tasklet) else edge.dst
+        out.extend(copies or (Site(a, inner, node, state) for a in edge_accesses(edge, state, arrays, mapping)))
     for node in state.nodes():
         if isinstance(node, nodes.NestedSDFG):
             inner_arrays, inner_mapping = nested_bindings(state, node, arrays, mapping)
@@ -668,6 +673,14 @@ def size_symbols(sdfg: SDFG) -> set[str]:
     return (shapes | (bounds - elsewhere)) - assigned - counters - set(sdfg.constants)
 
 
+def fixed_symbols(loop: LoopRegion) -> set[str]:
+    """The symbols of ``loop``'s SDFG that nothing inside ``loop`` assigns: a value set before the loop runs or passed
+    by the caller (a column index), the same in every iteration."""
+    assigned = {name for edge in loop.all_interstate_edges(recursive=True) for name in edge.data.assignments}
+    loops = [r for r in loop.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+    return set(loop.sdfg.symbols) - assigned - {r.loop_variable for r in loops} - set(loop.sdfg.constants)
+
+
 def is_scratch(sdfg: SDFG, name: str) -> bool:
     """Whether container ``name`` of ``sdfg`` is scratch: a transient here, or an argument of a nested SDFG that every
     caller binds to scratch."""
@@ -688,7 +701,8 @@ def is_scratch(sdfg: SDFG, name: str) -> bool:
 
 def witnessed_carrying_access(loop: LoopRegion) -> str | None:
     """``RAW on A[k, j] (witness: N=3, k=0 and k=1)`` when the solver finds two iterations of ``loop`` that touch one
-    element of an argument array, choosing values for array sizes only."""
+    element of an argument array, choosing values for array sizes only; a parameter the caller fixes may appear
+    when the conflict holds for every in-bounds value of it."""
     counter = loop_range(loop, {}) if loop.loop_variable else None
     if counter is None:
         return None
@@ -705,14 +719,27 @@ def witnessed_carrying_access(loop: LoopRegion) -> str | None:
     mapping = {name: sympy.sympify(value) for name, value in loop.sdfg.constants.items()}
     sites: list[Site] = []
     region_sites(loop, arrays, mapping, (counter,), sites)
-    sites = [site for site in sites if not is_scratch(loop.sdfg, site.access.array)]
+    scratch = {site.access.array for site in sites if is_scratch(loop.sdfg, site.access.array)}
+    # A read of scratch that no write of its own iteration reaches first sees an earlier iteration's value, which no
+    # private copy has: the one conflict on scratch that proves an order. Every write must be a site for that.
+    if not writes_are_sites(loop):
+        sites = [site for site in sites if site.access.array not in scratch]
     sizes = size_symbols(loop.sdfg)
+    fixed = fixed_symbols(loop) - sizes
     pairs = [(w, o) for w in sites if w.access.write for o in sites if o.access.array == w.access.array]
     pairs.sort(key=lambda pair: pair[1].access.write)
     for write, other in pairs:
         for first, second in ((write, other), (other, write)):
-            if first.access.write and not second.access.write and rewritten_in_iteration(second, sites):
+            flow = first.access.write and not second.access.write
+            if write.access.array in scratch and not flow:
                 continue
+            if flow and write.access.array not in scratch and rewritten_in_iteration(second, sites):
+                continue
+            kills = tuple(
+                (site.access.index, site.iters, flows_into(second, site))
+                for site in sites
+                if write.access.array in scratch and site.access.write and site.access.array == write.access.array
+            )
             with canon_stats.timed("z3", loop):
                 found = smt_dependence.find_conflict_witness(
                     first.access.index,
@@ -722,10 +749,38 @@ def witnessed_carrying_access(loop: LoopRegion) -> str | None:
                     sizes,
                     outer=tuple(outer),
                     shape=array_extent(loop.sdfg, first.access.array, len(first.access.index)),
+                    fixed=fixed,
+                    kills=kills,
                 )
             if found is not None:
                 return conflict_label(first, second, found, counter[0])
     return None
+
+
+def flows_into(read: Site, write: Site) -> bool:
+    """Whether ``write`` is downstream of ``read`` in one state under the same iterators, so in every instance of the
+    two the read happens first."""
+    return read.state is write.state and read.iters == write.iters and write.node in read.state.bfs_nodes(read.node)
+
+
+def writes_are_sites(loop: LoopRegion) -> bool:
+    """Whether every write under ``loop`` is one :func:`region_sites` sees: no branch, no write that may not happen,
+    no library node writing, every tasklet writing one element."""
+    if has_branch(loop):
+        return False
+    for block in loop.all_control_flow_blocks(recursive=True):
+        if not isinstance(block, SDFGState):
+            continue
+        for edge in block.edges():
+            if isinstance(edge.src, nodes.LibraryNode) or (edge.data.dynamic and not edge.data.is_empty()):
+                return False
+            if (
+                isinstance(edge.src, nodes.Tasklet)
+                and not edge.data.is_empty()
+                and edge.data.subset.num_elements() != 1
+            ):
+                return False
+    return True
 
 
 def array_extent(sdfg: SDFG, name: str, dims: int) -> tuple[sympy.Expr | None, ...]:
@@ -1183,6 +1238,22 @@ def partially_read_hint(state: SDFGState, node: nodes.LibraryNode) -> str | None
     if (read >= desc.total_size) == True:
         return None
     return PARTIALLY_READ.format(read=read, size=desc.total_size)
+
+
+def require_classes(sdfg: SDFG) -> None:
+    """Raise unless every Map and LoopRegion in ``sdfg`` opens its hint with its class: the rendering's header
+    promises one comment per loop, and a loop without one reads as nothing anybody checked.
+
+    :raises RuntimeError: naming the loops and maps without a class.
+    """
+    missing = [
+        node.label
+        for node, parent in sdfg.all_nodes_recursive()
+        if isinstance(node, (nodes.MapEntry, LoopRegion))
+        and not (node.specialization_hint or "").strip().startswith(CLASS_PREFIXES)
+    ]
+    if missing:
+        raise RuntimeError(f"CPF: no class (parallel, sequential or unknown) on {', '.join(missing)}")
 
 
 @xf.explicit_cf_compatible

@@ -72,7 +72,7 @@ from dace.transformation.dataflow.prune_connectors import PruneConnectors
 from dace.transformation.dataflow.tasklet_fusion import TaskletFusion
 from dace.transformation.dataflow.trivial_map_elimination import TrivialMapElimination
 from dace.transformation.passes.analysis.analysis import has_wcr_in_edge
-from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
+from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds, require_classes
 from dace.transformation.passes.canonicalize.finalize import blas_addresses
 from dace.transformation.passes.readable_names import ReadableNames
 from dace.transformation.passes.scalar_fission import AccessIndex, MustDefinition, SubsetAccesses, edge_subset
@@ -1092,6 +1092,8 @@ def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) ->
     sdfg.apply_transformations_repeated([PruneConnectors, FuseIdenticalConnectors], validate=False)
     # Last change to the graph, after every pass that matches a name and before the persistent set is named.
     ReadableNames().apply_pass(sdfg, {})
+    # Every pass that adds or rewrites a scope has run: each loop and map must carry the class its comment opens with.
+    require_classes(sdfg)
     persistent = tuple(
         name for name, desc in sdfg.arrays.items() if desc.transient and desc.lifetime in LIFETIME_DEMOTIONS
     )

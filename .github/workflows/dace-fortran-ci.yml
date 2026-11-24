@@ -3,7 +3,7 @@ name: dace-fortran
 # ICON velocity tendencies end to end: dace-fortran parses the Fortran, ConfigPropagation bakes the namelist
 # configuration into one SDFG per combination, and every variant is parallelized and compared against gfortran
 # (tests/corpus/velocity). On the CPU the comparison is bit for bit; the GPU stage offloads the same variants and checks
-# their structure.
+# their structure. CloudSC, also through dace-fortran, is canonicalized and its CPF loop classes are checked.
 
 on:
   push:
@@ -84,3 +84,16 @@ jobs:
         ulimit -s 65536 || true
         uv run pytest --tb=short --timeout_method thread --timeout=3600 -p no:cacheprovider -m "not gpu" \
           tests/corpus/velocity/velocity_pipeline_test.py
+    # CloudSC through dace-fortran, canonicalized and rendered as CPF: every loop classed, the per-column solve proven
+    # sequential, and the count of loops left unknown never rising. Here, not in dace-fortran's own CI: that one pins
+    # a DaCe main commit, which has no canonicalization or CPF.
+    - name: CloudSC loop classes
+      if: always()
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_cache=unique
+        export DACE_FORTRAN_ROOT="$PWD/dace-fortran"
+        export DACE_compiler_cpu_implementation=experimental_readable
+        ulimit -s 65536 || true
+        uv run pytest --tb=short --timeout_method thread --timeout=1800 -p no:cacheprovider -m "long" \
+          tests/corpus/cloudsc/cloudsc_fortran_kinds_test.py
