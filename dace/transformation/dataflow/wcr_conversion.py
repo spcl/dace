@@ -1332,6 +1332,12 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
         edge = self._matched_wcr_edge(graph, expr_index)
         if edge is None:
             return False
+        # ``apply`` writes the WCR body out as a tasklet expression; a body it cannot render (a logical
+        # ``a or b``) keeps its WCR
+        try:
+            _wcr_augassign_body(edge.data.wcr)
+        except NotImplementedError:
+            return False
 
         # ``output`` is bound as SOME successor of the map exit, and an exit with several outputs
         # has one valid binding per array -- nothing in the path pattern ties it to the container
