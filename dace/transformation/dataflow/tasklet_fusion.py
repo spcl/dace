@@ -104,6 +104,10 @@ class TaskletFusion(pm.SingleStateTransformation):
         # Neither the first Tasklet nor the AccessNode may be used anywhere else.
         if graph.out_degree(t1) != 1 or graph.out_degree(data) != 1:
             return False
+        # Besides the first Tasklet's write, the AccessNode may only be the target of ordering (empty) edges, which
+        # the fused Tasklet takes over.
+        if any(e.src is not t1 and not e.data.is_empty() for e in graph.in_edges(data)):
+            return False
         access_node_count = sum(1 for s in sdfg.nodes() for n in s.data_nodes() if n.data == data.data)
         access_node_count += sum(1 for e in sdfg.edges() if data.data in e.data.free_symbols)
         if access_node_count > 1:
@@ -239,9 +243,15 @@ class TaskletFusion(pm.SingleStateTransformation):
                     continue
             graph.add_edge(in_edge.src, in_edge.src_conn, new_tasklet, in_edge.dst_conn, in_edge.data)
 
+        # An ordering edge into the folded AccessNode orders its reader before the value is consumed: keep it.
+        for in_edge in graph.in_edges(data):
+            if in_edge.src is not t1:
+                graph.add_nedge(in_edge.src, new_tasklet, dace.Memlet())
+
         for in_edge in graph.in_edges(t2):
-            # Only connect if there is no edge connected to that connector yet.
-            if len(list(graph.in_edges_by_connector(new_tasklet, in_edge.dst_conn))) == 0:
+            # Only connect if there is no edge connected to that connector yet. Ordering (empty) edges share the ``None``
+            # connector, and each one orders a different node: keep all of them.
+            if in_edge.dst_conn is None or len(list(graph.in_edges_by_connector(new_tasklet, in_edge.dst_conn))) == 0:
                 graph.add_edge(in_edge.src, in_edge.src_conn, new_tasklet, in_edge.dst_conn, in_edge.data)
             else:
                 graph.remove_memlet_path(in_edge)

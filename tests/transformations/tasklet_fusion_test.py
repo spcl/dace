@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import networkx as nx
 import numpy as np
 import pytest
 
@@ -392,6 +393,37 @@ def test_a_scalar_a_branch_condition_reads_is_not_folded():
         assert C[0] == expected
 
 
+def test_the_ordering_edges_of_both_tasklets_survive():
+    """``nre = re * 2; re = nre + 0`` with each tasklet ordered after a reader of ``re`` by an empty edge: the fused
+    tasklet kept the first ordering edge only (both use the ``None`` connector), so the generator wrote ``re`` before
+    the other reader read it (warpx_esirkepov_deposition's azimuthal mode loop, 11-24)."""
+    sdfg = dace.SDFG("ordering_edges_of_both_tasklets")
+    for name in ("R", "I", "J"):
+        sdfg.add_array(name, [1], dace.float64)
+    sdfg.add_scalar("nre", dace.float64, transient=True)
+    state = sdfg.add_state()
+    readers = []
+    for name, out in (("I", "i"), ("J", "j")):
+        reader = state.add_tasklet(f"read_into_{name}", {"r"}, {out}, f"{out} = r * 0.5")
+        state.add_edge(state.add_read("R"), None, reader, "r", dace.Memlet("R[0]"))
+        state.add_edge(reader, out, state.add_write(name), None, dace.Memlet(f"{name}[0]"))
+        readers.append(reader)
+    rotate = state.add_tasklet("rotate", {"r"}, {"n"}, "n = r * 2.0")
+    copy = state.add_tasklet("copy", {"n"}, {"r"}, "r = n + 0")
+    middle = state.add_access("nre")
+    written = state.add_write("R")
+    state.add_edge(state.add_read("R"), None, rotate, "r", dace.Memlet("R[0]"))
+    state.add_edge(rotate, "n", middle, None, dace.Memlet("nre[0]"))
+    state.add_edge(middle, None, copy, "n", dace.Memlet("nre[0]"))
+    state.add_edge(copy, "r", written, None, dace.Memlet("R[0]"))
+    state.add_nedge(readers[1], rotate, dace.Memlet())
+    state.add_nedge(readers[0], copy, dace.Memlet())
+
+    assert sdfg.apply_transformations(TaskletFusion) == 1
+    for reader in readers:
+        assert nx.has_path(state.nx, reader, written), f"{reader} must stay ordered before the write of R"
+
+
 if __name__ == "__main__":
     test_basic()
     test_same_name()
@@ -406,3 +438,4 @@ if __name__ == "__main__":
     test_tasklets_without_debuginfo_fuse()
     test_a_write_to_an_argument_is_not_folded()
     test_a_scalar_a_branch_condition_reads_is_not_folded()
+    test_the_ordering_edges_of_both_tasklets_survive()
