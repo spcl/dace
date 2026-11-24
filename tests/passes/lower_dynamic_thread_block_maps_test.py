@@ -155,7 +155,8 @@ def test_the_queue_takes_the_chunk_and_guided_schedule_of_its_map(
         dace.config.Config.set("compiler", "cuda", "backend", value="cuda")
         dace.config.Config.set("compiler", "cuda", "dynamic_map_block_size", value="128,1,1")
         code = "\n".join(c.code for c in sdfg.generate_code())
-    assert f"dace::DynamicMap<true, 128, 32, int, {chunk}, {flag}>::block_claim(" in code
+    arguments = "" if chunk == 0 and flag == "false" else f", {chunk}, {flag}"
+    assert f"dace::DynamicMap<true, 128, 32, int{arguments}>::block_claim(" in code
     # Every map of the kernel reads the one queue state through the type without chunk and schedule
     assert "reinterpret_cast<dace::DynamicMap<true, 128, 32, int>::shared_type *>" in code
 

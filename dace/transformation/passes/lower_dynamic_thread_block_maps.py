@@ -305,8 +305,10 @@ def queue_type(head: str, dynamic_map: nodes.Map) -> str:
         chunk = int(chunk)
     else:
         raise NotImplementedError(f"The chunk of the dynamic map {dynamic_map.label} is not a constant: {chunk}")
-    guided = "true" if dynamic_map.omp_schedule == dtypes.OMPScheduleType.Guided else "false"
-    return f"{head}, {chunk}, {guided}>"
+    guided = dynamic_map.omp_schedule == dtypes.OMPScheduleType.Guided
+    if chunk == 0 and not guided:
+        return f"{head}>"
+    return f"{head}, {chunk}, {'true' if guided else 'false'}>"
 
 
 class KernelLowering:
