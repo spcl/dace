@@ -677,6 +677,150 @@ def test_2d_non_strict_nest_lift_follows_the_loop_on_nan_data():
         )
 
 
+# A masked argmin into array elements (CloudSC's species sort): ``if mask[k, n] and a[k, n] < best[k]: idx[k] = n;
+# best[k] = a[k, n]``, the column loop over ``k`` inside or outside the loop over ``n``.
+
+K = dace.symbol("K")
+
+
+@dace.program
+def species_sort(ratio: dace.float64[K, 5], order: dace.int64[K, 5], mask: dace.bool_[K, 5], zmin: dace.float64[K]):
+    for m in range(5):
+        for k in range(K):
+            zmin[k] = 1e32
+        for n in range(5):
+            for k in range(K):
+                if mask[k, n] and ratio[k, n] < zmin[k]:
+                    order[k, m] = n
+                    zmin[k] = ratio[k, n]
+        for k in range(K):
+            mask[k, order[k, m]] = False
+
+
+def sequential_species_sort(ratio):
+    order, mask, zmin = (
+        np.full(ratio.shape, -999, dtype=np.int64),
+        np.ones(ratio.shape, dtype=bool),
+        np.zeros(len(ratio)),
+    )
+    for m in range(5):
+        zmin[:] = 1e32
+        for n in range(5):
+            for k in range(len(ratio)):
+                if mask[k, n] and ratio[k, n] < zmin[k]:
+                    order[k, m] = n
+                    zmin[k] = ratio[k, n]
+        for k in range(len(ratio)):
+            mask[k, order[k, m]] = False
+    return order, mask, zmin
+
+
+def test_species_sort_canonicalizes_its_masked_argmin_and_keeps_the_first_tie():
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+
+    sdfg = species_sort.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    guards = [b for sd in sdfg.all_sdfgs_recursive() for b in sd.all_control_flow_blocks()]
+    assert not [b for b in guards if isinstance(b, ConditionalBlock)], "the guarded argmin loop must be lifted"
+    ratio = np.round(2 * np.random.default_rng(7).random((33, 5)))  # three values over five species: ties
+    order, mask, zmin = np.zeros((33, 5), dtype=np.int64), np.ones((33, 5), dtype=bool), np.zeros(33)
+    sdfg(ratio=ratio, order=order, mask=mask, zmin=zmin, K=33)
+    want_order, want_mask, want_zmin = sequential_species_sort(ratio)
+    assert np.array_equal(order, want_order)
+    assert np.array_equal(mask, want_mask)
+    assert np.array_equal(zmin, want_zmin)
+
+
+@dace.program
+def masked_argmin_columns_inside(
+    a: dace.float64[K, 6], mask: dace.bool_[K, 6], best: dace.float64[K], idx: dace.int32[K, 2]
+):
+    for n in range(6):
+        for k in range(K):
+            if mask[k, n] and a[k, n] < best[k]:
+                idx[k, 1] = n
+                best[k] = a[k, n]
+
+
+@dace.program
+def masked_argmin_columns_outside(
+    a: dace.float64[K, 6], mask: dace.bool_[K, 6], best: dace.float64[K], idx: dace.int32[K, 2]
+):
+    for k in range(K):
+        for n in range(6):
+            if mask[k, n] and a[k, n] < best[k]:
+                idx[k, 1] = n
+                best[k] = a[k, n]
+
+
+@dace.program
+def masked_argmin_non_strict(
+    a: dace.float64[K, 6], mask: dace.bool_[K, 6], best: dace.float64[K], idx: dace.int32[K, 2]
+):
+    for n in range(6):
+        for k in range(K):
+            if mask[k, n] and a[k, n] <= best[k]:
+                idx[k, 1] = n
+                best[k] = a[k, n]
+
+
+@dace.program
+def masked_argmin_mask_reads_the_carrier(
+    a: dace.float64[K, 6], mask: dace.bool_[K, 6], best: dace.float64[K], idx: dace.int32[K, 2]
+):
+    for n in range(6):
+        for k in range(K):
+            if best[k] > 0.5 and a[k, n] < best[k]:
+                idx[k, 1] = n
+                best[k] = a[k, n]
+
+
+def masked_argmin_case():
+    """Ties, NaN, fully masked rows and rows no element of which beats the seed."""
+    rng = np.random.default_rng(29)
+    a = np.round(2 * rng.random((24, 6)))
+    a[1, 2] = a[2, 0] = np.nan
+    a[3] = 7.0  # above every seed
+    mask = rng.random((24, 6)) < 0.7
+    mask[4] = False
+    best = np.full(24, 3.0)
+    best[5] = np.nan
+    return a, mask, best, np.full((24, 2), -1, dtype=np.int32)
+
+
+def sequential_masked_argmin(a, mask, best, idx, non_strict, gate):
+    best, idx = best.copy(), idx.copy()
+    for k in range(len(a)):
+        for n in range(a.shape[1]):
+            passes = (a[k, n] <= best[k]) if non_strict else (a[k, n] < best[k])
+            if (best[k] > 0.5 if gate else mask[k, n]) and passes:
+                idx[k, 1] = n
+                best[k] = a[k, n]
+    return best, idx
+
+
+@pytest.mark.parametrize(
+    "program,non_strict,gated,lifts",
+    [
+        (masked_argmin_columns_inside, False, False, True),
+        (masked_argmin_columns_outside, False, False, True),
+        (masked_argmin_non_strict, True, False, True),
+        # The carrier read in the mask changes with every update: no filter of the data, so no argmin.
+        (masked_argmin_mask_reads_the_carrier, False, True, False),
+    ],
+)
+def test_masked_argmin_into_array_elements_matches_the_loop(program, non_strict, gated, lifts):
+    sdfg = program.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == (1 if lifts else None)
+    sdfg.validate()
+    assert _num_loops(sdfg) == (1 if lifts else 2), "a lift leaves the column loop only"
+    a, mask, best, idx = masked_argmin_case()
+    want_best, want_idx = sequential_masked_argmin(a, mask, best, idx, non_strict, gated)
+    sdfg(a=a, mask=mask, best=best, idx=idx, K=len(a))
+    np.testing.assert_array_equal(best, want_best)
+    np.testing.assert_array_equal(idx, want_idx)
+
+
 if __name__ == "__main__":
     for _op, _idx in ((">", 0), (">=", 2), ("<", 1), ("<=", 3)):
         test_index_tie_breaking_matches_sequential(_op, _idx)
@@ -690,4 +834,9 @@ if __name__ == "__main__":
     test_2d_index_tie_breaking_matches_sequential(">=", False)
     test_2d_non_strict_nest_lift_follows_the_loop_on_nan_data()
     test_a_scan_starting_at_the_seed_element_is_lifted()
+    test_species_sort_canonicalizes_its_masked_argmin_and_keeps_the_first_tie()
+    test_masked_argmin_into_array_elements_matches_the_loop(masked_argmin_columns_inside, False, False, True)
+    test_masked_argmin_into_array_elements_matches_the_loop(masked_argmin_columns_outside, False, False, True)
+    test_masked_argmin_into_array_elements_matches_the_loop(masked_argmin_non_strict, True, False, True)
+    test_masked_argmin_into_array_elements_matches_the_loop(masked_argmin_mask_reads_the_carrier, False, True, False)
     print("ok")

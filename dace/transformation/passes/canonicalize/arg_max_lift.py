@@ -86,6 +86,28 @@ class PartialReduction(NamedTuple):
     extents: list[tuple[Any, Any]]
 
 
+class MaskedArgReduction(NamedTuple):
+    """A guarded argmin / argmax ``if mask and source[I] OP carrier[K]: index[J] = i; carrier[K] = source[I]``
+    (:meth:`ArgMaxLift.match_masked_arg`), over the loop ``reduced``; ``column`` is an independent loop between it and
+    the guard, which the rewrite makes the outer one."""
+
+    reduced: LoopRegion
+    column: LoopRegion | None
+    carrier: str
+    carrier_subset: subsets.Range
+    index: str
+    index_subset: subsets.Range
+    guard: str  # wired: every data read a connector of ``inputs``
+    gather: ast.Subscript
+    wired_gather: str
+    wired_seed: str
+    inputs: dict[str, mm.Memlet]
+    op: dtypes.ReductionType
+    last_wins: bool
+    start: Any
+    end: Any
+
+
 class _Match(NamedTuple):
     """A matched argmax/argmin loop."""
 
@@ -155,24 +177,19 @@ class GuardReadWiring(ast.NodeTransformer):
             self.refused = True
             return node
         array = node.value.id
-        # One index expression only makes a 1-D memlet; a rank mismatch would emit a subset of the wrong dimensionality.
-        if len(self.sdfg.arrays[array].shape) != 1:
+        indices = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+        # One index per dimension: a rank mismatch would emit a subset of the wrong dimensionality.
+        if len(indices) != len(self.sdfg.arrays[array].shape) or any(
+            isinstance(idx, (ast.Slice, ast.List, ast.Starred)) for idx in indices
+        ):
             self.refused = True
             return node
-        idx = node.slice
-        if isinstance(idx, (ast.Tuple, ast.Slice, ast.List)):
+        positions = [self.position(ast.unparse(idx)) for idx in indices]
+        if any(pos is None for pos in positions):
             self.refused = True
             return node
-        try:
-            idx_str = ast.unparse(idx)
-        except Exception:  # pragma: no cover -- defensive
-            self.refused = True
-            return node
-        pos = self.position(idx_str)
-        if pos is None:
-            self.refused = True
-            return node
-        return ast.copy_location(self.connector(f"{array}[{pos}]", array, subsets.Range([(pos, pos, 1)])), node)
+        key = f"{array}[{', '.join(str(pos) for pos in positions)}]"
+        return ast.copy_location(self.connector(key, array, subsets.Range([(pos, pos, 1) for pos in positions])), node)
 
     def position(self, idx_str: str) -> Any | None:
         """The single array position a guard read touches -- affine in the loop variable, or wholly loop-invariant."""
@@ -349,6 +366,13 @@ class ArgMaxLift(ppl.Pass):
                 if mr is not None:
                     self.rewrite_partial_reduction(mr, sd)
                     replaced.update(id(r) for r in region.all_control_flow_regions())
+                    rewritten += 1
+                    continue
+                # A masked argmin / argmax into array elements, under an independent column loop or not (CloudSC).
+                ma = self.match_masked_arg(region, sd)
+                if ma is not None:
+                    replaced.update(id(r) for r in region.all_control_flow_regions())
+                    self.rewrite_masked_arg(ma, sd)
                     rewritten += 1
         return rewritten or None
 
@@ -2019,6 +2043,43 @@ class ArgMaxLift(ppl.Pass):
         tree = substitute.visit(tree)
         return tree if substitute.ok else None
 
+    @staticmethod
+    def is_carrier_element(node: ast.expr, carrier: str, carrier_subset: subsets.Range, sdfg: SDFG) -> bool:
+        """Whether ``node`` reads ``carrier[K]``, ``K`` the one element of ``carrier_subset``."""
+        if isinstance(node, ast.Name):
+            return node.id == carrier and sdfg.arrays[carrier].total_size == 1
+        if not (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == carrier):
+            return False
+        idx = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+        if len(idx) != len(carrier_subset.ranges):
+            return False
+        try:
+            return all(
+                symbolic.equal(symbolic.pystr_to_symbolic(ast.unparse(i)), bounds[0], is_length=False) is True
+                for i, bounds in zip(idx, carrier_subset.ranges, strict=True)
+            )
+        except (TypeError, ValueError, SyntaxError):
+            return False
+
+    def carrier_compare(
+        self, node: ast.expr, carrier: str, carrier_subset: subsets.Range, sdfg: SDFG
+    ) -> tuple[CompareOp, ast.Subscript] | None:
+        """``(OP, gather)`` of a comparison read as ``gather OP carrier[K]`` (``carrier[K] < gather`` gives ``>``)."""
+        if not (isinstance(node, ast.Compare) and len(node.ops) == 1 and len(node.comparators) == 1):
+            return None
+        op, left, right = type(node.ops[0]), node.left, node.comparators[0]
+        if op not in CMP_AST_TO_RTYPE:
+            return None
+        for gather, other, read_op in ((left, right, op), (right, left, MIRRORED_CMP[op])):
+            if (
+                isinstance(gather, ast.Subscript)
+                and isinstance(gather.value, ast.Name)
+                and not self.is_carrier_element(gather, carrier, carrier_subset, sdfg)
+                and self.is_carrier_element(other, carrier, carrier_subset, sdfg)
+            ):
+                return read_op, gather
+        return None
+
     def partial_fold(
         self,
         tree: ast.expr,
@@ -2030,44 +2091,19 @@ class ArgMaxLift(ppl.Pass):
         """``(combine, gather)`` for a guard (with its bindings substituted) and the value the branch writes, or
         ``None``; see :meth:`match_partial_reduction` for the forms."""
 
-        def is_carrier(node: ast.expr) -> bool:
-            if isinstance(node, ast.Name):
-                return node.id == carrier and sdfg.arrays[carrier].total_size == 1
-            if not (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == carrier):
-                return False
-            idx = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
-            if len(idx) != len(carrier_subset.ranges):
-                return False
-            try:
-                return all(
-                    symbolic.equal(symbolic.pystr_to_symbolic(ast.unparse(i)), begin, is_length=False) is True
-                    for i, (begin, _, _) in zip(idx, carrier_subset.ranges, strict=True)
-                )
-            except (TypeError, ValueError, SyntaxError):
-                return False
-
         def is_gather(node: ast.expr) -> bool:
             return isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and not is_carrier(node)
 
+        def is_carrier(node: ast.expr) -> bool:
+            return self.is_carrier_element(node, carrier, carrier_subset, sdfg)
+
         def compare(node: ast.expr) -> tuple[dtypes.ReductionType, bool, ast.Subscript] | None:
             """``(op, strict, gather)`` of ``gather > carrier`` / ``carrier < gather`` / ... ."""
-            if not (isinstance(node, ast.Compare) and len(node.ops) == 1 and len(node.comparators) == 1):
+            parsed = self.carrier_compare(node, carrier, carrier_subset, sdfg)
+            if parsed is None:
                 return None
-            op, left, right = type(node.ops[0]), node.left, node.comparators[0]
-            if op not in CMP_AST_TO_RTYPE:
-                return None
-            if is_gather(left) and is_carrier(right):
-                gather, reduction = left, CMP_AST_TO_RTYPE[op]
-            elif is_carrier(left) and is_gather(right):
-                gather = right
-                reduction = (
-                    dtypes.ReductionType.Min
-                    if CMP_AST_TO_RTYPE[op] == dtypes.ReductionType.Max
-                    else dtypes.ReductionType.Max
-                )
-            else:
-                return None
-            return reduction, op in (ast.Gt, ast.Lt), gather  # type: ignore[return-value]
+            op, gather = parsed
+            return CMP_AST_TO_RTYPE[op], op in (ast.Gt, ast.Lt), gather
 
         if isinstance(value, bool):
             # ``any`` / ``all`` over boolean data: the guard is the element, or its negation.
@@ -2183,6 +2219,246 @@ class ArgMaxLift(ppl.Pass):
         state.add_edge(
             node, "_out", state.add_write(m.carrier), None, mm.Memlet(data=m.carrier, subset=m.carrier_subset)
         )
+
+    # Masked argmin / argmax into array elements (CloudSC's species sort).
+
+    def match_masked_arg(self, loop: LoopRegion, sdfg: SDFG) -> MaskedArgReduction | None:
+        """``for i: [for k:] if mask and source[I] OP carrier[K]: index[J] = i; carrier[K] = source[I]``. ``K`` and
+        ``J`` are invariant in ``i``; under a column loop ``k`` each moves with ``k`` in one dimension, so the columns
+        are independent and the column loop goes outside."""
+        column = self._single_child_region(loop, LoopRegion)
+        if column is not None and (
+            not column.loop_variable or any(e.data.assignments or not e.data.is_unconditional() for e in loop.edges())
+        ):
+            return None
+        innermost = column if column is not None else loop
+        skeleton = self.guarded_loop_skeleton(innermost)
+        if skeleton is None:
+            return None
+        guard, true_branch = skeleton[3], skeleton[4]
+        nest = [loop] if column is None else [loop, column]
+        names = [n.loop_variable for n in nest]
+        if len(set(names)) != len(names):
+            return None
+        bindings = self._guard_bindings(innermost, names)
+        if bindings is None:
+            return None
+        extents = self._box_extents(nest, set(names) | set(bindings))
+        if extents is None:
+            return None
+        writes = self.arg_writes(true_branch, loop.loop_variable, sdfg)
+        if writes is None:
+            return None
+        carrier, carrier_subset, value, scratch, index, index_subset = writes
+        varying = {loop.loop_variable, *bindings}
+        for element in (carrier_subset, index_subset):
+            if any(rng[0] != rng[1] for rng in element.ranges) or self._names_in(*element.min_element()) & varying:
+                return None
+            if column is not None and not self.moves_with(element, column.loop_variable, varying):
+                return None
+        tree = self.substituted_guard(guard.as_string.strip(), bindings)
+        parsed = None if tree is None or carrier == index else self.masked_compare(tree, writes, sdfg)
+        if parsed is None:
+            return None
+        op_ast, gather, seed = parsed
+        source = gather.value.id  # type: ignore[attr-defined]  -- carrier_compare returns a Name-valued subscript
+        if source not in sdfg.arrays or sdfg.arrays[source].dtype != sdfg.arrays[carrier].dtype:
+            return None
+        if not self.same_element(value, gather):
+            return None  # the branch stores another element than the one it compared
+        if loop_analysis.read_outside(sdfg, loop, set(bindings), scratch):
+            return None
+        wiring = GuardReadWiring(sdfg, loop)
+        wired_guard = ast.unparse(wiring.visit(copy.deepcopy(tree)))
+        wired_gather = ast.unparse(wiring.visit(copy.deepcopy(gather)))
+        wired_seed = ast.unparse(wiring.visit(copy.deepcopy(seed)))
+        if wiring.refused:
+            return None
+        return MaskedArgReduction(
+            reduced=loop,
+            column=column,
+            carrier=carrier,
+            carrier_subset=carrier_subset,
+            index=index,
+            index_subset=index_subset,
+            guard=wired_guard,
+            gather=gather,
+            wired_gather=wired_gather,
+            wired_seed=wired_seed,
+            inputs=dict(wiring.reads.values()),
+            op=CMP_AST_TO_RTYPE[op_ast],
+            last_wins=self._resolve_last_wins(op_ast, True),
+            start=extents[0][0],
+            end=extents[0][1],
+        )
+
+    def masked_compare(
+        self, tree: ast.expr, writes: tuple, sdfg: SDFG
+    ) -> tuple[CompareOp, ast.Subscript, ast.expr] | None:
+        """``(OP, gather, carrier read)`` of a guard ``mask and ... and gather OP carrier[K]``: the carriers are read
+        only by the comparison, and the masks read nothing the loop writes."""
+        carrier, carrier_subset, scratch, index = writes[0], writes[1], writes[3], writes[4]
+        conjuncts = tree.values if isinstance(tree, ast.BoolOp) and isinstance(tree.op, ast.And) else [tree]
+        compares = [c for c in conjuncts if self.carrier_compare(c, carrier, carrier_subset, sdfg) is not None]
+        if len(compares) != 1:
+            return None
+        compare = compares[0]
+        op_ast, gather = required(self.carrier_compare(compare, carrier, carrier_subset, sdfg))
+        read = {n.id for c in conjuncts if c is not compare for n in ast.walk(c) if isinstance(n, ast.Name)}
+        read |= {n.id for n in ast.walk(gather) if isinstance(n, ast.Name)}
+        if read & {carrier, index, *scratch}:
+            return None
+        return op_ast, gather, compare.comparators[0] if compare.left is gather else compare.left  # type: ignore[attr-defined]
+
+    def moves_with(self, element: subsets.Range, var: str, blocked: set[str]) -> bool:
+        """Whether one dimension of ``element`` is ``var + c``, ``c`` free of ``var`` and ``blocked``."""
+        for begin in element.min_element():
+            offset = symbolic.pystr_to_symbolic(f"({symbolic.symstr(begin)}) - ({var})")
+            if var in self._names_in(begin) and not self._names_in(offset) & (blocked | {var}):
+                return True
+        return False
+
+    def arg_writes(
+        self, true_branch: ControlFlowBlock, var: str, sdfg: SDFG
+    ) -> tuple[str, subsets.Range, ast.expr, set[str], str, subsets.Range] | None:
+        """``(carrier, K, source[I], scratch, index, J)`` of a true branch that does exactly ``index[J] = var`` and
+        ``carrier[K] = source[I]``, or ``None``."""
+        if any(e.data.assignments or not e.data.is_unconditional() for e in true_branch.all_interstate_edges()):
+            return None
+        state = self._extract_singleton_state(true_branch)
+        if state is None or len(state.sink_nodes()) != 2:
+            return None
+        value_write, index_write, covered = None, None, 0
+        for sink in state.sink_nodes():
+            into = state.in_edges(sink)
+            if not isinstance(sink, nodes.AccessNode) or len(into) != 1 or into[0].data.wcr is not None:
+                return None
+            element = into[0].data.get_dst_subset(into[0], state)
+            src = into[0].src
+            if not isinstance(element, subsets.Range):
+                return None
+            if (
+                isinstance(src, nodes.Tasklet)
+                and src.code.language == dtypes.Language.Python
+                and not src.side_effects
+                and not state.in_edges(src)
+                and state.out_degree(src) == 1
+                and re.fullmatch(rf"{re.escape(into[0].src_conn)}\s*=\s*{re.escape(var)}", src.code.as_string.strip())
+            ):
+                index_write = (sink.data, element)
+                covered += 2
+                continue
+            walked = self._copy_chain(state, sink, src, sdfg)
+            if walked is None or isinstance(walked[1], bool) or value_write is not None:
+                return None
+            chain, value, scratch = walked
+            value_write = (sink.data, element, value, scratch)
+            covered += len(chain)
+        if value_write is None or index_write is None or covered != len(state.nodes()):
+            return None
+        return *value_write, *index_write
+
+    def rewrite_masked_arg(self, m: MaskedArgReduction, sdfg: SDFG) -> None:
+        """Replace the reduced loop with ``best = carrier[K]``; a map folding every passing ``source[I]`` into ``best``;
+        a map folding into ``pick`` the first (last) passing ``i`` whose element equals ``best``; and, when one
+        passed, ``index[J] = pick; carrier[K] = source[I(pick)]``: the very element the loop would have kept."""
+        loop, var = m.reduced, m.reduced.loop_variable
+        parent = loop.parent_graph
+        best = sdfg.add_scalar(
+            f"_argbest_{loop.label}", sdfg.arrays[m.carrier].dtype, transient=True, find_new_name=True
+        )[0]
+        pick = sdfg.add_scalar(
+            f"_argpick_{loop.label}", sdfg.arrays[m.index].dtype, transient=True, find_new_name=True
+        )[0]
+        sentinel = symbolic.symstr(m.start - 1 if m.last_wins else m.end + 1)
+        point = subsets.Range([(0, 0, 1)])
+
+        host = parent if m.column is None else m.column
+        for block in list(host.nodes()) if m.column is not None else []:
+            host.remove_node(block)
+        init = host.add_state(
+            f"{loop.label}_arg_init", is_start_block=m.column is not None or parent.start_block is loop
+        )
+        init.add_edge(
+            init.add_read(m.carrier),
+            None,
+            init.add_write(best),
+            None,
+            mm.Memlet(data=m.carrier, subset=copy.deepcopy(m.carrier_subset), other_subset=copy.deepcopy(point)),
+        )
+        seed = init.add_tasklet("arg_pick_seed", {}, dict.fromkeys(["__out"]), f"__out = {sentinel}")
+        init.add_edge(seed, "__out", init.add_write(pick), None, mm.Memlet(data=pick, subset=copy.deepcopy(point)))
+
+        # Each map evaluates the loop's own guard, short-circuit included: the reads are dynamic, taken on use.
+        guard, gather = m.guard, m.wired_gather
+        inputs = {conn: copy.deepcopy(memlet) for conn, memlet in m.inputs.items()}
+        for memlet in inputs.values():
+            memlet.dynamic = True
+        ranges = {var: subsets.Range([(m.start, m.end, 1)])}
+        fold = "min" if m.op == dtypes.ReductionType.Min else "max"
+        value_state = host.add_state(f"{loop.label}_arg_value")
+        value_state.add_mapped_tasklet(
+            "arg_value",
+            ranges,
+            copy.deepcopy(inputs),
+            f"__out = ({gather} if ({guard}) else {m.wired_seed})",
+            {"__out": mm.Memlet(data=best, subset=copy.deepcopy(point), wcr=STRICT_WCR[m.op])},
+            external_edges=True,
+        )
+        index_state = host.add_state(f"{loop.label}_arg_index")
+        index_state.add_mapped_tasklet(
+            "arg_index",
+            ranges,
+            {**copy.deepcopy(inputs), "__best": mm.Memlet(data=best, subset=copy.deepcopy(point))},
+            f"__out = ({var} if (({guard}) and {gather} == __best) else {sentinel})",
+            {
+                "__out": mm.Memlet(
+                    data=pick, subset=copy.deepcopy(point), wcr=f"lambda a, b: {'max' if m.last_wins else 'min'}(a, b)"
+                )
+            },
+            external_edges=True,
+        )
+
+        source = m.gather.value.id  # type: ignore[attr-defined]
+        kept = astutils.ASTFindReplace({var: "__pick"}).visit(copy.deepcopy(m.gather.slice))
+        bind_state = host.add_state(f"{loop.label}_arg_bind")
+        bind = bind_state.add_tasklet(
+            "arg_bind",
+            dict.fromkeys(["__pick", "__src"]),
+            dict.fromkeys(["__index", "__value"]),
+            f"if __pick != {sentinel}:\n    __index = __pick\n    __value = __src[{ast.unparse(kept)}]",
+        )
+        bind_state.add_edge(
+            bind_state.add_read(pick), None, bind, "__pick", mm.Memlet(data=pick, subset=copy.deepcopy(point))
+        )
+        src_memlet = mm.Memlet.from_array(source, sdfg.arrays[source])
+        src_memlet.dynamic = True
+        bind_state.add_edge(bind_state.add_read(source), None, bind, "__src", src_memlet)
+        for conn, name, element in (("__index", m.index, m.index_subset), ("__value", m.carrier, m.carrier_subset)):
+            bind_state.add_edge(
+                bind,
+                conn,
+                bind_state.add_write(name),
+                None,
+                mm.Memlet(data=name, subset=copy.deepcopy(element), dynamic=True),
+            )
+        host.add_edge(init, value_state, dace.InterstateEdge())
+        host.add_edge(value_state, index_state, dace.InterstateEdge())
+        host.add_edge(index_state, bind_state, dace.InterstateEdge())
+
+        # The column loop, its body now the reduction, takes the reduced loop's place.
+        first, last = (init, bind_state) if m.column is None else (m.column, m.column)
+        if m.column is not None:
+            parent.add_node(m.column, is_start_block=parent.start_block is loop)
+        for edge in list(parent.in_edges(loop)):
+            parent.add_edge(edge.src, first, edge.data)
+            parent.remove_edge(edge)
+        for edge in list(parent.out_edges(loop)):
+            parent.add_edge(last, edge.dst, edge.data)
+            parent.remove_edge(edge)
+        if m.column is not None:
+            loop.remove_node(m.column)
+        parent.remove_node(loop)
 
 
 __all__ = ["ArgMaxLift"]
