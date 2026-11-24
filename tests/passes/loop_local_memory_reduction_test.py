@@ -11,8 +11,34 @@ from dace.sdfg.state import CodeBlock, LoopRegion
 from dace.transformation.passes import LoopLocalMemoryReduction
 
 
+# Random inputs for the SDFG and the outputs the untransformed SDFG gives on them, computed once per SDFG
+def run_original(orig_sdfg: dace.SDFG):
+    input_data = {}
+    sym_data = {}
+    for sym in orig_sdfg.symbols:
+        if sym not in orig_sdfg.constants:
+            sym_data[sym] = 32
+            input_data[sym] = 32
+
+    for argName, argType in orig_sdfg.arglist().items():
+        if isinstance(argType, dace.data.Scalar):
+            input_data[argName] = argType.dtype.type(32)
+            continue
+
+        shape = tuple(dace.symbolic.evaluate(entry, {**orig_sdfg.constants, **sym_data}) for entry in argType.shape)
+        arr = dace.ndarray(shape=shape, dtype=argType.dtype)
+        arr[:] = np.random.rand(*arr.shape).astype(arr.dtype)
+        input_data[argName] = arr
+
+    output_data = copy.deepcopy(input_data)
+    orig_sdfg(**output_data)
+    return input_data, output_data, sym_data
+
+
 # Checks if LoopLocalMemoryReduction applied at least N times and if memory footprint was reduced for a specific option
-def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: dict[str, Any]):
+def check_transformation_option(
+    orig_sdfg: dace.SDFG, N: int, options: dict[str, Any], original_run: tuple | None = None
+):
     # Apply and validate
     orig_sdfg.validate()
     llmr_sdfg = copy.deepcopy(orig_sdfg)
@@ -31,26 +57,8 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: dict[str,
     assert apps >= N, f"Expected at least {N} applications, got {apps} with options {options}"
     llmr_sdfg.validate()
 
-    # Execute both SDFGs
-    input_data_orig = {}
-    sym_data = {}
-    for sym in orig_sdfg.symbols:
-        if sym not in orig_sdfg.constants:
-            sym_data[sym] = 32
-            input_data_orig[sym] = 32
-
-    for argName, argType in orig_sdfg.arglist().items():
-        if isinstance(argType, dace.data.Scalar):
-            input_data_orig[argName] = argType.dtype.type(32)
-            continue
-
-        shape = tuple(dace.symbolic.evaluate(entry, {**orig_sdfg.constants, **sym_data}) for entry in argType.shape)
-        arr = dace.ndarray(shape=shape, dtype=argType.dtype)
-        arr[:] = np.random.rand(*arr.shape).astype(arr.dtype)
-        input_data_orig[argName] = arr
-
+    input_data_orig, output_data_orig, sym_data = original_run or run_original(orig_sdfg)
     input_data_llmr = copy.deepcopy(input_data_orig)
-    orig_sdfg(**input_data_orig)
     llmr_sdfg(**input_data_llmr)
 
     # No difference should be observable. Use np.allclose to tolerate sub-ULP rounding
@@ -58,7 +66,7 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: dict[str,
     # buffer is rewritten — semantic equivalence, not bitwise.
     assert (
         sum(
-            not np.allclose(input_data_orig[argName], input_data_llmr[argName])
+            not np.allclose(output_data_orig[argName], input_data_llmr[argName])
             for argName, argType in llmr_sdfg.arglist().items()
         )
         == 0
@@ -74,9 +82,13 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: dict[str,
 
 # Checks if LoopLocalMemoryReduction applied at least N times and if memory footprint was reduced for all options
 def check_transformation(sdfg: dace.SDFG, N: int):
+    # The untransformed SDFG runs once on one input set; the four option variants are compared against that run
+    original_run = run_original(sdfg) if N > 0 else None
     for bitmask in [False, True]:
         for np2 in [False, True]:
-            check_transformation_option(sdfg, N, options={"bitmask_indexing": bitmask, "next_power_of_two": np2})
+            check_transformation_option(
+                sdfg, N, options={"bitmask_indexing": bitmask, "next_power_of_two": np2}, original_run=original_run
+            )
 
 
 def test_simple():
