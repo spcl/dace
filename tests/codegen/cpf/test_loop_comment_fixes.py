@@ -118,6 +118,19 @@ def test_the_header_lists_every_reduction_of_a_loop():
     assert header == ["//     reductions into unset (&&), flag (||)"], header
 
 
+def test_a_blas_zero_fill_is_a_library_loop_not_a_sequential_one():
+    """cholesky: the gemv expansion zero-fills its result before the call; the loop has no order to keep."""
+
+    @dace.program
+    def lower(A: dace.float64[N, N]):
+        for i in range(N):
+            A[i, 0:i] = A[i, 0:i] - A[0:i, 0:i] @ A[i, 0:i]
+
+    code = rendered(lower, "cpf_comment_zero_fill")
+    assert "// library loop (BLAS gemv zero fill): not a tuning target" in code, code
+    assert "implementation loop of BLAS" not in code, code
+
+
 if __name__ == "__main__":
     test_a_sequential_loop_over_an_indirect_access_offers_no_wavefront()
     test_an_unproven_loop_over_a_few_iterations_is_unknown_not_sequential()
@@ -125,3 +138,4 @@ if __name__ == "__main__":
     test_a_read_of_what_earlier_iterations_write_is_named_as_such()
     test_only_the_loop_that_shares_the_accumulator_is_a_reduction()
     test_the_header_lists_every_reduction_of_a_loop()
+    test_a_blas_zero_fill_is_a_library_loop_not_a_sequential_one()

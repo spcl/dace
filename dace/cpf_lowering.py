@@ -202,6 +202,9 @@ class LoopClass(enum.Enum):
     PARALLEL = "parallel"
     SEQUENTIAL = "sequential"
     UNKNOWN = "unknown"
+    #: A loop a library call's lowering writes (a zero fill, a helper's pass): no program loop, so no verdict on the
+    #: program and no tuning target. Its comment is ``library loop (<what>): ...``, not ``<class> -- <reason>``.
+    LIBRARY = "library loop"
 
     @property
     def prefix(self) -> str:
@@ -236,7 +239,7 @@ def reason_of(reason: str) -> Reason | None:
 KIND_WORDS: tuple[tuple[str, str], ...] = (
     (LoopClass.PARALLEL.prefix + Reason.REDUCTION.value, "parallel reduction"),
     (LoopClass.PARALLEL.prefix + Reason.SCAN.value, "parallel scan"),
-    *((cls.prefix, cls.value) for cls in LoopClass),
+    *((cls.prefix, cls.value) for cls in LoopClass if cls is not LoopClass.LIBRARY),
 )
 
 #: Lines an older hint carried under its class line, before the rendering's header (``cpf.CONTRACT_LINES``) took

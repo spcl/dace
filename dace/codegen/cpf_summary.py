@@ -12,11 +12,13 @@ from dace.cpf_lowering import KIND_EXTRAS, LoopClass, Reason, kind_line, reason_
 from dace.ordered import OrderedSet
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import PARALLEL
 
-CLASSES = "|".join(cls.value for cls in LoopClass)
+CLASSES = "|".join(cls.value for cls in LoopClass if cls is not LoopClass.LIBRARY)
 CLASS_LINE = re.compile(rf"^\s*// ({CLASSES}) -- (.*)$")
+#: The comment of a library lowering's loop: its construct and role in parentheses (:func:`library_comment`).
+LIBRARY_LINE = re.compile(rf"^\s*// ({LoopClass.LIBRARY.value}) \((.*)\): not a tuning target$")
 #: A class line of the kinds rendering (:func:`dace.cpf_lowering.kind_line`): the word, and a reason after ``: ``.
 #: A class line anywhere in a unit, with its `` -- `` after the class.
-CLASS_LINE_ANYWHERE = re.compile(rf"// ({CLASSES}) -- ")
+CLASS_LINE_ANYWHERE = re.compile(rf"// ({CLASSES}) -- |// ({LoopClass.LIBRARY.value}) \(")
 KIND_LINE = re.compile(
     rf"^\s*// ({LoopClass.PARALLEL.value}(?: {Reason.REDUCTION.value}| {Reason.SCAN.value})?|{LoopClass.SEQUENTIAL.value}|{LoopClass.UNKNOWN.value})(?:: (.*))?$"
 )
@@ -78,7 +80,7 @@ def loops_of(code: str) -> list[Loop]:
         head = FUNCTION_HEAD.match(line)
         if head is not None:
             function = head.group(1)
-        classed = CLASS_LINE.match(line)
+        classed = CLASS_LINE.match(line) or LIBRARY_LINE.match(line)
         if classed is not None:
             label = label or (LoopClass(classed.group(1)), classed.group(2))
             continue
@@ -91,7 +93,7 @@ def loops_of(code: str) -> list[Loop]:
         if label is not None:
             if reason_of(label[1]) is Reason.DIMENSION and name:
                 names.unique(name)
-            elif reason_of(label[1]) not in (*NOT_A_LOOP, *ADDED_REASONS):
+            elif label[0] is not LoopClass.LIBRARY and reason_of(label[1]) not in (*NOT_A_LOOP, *ADDED_REASONS):
                 found.append(Loop(names.unique(name or call_name(stripped)), label[0], label[1]))
             label = None
         elif name and covered:
@@ -142,7 +144,7 @@ def construct_of(lines: list[str], index: int, function: str) -> str:
             break  # the enclosing function's head, or code before it
         if not stripped.startswith("// ") or indent_of(line) >= own:
             continue
-        if CLASS_LINE.match(line) is not None or NESTED_LOOPS.search(line) is not None:
+        if CLASS_LINE.match(line) or LIBRARY_LINE.match(line) or NESTED_LOOPS.search(line):
             continue
         above = lines[n - 1] if n > 0 else ""
         if above.strip().startswith("//") and indent_of(above) == indent_of(line):
@@ -199,7 +201,19 @@ def added_comment(lines: list[str], index: int, parent: str, function: str) -> s
         return f"{LoopClass.PARALLEL.prefix}{Reason.IMPLEMENTATION.value}{construct}: the team's threads split these iterations (omp for)"
     if re.search(r"#pragma omp\b[^\n]*\bsimd\b", pragmas):
         return f"{LoopClass.PARALLEL.prefix}{Reason.IMPLEMENTATION.value}{construct}: vectorized (omp simd)"
-    return f"{LoopClass.SEQUENTIAL.prefix}{Reason.IMPLEMENTATION.value}{construct}: runs in order as written"
+    return library_comment(lines, index, construct)
+
+
+ZERO_FILL = re.compile(r"=\s*0(?:\.0*f?)?\s*;")
+
+
+def library_comment(lines: list[str], index: int, construct: str) -> str:
+    """The comment of a loop a library call's lowering writes without a pragma: it is no program loop and no tuning
+    target, and its order is the lowering's own, so it carries no class word. A loop whose body stores zero is the
+    zero fill."""
+    body = " ".join(lines[index : index + 2])
+    role = " zero fill" if ZERO_FILL.search(body) else ""
+    return f"{LoopClass.LIBRARY.value} ({construct}{role}): not a tuning target"
 
 
 def pragma_start(lines: list[str], index: int) -> int:
@@ -232,7 +246,7 @@ def comment_every_loop(code: str, kinds: bool = False) -> str:
         head = FUNCTION_HEAD.match(line)
         if head is not None:
             function, parents = head.group(1), []
-        classed = CLASS_LINE.match(line) or (KIND_LINE.match(line) if kinds else None)
+        classed = CLASS_LINE.match(line) or LIBRARY_LINE.match(line) or (KIND_LINE.match(line) if kinds else None)
         if classed is not None:
             # A thread team's or a one-trip block's comment is not a loop's: the loop inside gets its own.
             labelled = reason_of(classed.group(2) or "") not in NOT_A_LOOP

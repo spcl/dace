@@ -375,9 +375,9 @@ def test_every_loop_gets_a_comment_naming_its_role():
     assert comments == [
         "// parallel -- independent: no iteration writes an element another iteration reads or writes",
         "// parallel -- dimension 2 of the 2 nested loops from i; the comment above proves them all",
-        "// sequential -- implementation loop of scan: runs in order as written",
+        "// library loop (scan): not a tuning target",
         "// parallel -- implementation loop of scan: the team's threads split these iterations (omp for)",
-        "// sequential -- implementation loop of pass 1: runs in order as written",
+        "// library loop (pass 1): not a tuning target",
         "// sequential -- tile loop: its tiles run in order; the loops inside class the iterations of each tile",
         "// unknown -- not proven; parallel if no two iterations write one element; otherwise keep the order",
         "// sequential -- inner tile of loop i2: runs one tile of its range in order",
@@ -490,7 +490,7 @@ static inline void cpf_fill(double *a, long n) {
     lines = cpf_summary.comment_every_loop(code, kinds=True).splitlines()
     above = [lines[n - 1].strip() for n, line in enumerate(lines) if cpf_summary.ANY_LOOP_HEAD.match(line)]
     assert above[1] == "// parallel", lines
-    assert above[2] == "// sequential: implementation loop of helper cpf_fill: runs in order as written", lines
+    assert above[2] == "// library loop (helper cpf_fill zero fill): not a tuning target", lines
     assert not [line for line in lines if " -- " in line], lines
 
 
