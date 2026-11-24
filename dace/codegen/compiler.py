@@ -6,6 +6,7 @@ returns the corresponding CompiledSDFG object."""
 import atexit
 import collections
 import contextlib
+import getpass
 import glob
 import hashlib
 import io
@@ -229,11 +230,25 @@ def write_file_atomically(path: str, content: str) -> None:
 #: Untested on Windows.
 CACHES_SUPPORTED = os.name != "nt"
 
+#: Last-resort cache location inside the build folder. Prefixed so it cannot collide with the
+#: per-SDFG folders next to it, which are named after the SDFG.
+BUILD_CACHE_FOLDER = "__dace_build_cache"
+
 
 def build_cache_root() -> str:
-    """Directory holding the machine-global build caches, shared by every SDFG: :func:`build_cache.root`, a normal
-    folder, never ``/dev/shm`` or the temp folder. All advisory: a miss costs speed, never correctness."""
-    return build_cache.root()
+    """Directory holding the machine-global build caches, shared by every SDFG.
+
+    All advisory: a miss costs speed, never correctness. RAM-backed when possible, since on HPC
+    nodes the temp directory is often a shared file system where re-reading a large precompiled
+    header costs more than it saves.
+    """
+    root = os.environ.get("DACE_BUILD_CACHE_DIR")
+    if not root:
+        usable = (c for c in ("/dev/shm", tempfile.gettempdir()) if os.path.isdir(c) and os.access(c, os.W_OK))
+        root = next(usable, None)
+        if root is None:
+            return os.path.join(Config.get("default_build_folder"), BUILD_CACHE_FOLDER)
+    return os.path.join(root, f"dace_build_cache_{getpass.getuser()}")
 
 
 #: A PREDICTION of CMake's ``CMAKE_CXX_FLAGS_<CONFIG>`` defaults, only ever used to build the
