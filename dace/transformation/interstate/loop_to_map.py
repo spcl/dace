@@ -400,7 +400,7 @@ def _dim_provably_disjoint(idx1, idx2, itersym, step=1, start=0) -> bool:
 
 
 #: ``(lo, hi, is_point, itervar, start, end, step)`` as text: everything the injective-write oracle parses.
-SmtWriteKey = tuple[str, str, bool, str, str, str, str, Any]
+SmtWriteKey = tuple[str, str, bool, str, str, str, str, str, Any]
 
 
 def smt_proves_injective_write(
@@ -411,6 +411,7 @@ def smt_proves_injective_write(
     step: Any,
     verdicts: dict[SmtWriteKey, tuple[bool, tuple]] | None = None,
     facts: Any = None,
+    guard: sp.Basic = sp.true,
 ) -> bool:
     """Ask the SMT oracle whether a non-affine write touches a distinct location on
     every iteration, under the loop's ``facts`` (a
@@ -423,6 +424,8 @@ def smt_proves_injective_write(
 
     :param verdicts: Optional memo keyed by the exact texts the oracle parses (see
                      :attr:`LiftInvariants.smt_injective`).
+    :param guard: What the write is conditioned on (:func:`write_guard`): a point write need only be distinct between
+                  iterations that satisfy it.
     """
     if dst_subset is None:
         # ``get_dst_subset`` yields ``None`` for an edge that names no data -- an empty memlet,
@@ -440,7 +443,17 @@ def smt_proves_injective_write(
     rb, re_, _ = nd[0]
     point = rb == re_
     # Everything the oracle reads, as text: every input below is parsed from exactly these strings.
-    key = (str(rb), str(re_), point, itervar, str(start), str(end), str(step), None if facts is None else facts.key)
+    key = (
+        str(rb),
+        str(re_),
+        point,
+        itervar,
+        str(start),
+        str(end),
+        str(step),
+        str(guard),
+        None if facts is None else facts.key,
+    )
     if verdicts is not None:
         cached = verdicts.get(key)
         if cached is not None:
@@ -456,7 +469,7 @@ def smt_proves_injective_write(
 
 def smt_injective_verdict(key: SmtWriteKey, facts: Any = None) -> bool:
     """The uncached body of :func:`smt_proves_injective_write`, over its text key."""
-    rb, re_, point, itervar, start, end, step, _ = key
+    rb, re_, point, itervar, start, end, step, guard, _ = key
     try:
         args = (itervar, symbolic.pystr_to_symbolic(start), symbolic.pystr_to_symbolic(end))
         kwargs = dict(step=symbolic.pystr_to_symbolic(step), facts=facts)
@@ -464,7 +477,7 @@ def smt_injective_verdict(key: SmtWriteKey, facts: Any = None) -> bool:
         if facts is not None:
             lo, hi = facts.expand(lo), facts.expand(hi)
         if point:
-            r = smt_dependence.prove_injective_write(lo, *args, **kwargs)
+            r = smt_dependence.prove_injective_write(lo, *args, guard=symbolic.pystr_to_symbolic(guard), **kwargs)
         else:
             # A RANGE write: the iteration owns the whole interval, so the property that makes the
             # loop parallel is that two iterations' intervals never intersect. Chunked rewrites land
@@ -629,6 +642,19 @@ def destination_memlet(e: Any, state: SDFGState, dn: nodes.AccessNode, closed_fo
     return memlet.Memlet(data=dn.data, subset=in_closed_form(dst, closed_forms), wcr=e.data.wcr)
 
 
+def write_guard(state: SDFGState, loop: Any, itersym: sp.Symbol, varying: set[str]) -> sp.Basic:
+    """The branch conditions inside ``loop`` that ``state`` runs under and that mean the same in every iteration: they
+    read only the iteration variable and symbols the loop never changes, and no array."""
+    held = cfg_analysis.collect_enclosing_conditions(state, stop=loop)
+    kept = [
+        c
+        for c in sp.And.make_args(held)
+        if not c.atoms(symbolic.Subscript, sp.Indexed)
+        and not {str(x) for x in c.free_symbols} & (varying - {str(itersym)})
+    ]
+    return sp.And(*kept)
+
+
 def write_refusal(
     sdfg: SDFG,
     state: SDFGState,
@@ -696,7 +722,8 @@ def write_refusal(
             if dst_subset and 0 < len(moving) < dst_subset.dims():
                 dst_subset = subsets.Range(moving)
             with canon_stats.timed("z3", sdfg):
-                injective = smt_proves_injective_write(dst_subset, itersym, start, end, step, verdicts, facts)
+                guard = sp.true if lift is None else write_guard(state, lift.loop, itersym, varying)
+                injective = smt_proves_injective_write(dst_subset, itersym, start, end, step, verdicts, facts, guard)
             if not injective:
                 return (
                     Refusal.NON_UNIQUE_WRITE,

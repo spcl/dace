@@ -419,10 +419,13 @@ def prove_injective_write(
     domain_assumptions: sp.Basic | None = None,
     rlimit: int = DEFAULT_RLIMIT,
     facts: Any = None,
+    guard: sp.Basic = sp.true,
 ) -> bool | None:
     """Prove that distinct iterations write to distinct locations.
 
     :param write_expr: The write-index expression in terms of ``itervar``.
+    :param guard: The condition the write runs under, over ``itervar`` and symbols the loop never changes: only
+                  iterations that satisfy it write, so two of them must differ.
     :returns: ``True`` if z3 proves injectivity; ``False``/``None`` otherwise.
     """
     if not _HAS_Z3:
@@ -444,7 +447,14 @@ def prove_injective_write(
     if not bounds:
         return None
 
-    antecedent = required(z3).And(i1 != i2, *bounds)
+    runs = []
+    for copy in (i1, i2):
+        sym_cache[itervar] = copy
+        held = _bool_to_z3(guard, sym_cache, arr_cache) if guard != sp.true else True
+        if held is None:
+            return None
+        runs += [] if held is True else [held]
+    antecedent = required(z3).And(i1 != i2, *bounds, *runs)
     return prove_assuming(antecedent, w1 != w2, domain_assumptions, facts, [w1, w2, *bounds], rlimit)
 
 
