@@ -154,6 +154,13 @@ class PerfLoopNesting(xf.SingleStateTransformation):
             isinstance(n, (nodes.LibraryNode, nodes.NestedSDFG)) and inner_scope[n] is None for n in inner_state.nodes()
         ):
             return False
+        # Likewise a top-level copy that no single child keeps both ends of (ICON velocity_tendencies'
+        # ``z_vt_ie(:, 1) = vt(:, 1)`` beside two tasklets): every copy would drop it
+        kept = [child_subgraph(inner_state, c) for c in top_children]
+        if any(
+            inner_scope[e.src] is None and not any(e.src in k and e.dst in k for k in kept) for e in inner_state.edges()
+        ):
+            return False
         # Each child becomes its own parent-map copy. Cross-child dependencies
         # survive only when the shared container crosses the NestedSDFG
         # boundary; ``apply`` then restores their original order with an
@@ -183,7 +190,7 @@ class PerfLoopNesting(xf.SingleStateTransformation):
 
         # Bare top-level Tasklets become siblings via a trivial map, except
         # sunk-chain producers, which are replicated per child by
-        # ``_child_subgraph`` and must not turn into independent siblings.
+        # ``child_subgraph`` and must not turn into independent siblings.
         for n in list(inner_state.nodes()):
             if isinstance(n, nodes.Tasklet) and inner_state.entry_node(n) is None and n not in sunk:
                 _wrap_tasklet_in_trivial_map(inner_state, n)
@@ -193,7 +200,7 @@ class PerfLoopNesting(xf.SingleStateTransformation):
 
         duplicates = []
         for ch_entry in child_entries:
-            keep = _child_subgraph(inner_state, ch_entry)
+            keep = child_subgraph(inner_state, ch_entry)
             duplicates.append(_build_duplicate(graph, pe, px, orig_nsdfg, inner_state, keep, outer_in_by, outer_out_by))
 
         # Restore the original intra-state order across the duplicates: an
@@ -266,7 +273,7 @@ def _child_data_io(state: SDFGState, child: nodes.Node) -> tuple[set[str], set[s
             writes.add(e.data.data)
             results.add(e.dst)
     # The copies an operand arrives through and a result leaves through belong to the child, since
-    # fission keeps them in its duplicate (``_child_subgraph``): the container they end at is the
+    # fission keeps them in its duplicate (``child_subgraph``): the container they end at is the
     # one the child really reads or writes.
     reads.update(n.data for n in _copy_chain(state, operands, downstream=False))
     writes.update(n.data for n in _copy_chain(state, results, downstream=True))
@@ -579,14 +586,14 @@ def _copy_state_contents(src: SDFGState, dst: SDFGState) -> dict[nodes.Node, nod
     return nmap
 
 
-def _child_subgraph(inner_state: SDFGState, ch_entry: nodes.MapEntry) -> set[nodes.Node]:
-    """Subgraph belonging to one child map: its MapEntry, MapExit, every
-    node scoped under the MapEntry, the top-level AccessNodes directly
-    connected to the entry's in-edges or exit's out-edges, the copies those
+def child_subgraph(inner_state: SDFGState, ch_entry: nodes.MapEntry | nodes.Tasklet) -> set[nodes.Node]:
+    """Subgraph belonging to one child map (or a bare Tasklet not yet wrapped
+    in its trivial map): its MapEntry, MapExit, every node scoped under the
+    MapEntry, the top-level AccessNodes directly connected to the entry's in-edges or exit's out-edges, the copies those
     output AccessNodes flow on through, and -- for an imperfect nest -- the
     transitive top-level producer chain of any such input AccessNode (the
     sunk intervening chain)."""
-    ch_exit = inner_state.exit_node(ch_entry)
+    ch_exit = inner_state.exit_node(ch_entry) if isinstance(ch_entry, nodes.MapEntry) else ch_entry
     scope = inner_state.scope_dict()  # Nothing below mutates `inner_state`.
     keep: set[nodes.Node] = {ch_entry, ch_exit}
     keep.update(n for n in inner_state.nodes() if scope[n] is ch_entry)

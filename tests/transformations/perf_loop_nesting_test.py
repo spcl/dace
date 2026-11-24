@@ -520,15 +520,6 @@ def test_library_node_beside_the_children_refuses():
     assert not PerfLoopNesting.can_be_applied_to(sdfg, parent_entry=entry)
 
 
-if __name__ == "__main__":
-    test_three_parallel_inner_maps_fission_into_three_parents()
-    test_mixed_map_and_tasklet_wraps_tasklet_with_trivial_map()
-    test_two_state_nested_sdfg_is_rejected()
-    test_velocity_for_it_35_pattern_fissions_into_two_parents()
-    test_pln_on_parent_inside_nested_sdfg_must_use_owning_sdfg()
-    print("OK")
-
-
 def _copied_out_children(chained: bool):
     """``for j in map: b[j] = 2 * a[j]; d[j] = 3 * (b if chained else c)[j]``, each statement a bare
     tasklet whose result reaches its container through a transient and a copy -- the frontend shape
@@ -603,4 +594,52 @@ def test_a_container_written_through_a_copy_orders_its_reader_after_it():
     sdfg(a=a, b=b, c=c, d=d, N=5)
     np.testing.assert_array_equal(b, 2 * a)
     np.testing.assert_array_equal(d, 6 * a)
+
+
+def test_a_copy_beside_the_children_survives():
+    """``for j in map: y[j] = 2 * x[j]; z[j] = 3 * x[j]; w[j] = x[j]``, the last a bare copy between
+    top-level access nodes. No child's duplicate kept it: ICON velocity_tendencies lost
+    ``z_vt_ie(:, 1) = vt(:, 1)``."""
+    inner = SDFG("copy_beside_body")
+    for name in "xyzw":
+        inner.add_array(name, [N], dace.float64)
+    istate = inner.add_state("body", is_start_block=True)
+    x = istate.add_read("x")
+    for out, factor in (("y", 2), ("z", 3)):
+        tasklet = istate.add_tasklet(f"scale_{out}", {"a"}, {"b"}, f"b = {factor} * a")
+        istate.add_edge(x, None, tasklet, "a", mm.Memlet("x[j]"))
+        istate.add_edge(tasklet, "b", istate.add_write(out), None, mm.Memlet(f"{out}[j]"))
+    istate.add_edge(x, None, istate.add_write("w"), None, mm.Memlet("x[j]", other_subset="j"))
+
+    sdfg = SDFG("copy_beside_children")
+    for name in "xyzw":
+        sdfg.add_array(name, [N], dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    nsdfg = state.add_nested_sdfg(inner, {"x"}, {"y", "z", "w"}, symbol_mapping={"j": "j", "N": "N"})
+    entry, exit_ = state.add_map("parent", {"j": "0:N"})
+    state.add_memlet_path(state.add_read("x"), entry, nsdfg, dst_conn="x", memlet=mm.Memlet("x[0:N]"))
+    for name in "yzw":
+        state.add_memlet_path(nsdfg, exit_, state.add_write(name), src_conn=name, memlet=mm.Memlet(f"{name}[0:N]"))
+    sdfg.validate()
+
+    sdfg.apply_transformations_repeated(PerfLoopNesting)
+    sdfg.validate()
+    _force_sequential_maps(sdfg)
+    x = np.arange(1.0, 6.0)
+    y, z, w = np.zeros(5), np.zeros(5), np.zeros(5)
+    sdfg(x=x, y=y, z=z, w=w, N=5)
+    np.testing.assert_array_equal(y, 2 * x)
+    np.testing.assert_array_equal(z, 3 * x)
+    np.testing.assert_array_equal(w, x)
+
+
+if __name__ == "__main__":
+    test_three_parallel_inner_maps_fission_into_three_parents()
+    test_mixed_map_and_tasklet_wraps_tasklet_with_trivial_map()
+    test_two_state_nested_sdfg_is_rejected()
+    test_velocity_for_it_35_pattern_fissions_into_two_parents()
+    test_pln_on_parent_inside_nested_sdfg_must_use_owning_sdfg()
     test_library_node_beside_the_children_refuses()
+    test_a_result_written_through_a_copy_survives_the_fission()
+    test_a_container_written_through_a_copy_orders_its_reader_after_it()
+    test_a_copy_beside_the_children_survives()
