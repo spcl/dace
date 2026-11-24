@@ -1075,13 +1075,13 @@ def read_before_written(
     # same elements every iteration. A branch false on the first iteration runs after such an iteration.
     earlier: list[tuple[str, sp.Basic, set[Store]]] = []
 
-    def false_at(cond: properties.CodeBlock, var: str, start: sp.Basic) -> bool:
-        """Whether ``cond`` is false when the iterator named ``var`` holds ``start``."""
-        test = symbolic.pystr_to_symbolic(cond.as_string)
+    def false_at(cond: str, var: str, start: sp.Basic) -> bool:
+        """Whether the condition ``cond`` is false when the iterator named ``var`` holds ``start``."""
+        test = symbolic.pystr_to_symbolic(cond)
         names = {str(x): x for x in test.free_symbols}
         return var in names and test.subs(names[var], start) == sp.false
 
-    def skips_first(cond: properties.CodeBlock) -> set[Store]:
+    def skips_first(cond: str) -> set[Store]:
         """The stores an earlier iteration made when ``cond`` is false on an enclosing nested loop's first iteration
         (cloudsc's ``IF (JK > NCLDTOP)`` reading ``ZQXNM1``, which the end of the previous ``JK`` iteration set)."""
         seen: set[Store] = set()
@@ -1101,9 +1101,10 @@ def read_before_written(
             return set()
         changed = changed_by(block)
         if not any(
-            isinstance(b, ConditionalBlock)
-            and any(cond is not None and false_at(cond, var, start) for cond, branch in b.branches)
-            for b in body
+            cond is not None and false_at(cond.as_string, var, start)
+            for b in [*body, *nested_blocks(block)]
+            if isinstance(b, ConditionalBlock)
+            for cond, branch in b.branches
         ):
             return set()
         trial, before = set(written), set(carried)
@@ -1155,9 +1156,8 @@ def read_before_written(
                     if (
                         not read_covered(block, dn, seen)
                         and not any(
-                            read_covered(block, dn, guarded[key][1])
+                            read_covered(block, dn, guarded[key][1] if key in guarded else skips_first(key))
                             for key in nested_read_guards(block, dn)
-                            if key in guarded
                         )
                         and not nested_writes_first(block, dn)
                     ):
@@ -1172,7 +1172,7 @@ def read_before_written(
                     if key in guarded:
                         branch_written |= guarded[key][1]
                     if cond is not None and earlier:
-                        branch_written |= skips_first(cond)
+                        branch_written |= skips_first(cond.as_string)
                     scan(body, branch_written, dict(guarded))
                     per_branch.append(branch_written)
                     # An ``elif`` arm also needs the earlier conditions false: a later branch on its own can run without it
@@ -1197,6 +1197,15 @@ def read_before_written(
 
     scan(loop, set(), {})
     return carried
+
+
+def nested_blocks(region: ControlFlowRegion) -> Iterator[ControlFlowBlock]:
+    """The control-flow blocks of the SDFGs nested in the states of ``region``, at any depth."""
+    for state in region.all_control_flow_blocks():
+        if isinstance(state, SDFGState):
+            for node in state.nodes():
+                if isinstance(node, nodes.NestedSDFG):
+                    yield from node.sdfg.all_control_flow_blocks()
 
 
 def nested_writes_first(state: SDFGState, dn: nodes.AccessNode) -> bool:
@@ -3410,6 +3419,10 @@ class LoopLift:
                 root_data_name = name.split(".")[0]
                 name = root_data_name
             nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
+            # A private array an inner loop carries from one level to the next must outlive the state that uses it:
+            # a Scope lifetime allocates it afresh inside that state, every iteration of the inner loop
+            if name in unique_set and nsdfg.arrays[name].lifetime == dtypes.AllocationLifetime.Scope:
+                nsdfg.arrays[name].lifetime = dtypes.AllocationLifetime.SDFG
 
         # Add NestedSDFG node
         declare_lifted_symbols(nsdfg, sdfg, self.loop, lift_ctx)
