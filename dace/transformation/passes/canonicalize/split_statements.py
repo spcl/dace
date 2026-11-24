@@ -714,7 +714,7 @@ def used_outside(name: str, loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex)
 class Access(NamedTuple):
     """One access of a guarded body: the site it happens at (body order), its container and subset."""
 
-    site: int
+    site: float
     data: str
     subset: subsets.Subset | None
 
@@ -778,9 +778,12 @@ def site_reads(site: Any, arrays: dict[str, dt.Data]) -> list[Memlet]:
     return site.data.get_read_memlets(arrays, include_scalars=True)
 
 
-def cone_reads(state: SDFGState, store: nodes.AccessNode, site: int, local: dict[str, None]) -> list[Access] | None:
-    """The reads feeding ``store`` within ``state``; ``None`` when a loop-local temporary on the way is read before
-    this state writes it (it would carry a value between iterations)."""
+def cone_reads(
+    state: SDFGState, store: nodes.AccessNode, site: int, region: ControlFlowRegion, earlier: dict[str, Any]
+) -> list[Access] | None:
+    """The reads feeding ``store`` within ``state``, and through each loop-local temporary an earlier state of the
+    iteration wrote (``earlier``: name -> ``(region, reads)``) the reads that fed it there; ``None`` when a temporary on
+    the way may be read before this iteration writes it (it would carry a value between iterations)."""
     found = []
     seen = {store}
     stack = [e.src for e in producer_edges(state, store)]
@@ -789,14 +792,18 @@ def cone_reads(state: SDFGState, store: nodes.AccessNode, site: int, local: dict
         if node in seen:
             continue
         seen.add(node)
-        if isinstance(node, nodes.AccessNode):
-            if node.data in local:
-                if not producer_edges(state, node):
+        if isinstance(node, nodes.AccessNode) and node.data in earlier.get("local", {}):
+            if not producer_edges(state, node):
+                written = earlier.get(node.data)
+                if written is None or not within(region, written[0]):
                     return None
-            else:
-                found.extend(
-                    Access(site, node.data, e.data.get_src_subset(e, state)) for e in value_edges(state.out_edges(node))
-                )
+                found.extend(written[1])
+        elif isinstance(node, nodes.AccessNode):
+            # Within the state, a read from a source node happens before the state's stores, any other after them
+            when = site - 0.5 if state.in_degree(node) == 0 else site + 0.5
+            found.extend(
+                Access(when, node.data, e.data.get_src_subset(e, state)) for e in value_edges(state.out_edges(node))
+            )
         stack.extend(e.src for e in producer_edges(state, node))
     return found
 
@@ -819,6 +826,8 @@ def guarded_body(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> Guarded
     body = GuardedBody({}, {}, [])
     # symbol -> (site, region) of its one assignment
     assigned_at: dict[str, tuple[int, ControlFlowRegion]] = {}
+    # loop-local temporary -> (region, reads) of the state that last wrote it; "local" -> the temporaries themselves
+    temporaries: dict[str, Any] = {"local": local}
     for position, (site, region) in enumerate(sites):
         if isinstance(site, SDFGState):
             read_names = {str(sym) for sym in site.free_symbols}
@@ -832,16 +841,20 @@ def guarded_body(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> Guarded
         if isinstance(site, SDFGState):
             for node in site.data_nodes():
                 stores = producer_edges(site, node)
-                if not stores or node.data in local:
+                if not stores:
                     continue
                 if any(e.data.wcr is not None for e in stores):
                     return None
+                reads = cone_reads(site, node, position, region, temporaries)
+                if reads is None:
+                    return None
+                if node.data in local:
+                    # Every clone that reads the temporary recomputes it, from these reads
+                    temporaries[node.data] = (region, reads)
+                    continue
                 body.stores.setdefault(node.data, []).extend(
                     Access(position, node.data, e.data.get_dst_subset(e, site)) for e in stores
                 )
-                reads = cone_reads(site, node, position, local)
-                if reads is None:
-                    return None
                 body.cone_reads.setdefault(node.data, []).extend(reads)
             continue
         reads = site_reads(site, sdfg.arrays)
