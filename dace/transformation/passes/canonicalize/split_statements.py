@@ -728,6 +728,8 @@ class GuardedBody(NamedTuple):
     cone_reads: dict[str, list[Access]]
     #: reads of conditions and interstate edges, which every clone repeats
     control_reads: list[Access]
+    #: the control reads a condition tests, directly or through the symbols it reads
+    guard_reads: list[Access]
 
 
 def chain_sites(region: ControlFlowRegion) -> list[tuple[Any, ControlFlowRegion]] | None:
@@ -823,7 +825,10 @@ def guarded_body(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> Guarded
         return None
     local = index.local_transients(loop)
     assigned = loop_assigned(loop)
-    body = GuardedBody({}, {}, [])
+    body = GuardedBody({}, {}, [], [])
+    # per interstate edge: the symbols it assigns, the symbols it reads and its container reads
+    edges: list[tuple[set[str], set[str], list[Access]]] = []
+    tested: set[str] = set()
     # symbol -> (site, region) of its one assignment
     assigned_at: dict[str, tuple[int, ControlFlowRegion]] = {}
     # loop-local temporary -> (region, reads) of the state that last wrote it; "local" -> the temporaries themselves
@@ -860,12 +865,22 @@ def guarded_body(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> Guarded
         reads = site_reads(site, sdfg.arrays)
         if any(m.data in local for m in reads):
             return None
-        body.control_reads.extend(Access(position, m.data, m.subset) for m in reads)
-        if not isinstance(site, ConditionalBlock):
+        accesses = [Access(position, m.data, m.subset) for m in reads]
+        body.control_reads.extend(accesses)
+        if isinstance(site, ConditionalBlock):
+            tested |= read_names
+            body.guard_reads.extend(accesses)
+        else:
+            edges.append((set(site.data.assignments), read_names, accesses))
             for name in site.data.assignments:
                 if name in assigned_at or used_outside(name, loop, sdfg, index):
                     return None
                 assigned_at[name] = (position, region)
+    # A symbol assignment precedes its reads, so one backward sweep closes the tested symbols
+    for names, read_names, accesses in reversed(edges):
+        if names & tested:
+            tested |= read_names
+            body.guard_reads.extend(accesses)
     return body
 
 
@@ -880,6 +895,11 @@ def guarded_groups(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> list[
     either before every store of it (that clone runs first) or after every store (that clone runs after)."""
     body = guarded_body(loop, sdfg, index)
     if body is None or len(body.stores) < 2:
+        return None
+    # A guard that tests a value the body stores later couples the statements: a compare-and-update (a masked argmin)
+    # or a test-and-clear is one statement other lifts match whole, and per-statement copies of its guard only multiply
+    # it. A guard that tests a value stored before it (``c = test; if c: ...``) is an ordinary read of an earlier group
+    if any(r.data in body.stores and r.site < max(a.site for a in body.stores[r.data]) for r in body.guard_reads):
         return None
     outputs = sorted(body.stores, key=lambda name: min(a.site for a in body.stores[name]))
     after: list[dict[int, None]] = [{} for name in outputs]
