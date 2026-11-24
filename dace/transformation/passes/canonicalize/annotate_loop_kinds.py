@@ -77,6 +77,13 @@ SEQUENTIAL_PROVEN_OVER_DOALL = (
 #: A loop the dependence test declined to answer, or never examined.
 UNKNOWN = "unknown -- {reason}"
 
+#: An unproven loop over a literal trip count ``symbolic.is_small_extent`` calls small: too few iterations to share
+#: out, so a parallel version is not worth a runtime check; ``{reason}`` is what the dependence test left open.
+SMALL_EXTENT = (
+    "sequential -- small extent: {trips} iterations, too few to share out among threads, so no parallel version is "
+    "worth a runtime check; not proven: {reason}"
+)
+
 #: The ``UNKNOWN`` reason of a loop the dependence test never answered for; the specific cause follows a colon.
 NEVER_EXAMINED = "not analyzed for dependences"
 #: ... because the loop has no single iteration counter to test (a while loop).
@@ -867,7 +874,7 @@ def loop_hint(loop: LoopRegion, session: Any = None) -> str:
     if reason == NO_COUNTER:
         return WHILE_LOOP
     if isinstance(reason, str):
-        return UNKNOWN.format(reason=f"{reason}; {UNSHOWN_TAIL}")
+        return unproven_hint(loop, f"{reason}; {UNSHOWN_TAIL}")
     required = order_requirement(reason)
     if required is not None:
         return required
@@ -875,7 +882,17 @@ def loop_hint(loop: LoopRegion, session: Any = None) -> str:
     if access is not None:
         text = SEQUENTIAL_PROVEN_OVER_DOALL if over_doall_nest(loop) else SEQUENTIAL_PROVEN
         return text.format(reason=proven_reason(access))
-    return UNKNOWN.format(reason=unproven_reason(reason))
+    return unproven_hint(loop, unproven_reason(reason))
+
+
+def unproven_hint(loop: LoopRegion, reason: str) -> str:
+    """``SMALL_EXTENT`` for a loop over a few literal iterations, else ``UNKNOWN``."""
+    counter = loop_range(loop, {}) if loop.loop_variable else None
+    if counter is not None:
+        trips = sympy.floor((as_basic(counter[2]) - as_basic(counter[1])) / as_basic(counter[3])) + 1
+        if trips.is_number and trips > 0 and symbolic.is_small_extent(trips, loop.sdfg.facts()):
+            return SMALL_EXTENT.format(trips=trips, reason=reason)
+    return UNKNOWN.format(reason=reason)
 
 
 def recurrence_before_rewrite(loop: LoopRegion) -> str | None:

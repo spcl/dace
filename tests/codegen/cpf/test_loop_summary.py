@@ -219,6 +219,24 @@ def test_a_loop_over_a_few_fixed_iterations_gets_a_real_class():
     assert header[-1] == "// cpf: proven: all", header
 
 
+@dace.program
+def scattered_species(a: dace.float64[N], order: dace.int64[5], b: dace.float64[N]):
+    for s in range(5):
+        a[order[s]] = a[order[s]] + 1.0
+    for i in range(N):
+        b[order[i % 5]] = b[order[i % 5]] + 1.0
+
+
+def test_an_unproven_loop_over_a_few_fixed_iterations_is_sequential_and_settled():
+    """Owner 11-24 (CloudSC's nclv = 5 species loops): too few iterations to share out, so no check is worth it; the
+    same body over ``N`` iterations stays open."""
+    sdfg = scattered_species.to_sdfg(simplify=True)
+    sdfg.name = "cpf_audit_summary_small_extent"
+    header = summary(named(sdfg))
+    assert any(re.match(r"//   sequential: s, small extent: 5 iterations", line) for line in header), header
+    assert header[-1] == "// cpf: proven: partial; open: i", header
+
+
 VERSIONED_LOOP = """\
 if ((inc != 0)) {
     // parallel -- the runtime check found inc != 0, so no iteration writes an element another iteration reads or writes
@@ -488,6 +506,7 @@ if __name__ == "__main__":
     test_the_legend_explains_only_the_classes_the_unit_uses()
     test_only_unknown_loops_are_open()
     test_a_loop_over_a_few_fixed_iterations_gets_a_real_class()
+    test_an_unproven_loop_over_a_few_fixed_iterations_is_sequential_and_settled()
     test_a_versioned_loop_counts_as_proven_and_lists_its_guarded_arm()
     test_a_unit_whose_only_loop_is_a_helper_is_proven()
     test_a_unit_without_a_versioned_loop_has_no_guarded_line()

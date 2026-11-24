@@ -23,7 +23,7 @@ from dace.transformation.passes.canonicalize.pipeline import canonicalize
 pytestmark = pytest.mark.long
 
 #: Loops left ``unknown`` in the rendering's header (measured 2026-11-24): may go down, never up.
-UNKNOWN_BOUND = 15
+UNKNOWN_BOUND = 3
 
 #: Loops of CloudSC's per-column 5x5 solve proven sequential, per array: the four substitution loops over ``zqxn``
 #: and the LU pivot loop over ``zqlhs``.
