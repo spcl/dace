@@ -773,6 +773,7 @@ def find_conflict_witness(
     fixed: set[str] = frozenset(),
     kills: tuple[tuple[tuple[sp.Basic, ...], tuple[IterRange, ...], bool, Guard], ...] = (),
     guards: tuple[Guard, Guard] = ((), ()),
+    assumptions: Guard = (),
 ) -> dict[str, int] | None:
     """Values under which ``first``, at an earlier iteration of the carrying loop, and ``second``, at a later one,
     touch the same element; ``None`` when there are none, the solver gives up, or something cannot be encoded.
@@ -791,6 +792,9 @@ def find_conflict_witness(
     reads, except the very instance of the read's own statement when ``same`` (it writes after it reads).
     ``guards`` are the branch conditions ``first`` and ``second`` run under, each at its own iteration; an array they
     read is input the witness may choose, and its chosen elements are part of the witness (``flag[1]``).
+    ``assumptions`` are the conditions the program declares on its symbols (an entry ``abort()``, a nonnegative or
+    ordered pair): a witness must satisfy them, so it is a run the program accepts. One that names a symbol the
+    witness may not choose or fix is left out.
     """
     exprs = [sp.sympify(e) for e in first + second]
     exprs += [sp.sympify(b) for _, start, end, _ in outer + first_iters + second_iters for b in (start, end)]
@@ -807,6 +811,12 @@ def find_conflict_witness(
     params = sorted({s.name for e in exprs + conditions for s in e.free_symbols} - iterators - sizes)
     sym_cache: dict[str, Any] = {}
     arr_cache: dict[str, Any] = {}
+    assumptions = tuple(
+        (e, holds) for e, holds in assumptions if {s.name for s in sp.sympify(e).free_symbols} <= sizes | set(fixed)
+    )
+    declared = encode_guard("", assumptions, (), sym_cache, arr_cache)
+    if declared is None:
+        return None
     sides = [encode_side("__a", first, first_iters, sym_cache), encode_side("__b", second, second_iters, sym_cache)]
     shared = encode_side("", (), outer, sym_cache)
     held = [
@@ -818,7 +828,7 @@ def find_conflict_witness(
     carrier, _, _, step = first_iters[0]
     earlier, later = required(z3).Int(carrier + "__a"), required(z3).Int(carrier + "__b")
     # Two ordered iterations belong to the domain: a parameter value under which the loop runs once orders nothing
-    domain = [*shared[0], *sides[0][0], *sides[1][0]]
+    domain = [*shared[0], *sides[0][0], *sides[1][0], *declared]
     domain.append(earlier < later if int(symbolic.evaluate(step, {})) > 0 else earlier > later)
     conflict = [*(a == b for a, b in zip(sides[0][1], sides[1][1])), *held[0], *held[1]]
     for number, (index, iters, same, guard) in enumerate(kills):

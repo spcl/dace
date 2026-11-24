@@ -411,8 +411,11 @@ def summary_lines(loops: list[Loop]) -> list[str]:
     scans = [loop.name for loop in parallel if reason_of(loop.reason) is Reason.SCAN]
     private = [m.group(1) for loop in loops for m in [PRIVATE.search(loop.reason)] if m]
     lines = ["// Summary of the loop comments below."] if loops else []
-    if parallel:
-        names = ", ".join(dict.fromkeys(loop.name for loop in parallel))
+    # A loop is named by its counter: a call (a scan helper, listed on the scans line) and a lowering's ``_``-counter
+    # are no loop of the program
+    named = [loop for loop in parallel if not loop.name.endswith("()") and not loop.name.startswith("_")]
+    if named:
+        names = ", ".join(dict.fromkeys(loop.name for loop in named))
         lines.append(f"//   parallel: {names}")
     if folds:
         lines.append(f"//     reductions into {', '.join(folds)}")

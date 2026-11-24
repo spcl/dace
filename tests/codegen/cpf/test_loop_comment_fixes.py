@@ -3,6 +3,8 @@
 
 Each test renders a few-line program and checks the comment string of the loop the finding is about."""
 
+import numpy as np
+
 import dace
 from dace.sdfg import tasklet_utils
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
@@ -272,6 +274,56 @@ def test_a_map_a_gpu_thread_runs_stays_parallel_and_says_so():
     assert not [line for line in lines if line.startswith("// sequential")], lines
 
 
+def test_a_witness_satisfies_the_declared_preconditions():
+    """``a[i] = a[i + K]`` conflicts only for ``K < N``; the program aborts at entry for ``K < N``, so no run it accepts
+    has the conflict and the loop is not proven sequential."""
+    K = dace.symbol("K")
+
+    @dace.program
+    def ahead(a: dace.float64[N + K]):
+        for i in range(N):
+            a[i] = a[i + K] + 1.0
+
+    sdfg = ahead.to_sdfg(simplify=True)
+    sdfg.name = "cpf_comment_declared"
+    guard = sdfg.add_state_before(sdfg.start_block, "entry_guard", is_start_block=True)
+    tasklet_utils.add_abort_guard(guard, "entry_check", "K < N")
+    (first,) = class_lines(named(sdfg))
+    assert first.startswith("// unknown -- "), first
+    assert "K=1, N=2" not in first, first
+
+
+def test_a_sequential_loop_names_the_container_that_carries_it_and_how_it_is_written():
+    """The running example's time loop proves a dependence on ``y``, but ``x`` carries the values to the next
+    iteration, through the copy ``x = y``."""
+
+    @dace.program
+    def power_step(x: dace.float64[N], y: dace.float64[N], col: dace.int64[N]):
+        for t in range(T):
+            for j in dace.map[0:N]:
+                y[j] = x[col[j]]
+            x[:] = y
+
+    sequential = [line for line in class_lines(rendered(power_step, "cpf_comment_carrier")) if "sequential" in line]
+    assert len(sequential) == 1 and sequential[0].endswith(
+        "; x (x = y) carries the values from one iteration to the next"
+    ), sequential
+
+
+def test_the_header_lists_program_loops_not_helper_calls_or_lowering_counters():
+    """The scan helper is listed on the scans line and the copy helper's ``__i0`` is no loop of the program."""
+
+    @dace.program
+    def running_sum(a: dace.float64[N], y: dace.float64[N]):
+        y[:] = np.cumsum(a)
+
+    header = [
+        line for line in rendered(running_sum, "cpf_comment_header_names").splitlines() if line.startswith("//   ")
+    ]
+    parallel = [line for line in header if line.startswith("//   parallel: ") and "proven" not in line]
+    assert all("(" not in line and "__" not in line for line in parallel), header
+
+
 if __name__ == "__main__":
     test_a_sequential_loop_over_an_indirect_access_offers_no_wavefront()
     test_an_unproven_loop_over_a_few_iterations_is_unknown_not_sequential()
@@ -290,3 +342,6 @@ if __name__ == "__main__":
     test_a_map_inside_a_parallel_loop_stays_parallel_and_names_the_loop()
     test_a_short_map_stays_parallel_and_says_it_is_too_short_to_fork()
     test_a_map_a_gpu_thread_runs_stays_parallel_and_says_so()
+    test_a_witness_satisfies_the_declared_preconditions()
+    test_a_sequential_loop_names_the_container_that_carries_it_and_how_it_is_written()
+    test_the_header_lists_program_loops_not_helper_calls_or_lowering_counters()

@@ -8,7 +8,7 @@ from typing import Any, NamedTuple
 
 import sympy
 
-from dace import SDFG, data, dtypes, symbolic
+from dace import SDFG, data, dtypes, symbolic, symbolic_facts
 from dace.cpf_lowering import LoopClass, Reason
 from dace.frontend.operations import detect_reduction_type
 from dace.memlet import Memlet
@@ -833,7 +833,21 @@ def is_scratch(sdfg: SDFG, name: str) -> bool:
     return all(is_scratch(state.sdfg, n.data) for n in outer)
 
 
-def witnessed_carrying_access(loop: LoopRegion) -> str | None:
+def declared_conditions(loop: LoopRegion, traps: list[tuple[str, set[str]]]) -> smt_dependence.Guard:
+    """What ``loop``'s program declares of its symbols, as conditions a witness must satisfy: the entry ``abort()``
+    guards that reach ``loop``'s function (``traps``), and the relations assumed of its symbols."""
+    relations = {
+        symbolic_facts.RelationKind.LT: sympy.Lt,
+        symbolic_facts.RelationKind.LE: sympy.Le,
+        symbolic_facts.RelationKind.EQ: sympy.Eq,
+        symbolic_facts.RelationKind.NE: sympy.Ne,
+    }
+    declared = [(symbolic.pystr_to_symbolic(held), True) for held, names in traps]
+    declared += [(relations[r.kind](r.lhs, r.rhs), True) for r in loop.sdfg.facts().known() if r.kind in relations]
+    return tuple(declared)
+
+
+def witnessed_carrying_access(loop: LoopRegion, traps: list[tuple[str, set[str]]] | None = None) -> str | None:
     """``RAW on A[k, j] (witness: N=3, k=0 and k=1)`` when the solver finds two iterations of ``loop`` that touch one
     element of an argument array, choosing values for array sizes only; a parameter the caller fixes may appear
     when the conflict holds for every in-bounds value of it."""
@@ -861,6 +875,7 @@ def witnessed_carrying_access(loop: LoopRegion) -> str | None:
     sites = [site for site in sites if site.access.array not in scratch & unseen]
     sizes = size_symbols(loop.sdfg)
     fixed = fixed_symbols(loop) - sizes
+    declared = declared_conditions(loop, traps or [])
     pairs = [(w, o) for w in sites if w.access.write for o in sites if o.access.array == w.access.array]
     pairs.sort(key=lambda pair: pair[1].access.write)
     for write, other in pairs:
@@ -890,6 +905,7 @@ def witnessed_carrying_access(loop: LoopRegion) -> str | None:
                     fixed=fixed,
                     kills=kills,
                     guards=(first.guard, second.guard),
+                    assumptions=declared,
                 )
             if found is not None:
                 return conflict_label(first, second, found, counter[0])
@@ -1025,8 +1041,9 @@ def conflict_label(first: Site, second: Site, witness: dict[str, int], carrier: 
     return f"{kind} on {site_text(named)} (example the solver found: {where})"
 
 
-def loop_hint(loop: LoopRegion, session: Any = None) -> str:
-    """The hint text naming what kind of loop ``loop`` is; ``session`` as :func:`refusal_reason`."""
+def loop_hint(loop: LoopRegion, session: Any = None, traps: list[tuple[str, set[str]]] | None = None) -> str:
+    """The hint text naming what kind of loop ``loop`` is; ``session`` as :func:`refusal_reason`; ``traps`` the entry
+    ``abort()`` guards its function rests on, which a witness must satisfy."""
     reason = refusal_reason(loop, session)
     if reason is None:
         return SEQUENTIAL_PINNED if loop.pinned_sequential else parallel_loop_hint(loop)
@@ -1037,9 +1054,9 @@ def loop_hint(loop: LoopRegion, session: Any = None) -> str:
     required = order_requirement(reason)
     if required is not None:
         return required
-    access = proof_of_carry(loop, reason)
+    access = proof_of_carry(loop, reason, traps)
     if access is not None:
-        return SEQUENTIAL_PROVEN.format(reason=proven_reason(access))
+        return SEQUENTIAL_PROVEN.format(reason=proven_reason(access)) + carrier_note(loop, access)
     return unproven_hint(loop, unproven_reason(reason, loop.loop_variable))
 
 
@@ -1162,10 +1179,50 @@ def loop_private(loop: LoopRegion, states: list[SDFGState]) -> list[str]:
     return sorted(found)
 
 
-def proof_of_carry(loop: LoopRegion, reason: LoopRefusal) -> str | None:
+def carriers(loop: LoopRegion) -> dict[str, str | None]:
+    """The containers that carry values from one iteration of ``loop`` to the next, each with the container a whole
+    copy writes it from (``x`` carried as ``x = y``) or ``None``: written in the body, and read as input by the first
+    state of the body that touches them, so the read sees the previous iteration's write."""
+    seen: OrderedSet[str] = OrderedSet()
+    exposed: OrderedSet[str] = OrderedSet()
+    written: dict[str, str | None] = {}
+    for block in loop.bfs_nodes(loop.start_block):
+        inside = [block] if isinstance(block, SDFGState) else list(block.all_control_flow_blocks())
+        for state in (b for b in inside if isinstance(b, SDFGState)):
+            first = {n.data for n in state.data_nodes()} - seen
+            exposed |= {
+                n.data
+                for n in state.data_nodes()
+                if n.data in first and state.in_degree(n) == 0 and state.out_degree(n) > 0
+            }
+            seen |= first
+            for node in state.data_nodes():
+                for edge in state.in_edges(node):
+                    if not edge.data.is_empty():
+                        copied = edge.src.data if isinstance(edge.src, nodes.AccessNode) else None
+                        written[node.data] = copied if written.get(node.data) is None else written[node.data]
+    return {
+        name: written[name] for name in exposed if name in written and not isinstance(loop.sdfg.arrays[name], data.View)
+    }
+
+
+def carrier_note(loop: LoopRegion, access: str) -> str:
+    """``; x carries the values to the next iteration (x = y)`` for the carriers of ``loop`` other than the container
+    ``access`` names, or ``""``."""
+    named = re.search(r"on (\w+)\[", access) or re.search(r"on (\w+)", access)
+    found = [(name, copy) for name, copy in carriers(loop).items() if named is None or name != named.group(1)]
+    if not found:
+        return ""
+    text = ", ".join(f"{name} ({name} = {copy})" if copy else name for name, copy in found)
+    return f"; {text} carr{'ies' if len(found) == 1 else 'y'} the values from one iteration to the next"
+
+
+def proof_of_carry(
+    loop: LoopRegion, reason: LoopRefusal, traps: list[tuple[str, set[str]]] | None = None
+) -> str | None:
     """The access that proves ``loop`` carries a dependence, or ``None``: a solver witness, else a constant distance or
     a carried symbol ``LoopToMap`` named."""
-    witnessed = witnessed_carrying_access(loop)
+    witnessed = witnessed_carrying_access(loop, traps)
     if witnessed is not None:
         return witnessed
     # The element-level proof also names the direction: LoopToMap's "read-after-write conflict" is
@@ -1465,7 +1522,7 @@ class AnnotateLoopKinds(ppl.Pass):
                     [trap for trap in traps.get(id(parent_graph.sdfg), []) if trap[0] not in entry_held],
                 )
                 if isinstance(node, nodes.MapEntry)
-                else loop_hint(node, session)
+                else loop_hint(node, session, traps.get(id(parent_graph.sdfg), []))
             )
             node.specialization_hint = f"{kind}\n{hint}" if hint else kind
             labelled += 1
