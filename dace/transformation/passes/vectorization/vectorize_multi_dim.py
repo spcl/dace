@@ -142,7 +142,6 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (
     map_body_wcr_violations,
     nested_sdfg_wcr_violations,
     no_lane_collapsing_nested_sdfgs,
-    no_wcr_inside_nested_sdfgs,
     no_widened_scalar_tasklets,
 )
 
@@ -489,9 +488,20 @@ class AssertNoNestedSDFGWCR(ppl.Pass):
         return []
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
-        violation = no_wcr_inside_nested_sdfgs(sdfg, allow_boundary_duplicates=True)
-        if violation is not None:
-            raise VectorizeUnsupported(f"unresolved WCR inside the body NSDFG before tiling: {violation}")
+        # Refuse only the maps around the violating edges, as ``_AssertNoBodyWCR`` does: a map an earlier refusal
+        # marked stays scalar, and only a violation outside every map refuses the kernel.
+        violations = [
+            (message, labels)
+            for message, labels in nested_sdfg_wcr_violations(sdfg, allow_boundary_duplicates=True)
+            if not labels or not all(label.endswith(NO_VECTORIZE_MARKER) for label in labels)
+        ]
+        if violations:
+            maps = tuple(OrderedSet(label for message, labels in violations for label in labels))
+            if any(not labels for message, labels in violations):
+                maps = ()
+            raise VectorizeUnsupported(
+                f"unresolved WCR inside the body NSDFG before tiling: {violations[0][0]}", maps=maps
+            )
         return None
 
 
