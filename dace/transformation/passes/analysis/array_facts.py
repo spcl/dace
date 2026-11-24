@@ -774,12 +774,20 @@ def declared_facts(block: ControlFlowBlock, name: str) -> list[ArrayFact]:
 # Consumer side
 
 
+def sympy_logic(value: Any) -> Any:
+    """``value`` with DaCe's ``AND``/``OR`` as sympy's ``And``/``Or``: the same truth value, and one a sympy ``And``
+    or ``Not`` guard accepts as an argument (it refuses a DaCe function with a ``TypeError``)."""
+    if not isinstance(value, sympy.Basic):
+        return value
+    return value.replace(symbolic.AND, sympy.And).replace(symbolic.OR, sympy.Or)
+
+
 def bound_expression(expr: Any, bindings: dict[str, Any], assigned: Counter) -> Any | None:
     """``expr`` with every name the loop assigns once replaced by its value, until only the iterator and names the
     loop does not assign remain; ``None`` if a name the loop assigns more than once is left."""
     for _ in range(SUBSTITUTION_DEPTH):
         names = {str(s) for s in expr.free_symbols} | {str(a.args[0]) for a in expr.atoms(symbolic.Subscript)}
-        pending = {n: bindings[n] for n in names if n in bindings}
+        pending = {n: sympy_logic(bindings[n]) for n in names if n in bindings}
         if not pending:
             break
         expr = expr.subs({symbolic.symbol(n): v for n, v in pending.items()})

@@ -591,6 +591,23 @@ def test_a_declared_range_maps_a_gather_through_a_caller_index():
     assert any("idx in [0, N - 1] (declared)" in n for n in fact_notes(sdfg))
 
 
+def test_a_guard_bound_to_a_parsed_conjunction_substitutes():
+    """A store's guard is a sympy ``And``; a name in it the loop assigns a parsed condition (DaCe's ``AND``) is
+    replaced by that condition. sympy's ``And`` refused DaCe's function with a ``TypeError`` (CloudSC from
+    dace-fortran, a guard over ``zdqs`` and ``za``)."""
+    from collections import Counter
+
+    import sympy
+
+    from dace import symbolic
+
+    value = symbolic.pystr_to_symbolic("(z[i] <= -m) and (a[i, j] < 0.9)")
+    b, i = symbolic.symbol("b"), symbolic.symbol("i")
+    for guard in (sympy.And(b, i > 0), sympy.Not(b)):
+        bound = array_facts.bound_expression(guard, {"b": value}, Counter({"b": 1}))
+        assert bound is not None and "b" not in {str(s) for s in bound.free_symbols}, bound
+
+
 if __name__ == "__main__":
     import sys
 
