@@ -88,6 +88,12 @@ class Replacements:
         return None
 
     @staticmethod
+    def has_methods(class_or_name: str | type) -> bool:
+        """Whether a replacement is registered for a method of the class or one of its bases."""
+        bases = set(_get_all_bases(class_or_name))
+        return any(key[0] in bases for key in Replacements._method_rep)
+
+    @staticmethod
     def get_attribute(class_or_name: str | type, attr_name: str):
         for classname in _get_all_bases(class_or_name):
             if (classname, attr_name) in Replacements._attr_rep:

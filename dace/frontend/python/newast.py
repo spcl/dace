@@ -4294,6 +4294,16 @@ class ProgramVisitor(ExtNodeVisitor):
             if not true_name and (op or isinstance(target, ast.Subscript)):
                 raise DaceSyntaxError(self, target, f'Variable "{name}" used before definition')
 
+            if (
+                not true_name
+                and isinstance(target, ast.Name)
+                and op is None
+                and oprepo.Replacements.has_methods(type(result))
+            ):
+                # A local alias of an object with replacement methods (``comm = MPI.COMM_WORLD``) acts as a global
+                self.globals[name] = result
+                continue
+
             new_data, rng = None, None
             dtype_keys = tuple(dtypes.dtype_to_typeclass().keys())
             if not (

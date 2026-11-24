@@ -9,6 +9,7 @@ import sympy as sp
 import dace
 from dace import dtypes, symbolic
 from dace.frontend.common import op_repository as oprepo
+from dace.frontend.python.common import StringLiteral
 from dace.frontend.python.replacements.utils import ProgramVisitor
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
@@ -228,8 +229,14 @@ def _pgrid_bcast(
 
 
 def _mpi4py_to_MPI(MPI, op):
+    if isinstance(op, StringLiteral):
+        return str(op)
+    if not isinstance(op, MPI.Op):
+        return op
     if op is MPI.SUM:
         return "MPI_SUM"
+    elif op is MPI.PROD:
+        return "MPI_PROD"
     elif op is MPI.MAX:
         return "MPI_MAX"
     elif op is MPI.MIN:
@@ -244,18 +251,29 @@ def _Reduce(
     sdfg: SDFG,
     state: SDFGState,
     buffer: str,
-    op: str,
+    recvbuf_or_op=None,
+    op=None,
     root: str | sp.Expr | Number = 0,
     grid: str = None,
 ):
+    """``Reduce(buffer, op, root)`` reduces in place. mpi4py's ``Reduce(sendbuf, recvbuf, op, root)`` reduces
+    ``sendbuf`` into ``recvbuf``; ``MPI.IN_PLACE`` as ``sendbuf`` reduces ``recvbuf`` in place."""
+
+    from mpi4py import MPI
 
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
     from dace.libraries.comm.nodes.reduce import Reduce
 
-    libnode = Reduce("_Reduce_", op)
-    desc = sdfg.arrays[buffer]
+    if isinstance(recvbuf_or_op, str) and recvbuf_or_op in sdfg.arrays:
+        out_name = recvbuf_or_op
+        if buffer is MPI.IN_PLACE:
+            buffer = out_name
+    else:
+        out_name = buffer
+        op = recvbuf_or_op if op is None else op
+    libnode = Reduce("_Reduce_", _mpi4py_to_MPI(MPI, "MPI_SUM" if op is None else op))
     in_buffer = state.add_read(buffer)
-    out_buffer = state.add_write(buffer)
+    out_buffer = state.add_write(out_name)
     if isinstance(root, str) and root in sdfg.arrays.keys():
         root_node = state.add_read(root)
     else:
@@ -266,11 +284,31 @@ def _Reduce(
     if grid:
         libnode.add_in_connector("_grid")
         state.add_edge(state.add_read(grid), None, libnode, "_grid", Memlet(data=grid))
-    state.add_edge(in_buffer, None, libnode, "_inbuffer", Memlet.from_array(buffer, desc))
+    state.add_edge(in_buffer, None, libnode, "_inbuffer", Memlet.from_array(buffer, sdfg.arrays[buffer]))
     state.add_edge(root_node, None, libnode, "_root", Memlet.simple(root_node.data, "0"))
-    state.add_edge(libnode, "_outbuffer", out_buffer, None, Memlet.from_array(buffer, desc))
+    state.add_edge(libnode, "_outbuffer", out_buffer, None, Memlet.from_array(out_name, sdfg.arrays[out_name]))
 
     return None
+
+
+@oprepo.replaces_method("Intracomm", "Reduce")
+def intracomm_reduce(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    icomm: str,
+    sendbuf: str,
+    recvbuf: str,
+    op=None,
+    root: str | sp.Expr | Number = 0,
+):
+    """Equivalent to `dace.comm.Reduce(sendbuf, recvbuf, op, root)`."""
+
+    from mpi4py import MPI
+
+    if pv.globals[icomm] != MPI.COMM_WORLD:
+        raise ValueError("Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.")
+    return _Reduce(pv, sdfg, state, sendbuf, recvbuf, op, root)
 
 
 @oprepo.replaces("mpi4py.MPI.COMM_WORLD.Alltoall")
@@ -322,8 +360,7 @@ def _allreduce(
 
     from dace.libraries.comm.nodes.allreduce import Allreduce
 
-    if isinstance(op, MPI.Op):
-        op = _mpi4py_to_MPI(MPI, op)
+    op = _mpi4py_to_MPI(MPI, op)
     if inp_buffer != MPI.IN_PLACE:
         raise ValueError("DaCe currently supports in-place Allreduce only.")
     libnode = Allreduce("_Allreduce_", op)

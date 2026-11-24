@@ -374,6 +374,129 @@ def test_alltoall():
     assert np.allclose(val, ref), "The received values are not what I expected."
 
 
+@pytest.mark.mpi
+def test_local_comm_alias():
+    from mpi4py import MPI
+
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+    size = commworld.Get_size()
+
+    @dace.program
+    def mpi4py_local_alias(rank: dace.int32, size: dace.int32):
+        comm = MPI.COMM_WORLD
+        src = (rank - 1) % size
+        dst = (rank + 1) % size
+        req = np.empty((2,), dtype=MPI.Request)
+        sbuf = np.full((1,), rank, dtype=np.int32)
+        req[0] = comm.Isend(sbuf, dst, tag=0)
+        rbuf = np.empty((1,), dtype=np.int32)
+        req[1] = comm.Irecv(rbuf, src, tag=0)
+        MPI.Request.Waitall(req)
+        return rbuf
+
+    sdfg = None
+    if rank == 0:
+        sdfg = mpi4py_local_alias.to_sdfg(simplify=True)
+    func = utils.distributed_compile(sdfg, commworld)
+
+    val = func(rank=rank, size=size)
+    ref = mpi4py_local_alias.f(rank, size)
+
+    assert val[0] == ref[0]
+
+
+@pytest.mark.mpi
+def test_isend_irecv_column():
+    from mpi4py import MPI
+
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+    size = commworld.Get_size()
+
+    @dace.program
+    def mpi4py_column(u: dace.float64[4, 3], rank: dace.int32, size: dace.int32):
+        req = np.empty((2,), dtype=MPI.Request)
+        req[0] = commworld.Isend(u[:, 1], (rank + 1) % size, tag=0)
+        req[1] = commworld.Irecv(u[:, 0], (rank - 1) % size, tag=0)
+        MPI.Request.Waitall(req)
+
+    sdfg = None
+    if rank == 0:
+        sdfg = mpi4py_column.to_sdfg(simplify=True)
+    func = utils.distributed_compile(sdfg, commworld)
+
+    base = np.arange(12, dtype=np.float64).reshape(4, 3)
+    u = base + 100 * rank
+    func(u=u, rank=rank, size=size)
+
+    expected = base + 100 * rank
+    expected[:, 0] = base[:, 1] + 100 * ((rank - 1) % size)
+    assert np.array_equal(u, expected)
+
+
+@pytest.mark.mpi
+def test_reduce_into_another_buffer():
+    from mpi4py import MPI
+
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+
+    @dace.program
+    def mpi4py_reduce(a: dace.float64[4], b: dace.float64[4]):
+        MPI.COMM_WORLD.Reduce(a, b, op=MPI.SUM, root=0)
+
+    @dace.program
+    def mpi4py_reduce_method(a: dace.float64[4], b: dace.float64[4]):
+        commworld.Reduce(a, b, MPI.MAX, root=0)
+
+    for program in (mpi4py_reduce, mpi4py_reduce_method):
+        sdfg = None
+        if rank == 0:
+            sdfg = program.to_sdfg(simplify=True)
+        func = utils.distributed_compile(sdfg, commworld)
+
+        a = np.arange(4, dtype=np.float64) + rank
+        val, ref = np.full(4, -1.0), np.full(4, -1.0)
+        func(a=a.copy(), b=val)
+        program.f(a.copy(), ref)
+
+        assert np.array_equal(val, ref)
+
+
+@pytest.mark.mpi
+@pytest.mark.parametrize("op", ["string", "mpi4py"])
+def test_reduce_in_place(op: str):
+    from mpi4py import MPI
+
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+    size = commworld.Get_size()
+
+    if op == "string":
+
+        @dace.program
+        def mpi4py_reduce_in_place(a: dace.float64[4]):
+            dace.comm.Reduce(a, "MPI_SUM", root=0)
+
+    else:
+
+        @dace.program
+        def mpi4py_reduce_in_place(a: dace.float64[4]):
+            MPI.COMM_WORLD.Reduce(MPI.IN_PLACE, a, op=MPI.SUM, root=0)
+
+    sdfg = None
+    if rank == 0:
+        sdfg = mpi4py_reduce_in_place.to_sdfg(simplify=True)
+    func = utils.distributed_compile(sdfg, commworld)
+
+    a = np.arange(4, dtype=np.float64) + rank
+    func(a=a)
+
+    expected = size * np.arange(4) + size * (size - 1) / 2 if rank == 0 else np.arange(4) + rank
+    assert np.array_equal(a, expected)
+
+
 if __name__ == "__main__":
     test_comm_world_bcast()
     test_external_comm_bcast()
@@ -383,3 +506,8 @@ if __name__ == "__main__":
     test_isend_irecv()
     test_send_recv()
     test_alltoall()
+    test_local_comm_alias()
+    test_isend_irecv_column()
+    test_reduce_into_another_buffer()
+    test_reduce_in_place("string")
+    test_reduce_in_place("mpi4py")
