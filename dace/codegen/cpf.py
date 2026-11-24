@@ -2121,10 +2121,11 @@ def keep_target_path(code: str, x86: bool) -> str:
 
 
 #: A generator connector local of a tasklet block (``__in1``, ``__inp``, ``__out``, the pointer view ``__arr``):
-#: ``T __in1 = v;`` or ``T __out;``, and the assignment ``__out = v;``.
+#: ``T __in1 = v;`` or ``T __out;``, and the assignment ``__out = v;``. The name starts a word: ``priv_out_0 = v;``
+#: stores into ``priv_out_0`` and declares no ``_out_0``.
 CONNECTOR_DECL = re.compile(
     r"(?P<type>(?:const )?[A-Za-z_][\w:<>, ]*?(?:\*+ ?(?:restrict |__restrict__ )?)?) ?"
-    r"(?P<name>__(?:in|out|arr)\w*|_(?:in|out)_\w+)(?: = (?P<value>.+))?;"
+    r"(?<!\w)(?P<name>__(?:in|out|arr)\w*|_(?:in|out)_\w+)(?: = (?P<value>.+))?;"
 )
 CONNECTOR_SET = re.compile(r"(?P<name>__(?:in|out|arr)\w*|_(?:in|out)_\w+) = (?P<value>.+);")
 #: A literal or one access to a container (``x``, ``x[e]``, ``*(x)``, ``*(&x)``, ``*(x + e)``).

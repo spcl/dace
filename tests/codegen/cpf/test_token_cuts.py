@@ -113,6 +113,11 @@ def test_a_connector_block_becomes_its_one_statement():
     )
     named = "    {\n        double y;\n        y = (x[i] * 2.0);\n        *(acc) = *(acc) + (y);\n    }\n"
     assert collapse_connector_blocks(named, types) == named, "a tasklet's own local keeps its declaration"
+    types["priv_out_0"] = "double"
+    store = "    {\n        double __inp = s[i];\n        priv_out_0 = __inp;\n    }\n"
+    assert collapse_connector_blocks(store, types) == "    priv_out_0 = s[i];\n", (
+        "a store into a container named like a connector local (lavamd's wcr_priv_Add_out_0) is no declaration"
+    )
     atomic = (
         "    {\n        double __out;\n        __out = (x[i] * y[i]);\n        // atomic update: why\n"
         "        #pragma omp atomic update\n        *(s) = *(s) + (__out);\n    }\n"
