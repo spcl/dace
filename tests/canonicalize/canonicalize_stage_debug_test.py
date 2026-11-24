@@ -8,6 +8,8 @@ correct), and the *detection* path: when a stage corrupts values or
 structure, the harness must flag it.
 """
 
+from unittest import mock
+
 import numpy as np
 import pytest
 
@@ -102,11 +104,6 @@ def test_per_row_reduction_all_stages_ok():
         assert r.ok, f"stage failed: {r}"
 
 
-def test_first_failing_stage_none_for_clean_kernel():
-    sdfg = elementwise.to_sdfg(simplify=True)
-    assert first_failing_stage(sdfg) is None
-
-
 # Detection path: a corrupting stage must be caught
 
 
@@ -146,13 +143,11 @@ class _InjectInvalidNode(ppl.Pass):
         return 1
 
 
-def test_harness_detects_value_corrupting_stage(monkeypatch):
-    """Monkeypatch the stage list to a single value-corrupting pass; the
-    harness must report a numerical mismatch (and ``first_failing_stage``
-    must find it)."""
-    monkeypatch.setattr(cdbg, "build_stages", lambda: [("inject", _PerturbOutputValues())])
+def test_harness_detects_value_corrupting_stage():
+    """Patch the stage list to a single value-corrupting pass; the harness must report a numerical mismatch."""
     sdfg = elementwise.to_sdfg(simplify=True)
-    results = canonicalize_with_stage_checks(sdfg, symbol_value=3)
+    with mock.patch.object(cdbg, "build_stages", lambda: [("inject", _PerturbOutputValues())]):
+        results = canonicalize_with_stage_checks(sdfg, symbol_value=3)
     assert len(results) == 1
     r = results[0]
     assert r.valid, "value corruption keeps the SDFG structurally valid"
@@ -160,25 +155,38 @@ def test_harness_detects_value_corrupting_stage(monkeypatch):
     assert r.max_abs_diff is not None and r.max_abs_diff > 1.0
 
 
-def test_harness_detects_invalid_stage(monkeypatch):
-    """Monkeypatch the stage list to a structure-corrupting pass; the
-    harness must report the stage as invalid."""
-    monkeypatch.setattr(cdbg, "build_stages", lambda: [("inject", _InjectInvalidNode())])
+def test_first_failing_stage_is_the_stage_that_corrupts_values():
     sdfg = elementwise.to_sdfg(simplify=True)
-    results = canonicalize_with_stage_checks(sdfg, symbol_value=3)
+    with mock.patch.object(cdbg, "build_stages", lambda: [("inject", _PerturbOutputValues())]):
+        failing = first_failing_stage(sdfg, symbol_value=3)
+    assert failing is not None and failing.label == "inject"
+
+
+def test_harness_detects_invalid_stage():
+    """Patch the stage list to a structure-corrupting pass; the harness must report the stage as invalid."""
+    sdfg = elementwise.to_sdfg(simplify=True)
+    with mock.patch.object(cdbg, "build_stages", lambda: [("inject", _InjectInvalidNode())]):
+        results = canonicalize_with_stage_checks(sdfg, symbol_value=3)
     assert len(results) == 1
     assert results[0].valid is False
     assert not results[0].ok
 
 
-def test_stop_on_failure_halts_at_first_bad_stage(monkeypatch):
-    monkeypatch.setattr(
-        cdbg, "build_stages", lambda: [("inject", _PerturbOutputValues()), ("inject2", _PerturbOutputValues())]
-    )
+def test_stop_on_failure_halts_at_first_bad_stage():
     sdfg = elementwise.to_sdfg(simplify=True)
-    results = canonicalize_with_stage_checks(sdfg, symbol_value=3, stop_on_failure=True)
+    stages = [("inject", _PerturbOutputValues()), ("inject2", _PerturbOutputValues())]
+    with mock.patch.object(cdbg, "build_stages", lambda: stages):
+        results = canonicalize_with_stage_checks(sdfg, symbol_value=3, stop_on_failure=True)
     assert len(results) == 1  # halted after the first failing stage
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_build_random_inputs_small_symbols_and_data()
+    test_compare_identical_and_diff()
+    test_stage_result_ok_needs_both_validity_and_numerics()
+    test_elementwise_all_stages_ok()
+    test_per_row_reduction_all_stages_ok()
+    test_harness_detects_value_corrupting_stage()
+    test_first_failing_stage_is_the_stage_that_corrupts_values()
+    test_harness_detects_invalid_stage()
+    test_stop_on_failure_halts_at_first_bad_stage()

@@ -263,7 +263,6 @@ _NVIDIA_ONLY = {
     "": (
         "cuda_host_compiler_cudatest.py",
         "cuda_tile_cpp_test.py",
-        "fft_cufft_extended_test.py",
         "fft_gpu_extended_test.py",
         "matmul_cudatest.py",
     ),

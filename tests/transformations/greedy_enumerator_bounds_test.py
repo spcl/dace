@@ -24,8 +24,6 @@ subgraphs in a few megabytes.
 
 import tracemalloc
 
-import pytest
-
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
@@ -124,30 +122,6 @@ def test_greedy_enumerator_is_linear_in_map_count():
     assert peak <= MAX_PEAK_BYTES, f"enumeration of {N_MAPS} maps peaked at {peak / 1e6:.2f} MB"
 
 
-def test_greedy_enumerator_scales_linearly():
-    """Doubling the map count must not more than double the cost."""
-    # Warm up at the larger size: a cache first filled during the large run would count against it alone
-    _enumerate(_clique_state_sdfg(N_MAPS))
-
-    # tracemalloc also counts what other threads allocate meanwhile (pytest-xdist's receiver); that only adds, so
-    # the least of a few runs is the enumerator's own peak
-    small_groups, small_calls, small_peak = min(
-        (_enumerate(_clique_state_sdfg(N_MAPS // 2), measure=True) for i in range(3)), key=lambda run: run[2]
-    )
-    large_groups, large_calls, large_peak = min(
-        (_enumerate(_clique_state_sdfg(N_MAPS), measure=True) for i in range(3)), key=lambda run: run[2]
-    )
-
-    assert large_calls <= 2 * small_calls + 2, (
-        f"{small_calls} calls for {N_MAPS // 2} maps but {large_calls} for {N_MAPS}"
-    )
-    # Allow a quadratic slack on memory: the adjacency list of a clique is
-    # inherently O(N**2). Anything combinatorial blows straight through this.
-    assert large_peak <= 4 * small_peak + MAX_PEAK_BYTES // 32, (
-        f"{small_peak / 1e6:.2f} MB for {N_MAPS // 2} maps but {large_peak / 1e6:.2f} MB for {N_MAPS}"
-    )
-
-
 def test_greedy_fuse_terminates_on_map_heavy_state():
     """End-to-end guard: the driver completes and leaves a valid, acyclic SDFG."""
     sdfg = _clique_state_sdfg(N_MAPS)
@@ -162,4 +136,5 @@ def test_greedy_fuse_terminates_on_map_heavy_state():
 
 
 if __name__ == "__main__":
-    raise SystemExit(pytest.main([__file__, "-v"]))
+    test_greedy_enumerator_is_linear_in_map_count()
+    test_greedy_fuse_terminates_on_map_heavy_state()

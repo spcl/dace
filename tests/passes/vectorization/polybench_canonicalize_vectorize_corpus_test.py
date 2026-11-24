@@ -2,16 +2,12 @@
 """polybench corpus: canonicalize / canonicalize+vectorize, value-preserving.
 
 For every polybench kernel (see :mod:`tests.corpus.polybench`) the corpus builds a
-fresh SDFG from the python frontend, runs two pipelines, and checks each end-to-end
-against the untransformed baseline run (polybench ships no numpy oracle, so this is
-a value-preservation check):
+fresh SDFG from the python frontend, runs ``canon_vec`` (canonicalize then multi-dim
+vectorize, round-robin knob), and checks it end-to-end against the untransformed
+baseline run (polybench ships no numpy oracle, so this is a value-preservation check).
+Canonicalization alone is checked over the same kernels by
+:mod:`tests.passes.canonicalize.canonicalize_numerical_corpus_test`.
 
-1. ``canon``     -- canonicalize only.
-2. ``canon_vec`` -- canonicalize then multi-dim vectorize (round-robin knob).
-
-The canonicalized SDFG + inputs + reference are computed once per kernel and shared
-(phase 2 deep-copies the canon base). Phases are parametrized so pytest reports the
-``x/N`` per kernel.
 (``auto_optimize`` phases are intentionally omitted -- canon+vectorize is the
 must-pass path here.)
 """
@@ -37,7 +33,7 @@ from tests.passes.vectorization.tile_assertions import assert_tiled_unless_pinne
 
 KERNELS = [k.name for k in polybench.collect()]
 LAPACK_KERNELS = frozenset(k.name for k in polybench.collect() if k.lapack)
-PHASES = ("canon", "canon_vec")
+PHASES = ("canon_vec",)
 
 #: Kernels this knob set leaves with no tile lib node, measured after canonicalize. Pinned exactly: the
 #: ``canon_vec`` comparison alone passes on a refusal, which hands back the un-tiled graph.
@@ -109,3 +105,8 @@ def test_polybench_corpus(name, phase):
     sdfg.validate()
     got = polybench.run(sdfg, call_arrays, psize)
     assert polybench.outputs_match(ref, got), f"{name}/{phase}: output diverges from baseline"
+
+
+if __name__ == "__main__":
+    for name in KERNELS:
+        test_polybench_corpus(name, "canon_vec")

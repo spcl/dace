@@ -19,7 +19,7 @@ kernel the test:
 ``nan``/``inf`` match as equal; integer index/permutation arrays are read-only
 inputs and skipped. Inner constant-tile loops (e.g. ``heat3d``'s tile size 8)
 would unroll 512x, so ``unroll_limit`` is capped, matching the canonicalize
-sibling :mod:`tests.canonicalize.tsvc_2_5_corpus_test`.
+sibling canonicalize recipe in :mod:`tests.passes.canonicalize.canonicalize_numerical_corpus_test`.
 """
 
 import contextlib
@@ -170,19 +170,6 @@ def _run_and_check(program, sdfg, arrays, scalars, ref, stage: str):
 
 
 @pytest.mark.parametrize("idx,program", list(enumerate(CORPUS)), ids=[p.name for p in CORPUS])
-def test_tsvc_2_5_canonicalize(idx, program):
-    """Canonicalize -> verify against the numpy oracle. Canonicalization alone is
-    value-preserving; this is the first of the two corpus paths (this, then
-    ``+multidim`` vectorize)."""
-    arrays, scalars, ref = _reference(program)
-    sdfg = _canonicalized(program)
-    # Distinct sdfg.name so the canon-only build never shares a .dacecache dir with
-    # the legacy arm (same base name) under the parallel sweep.
-    sdfg.name = f"{sdfg.name}_canononly"
-    _run_and_check(program, sdfg, arrays, scalars, ref, "canonicalization")
-
-
-@pytest.mark.parametrize("idx,program", list(enumerate(CORPUS)), ids=[p.name for p in CORPUS])
 def test_tsvc_2_5_canonicalize_then_multidim_vectorize(idx, program):
     """Canonicalize -> verify -> multidim VectorizeCPUMultiDim (round-robin knob,
     K=2 when the canonicalized body is a 2-D nested map) -> verify."""
@@ -218,6 +205,5 @@ def test_tsvc_2_5_canonicalize_then_multidim_vectorize(idx, program):
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(pytest.main([__file__, "-q"]))
+    for idx, program in enumerate(CORPUS):
+        test_tsvc_2_5_canonicalize_then_multidim_vectorize(idx, program)

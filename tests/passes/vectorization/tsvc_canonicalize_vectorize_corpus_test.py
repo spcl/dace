@@ -156,15 +156,6 @@ def _vectorize_and_check(name, sdfg, kernel, arrays, ck, ref, vec_pass):
 
 
 @pytest.mark.parametrize("idx,name", list(enumerate(KERNELS)))
-def test_tsvc_canonicalize(idx, name):
-    """Canonicalize -> verify e2e against numpy. Canonicalization alone is
-    value-preserving; this is the first of the two corpus paths (this, then
-    ``+multidim`` vectorize). ``_canonicalized`` asserts the
-    post-canon output matches the reference."""
-    _canonicalized(name, tag="canon")
-
-
-@pytest.mark.parametrize("idx,name", list(enumerate(KERNELS)))
 def test_tsvc_canonicalize_then_multidim_vectorize(idx, name):
     """Canonicalize -> verify -> multidim VectorizeCPUMultiDim (round-robin knob,
     K=2 when the canonicalized body is a 2-D nested map) -> verify."""
@@ -198,3 +189,8 @@ def test_tsvc_canonicalize_then_multidim_vectorize(idx, name):
             VectorizeConfig(widths=(8,), validate_all=True, **MULTIDIM_KNOBS[idx % len(MULTIDIM_KNOBS)])
         )
     _vectorize_and_check(name, sdfg, kernel, arrays, ck, ref, vec)
+
+
+if __name__ == "__main__":
+    for idx, name in enumerate(KERNELS):
+        test_tsvc_canonicalize_then_multidim_vectorize(idx, name)
