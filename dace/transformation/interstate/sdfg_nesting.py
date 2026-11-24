@@ -1278,6 +1278,12 @@ class InlineSDFG(transformation.SingleStateTransformation):
         outer = (ins[0].data.subset, outs[0].data.subset)
         if all(subset.num_elements() == 1 for subset in outer):
             return "element"
+        # The identity form stages the copy through an access node of the input's container with an incoming edge, a
+        # write: not where the enclosing nest takes that container as an input connector only.
+        parent = state.sdfg.parent_nsdfg_node
+        source = ins[0].data.data
+        if parent is not None and source in parent.in_connectors and source not in parent.out_connectors:
+            return None
         nested = (nsdfg_node.sdfg.arrays[inp], nsdfg_node.sdfg.arrays[out])
         if all(
             isinstance(subset, subsets.Range) and len(subset) == len(desc.shape) and all(b == 0 for b, _, _ in subset)

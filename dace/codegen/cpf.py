@@ -2444,8 +2444,11 @@ def render_unit(
     # The device unit repeats the frame's state struct, whose vendor handles and plans need their declarations.
     device_environments = (set(device.environments) | set(frame.environments)) if device is not None else set()
     device_code = preamble(device_body, dialect, device_environments) + device_body if device_body else ""
-    if proofs and device_code:
-        device_code = cpf_summary.comment_every_loop(device_code)
+    kinds = cpf_lowering.hint_detail() is cpf_lowering.HintDetail.KINDS
+    if kinds:
+        code = cpf_summary.comment_every_loop(code, kinds=True)
+    if (proofs or kinds) and device_code:
+        device_code = cpf_summary.comment_every_loop(device_code, kinds=kinds)
     for unit in filter(None, (code, device_code)):
         verify(unit, sdfg.name, dialect)
         if check_compiles:

@@ -418,6 +418,50 @@ def test_a_rendered_unit_comments_every_loop_above_its_pragmas():
             )
 
 
+def test_an_added_comment_skips_a_barrier_above_the_loop():
+    """A barrier is a statement of its own, not a pragma of the loop under it: the added comment goes between the
+    two, so the barrier does not read as part of the loop."""
+    code = """\
+static inline void cpf_helper(double *a, long n) {
+    #pragma omp parallel
+    {
+        #pragma omp barrier
+        for (long q = 0; q < n; ++q) {
+            a[q] = 0;
+        }
+    }
+}
+"""
+    lines = cpf_summary.comment_every_loop(code).splitlines()
+    barrier = next(n for n, line in enumerate(lines) if "#pragma omp barrier" in line)
+    assert cpf_summary.CLASS_LINE.match(lines[barrier + 1]), lines
+    assert cpf_summary.ANY_LOOP_HEAD.match(lines[barrier + 2]), lines
+
+
+def test_the_kinds_rendering_gets_a_class_word_on_every_loop():
+    """The kinds rendering carries the word alone: a map's other dimensions follow its parallel head, an
+    implementation loop of a helper says its class and role, and no line has a proof's dash."""
+    code = """\
+void f0(double *a, int64_t N, int64_t M) {
+    // parallel
+    #pragma omp parallel for
+    for (int64_t i = 0; i < N; i += 1) {
+        for (int64_t j = 0; j < M; j += 1) {
+            a[i * M + j] = 0;
+        }
+    }
+}
+static inline void cpf_fill(double *a, long n) {
+    for (long q = 0; q < n; ++q) a[q] = 0;
+}
+"""
+    lines = cpf_summary.comment_every_loop(code, kinds=True).splitlines()
+    above = [lines[n - 1].strip() for n, line in enumerate(lines) if cpf_summary.ANY_LOOP_HEAD.match(line)]
+    assert above[1] == "// parallel", lines
+    assert above[2] == "// sequential: implementation loop of helper cpf_fill: runs in order as written", lines
+    assert not [line for line in lines if " -- " in line], lines
+
+
 if __name__ == "__main__":
     test_a_private_name_the_loop_body_declares_is_dropped()
     test_a_private_buffer_declared_before_the_loop_stays_named()
@@ -441,3 +485,5 @@ if __name__ == "__main__":
     test_a_program_loop_no_pass_classed_stays_open_with_its_guard()
     test_a_triangular_loop_is_not_a_tile()
     test_a_rendered_unit_comments_every_loop_above_its_pragmas()
+    test_an_added_comment_skips_a_barrier_above_the_loop()
+    test_the_kinds_rendering_gets_a_class_word_on_every_loop()

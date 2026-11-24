@@ -8,12 +8,18 @@ two cannot disagree. It names each loop by its counter in the rendered code.
 import re
 from dataclasses import dataclass
 
-from dace.cpf_lowering import KIND_EXTRAS
+from dace.cpf_lowering import KIND_EXTRAS, kind_line
 from dace.ordered import OrderedSet
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import PARALLEL
 from dace.transformation.passes.loop_specialization import VERSIONED
 
 CLASS_LINE = re.compile(r"^\s*// (parallel|sequential|unknown) -- (.*)$")
+#: A class line of the kinds rendering (:func:`dace.cpf_lowering.kind_line`): the word, and a reason after ``: ``.
+KIND_LINE = re.compile(r"^\s*// (parallel(?: reduction| scan)?|sequential|unknown)(?:: (.*))?$")
+#: The pragmas that belong to the loop under them; a barrier or a flush is a statement of its own.
+LOOP_PRAGMA = re.compile(
+    r"^\s*#pragma\s+(?:omp\s+(?:parallel\b|for\b|simd\b|distribute\b|taskloop\b|teams\b|target\b)|GCC\s+(?:ivdep|unroll)\b|unroll\b|clang\s+loop\b)"
+)
 LOOP_HEAD = re.compile(r"^\s*for \((?:[\w:<>]+\s+)*\**(\w+)\s*=")
 WHILE_HEAD = re.compile(r"^\s*(?:while|do)\b")
 CALL_HEAD = re.compile(r"^\s*(?:[\w:<>*]+\s+)*(\w+)\s*\(")
@@ -198,19 +204,26 @@ def added_comment(lines: list[str], index: int, parent: str, function: str) -> s
 def pragma_start(lines: list[str], index: int) -> int:
     """The first line of the run of ``#pragma`` lines right above ``lines[index]`` (``index`` when there is none)."""
     start = index
-    while start > 0 and lines[start - 1].strip().startswith("#pragma"):
+    while start > 0 and LOOP_PRAGMA.match(lines[start - 1]) is not None:
         start -= 1
     return start
 
 
-def comment_every_loop(code: str) -> str:
+def comment_every_loop(code: str, kinds: bool = False) -> str:
     """``code`` with a comment on every loop that has none. The CPU generator labels a map's or loop's first ``for``;
     the other dimensions of a multi-dimensional map, and the loops a lowering writes out by hand (a scan's passes, a
     BLAS call's zero fill, a helper function), had none, so a reader could not tell a proven loop from an unread
-    one."""
+    one.
+
+    ``kinds``: ``code`` is the kinds rendering, whose class lines carry the word alone (:data:`KIND_LINE`), and the
+    added comments are written that way too. Its map comment does not count the nested loops, so a map's other
+    dimensions are the unlabelled loops whose heads follow the labelled parallel head with only pragmas between."""
     lines = code.splitlines()
     out: list[str] = []
     labelled, nest, covered, dimension, total, first = False, 0, 0, 0, 0, ""
+    # parallel: the last class line names a parallel loop; chain: the line above (pragmas aside) is the head of a
+    # parallel loop, so in the kinds rendering an unlabelled head here is another dimension of its map.
+    parallel, chain = False, False
     function = ""
     parents: list[tuple[int, str]] = []
     for index, line in enumerate(lines):
@@ -218,10 +231,11 @@ def comment_every_loop(code: str) -> str:
         head = FUNCTION_HEAD.match(line)
         if head is not None:
             function, parents = head.group(1), []
-        classed = CLASS_LINE.match(line)
+        classed = CLASS_LINE.match(line) or (KIND_LINE.match(line) if kinds else None)
         if classed is not None:
             # A thread team's or a one-trip block's comment is not a loop's: the loop inside gets its own.
-            labelled = not classed.group(2).startswith(NOT_A_LOOP)
+            labelled = not (classed.group(2) or "").startswith(NOT_A_LOOP)
+            parallel = classed.group(1).startswith("parallel")
         nested = NESTED_LOOPS.search(line)
         if nested is not None:
             nest = int(nested.group(1))
@@ -231,6 +245,7 @@ def comment_every_loop(code: str) -> str:
                 parents.pop()
         if ANY_LOOP_HEAD.match(line):
             indent = line[: indent_of(line)]
+            dimension_of_chain = kinds and chain and not labelled
             if labelled:
                 covered, dimension, total, first = (
                     (nest - 1, 1, nest, loop_counter(line)) if nest > 1 else (0, 0, 0, "")
@@ -243,15 +258,22 @@ def comment_every_loop(code: str) -> str:
                         f"parallel -- {DIMENSION}{dimension} of the {total} nested loops from {first}; the comment "
                         "above proves them all"
                     )
+                elif dimension_of_chain:
+                    comment = "parallel"
                 else:
                     comment = added_comment(lines, index, parents[-1][1] if parents else "", function)
+                    comment = (kind_line(comment) or comment) if kinds else comment
                 # Above the loop's pragmas, as every generated comment is, so each pragma stays next to its loop.
                 pragmas = index - pragma_start(lines, index)
                 out[len(out) - pragmas : len(out) - pragmas] = [f"{indent}// {comment}"]
             parents.append((indent_of(line), loop_counter(line)))
+            chain = kinds and ((labelled and parallel) or dimension_of_chain)
             labelled, nest = False, 0
-        elif not holds_label(stripped):
-            labelled, nest, covered = False, 0, 0
+        else:
+            if stripped and not stripped.startswith("#pragma"):
+                chain = False
+            if not holds_label(stripped):
+                labelled, nest, covered = False, 0, 0
         out.append(line)
     return "\n".join(out) + ("\n" if code.endswith("\n") else "")
 
