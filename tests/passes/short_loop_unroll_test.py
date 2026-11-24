@@ -128,7 +128,33 @@ def test_the_canonical_form_keeps_a_short_loop_and_the_cpu_finalize_unrolls_it()
     assert np.allclose(A, want)
 
 
+@dace.program
+def two_short_loops(A: dace.float64[3], B: dace.float64[3], C: dace.float64[3]):
+    for i in range(3):
+        A[i] = A[i] + 1.0
+        B[i] = B[i] * 2.0
+        C[i] = C[i] - 1.0
+    for j in range(3):
+        A[j] = A[j] * 3.0
+        B[j] = B[j] - 2.0
+        C[j] = C[j] + 4.0
+
+
+def test_short_loop_unroll_at_most_doubles_the_program() -> None:
+    """Each loop clones 2 x 6 tasklets into a 12-tasklet program: the first spends the whole allowance, the second
+    stays rolled, and the result still matches."""
+    sdfg = two_short_loops.to_sdfg(simplify=True)
+    assert ShortLoopUnroll(10, 6).apply_pass(sdfg, {}) == 1
+    assert _num_loops(sdfg) == 1
+    rng = np.random.default_rng(2)
+    A, B, C = (rng.random(3) for _ in range(3))
+    want = [A * 3.0 + 3.0, B * 2.0 - 2.0, C + 3.0]
+    sdfg(A=A, B=B, C=C)
+    assert all(np.allclose(got, ref) for got, ref in zip((A, B, C), want))
+
+
 if __name__ == "__main__":
     test_short_loop_unroll_gate_on_trip_count()
     test_short_loop_unroll_branchy_and_straightline_value_preserving()
     test_the_canonical_form_keeps_a_short_loop_and_the_cpu_finalize_unrolls_it()
+    test_short_loop_unroll_at_most_doubles_the_program()

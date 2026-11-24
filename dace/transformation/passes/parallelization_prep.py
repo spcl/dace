@@ -354,7 +354,8 @@ class ShortLoopUnroll(ppl.Pass):
     A loop whose body holds a map, or more than ``unroll_tasklet_budget`` tasklets, stays rolled for
     LoopToMap. A map body is already parallel: sw4_rhs4sg's unrolls cloned map bodies from 7541 to 87343
     nodes that every later canonicalize stage walked. Inner loops do not block an unroll; CloudSC's species
-    loops hold symbolic inner loops, and at most 80 tasklets."""
+    loops hold symbolic inner loops, and at most 80 tasklets. One run adds at most as many tasklets as the
+    program held, so the program at most doubles; the deepest loops spend that allowance first."""
 
     CATEGORY: str = "Optimization Preparation"
 
@@ -433,6 +434,12 @@ class ShortLoopUnroll(ppl.Pass):
         # Loops LoopUnroll refused. The gates are re-judged every level instead: unrolling inner
         # loops can fold a guard away and make a branchy body unrollable.
         refused: set[LoopRegion] = set()
+        # Cost model: one run adds at most as many tasklets as the program held (at least the per-loop budget), so
+        # unrolling at most doubles the program; a loop whose clones would overdraw the allowance stays rolled.
+        allowance = max(
+            self.unroll_tasklet_budget,
+            sum(1 for node, _ in sdfg.all_nodes_recursive() if isinstance(node, nodes.Tasklet)),
+        )
         while True:
             # One LEVEL at a time: every eligible loop at the deepest eligible depth unrolls, then each
             # region that received clones is fused once, then the next innermost level is judged. The
@@ -444,10 +451,15 @@ class ShortLoopUnroll(ppl.Pass):
             touched: list[ControlFlowRegion] = []
             for loop in [loop for loop in eligible if _loop_depth(loop) == depth]:
                 parent = loop.parent_graph
+                added = (trips[loop] - 1) * loop_body_census(loop)[0]
+                if added > allowance:
+                    refused.add(loop)  # its clones would overdraw the growth allowance
+                    continue
                 if not self.unroll_one(loop):
                     refused.add(loop)  # not unrollable in this context; leave it for LoopToMap
                     continue
                 unrolled += 1
+                allowance -= added
                 if parent is not None and all(parent is not seen for seen in touched):
                     touched.append(parent)
             for region in touched:
