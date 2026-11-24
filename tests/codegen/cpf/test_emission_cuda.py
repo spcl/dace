@@ -109,7 +109,8 @@ def nvcc_library(rendering: Rendering, directory: pathlib.Path, name: str) -> pa
         command = [nvcc, *flags, "-c", str(source), "-o", objects[-1]]
         result = subprocess.run(command, capture_output=True, text=True)
         assert result.returncode == 0, f"{' '.join(command)}\n{result.stderr}"
-    command = [nvcc, *flags, "-shared", *objects, "-o", str(library)]
+    # the vendor libraries the units call (-lcublas), as the rendering names them
+    command = [nvcc, *flags, "-shared", *objects, *rendering.link, "-o", str(library)]
     result = subprocess.run(command, capture_output=True, text=True)
     assert result.returncode == 0, f"{' '.join(command)}\n{result.stderr}"
     return library
@@ -309,3 +310,206 @@ def test_a_device_scan_cuda_unit_builds_with_nvcc_through_cpf_functors(
     )
 
     nvcc_library(rendering, tmp_path, name)
+
+
+def persistent_device_sdfg(
+    name: str,
+    lifetime: dace.dtypes.AllocationLifetime,
+    pool: bool = False,
+    setzero: bool = False,
+    assigned_extent: bool = False,
+) -> dace.SDFG:
+    """Two device maps with a ``GPU_Global`` temporary between them: ``tmp = 2 * A``, then ``B = tmp + 1``. With
+    ``assigned_extent`` the temporary is sized by ``M``, which the program assigns (``M = N``) before using it."""
+    sdfg = dace.SDFG(name)
+    gpu = dace.dtypes.StorageType.GPU_Global
+    sdfg.add_array("A", [N], dace.float64, storage=gpu)
+    sdfg.add_array("B", [N], dace.float64, storage=gpu)
+    extent = "N"
+    if assigned_extent:
+        sdfg.add_symbol("M", dace.int32)
+        extent = "M"
+    _, tmp = sdfg.add_transient("tmp", [dace.symbol(extent)], dace.float64, storage=gpu, lifetime=lifetime)
+    tmp.pool = pool
+    write = sdfg.add_state("write")
+    if assigned_extent:
+        start = sdfg.add_state("start", is_start_block=True)
+        sdfg.add_edge(start, write, dace.InterstateEdge(assignments={"M": "N"}))
+    _, double_entry, _ = write.add_mapped_tasklet(
+        "double",
+        {"i": f"0:{extent}"},
+        {"a": dace.Memlet("A[i]")},
+        "t = 2 * a",
+        {"t": dace.Memlet("tmp[i]")},
+        schedule=dace.dtypes.ScheduleType.GPU_Device,
+        external_edges=True,
+    )
+    for node in write.data_nodes():
+        if node.data == "tmp":
+            node.setzero = setzero
+    read = sdfg.add_state_after(write, "read")
+    _, increment_entry, _ = read.add_mapped_tasklet(
+        "increment",
+        {"i": f"0:{extent}"},
+        {"t": dace.Memlet("tmp[i]")},
+        "b = t + 1",
+        {"b": dace.Memlet("B[i]")},
+        schedule=dace.dtypes.ScheduleType.GPU_Device,
+        external_edges=True,
+    )
+    # a block size of its own, so the render does not warn that it falls back to the configured default
+    for entry in (double_entry, increment_entry):
+        entry.map.gpu_block_size = [32, 1, 1]
+    return sdfg
+
+
+def entry_body(code: str, name: str) -> str:
+    start = code.index(f'extern "C" void {name}(')
+    return code[code.index("{", start) : code.index("\n}\n", start)]
+
+
+@pytest.mark.parametrize("language", ["cuda", "hip"])
+@pytest.mark.parametrize("pool", [False, True], ids=["plain", "pooled"])
+def test_a_persistent_device_buffer_is_one_static_allocation(language: str, pool: bool):
+    name = f"cpf_persistent_device_{language}_{'pooled' if pool else 'plain'}"
+    rendering = render(
+        persistent_device_sdfg(name, dace.dtypes.AllocationLifetime.Persistent, pool=pool),
+        language=language,
+        check_compiles=False,
+    )
+    entry = entry_body(rendering.code, name)
+    # No per-call pair: the buffer is the file-scope pointer, allocated by a call that needs more than it holds.
+    assert not re.search(rf"{language}Malloc(Async)?\(\(void\*\*\)&__state->\w*tmp", entry), entry
+    assert not re.search(rf"{language}Free(Async)?\(__state->\w*tmp", entry), entry
+    assert "static double *__cpf_persistent_tmp = nullptr;" in rendering.code
+    assert re.search(r"if \(__cpf_persistent_tmp_count < \(size_t\)\(N\)\)", entry), entry
+    assert re.search(r"__state->\w*tmp = __cpf_persistent_tmp;", entry), entry
+    # Released once, at exit, in the host unit only: the device unit names no host pointer.
+    assert "~__cpf_persistent_tmp_release_t()" in rendering.code
+    assert "__cpf_persistent_tmp" not in (rendering.device_code or "")
+
+
+@pytest.mark.parametrize("lifetime", ["Scope", "SDFG"])
+def test_a_device_buffer_the_gpu_pipeline_makes_persistent_is_one_static_allocation(lifetime: str):
+    # The GPU pipeline runs MakeTransientsPersistent while generating code (after MoveArrayOutOfKernel), after CPF
+    # demoted the lifetimes and named the buffers it holds: the buffer reaches allocation Persistent all the same.
+    name = f"cpf_device_{lifetime.lower()}"
+    rendering = render(
+        persistent_device_sdfg(name, dace.dtypes.AllocationLifetime[lifetime]), language="cuda", check_compiles=False
+    )
+    entry = entry_body(rendering.code, name)
+    assert not re.search(r"cudaMalloc(Async)?\(\(void\*\*\)&__state->\w*tmp", entry), entry
+    assert "static double *__cpf_persistent_tmp = nullptr;" in rendering.code
+
+
+def test_a_device_buffer_sized_by_an_assigned_symbol_stays_one_allocation_per_call():
+    # M is assigned inside the program, so no single size holds across calls: the buffer keeps its per-call pair.
+    name = "cpf_device_assigned_extent"
+    rendering = render(
+        persistent_device_sdfg(name, dace.dtypes.AllocationLifetime.Scope, assigned_extent=True),
+        language="cuda",
+        check_compiles=False,
+    )
+    entry = entry_body(rendering.code, name)
+    # A local pointer or a state member, depending on where the allocation lands
+    assert re.search(r"cudaMalloc(Async)?\(\(void\*\*\)&(__state->)?\w*tmp", entry), entry
+    assert re.search(r"cudaFree(Async)?\((__state->)?\w*tmp", entry), entry
+    assert "__cpf_persistent_tmp" not in rendering.code
+
+
+def test_a_zeroed_persistent_device_buffer_is_zeroed_on_every_call():
+    name = "cpf_persistent_device_zeroed"
+    rendering = render(
+        persistent_device_sdfg(name, dace.dtypes.AllocationLifetime.Persistent, setzero=True),
+        language="cuda",
+        check_compiles=False,
+    )
+    entry = entry_body(rendering.code, name)
+    assert re.search(r"cudaMemset\(__state->\w*tmp, 0,", entry), entry
+    assert "static double *__cpf_persistent_tmp" in rendering.code
+
+
+@pytest.mark.gpu
+def test_a_persistent_device_buffer_grows_and_is_reused(tmp_path: pathlib.Path):
+    require_gpu_backend("cuda")
+    import cupy  # Deferred: the optional GPU dependency, needed only where a GPU runs this test.
+
+    name = "cpf_persistent_device_run"
+    rendering = render(persistent_device_sdfg(name, dace.dtypes.AllocationLifetime.Persistent), language="cuda")
+    entry = ctypes.CDLL(str(nvcc_library(rendering, tmp_path, name)))[name]
+    entry.argtypes = entry_argtypes(rendering.sdfg)
+    # A larger call grows the buffer, a smaller one reuses it.
+    for length in (50, 80, 30):
+        a = np.random.default_rng(length).random(length)
+        device = {"A": cupy.asarray(a), "B": cupy.zeros(length)}
+        arguments = [
+            ctypes.c_void_p(device[arg].data.ptr) if arg in device else length for arg in rendering.sdfg.arglist()
+        ]
+        entry(*arguments)
+        np.testing.assert_allclose(cupy.asnumpy(device["B"]), 2.0 * a + 1.0, rtol=1e-12, atol=0.0)
+
+
+@dace.program
+def cpf_cublas_matmul(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
+    C[:] = A @ B
+
+
+@pytest.mark.parametrize("language,field", [("cuda", "cublas_handle"), ("hip", "hipblas_handle")])
+def test_a_blas_unit_holds_one_shared_handle_instead_of_one_per_call(language: str, field: str):
+    # The entry builds its state struct on its own stack: a handle held by value there was created (cublasCreate) by
+    # every call and destroyed on return. As an inline static member it is one handle the calls share.
+    name = f"cpf_cublas_matmul_{language}"
+    rendering = render_gpu(cpf_cublas_matmul, name, language=language)
+    shared = f"inline static cpf_vendor::blas::CublasHandle {field};"
+    assert re.findall(rf"^\s*(.*\b{field};)", rendering.code, re.MULTILINE) == [shared]
+    # the device unit repeats the struct to name it, so it declares the field alike: one definition, one handle
+    assert re.findall(rf"^\s*(.*\b{field};)", rendering.device_code or "", re.MULTILINE) == [shared]
+    assert f"__state->{field}.Get()" in entry_body(rendering.code, name)
+
+
+def test_a_unit_without_a_library_handle_has_no_static_member():
+    rendering = render_gpu(vector_add, "cpf_vector_add_no_handle", language="cuda")
+    assert "inline static" not in rendering.code and "inline static" not in (rendering.device_code or "")
+
+
+@pytest.mark.parametrize(
+    "field,expected",
+    [
+        (
+            "    dace::blas::CublasHandle cublas_handle;",
+            "    inline static cpf_vendor::blas::CublasHandle cublas_handle;",
+        ),
+        (
+            "  cpf_vendor::lapack::CusolverDnHandle cusolverDn_handle;",
+            "  inline static cpf_vendor::lapack::CusolverDnHandle cusolverDn_handle;",
+        ),
+        ("    cpf_gpu_context *gpu_context;", "    cpf_gpu_context *gpu_context;"),
+        ("    dace::fft::Plans plans;", "    dace::fft::Plans plans;"),
+    ],
+    ids=["blas", "lapack", "context-unchanged", "fft-unchanged"],
+)
+def test_only_library_handle_fields_are_shared(field: str, expected: str):
+    from dace.cpf_lowering import share_library_handles
+
+    assert share_library_handles(f"struct k_state_t {{\n{field}\n}};\n") == f"struct k_state_t {{\n{expected}\n}};\n"
+
+
+@pytest.mark.gpu
+def test_a_blas_unit_called_three_times_computes_each_product(tmp_path: pathlib.Path):
+    require_gpu_backend("cuda")
+    import cupy  # Deferred: the optional GPU dependency, needed only where a GPU runs this test.
+
+    name = "cpf_cublas_matmul_run"
+    rendering = render_gpu(cpf_cublas_matmul, name, language="cuda")
+    entry = ctypes.CDLL(str(nvcc_library(rendering, tmp_path, name)))[name]
+    entry.argtypes = entry_argtypes(rendering.sdfg)
+    # The second and third calls reuse the handle the first created; each product is still its own.
+    for length in (16, 33, 16):
+        generator = np.random.default_rng(length)
+        host = {"A": generator.random((length, length)), "B": generator.random((length, length))}
+        device = {arg: cupy.asarray(values) for arg, values in host.items()} | {"C": cupy.zeros((length, length))}
+        arguments = [
+            ctypes.c_void_p(device[arg].data.ptr) if arg in device else length for arg in rendering.sdfg.arglist()
+        ]
+        entry(*arguments)
+        np.testing.assert_allclose(cupy.asnumpy(device["C"]), host["A"] @ host["B"], rtol=1e-12, atol=1e-12)

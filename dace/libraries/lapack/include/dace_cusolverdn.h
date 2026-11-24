@@ -14,6 +14,8 @@
 #define cusolverDnHandle_t hipsolverDnHandle_t
 #define cusolverDnCreate hipsolverDnCreate
 #define cusolverDnDestroy hipsolverDnDestroy
+#define cudaGetDevice hipGetDevice
+#define cudaSuccess hipSuccess
 #else
 #include <cuda_runtime.h>
 #include <cusolverDn.h>
@@ -29,6 +31,13 @@
 namespace dace {
 
 namespace lapack {
+
+// Whether the GPU runtime still answers. At process exit it may already be unloading; a handle is then the
+// driver's to reclaim, and destroying it would fail or reach into a runtime that is gone.
+static bool GpuRuntimeAlive() {
+  int device = 0;
+  return cudaGetDevice(&device) == cudaSuccess;
+}
 
 static void CheckCusolverDnError(cusolverStatus_t const& status) {
   if (status != CUSOLVER_STATUS_SUCCESS) {
@@ -89,11 +98,14 @@ class CusolverDnHandle {
     return buffer.data;
   }
 
+  // Never throws: a throwing destructor terminates the process. A handle that lives across calls is destroyed at
+  // unload or at exit, where the runtime may be gone: then its workspaces and the handle are left to the driver.
   ~CusolverDnHandle() {
+    if (!GpuRuntimeAlive()) return;
     for (std::map<std::pair<Stream, int>, Buffer>::iterator it = workspaces_.begin(); it != workspaces_.end(); ++it) {
       Release(it->second);
     }
-    if (handle_) CheckCusolverDnError(cusolverDnDestroy(*handle_));
+    if (handle_) (void)cusolverDnDestroy(*handle_);
   }
 
   CusolverDnHandle& operator=(CusolverDnHandle const&) = delete;

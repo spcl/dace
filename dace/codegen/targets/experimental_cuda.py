@@ -120,6 +120,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self.has_pool = False
         # Nested-SDFG transients the kernel passes in itself; this generator passes none
         self.extra_nsdfg_args: list[tuple[str, str, str]] = []
+        #: The file-scope ``static`` device pointers of a standalone unit's persistent buffers, by name.
+        self.persistent_device_holders: dict[str, dt.Data] = {}
 
         cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
         assert isinstance(cpu_codegen, CPUCodeGen)  # the generic node dispatcher is always the CPU target
@@ -1001,7 +1003,26 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         arrsize_malloc = f"{sym2cpp(nodedesc.total_size)} * sizeof({nodedesc.dtype.ctype})"
         assert isinstance(nodedesc, (dt.Array, dt.Scalar))  # the only GPU_Global descriptors with ``pool``
 
-        if nodedesc.pool:
+        # A persistent buffer of a standalone unit lives in a file-scope ``static`` device pointer, as the host
+        # generator keeps one (``cpf_lowering.persistent_static``): allocated by the first call, reallocated only by a
+        # call that needs more, freed at exit. The entry drains the device before it returns, so the next call never
+        # races the last one's kernels.
+        holder = self.persistent_device_holder(node.data, nodedesc)
+        if holder is not None:
+            holder = self.register_persistent_device_holder(holder, nodedesc, function_stream, cfg, state_id, node)
+            count = sym2cpp(nodedesc.total_size)
+            allocation_stream.write(
+                f"if ({holder}_count < (size_t)({count})) {{\n"
+                f"if ({holder}) DACE_GPU_CHECK({self.backend}Free({holder}));\n"
+                f"DACE_GPU_CHECK({self.backend}Malloc((void**)&{holder}, {arrsize_malloc}));\n"
+                f"{holder}_count = (size_t)({count});\n"
+                f"}}\n"
+                f"{dataname} = {holder};\n",
+                cfg,
+                state_id,
+                node,
+            )
+        elif nodedesc.pool:
             gpu_stream = assigned_stream_expr(node)
             allocation_stream.write(
                 f"DACE_GPU_CHECK({self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {gpu_stream}));\n",
@@ -1021,6 +1042,56 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             )
         if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
             allocation_stream.write(f"{dataname} += {sym2cpp(nodedesc.start_offset)};\n", cfg, state_id, node)
+
+    @staticmethod
+    def persistent_device_holder(name: str, nodedesc: dt.Data) -> str | None:
+        """The file-scope pointer a standalone unit keeps device buffer ``name`` in across calls, else ``None``: a
+        buffer CPF holds (``cpf_lowering.persistent_static``), or one the GPU pipeline made ``Persistent`` while
+        generating code (``MakeTransientsPersistent`` after ``MoveArrayOutOfKernel``), after CPF demoted the lifetimes
+        and named the held set."""
+        holder = cpf_lowering.persistent_static(name, nodedesc)
+        if holder is not None:
+            return holder
+        persistent = nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.Global)
+        if cpf_lowering.standalone() and nodedesc.transient and persistent:
+            return f"__cpf_persistent_{name}"
+        return None
+
+    def register_persistent_device_holder(
+        self,
+        holder: str,
+        nodedesc: dt.Data,
+        function_stream: CodeIOStream,
+        cfg: ControlFlowRegion,
+        state_id: int,
+        node: nodes.AccessNode,
+    ) -> str:
+        """Define the file-scope device pointer ``holder`` (and its ``_count``) of a persistent buffer once, with its
+        release at exit. The release ignores the error: at exit the runtime may already be unloading. A name another
+        buffer already holds gets a suffix."""
+        name, suffix = holder, 0
+        while name in self.persistent_device_holders and self.persistent_device_holders[name] is not nodedesc:
+            suffix += 1
+            name = f"{holder}_{suffix}"
+        if name in self.persistent_device_holders:
+            return name
+        self.persistent_device_holders[name] = nodedesc
+        ctype = nodedesc.dtype.ctype
+        function_stream.write(
+            f"// {name}: one device buffer every call of this unit shares, reallocated without a lock when a call "
+            "needs more. Calls running at once corrupt it: serialize them.\n"
+            f"static {ctype} *{name} = nullptr;\n"
+            f"static size_t {name}_count = 0;\n"
+            f"namespace {{\n"
+            f"struct {name}_release_t {{\n"
+            f"~{name}_release_t() {{ if ({name}) (void){self.backend}Free({name}); }}\n"
+            f"}} {name}_release;\n"
+            f"}}\n",
+            cfg,
+            state_id,
+            node,
+        )
+        return name
 
     def prepare_CPU_Pinned_array(
         self,
@@ -1116,7 +1187,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             assert isinstance(nodedesc, (dt.Array, dt.Scalar))
-            if nodedesc.pool:
+            if self.persistent_device_holder(node.data, nodedesc) is not None:
+                pass  # a file-scope ``static`` pointer, freed at exit (prepare_GPU_Global_array)
+            elif nodedesc.pool:
                 # Pooled arrays whose release point was picked up by compute_pool_release are
                 # freed in generate_state; everything else is freed here.
                 if (sdfg, node.data) not in self.pool_released_early:
