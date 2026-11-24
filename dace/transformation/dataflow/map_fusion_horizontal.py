@@ -328,6 +328,7 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
 
         # Now we relocate all connectors from the second to the first Map and remove
         #  the respective node of the second Map.
+        mfhelper.keep_class_line(second_map_entry, first_map_entry)
         reused = []
         for to_node, from_node in [
             (first_map_entry, second_map_entry),

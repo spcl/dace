@@ -343,6 +343,14 @@ def get_new_conn_name(
     )
 
 
+def keep_class_line(from_entry: nodes.MapEntry, to_entry: nodes.MapEntry) -> None:
+    """Carry the class line a pass gave ``from_entry`` (``parallel -- last write wins: ...``) onto ``to_entry``, which
+    absorbs its body and has none of its own: the fused map does what both did."""
+    hint = from_entry.specialization_hint or ""
+    if hint.startswith("parallel -- ") and not (to_entry.specialization_hint or "").startswith("parallel -- "):
+        to_entry.specialization_hint = hint
+
+
 def relocate_nodes(
     from_node: nodes.MapExit | nodes.MapEntry,
     to_node: nodes.MapExit | nodes.MapEntry,

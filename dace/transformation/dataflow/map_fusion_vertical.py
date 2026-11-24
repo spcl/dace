@@ -792,6 +792,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
         )
 
+        mfhelper.keep_class_line(second_map_entry, first_map_entry)
         for node_to_remove in [first_map_exit, second_map_entry]:
             assert graph.degree(node_to_remove) == 0
             graph.remove_node(node_to_remove)
