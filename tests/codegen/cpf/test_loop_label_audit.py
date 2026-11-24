@@ -298,11 +298,14 @@ def test_a_skewed_seidel_renders_unique_counters_and_a_proven_header():
 
 def test_every_unknown_reason_says_what_failed_when_it_is_parallel_and_what_goes_wrong_otherwise():
     """seidel_2d (review #8): a refusal the labels had no sentence for printed its message, a 300-token subset. Every
-    kind now reads ``<what was not shown>; parallel if (or only as) <condition>; otherwise <what goes wrong>``."""
+    kind now reads ``<what was not shown>; parallel if (only if, or only as) <condition>; otherwise <what goes wrong>``."""
     for kind in Refusal:
         refusal = LoopRefusal(kind, "dst_subset=64*j - 64*Min(j, int_ceil(2*N - 5, 64) - 1) + 1", container="A")
         reason = unproven_reason(refusal)
-        assert re.fullmatch(r"[^;]+(; [^;]+)*; parallel (if|only as) [^;]+; otherwise [^;]+", reason), (kind, reason)
+        assert re.fullmatch(r"[^;]+(; [^;]+)*; parallel (if|only if|only as) [^;]+; otherwise [^;]+", reason), (
+            kind,
+            reason,
+        )
         assert "dst_subset" not in reason and "Min(" not in reason, (kind, reason)
 
 

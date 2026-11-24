@@ -274,13 +274,25 @@ UNSHOWN_TAIL = (
 )
 
 
-def unproven_reason(refusal: LoopRefusal) -> str:
+def unproven_reason(refusal: LoopRefusal, loop_variable: str = "") -> str:
     """The reason of an ``unknown`` loop, one template for every refusal: what the test could not show, naming the
-    array or symbol; ``parallel if`` the condition that would settle it; ``otherwise`` what goes wrong."""
+    array or symbol; ``parallel if`` the condition that would settle it; ``otherwise`` what goes wrong.
+    ``loop_variable`` tells a write that does not move with the loop from one the test could not show distinct."""
     kind = refusal.kind
     written = quoted(refusal.container, refusal.writes[0] if refusal.writes else None)
     read = quoted(refusal.container, refusal.reads[0] if refusal.reads else None)
     later_wins = "otherwise a later iteration's write must win, so keep the order"
+    container = refusal.container or "an array"
+    if (
+        kind is Refusal.NON_UNIQUE_WRITE
+        and loop_variable
+        and not any(loop_variable in free_names(w) for w in refusal.writes)
+    ):
+        return (
+            f"every iteration writes the same elements of {container} (the write to {written} does not depend "
+            f"on the loop counter {loop_variable}); parallel only if {container} is private per iteration or "
+            f"the update is a reduction; {later_wins}"
+        )
     if kind is Refusal.NON_UNIQUE_WRITE:
         return (
             f"the solver could not show that each iteration writes a different element of {written}; parallel if no "
@@ -298,9 +310,9 @@ def unproven_reason(refusal: LoopRefusal) -> str:
         )
     if kind is Refusal.CARRIED_DEPENDENCE:
         return (
-            f"the dependence test could not show that a read of {read} never sees another iteration's write; "
-            "parallel if no iteration reads an element another iteration writes; otherwise that read must see the "
-            "earlier iteration's value, so keep the order"
+            f"the loop reads {read} and also writes {container}: the dependence test could not show that an "
+            "earlier iteration never writes an element this read touches; parallel if none does; otherwise that read "
+            "must see the earlier iteration's value, so keep the order"
         )
     if kind is Refusal.CARRIED_SYMBOL:
         return (
@@ -1028,7 +1040,7 @@ def loop_hint(loop: LoopRegion, session: Any = None) -> str:
     access = proof_of_carry(loop, reason)
     if access is not None:
         return SEQUENTIAL_PROVEN.format(reason=proven_reason(access))
-    return unproven_hint(loop, unproven_reason(reason))
+    return unproven_hint(loop, unproven_reason(reason, loop.loop_variable))
 
 
 def unproven_hint(loop: LoopRegion, reason: str) -> str:
