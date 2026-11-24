@@ -845,10 +845,16 @@ def test_a_guarded_loop_names_its_guard_on_both_arms():
     ]
     loops = [loop.specialization_hint.splitlines()[0] for loop in loops_of(sdfg)]
     assert any(
-        re.match(r"parallel -- the runtime check found .*inc.*, so no iteration writes", line) for line in maps
+        re.match(
+            r"parallel -- guarded by if \(inc != 0\) \(one test per call\): when it holds, no iteration writes", line
+        )
+        for line in maps
     ), maps
     assert any(
-        re.match(r"sequential -- the runtime check found .*inc.*: .*, so this arm keeps the order", line)
+        re.match(
+            r"sequential -- the else arm of if \(inc != 0\), taken when inc == 0 \(the loop then makes a sum into a\[0\]\): .*, so this arm keeps the order",
+            line,
+        )
         for line in loops
     ), loops
     # The fallback names the failing guard itself, never a negation of a negation

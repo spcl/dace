@@ -29,7 +29,7 @@ LOOP_PRAGMA = re.compile(
 LOOP_HEAD = re.compile(r"^\s*for \((?:[\w:<>]+\s+)*\**(\w+)\s*=")
 WHILE_HEAD = re.compile(r"^\s*(?:while|do)\b")
 CALL_HEAD = re.compile(r"^\s*(?:[\w:<>*]+\s+)*(\w+)\s*\(")
-FUNCTION_HEAD = re.compile(r"^[A-Za-z_][\w\s:<>*,&]*?\b(\w+)\s*\([^;]*$")
+FUNCTION_HEAD = re.compile(r"^[A-Za-z_][\w\s:<>*,&\"]*?\b(\w+)\s*\([^;]*$")
 NESTED_LOOPS = re.compile(r"the (\d+) nested loops over .* are all parallel")
 #: One ``<op> into <target>`` of a reduction comment, which lists one per accumulator.
 FOLD = re.compile(r"(\S+) into (\w+)")
@@ -435,7 +435,7 @@ def summary_lines(loops: list[Loop]) -> list[str]:
     else:
         lines.append(f"// cpf: proven: partial; open: {', '.join(dict.fromkeys(loop.name for loop in open_loops))}")
     # A versioned loop (``if (check) parallel else in order``) counts as proven; its parallel arms are listed apart
-    guarded = [loop.name for loop in parallel if reason_of(loop.reason) is Reason.GUARDED]
+    guarded = [loop.name for loop in parallel if reason_of(loop.reason) in (Reason.GUARDED, Reason.CHECKED)]
     if guarded:
         lines.append(f"// cpf: guarded: {', '.join(dict.fromkeys(guarded))}")
     return lines
@@ -523,6 +523,36 @@ def drop_missing_fusion_names(code: str) -> str:
     return "\n".join(kept_lines) + ("\n" if code.endswith("\n") else "")
 
 
+ABORT_GUARD = re.compile(r"^\s*if \((.*)\) \{$")
+
+
+def entry_preconditions(code: str) -> list[str]:
+    """The conditions under which the unit's entry function ``abort()``s, as the guards read in its code: ``if (N <= 0)
+    { abort(); }``. The entry function is the last one of the unit, after its helpers."""
+    lines = code.splitlines()
+    heads = [n for n, line in enumerate(lines) if FUNCTION_HEAD.match(line)]
+    if not heads:
+        return []
+    found: OrderedSet[str] = OrderedSet()
+    for n in range(heads[-1], len(lines) - 2):
+        guard = ABORT_GUARD.match(lines[n])
+        if guard is not None and lines[n + 1].strip() in ("abort();", "std::abort();") and lines[n + 2].strip() == "}":
+            found.add(unwrapped(guard.group(1)))
+    return list(found)
+
+
+def unwrapped(text: str) -> str:
+    """``text`` without the parentheses that enclose all of it: ``(N <= 0)`` reads ``N <= 0``, ``(a) || (b)`` stays."""
+    while text.startswith("(") and text.endswith(")"):
+        depth = 0
+        for char in text[1:-1]:
+            depth += {"(": 1, ")": -1}.get(char, 0)
+            if depth < 0:
+                return text
+        text = text[1:-1]
+    return text
+
+
 def with_summary(code: str, anchors: tuple[str, ...]) -> str:
     """``code`` with the summary of its loops inserted after the first line of ``anchors`` it holds; unchanged when
     ``code`` has none of those lines."""
@@ -530,4 +560,10 @@ def with_summary(code: str, anchors: tuple[str, ...]) -> str:
     if after is None:
         return code
     head, tail = code.split(after, 1)
-    return head + after + "\n" + "\n".join(summary_lines(loops_of(code))) + tail
+    preconditions = entry_preconditions(code)
+    header = (
+        [f"// Entry preconditions (the unit abort()s when one holds): {', '.join(preconditions)}"]
+        if preconditions
+        else []
+    )
+    return head + after + "\n" + "\n".join([*header, *summary_lines(loops_of(code))]) + tail

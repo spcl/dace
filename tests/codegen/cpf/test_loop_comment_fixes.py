@@ -4,6 +4,7 @@
 Each test renders a few-line program and checks the comment string of the loop the finding is about."""
 
 import dace
+from dace.sdfg import tasklet_utils
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from tests.codegen.cpf.test_specialization_hints import named
 
@@ -169,6 +170,45 @@ def test_the_closing_line_does_not_steer_away_from_fork_placement():
     assert "not from more parallelism" not in closing and "where the threads fork" in closing, closing
 
 
+def guarded_stride_code() -> str:
+    inc = dace.symbol("inc")
+
+    @dace.program
+    def strided(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(N):
+            a[i * inc] = a[i * inc] + b[i]
+
+    sdfg = strided.to_sdfg(simplify=True)
+    sdfg.name = "cpf_comment_guard"
+    canonicalize(sdfg, validate=True, validate_all=False, target="cpu")
+    return named(sdfg)
+
+
+def test_a_guarded_loop_names_its_test_once_and_says_what_the_fallback_is():
+    """s171: no doubled parentheses around the operands, and the fallback arm says it sums into ``a[0]``."""
+    parallel, fallback = class_lines(guarded_stride_code())
+    assert parallel.startswith("// parallel -- guarded by if (inc != 0) (one test per call): "), parallel
+    assert fallback.startswith(
+        "// sequential -- the else arm of if (inc != 0), taken when inc == 0 (the loop then makes a sum into a[0]): "
+    ), fallback
+
+
+def test_the_header_lists_the_entry_abort_preconditions():
+    """The program aborts at entry when ``N <= 0``; a reader of the loops needs it said once, above them."""
+
+    @dace.program
+    def positive(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(N):
+            b[N - 1 - i] = a[i]
+
+    sdfg = positive.to_sdfg(simplify=True)
+    sdfg.name = "cpf_comment_preconditions"
+    guard = sdfg.add_state_before(sdfg.start_block, "entry_guard", is_start_block=True)
+    tasklet_utils.add_abort_guard(guard, "entry_check", "N <= 0")
+    code = named(sdfg)
+    assert "// Entry preconditions (the unit abort()s when one holds): N <= 0" in code, code
+
+
 if __name__ == "__main__":
     test_a_sequential_loop_over_an_indirect_access_offers_no_wavefront()
     test_an_unproven_loop_over_a_few_iterations_is_unknown_not_sequential()
@@ -180,3 +220,5 @@ if __name__ == "__main__":
     test_a_sequential_loop_says_its_parallel_loops_fork_once_per_iteration()
     test_a_blas_call_says_it_runs_on_one_thread()
     test_the_closing_line_does_not_steer_away_from_fork_placement()
+    test_a_guarded_loop_names_its_test_once_and_says_what_the_fallback_is()
+    test_the_header_lists_the_entry_abort_preconditions()

@@ -13,52 +13,60 @@ in place (lift to Map, split into affine segments, ...): specialization owns the
 control-flow surgery, the callback owns what "parallel" means.
 """
 
+import ast
 import copy
 from collections.abc import Callable, Sequence
 
+import sympy
+
 from dace import dtypes, symbolic
 from dace.cpf_lowering import LoopClass, Reason
+from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 
-#: The class line of a parallel arm: the guard is the evidence the iterations are independent.
+#: The class line of a parallel arm: the guard is the evidence the iterations are independent. ``{frequency}`` says how
+#: often the test runs (:func:`test_frequency`).
 GUARDED = (
     LoopClass.PARALLEL.prefix
     + Reason.GUARDED.value
-    + "{guard}, so no iteration writes an element another iteration reads or writes"
+    + "{guard}) ({frequency}): when it holds, no iteration writes an element another iteration reads or writes"
 )
 #: The class line of the sequential arm a guard falls back to: the original loop, for the inputs the guard rejects.
-#: The negation is simplified (``inc == 0``, never ``not (not ...)``, review #10), and the arm says why it keeps the
-#: order, not that a dependence was proven (review #1).
+#: The negation is simplified (``inc == 0``, never ``not (not ...)``, review #10), the arm says why it keeps the
+#: order, not that a dependence was proven (review #1), and ``{effect}`` says what the loop then does
+#: (:func:`fallback_effect`), empty when that is not known.
 GUARD_FALLBACK = (
     LoopClass.SEQUENTIAL.prefix
-    + Reason.GUARDED.value
-    + "{negated}: two iterations may then touch the same element, so this arm "
-    "keeps the order"
+    + "the else arm of if ({guard}), taken when {negated}{effect}: two iterations may then touch the same element, so "
+    "this arm keeps the order"
 )
+
+RELATION_OPERATORS = {"==", "!=", "<", "<=", ">", ">="}
+
+
+def readable(expr: sympy.Basic) -> str:
+    """``expr`` as a reader writes a test: ``inc != 0``, ``N > 0 and M > 0``, without a parenthesis around an operand."""
+    if isinstance(expr, sympy.core.relational.Relational) and expr.rel_op in RELATION_OPERATORS:
+        return f"{expr.lhs} {expr.rel_op} {expr.rhs}"
+    if isinstance(expr, (sympy.And, sympy.Or)):
+        joiner = " and " if isinstance(expr, sympy.And) else " or "
+        return joiner.join(
+            f"({readable(a)})" if isinstance(a, (sympy.And, sympy.Or)) else readable(a) for a in expr.args
+        )
+    if isinstance(expr, sympy.Not):
+        return f"not ({readable(expr.args[0])})"
+    return str(expr)
 
 
 def condition_text(condition: str) -> str:
     """``condition`` simplified for a reader (``not (a > 0)`` reads ``a <= 0``), or as given if it does not parse."""
     try:
-        text = symbolic.symstr(symbolic.pystr_to_symbolic(condition), cpp_mode=True)
+        return readable(symbolic.pystr_to_symbolic(condition))
     except Exception:  # pylint: disable=broad-exception-caught
         # A comment must not fail the specialization that asked for it
         return condition
-    while text.startswith("(") and text.endswith(")") and balanced(text[1:-1]):
-        text = text[1:-1]
-    return text
-
-
-def balanced(text: str) -> bool:
-    """Whether every parenthesis in ``text`` closes inside it (so outer ones around it can go)."""
-    depth = 0
-    for char in text:
-        depth += {"(": 1, ")": -1}.get(char, 0)
-        if depth < 0:
-            return False
-    return depth == 0
 
 
 def label_arm(node, kind: str) -> None:
@@ -74,9 +82,15 @@ def label_arms(
     loops of the sequential arm. ``labels``, when given, are the two arms' class lines in place of the generic
     :data:`GUARDED` and :data:`GUARD_FALLBACK`."""
     if labels is None:
+        negated = condition_text(f"not ({guard})")
+        loops = [r for r in seq_region.all_control_flow_regions() if isinstance(r, LoopRegion) and r.pinned_sequential]
         labels = (
-            GUARDED.format(guard=condition_text(guard)),
-            GUARD_FALLBACK.format(negated=condition_text(f"not ({guard})")),
+            GUARDED.format(guard=condition_text(guard), frequency=test_frequency(par_region)),
+            GUARD_FALLBACK.format(
+                guard=condition_text(guard),
+                negated=negated,
+                effect=fallback_effect(loops[0], negated) if loops else "",
+            ),
         )
     for block in par_region.all_control_flow_blocks():
         if isinstance(block, SDFGState):
@@ -86,6 +100,70 @@ def label_arms(
     for region in seq_region.all_control_flow_regions():
         if isinstance(region, LoopRegion) and region.pinned_sequential:
             label_arm(region, labels[1])
+
+
+def test_frequency(region: ControlFlowRegion) -> str:
+    """How often the test of a conditional holding ``region`` runs: once per call, or once per iteration of the
+    loop or map it sits in (through the nested SDFGs that hold it)."""
+    block = region
+    while block is not None:
+        if isinstance(block, LoopRegion) and block.loop_variable:
+            return f"one test per iteration of the {block.loop_variable} loop"
+        if isinstance(block, SDFG):
+            node = block.parent_nsdfg_node
+            if node is None:
+                break
+            if block.parent.entry_node(node) is not None:
+                return "one test per iteration of the enclosing map"
+            block = block.parent
+        else:
+            block = block.parent_graph
+    return "one test per call"
+
+
+ACCUMULATIONS = {ast.Add: "a sum", ast.Sub: "a difference", ast.Mult: "a product"}
+
+
+def fallback_effect(loop: LoopRegion, negated: str) -> str:
+    """What ``loop`` does where ``negated`` holds, for the class line of a guard's fallback arm: ``a sum into a[0]`` for
+    ``a[i * inc] = a[i * inc] + b[i]`` under ``inc == 0``, or ``""`` when no single write says it."""
+    try:
+        facts = symbolic.pystr_to_symbolic(negated)
+        equalities = {
+            r.lhs: r.rhs for r in (facts.args if isinstance(facts, sympy.And) else (facts,)) if isinstance(r, sympy.Eq)
+        }
+    except Exception:  # pylint: disable=broad-exception-caught
+        # A comment must not fail the specialization that asked for it
+        return ""
+    for state in loop.states():
+        for node in state.nodes():
+            if not isinstance(node, nodes.Tasklet):
+                continue
+            written = [
+                e for e in state.out_edges(node) if isinstance(e.dst, nodes.AccessNode) and not e.data.is_empty()
+            ]
+            if len(written) != 1 or state.sdfg.arrays[written[0].data.data].transient:
+                continue
+            target = written[0].data
+            where = copy.deepcopy(target.subset)
+            where.replace(equalities)
+            kind = accumulation(node, state, target)
+            return (
+                f" (the loop then makes {kind} into {target.data}[{where}])"
+                if kind
+                else f" (the loop then writes {target.data}[{where}])"
+            )
+    return ""
+
+
+def accumulation(node: nodes.Tasklet, state: SDFGState, target: Memlet) -> str:
+    """``a sum`` (or product, difference) if ``node`` adds to the element ``target`` names something else, else ``""``:
+    one of its inputs reads that element and its one statement applies the operator to it."""
+    reads = [e for e in state.in_edges(node) if e.data.data == target.data and str(e.data.subset) == str(target.subset)]
+    body = node.code.code
+    if not reads or len(body) != 1 or not isinstance(body[0], ast.Assign) or not isinstance(body[0].value, ast.BinOp):
+        return ""
+    return ACCUMULATIONS.get(type(body[0].value.op), "")
 
 
 def _owner_sdfg(loop: LoopRegion) -> SDFG:
