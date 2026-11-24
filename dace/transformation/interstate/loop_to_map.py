@@ -902,7 +902,7 @@ def read_before_written(
 
     def read_covered(state: SDFGState, dn: nodes.AccessNode, stored: set[Store]) -> bool:
         """Whether ``stored`` holds what ``dn`` reads. A read inside a scope is first widened over the scope's
-        iterations, unless a store in that scope wrote the very element. Elements a nested loop or a moving symbol
+        iterations, unless a store in that scope wrote the very elements. Elements a nested loop or a moving symbol
         names are not known here: such a store holds what :func:`same_slot` cannot tell apart, an unknown read needs
         only some store."""
         if dn.data in stored:
@@ -919,7 +919,9 @@ def read_before_written(
             subset = e.data.get_src_subset(e, state)
             if subset is None:
                 continue
-            if scope is not None and any(entry[2] is scope and entry[1] == subset for entry in entries):
+            if scope is not None and any(
+                entry[2] is scope and subsets_cover([entry[1]], subset, symbolic.Facts.none()) for entry in entries
+            ):
                 continue
             subset = widened(state, dn, subset)
             if fixed_subset(subset) and not any(part.free_symbols & moving for part in parts):
@@ -945,6 +947,54 @@ def read_before_written(
                 }
             changes[block] = names
         return names
+
+    # Per enclosing nested loop: its iterator, its first value, and what one full iteration of its body stores in the
+    # same elements every iteration. A branch false on the first iteration runs after such an iteration.
+    earlier: list[tuple[str, sp.Basic, set[Store]]] = []
+
+    def false_at(cond: properties.CodeBlock, var: str, start: sp.Basic) -> bool:
+        """Whether ``cond`` is false when the iterator named ``var`` holds ``start``."""
+        test = symbolic.pystr_to_symbolic(cond.as_string)
+        names = {str(x): x for x in test.free_symbols}
+        return var in names and test.subs(names[var], start) == sp.false
+
+    def skips_first(cond: properties.CodeBlock) -> set[Store]:
+        """The stores an earlier iteration made when ``cond`` is false on an enclosing nested loop's first iteration
+        (cloudsc's ``IF (JK > NCLDTOP)`` reading ``ZQXNM1``, which the end of the previous ``JK`` iteration set)."""
+        seen: set[Store] = set()
+        for var, start, stores in earlier:
+            if false_at(cond, var, start):
+                seen |= stores
+        return seen
+
+    def iteration_stores(block: LoopRegion, written: set[Store], guarded: dict) -> set[Store]:
+        """What every iteration of ``block`` stores to the same elements, when a branch in it skips the first
+        iteration and nothing leaves an iteration early; empty otherwise. Walks the body once without recording."""
+        var, start = block.loop_variable, loop_analysis.get_init_assignment(block)
+        if not var or start is None:
+            return set()
+        body = list(block.all_control_flow_blocks())
+        if any(isinstance(b, (BreakBlock, ContinueBlock, ReturnBlock)) for b in body):
+            return set()
+        changed = changed_by(block)
+        if not any(
+            isinstance(b, ConditionalBlock)
+            and any(cond is not None and false_at(cond, var, start) for cond, branch in b.branches)
+            for b in body
+        ):
+            return set()
+        trial, before = set(written), set(carried)
+        scan(block, trial, dict(guarded))
+        carried.clear()
+        carried.update(before)
+        stores = {
+            store
+            for store in trial - written
+            if isinstance(store, str) or (store[2] is None and not {str(x) for x in store[1].free_symbols} & changed)
+        }
+        if stores:
+            earlier.append((var, start, stores))
+        return stores
 
     def forget(guarded: dict[str, tuple[set[str], set[str]]], names: set[str]) -> None:
         for key in [key for key, (reads, _) in guarded.items() if reads & names]:
@@ -979,10 +1029,14 @@ def read_before_written(
                     # A read sees the stores that reach it along the state's edges, its own included; an in-edge from
                     # elsewhere (an ordering edge) orders it after none of them (cloudsc's zcldtopdist)
                     seen = written.union(*(s for writer, s in stores.items() if dn in reached[writer]))
-                    if not read_covered(block, dn, seen) and not any(
-                        read_covered(block, dn, guarded[key][1])
-                        for key in nested_read_guards(block, dn)
-                        if key in guarded
+                    if (
+                        not read_covered(block, dn, seen)
+                        and not any(
+                            read_covered(block, dn, guarded[key][1])
+                            for key in nested_read_guards(block, dn)
+                            if key in guarded
+                        )
+                        and not nested_writes_first(block, dn)
                     ):
                         carried.add(dn.data)
                 written |= stored
@@ -994,6 +1048,8 @@ def read_before_written(
                     branch_written = set(written)
                     if key in guarded:
                         branch_written |= guarded[key][1]
+                    if cond is not None and earlier:
+                        branch_written |= skips_first(cond)
                     scan(body, branch_written, dict(guarded))
                     per_branch.append(branch_written)
                     # An ``elif`` arm also needs the earlier conditions false: a later branch on its own can run without it
@@ -1005,7 +1061,10 @@ def read_before_written(
             elif isinstance(block, LoopRegion):
                 inner = dict(guarded)
                 forget(inner, changed_by(block))
+                pushed = bool(iteration_stores(block, written, inner))
                 scan(block, written, inner)
+                if pushed:
+                    earlier.pop()
             elif isinstance(block, ControlFlowRegion):
                 # Straight-line: its walk is part of this pass and forgets as it goes.
                 scan(block, written, guarded)
@@ -1015,6 +1074,25 @@ def read_before_written(
 
     scan(loop, set(), {})
     return carried
+
+
+def nested_writes_first(state: SDFGState, dn: nodes.AccessNode) -> bool:
+    """Whether every use of ``dn``'s value ends in a NestedSDFG that writes each element of the connector before it
+    reads it, so the outer value is never read: an in-place map body such as cloudsc's
+    ``ZLDIFDT(JL)=RCLDIFF*PTSPHY; ZLDIFDT(JL)=RCLDIFF_CONVI*ZLDIFDT(JL)`` passes ``zldifdt`` in only because it also
+    passes it out."""
+    leaves = [
+        leaf
+        for edge in state.out_edges(dn)
+        if not edge.data.is_empty() and not isinstance(edge.dst, nodes.ExitNode)
+        for leaf in state.memlet_tree(edge).leaves()
+    ]
+    return bool(leaves) and all(
+        isinstance(leaf.dst, nodes.NestedSDFG)
+        and leaf.dst_conn is not None
+        and leaf.dst_conn not in read_before_written(leaf.dst.sdfg, {leaf.dst_conn})
+        for leaf in leaves
+    )
 
 
 def nested_read_guards(state: SDFGState, dn: nodes.AccessNode) -> set[str]:
@@ -2858,9 +2936,6 @@ class LoopLift:
         # Inside the body (an inter-state edge read has no state): a dependence only exists if the loop runs
         facts = self.probe_resolver().facts_at(state if state is not None else self.loop)
 
-        if mmlt.dynamic and mmlt.src_subset.num_elements() != 1:
-            # If pointers are involved, give up
-            return False
         if not _check_range(src_subset, a, itersym, b, step, memo=ranges):
             # ``_check_range`` accepts only reads that MOVE with the iteration (some dim
             # ``a*i+b``, ``|a| >= 1``). An itersym read not matching that is conservatively a
