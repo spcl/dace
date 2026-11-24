@@ -2710,6 +2710,15 @@ class Subscript(DaceFunction):
         indices = ", ".join(str(a) for a in self.args[1:])
         return f"{self.args[0]}[{indices}]"
 
+    def _sympystr(self, printer):
+        # Inside a larger expression ``str`` goes through sympy's printer, which spelled this a call,
+        # ``Max(j, Subscript(off, 0))``: written back as code (an interstate assignment), that is a call to an
+        # undefined ``Subscript``. DaCe's own printers keep their handling (C indexing, serialization).
+        if isinstance(printer, (DaceSympyPrinter, DaceSympySerializer)):
+            return printer._print_Function(self)
+        indices = ", ".join(printer._print(a) for a in self.args[1:])
+        return f"{printer._print(self.args[0])}[{indices}]"
+
     def _subs(self, *args, **kwargs):
         return Subscript(*(a.subs(*args, **kwargs) for a in self.args))
 
@@ -3486,6 +3495,8 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         "right_shift": right_shift,
         "ITE": ITE,
         "Mod": sympy.Mod,
+        # Else an undefined function of that name: its container counts as a free symbol and prints as a call.
+        "Subscript": Subscript,
         "id": sympy.Symbol("id"),
         "diag": sympy.Symbol("diag"),
         "jn": sympy.Symbol("jn"),
