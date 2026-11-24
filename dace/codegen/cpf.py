@@ -54,6 +54,7 @@ from dace import data as dt
 from dace.codegen import codegen, cpf_compact, cpf_summary
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config, set_temporary
+from dace.cpf_lowering import LoopClass
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.fft.environments import fftw3
 from dace.libraries.tileops.dispatch import FUNCTION_ISAS, ISA, isa_implementation, widest_function_isa
@@ -1620,13 +1621,17 @@ CONTRACT_LINES = [
 ]
 
 #: The lines of :data:`CONTRACT_LINES` that explain each class, by class; the first and the last explain all.
-CONTRACT_KINDS = {"parallel": CONTRACT_LINES[1:3], "sequential": CONTRACT_LINES[3:4], "unknown": CONTRACT_LINES[4:5]}
+CONTRACT_KINDS = {
+    LoopClass.PARALLEL: CONTRACT_LINES[1:3],
+    LoopClass.SEQUENTIAL: CONTRACT_LINES[3:4],
+    LoopClass.UNKNOWN: CONTRACT_LINES[4:5],
+}
 
 
 def contract_lines(code: str) -> list[str]:
     """:data:`CONTRACT_LINES` for the classes ``code``'s loop comments use: a legend line for a class no loop has
     would explain nothing in the unit; none at all without a classed comment."""
-    used = OrderedSet(found.group(1) for found in re.finditer(r"// (parallel|sequential|unknown) -- ", code))
+    used = OrderedSet(LoopClass(found.group(1)) for found in re.finditer(cpf_summary.CLASS_LINE_ANYWHERE, code))
     if not used:
         return []
     return [CONTRACT_LINES[0], *(line for kind in CONTRACT_KINDS if kind in used for line in CONTRACT_KINDS[kind])] + [

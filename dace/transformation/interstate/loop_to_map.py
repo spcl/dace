@@ -18,6 +18,7 @@ import sympy as sp
 from dace import data as dt
 from dace import dtypes, memlet, nodes, properties, subsets, symbolic
 from dace import sdfg as sd
+from dace.cpf_lowering import LoopClass
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias
 from dace.sdfg import graph as gr
@@ -3629,7 +3630,7 @@ class LoopLift:
         # Integrate the nested SDFG into the parent SDFG
         dealias.integrate_nested_sdfg(nsdfg.sdfg)
         # A class line a pass gave the loop before lifting it (a last-write copy-out) describes the map
-        if (self.loop.specialization_hint or "").startswith("parallel -- "):
+        if (self.loop.specialization_hint or "").startswith(LoopClass.PARALLEL.prefix):
             entry.specialization_hint = self.loop.specialization_hint
         self.lifted_entry, self.lifted_state = entry, body
 

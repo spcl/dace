@@ -8,14 +8,18 @@ two cannot disagree. It names each loop by its counter in the rendered code.
 import re
 from dataclasses import dataclass
 
-from dace.cpf_lowering import KIND_EXTRAS, kind_line
+from dace.cpf_lowering import KIND_EXTRAS, LoopClass, Reason, kind_line, reason_of
 from dace.ordered import OrderedSet
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import PARALLEL
-from dace.transformation.passes.loop_specialization import VERSIONED
 
-CLASS_LINE = re.compile(r"^\s*// (parallel|sequential|unknown) -- (.*)$")
+CLASSES = "|".join(cls.value for cls in LoopClass)
+CLASS_LINE = re.compile(rf"^\s*// ({CLASSES}) -- (.*)$")
 #: A class line of the kinds rendering (:func:`dace.cpf_lowering.kind_line`): the word, and a reason after ``: ``.
-KIND_LINE = re.compile(r"^\s*// (parallel(?: reduction| scan)?|sequential|unknown)(?:: (.*))?$")
+#: A class line anywhere in a unit, with its `` -- `` after the class.
+CLASS_LINE_ANYWHERE = re.compile(rf"// ({CLASSES}) -- ")
+KIND_LINE = re.compile(
+    rf"^\s*// ({LoopClass.PARALLEL.value}(?: {Reason.REDUCTION.value}| {Reason.SCAN.value})?|{LoopClass.SEQUENTIAL.value}|{LoopClass.UNKNOWN.value})(?:: (.*))?$"
+)
 #: The pragmas that belong to the loop under them; a barrier or a flush is a statement of its own.
 LOOP_PRAGMA = re.compile(
     r"^\s*#pragma\s+(?:omp\s+(?:parallel\b|for\b|simd\b|distribute\b|taskloop\b|teams\b|target\b)|GCC\s+(?:ivdep|unroll)\b|unroll\b|clang\s+loop\b)"
@@ -25,7 +29,7 @@ WHILE_HEAD = re.compile(r"^\s*(?:while|do)\b")
 CALL_HEAD = re.compile(r"^\s*(?:[\w:<>*]+\s+)*(\w+)\s*\(")
 FUNCTION_HEAD = re.compile(r"^[A-Za-z_][\w\s:<>*,&]*?\b(\w+)\s*\([^;]*$")
 NESTED_LOOPS = re.compile(r"the (\d+) nested loops over .* are all parallel")
-REDUCTION = re.compile(r"^reduction: (\S+) into (\w+)")
+REDUCTION = re.compile(rf"^{Reason.REDUCTION.value}: (\S+) into (\w+)")
 PRIVATE = re.compile(r"private per iteration: ([\w, ]+)")
 EXAMPLE = re.compile(r" \(example[^)]*\)")
 #: Lines codegen puts between a loop's comment and its head: an accumulator load, the bounds of a range read from
@@ -42,13 +46,9 @@ FOR_COUNTER = re.compile(r"^\s*for\s*\(\s*(?:(?:[\w:<>]+\s+)*\**(\w+)\s*=|;\s*(\
 #: The reasons :func:`comment_every_loop` writes. They describe a loop's role, not a proof of its own, so the header
 #: does not list them: a dimension belongs to the nest the comment above proves, the others to a lowering's
 #: implementation (a scan's passes, a BLAS call's zero fill, a helper function).
-DIMENSION = "dimension "
-TILE = "tile loop"
-INNER_TILE = "inner tile of loop "
-IMPLEMENTATION = "implementation loop of "
-ADDED_REASONS = (DIMENSION, TILE, INNER_TILE, IMPLEMENTATION)
+ADDED_REASONS = (Reason.DIMENSION, Reason.TILE, Reason.INNER_TILE, Reason.IMPLEMENTATION)
 #: Labels on a construct that is not a loop: a thread team, a one-trip block on thread 0.
-NOT_A_LOOP = ("thread team", "not a loop")
+NOT_A_LOOP = (Reason.THREAD_TEAM, Reason.NOT_A_LOOP)
 
 CLOSING = (
     "// No reordering is left to prove: every loop is either parallel or a proven recurrence. Gains beyond this form "
@@ -59,7 +59,7 @@ CLOSING = (
 @dataclass(slots=True)
 class Loop:
     name: str
-    kind: str
+    kind: LoopClass
     reason: str
 
 
@@ -69,7 +69,7 @@ def loops_of(code: str) -> list[Loop]:
     uncommented loop without an ``int64_t`` counter, or with one that starts with ``_``, is a library expansion's own
     loop (gemv, reduce, scan) and is left out; mark those loops apart if one needs a verdict."""
     found: list[Loop] = []
-    label: tuple[str, str] | None = None
+    label: tuple[LoopClass, str] | None = None
     covered, function = 0, ""
     names = Names()
     for line in code.splitlines():
@@ -79,7 +79,7 @@ def loops_of(code: str) -> list[Loop]:
             function = head.group(1)
         classed = CLASS_LINE.match(line)
         if classed is not None:
-            label = label or (classed.group(1), classed.group(2))
+            label = label or (LoopClass(classed.group(1)), classed.group(2))
             continue
         nested = NESTED_LOOPS.search(line)
         if nested is not None:
@@ -88,16 +88,16 @@ def loops_of(code: str) -> list[Loop]:
             continue
         name = loop_name(stripped)
         if label is not None:
-            if label[1].startswith(DIMENSION) and name:
+            if reason_of(label[1]) is Reason.DIMENSION and name:
                 names.unique(name)
-            elif not label[1].startswith((*NOT_A_LOOP, *ADDED_REASONS)):
+            elif reason_of(label[1]) not in (*NOT_A_LOOP, *ADDED_REASONS):
                 found.append(Loop(names.unique(name or call_name(stripped)), label[0], label[1]))
             label = None
         elif name and covered:
             covered -= 1
             names.unique(name)
         elif stripped.startswith("for (int64_t ") and not function.startswith("cpf_") and not name.startswith("_"):
-            found.append(Loop(names.unique(name), "unknown", "no comment: not analyzed"))
+            found.append(Loop(names.unique(name), LoopClass.UNKNOWN, "no comment: not analyzed"))
     return found
 
 
@@ -179,9 +179,9 @@ def added_comment(lines: list[str], index: int, parent: str, function: str) -> s
     line = lines[index]
     child = next((lines[n] for n in range(index + 1, len(lines)) if ANY_LOOP_HEAD.match(lines[n])), "")
     if indent_of(child) > indent_of(line) and tiles(child, loop_counter(line)):
-        return f"sequential -- {TILE}: its tiles run in order; the loops inside class the iterations of each tile"
+        return f"{LoopClass.SEQUENTIAL.prefix}{Reason.TILE.value}: its tiles run in order; the loops inside class the iterations of each tile"
     if tiles(line, parent):
-        return f"sequential -- {INNER_TILE}{parent}: runs one tile of its range in order"
+        return f"{LoopClass.SEQUENTIAL.prefix}{Reason.INNER_TILE.value}{parent}: runs one tile of its range in order"
     if (
         line.strip().startswith("for (int64_t ")
         and not function.startswith("cpf_")
@@ -189,16 +189,16 @@ def added_comment(lines: list[str], index: int, parent: str, function: str) -> s
     ):
         # A program loop no pass labelled: open, as the header has always counted it.
         return (
-            "unknown -- not analyzed for dependences: no pass classed this loop; parallel if no iteration writes an "
+            f"{LoopClass.UNKNOWN.prefix}not analyzed for dependences: no pass classed this loop; parallel if no iteration writes an "
             "element another iteration reads or writes; otherwise keep the order"
         )
     construct = construct_of(lines, index, function)
     pragmas = " ".join(lines[n] for n in range(pragma_start(lines, index), index))
     if re.search(r"#pragma omp\b[^\n]*\bfor\b", pragmas):
-        return f"parallel -- {IMPLEMENTATION}{construct}: the team's threads split these iterations (omp for)"
+        return f"{LoopClass.PARALLEL.prefix}{Reason.IMPLEMENTATION.value}{construct}: the team's threads split these iterations (omp for)"
     if re.search(r"#pragma omp\b[^\n]*\bsimd\b", pragmas):
-        return f"parallel -- {IMPLEMENTATION}{construct}: vectorized (omp simd)"
-    return f"sequential -- {IMPLEMENTATION}{construct}: runs in order as written"
+        return f"{LoopClass.PARALLEL.prefix}{Reason.IMPLEMENTATION.value}{construct}: vectorized (omp simd)"
+    return f"{LoopClass.SEQUENTIAL.prefix}{Reason.IMPLEMENTATION.value}{construct}: runs in order as written"
 
 
 def pragma_start(lines: list[str], index: int) -> int:
@@ -234,8 +234,8 @@ def comment_every_loop(code: str, kinds: bool = False) -> str:
         classed = CLASS_LINE.match(line) or (KIND_LINE.match(line) if kinds else None)
         if classed is not None:
             # A thread team's or a one-trip block's comment is not a loop's: the loop inside gets its own.
-            labelled = not (classed.group(2) or "").startswith(NOT_A_LOOP)
-            parallel = classed.group(1).startswith("parallel")
+            labelled = reason_of(classed.group(2) or "") not in NOT_A_LOOP
+            parallel = classed.group(1).startswith(LoopClass.PARALLEL.value)
         nested = NESTED_LOOPS.search(line)
         if nested is not None:
             nest = int(nested.group(1))
@@ -255,11 +255,11 @@ def comment_every_loop(code: str, kinds: bool = False) -> str:
                     dimension += 1
                     covered -= 1
                     comment = (
-                        f"parallel -- {DIMENSION}{dimension} of the {total} nested loops from {first}; the comment "
+                        f"{LoopClass.PARALLEL.prefix}{Reason.DIMENSION.value}{dimension} of the {total} nested loops from {first}; the comment "
                         "above proves them all"
                     )
                 elif dimension_of_chain:
-                    comment = "parallel"
+                    comment = LoopClass.PARALLEL.value
                 else:
                     comment = added_comment(lines, index, parents[-1][1] if parents else "", function)
                     comment = (kind_line(comment) or comment) if kinds else comment
@@ -300,9 +300,9 @@ def summary_lines(loops: list[Loop]) -> list[str]:
     the closing line and ``cpf: proven: all`` only when every loop is proven parallel or a proven recurrence. A unit
     without a program loop (its loops are a lowering's, such as a find-first or argmax helper) has nothing open: just
     the closing line and ``cpf: proven: all``."""
-    parallel = [loop for loop in loops if loop.kind == "parallel"]
+    parallel = [loop for loop in loops if loop.kind is LoopClass.PARALLEL]
     reductions = [REDUCTION.match(loop.reason) for loop in parallel]
-    scans = [loop.name for loop in parallel if loop.reason.startswith("scan")]
+    scans = [loop.name for loop in parallel if reason_of(loop.reason) is Reason.SCAN]
     private = [m.group(1) for loop in loops for m in [PRIVATE.search(loop.reason)] if m]
     lines = ["// Summary of the loop comments below."] if loops else []
     if parallel:
@@ -316,17 +316,21 @@ def summary_lines(loops: list[Loop]) -> list[str]:
     if private:
         lines.append(f"//     private per iteration: {', '.join(dict.fromkeys(private))}")
     lines += [
-        f"//   sequential: {loop.name}, {reason_head(loop.reason)}" for loop in loops if loop.kind == "sequential"
+        f"//   sequential: {loop.name}, {reason_head(loop.reason)}"
+        for loop in loops
+        if loop.kind is LoopClass.SEQUENTIAL
     ]
-    lines += [f"//   unknown: {loop.name}, {EXAMPLE.sub('', loop.reason)}" for loop in loops if loop.kind == "unknown"]
+    lines += [
+        f"//   unknown: {loop.name}, {EXAMPLE.sub('', loop.reason)}" for loop in loops if loop.kind is LoopClass.UNKNOWN
+    ]
     # Every loop is analyzed (a short one too; its trip count only decides whether to fork): only unknown loops are open.
-    open_loops = [loop for loop in loops if loop.kind == "unknown"]
+    open_loops = [loop for loop in loops if loop.kind is LoopClass.UNKNOWN]
     if not open_loops:
         lines += [CLOSING, "// cpf: proven: all"]
     else:
         lines.append(f"// cpf: proven: partial; open: {', '.join(dict.fromkeys(loop.name for loop in open_loops))}")
     # A versioned loop (``if (check) parallel else in order``) counts as proven; its parallel arms are listed apart
-    guarded = [loop.name for loop in parallel if loop.reason.startswith(VERSIONED)]
+    guarded = [loop.name for loop in parallel if reason_of(loop.reason) is Reason.GUARDED]
     if guarded:
         lines.append(f"// cpf: guarded: {', '.join(dict.fromkeys(guarded))}")
     return lines

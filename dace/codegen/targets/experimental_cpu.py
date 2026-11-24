@@ -37,6 +37,7 @@ from dace.codegen.targets.cpu import (
     use_aligned_operator_new,
 )
 from dace.config import Config
+from dace.cpf_lowering import LoopClass, Reason
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.optionals import required
@@ -84,11 +85,15 @@ def scalar_decl() -> str:
 
 #: A one-trip map in a thread team, which renders as thread 0's block.
 THREAD_ZERO = (
-    "sequential -- not a loop: the map's one iteration runs on thread 0 of the team, and the other threads wait at "
+    LoopClass.SEQUENTIAL.prefix
+    + Reason.NOT_A_LOOP.value
+    + ": the map's one iteration runs on thread 0 of the team, and the other threads wait at "
     "the barrier after it"
 )
 THREAD_ZERO_NOWAIT = (
-    "sequential -- not a loop: the map's one iteration runs on thread 0 of the team; the other threads do not wait "
+    LoopClass.SEQUENTIAL.prefix
+    + Reason.NOT_A_LOOP.value
+    + ": the map's one iteration runs on thread 0 of the team; the other threads do not wait "
     "for it (nowait)"
 )
 

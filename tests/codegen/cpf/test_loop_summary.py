@@ -88,7 +88,7 @@ def test_a_label_over_the_bounds_of_a_range_read_from_data_names_its_loop():
     """A map over ``ptr[i]:ptr[i + 1]`` loads its bounds between label and loop: the summary said ``statement`` and
     listed ``k`` open, uncommented."""
     (loop,) = cpf_summary.loops_of(DATA_RANGE)
-    assert (loop.name, loop.kind) == ("k", "parallel"), loop
+    assert (loop.name, loop.kind) == ("k", cpf_lowering.LoopClass.PARALLEL), loop
 
 
 def summary(code: str) -> list[str]:
@@ -312,7 +312,7 @@ def test_a_respelled_accumulator_between_comment_and_loop_keeps_the_comment_on_t
     """cfd, lavamd: ``cpf_compact`` respells ``__acc_1_0_arr14`` to ``arr14_acc0``, the label landed on that
     declaration (``statement``), and the header listed the reduction loop ``j`` as unknown with no comment."""
     (loop,) = cpf_summary.loops_of(READABLE_ACCUMULATOR)
-    assert (loop.name, loop.kind) == ("j", "parallel"), loop
+    assert (loop.name, loop.kind) == ("j", cpf_lowering.LoopClass.PARALLEL), loop
 
 
 UNCOMMENTED = """\

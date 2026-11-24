@@ -9,6 +9,7 @@ from typing import Any, NamedTuple
 import sympy
 
 from dace import SDFG, data, dtypes, symbolic
+from dace.cpf_lowering import LoopClass, Reason
 from dace.frontend.operations import detect_reduction_type
 from dace.memlet import Memlet
 from dace.optionals import required
@@ -35,14 +36,18 @@ from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_
 # further dependence reasoning, ``unknown`` is the only open one.
 
 #: The first words of every loop hint: its class (see the three below).
-CLASS_PREFIXES = ("parallel -- ", "sequential -- ", "unknown -- ")
+CLASS_PREFIXES = tuple(cls.prefix for cls in LoopClass)
 
 #: A Map.
-PARALLEL = "parallel -- independent: no iteration writes an element another iteration reads or writes"
+PARALLEL = (
+    LoopClass.PARALLEL.prefix
+    + Reason.INDEPENDENT.value
+    + ": no iteration writes an element another iteration reads or writes"
+)
 
 #: The class line of a Map that accumulates into a container through a WCR edge: its iterations are not independent,
 #: they reduce, and the operator and the accumulator are the evidence.
-REDUCTION = "parallel -- reduction: {reductions}; the other accesses are independent"
+REDUCTION = LoopClass.PARALLEL.prefix + Reason.REDUCTION.value + ": {reductions}; the other accesses are independent"
 
 #: Appended to a parallel loop's class line: loop-local containers the rendering declares once, outside the loop,
 #: which every iteration writes before it reads them, so a parallel version needs a copy per iteration.
@@ -50,7 +55,8 @@ PRIVATE = "; private per iteration: {names}"
 
 #: A ``CPU_Persistent`` map: one ``#pragma omp parallel`` region, not a loop over independent iterations.
 TEAM = (
-    "parallel -- thread team: every thread runs the code inside, in order; only the omp for loops in it split "
+    LoopClass.PARALLEL.prefix
+    + "thread team: every thread runs the code inside, in order; only the omp for loops in it split "
     "their iterations"
 )
 
@@ -72,7 +78,7 @@ REDUCTION_SYMBOLS = {
 MAP_DIMENSIONS = "the {count} nested loops over {params} are all parallel"
 
 #: A loop whose carried dependence was proven.
-PROVEN_PREFIX = "sequential -- proven dependence"
+PROVEN_PREFIX = LoopClass.SEQUENTIAL.prefix + "proven dependence"
 SEQUENTIAL_PROVEN = PROVEN_PREFIX + " {reason}"
 
 #: A carried dependence on a loop whose body is a Do-All nest (a time loop over a stencil): proven too, but a skew
@@ -83,12 +89,13 @@ SEQUENTIAL_PROVEN_OVER_DOALL = (
 )
 
 #: A loop the dependence test declined to answer, or never examined.
-UNKNOWN = "unknown -- {reason}"
+UNKNOWN = LoopClass.UNKNOWN.prefix + "{reason}"
 
 #: An unproven loop over a literal trip count ``symbolic.is_small_extent`` calls small: too few iterations to share
 #: out, so a parallel version is not worth a runtime check; ``{reason}`` is what the dependence test left open.
 SMALL_EXTENT = (
-    "sequential -- small extent: {trips} iterations, too few to share out among threads, so no parallel version is "
+    LoopClass.SEQUENTIAL.prefix
+    + "small extent: {trips} iterations, too few to share out among threads, so no parallel version is "
     "worth a runtime check; not proven: {reason}"
 )
 
@@ -98,28 +105,36 @@ NEVER_EXAMINED = "not analyzed for dependences"
 NO_COUNTER = f"{NEVER_EXAMINED}: a while loop has no single counter to test"
 
 #: A while loop: its condition reads what the previous trip computed, so the trips run in order.
-WHILE_LOOP = "sequential -- while loop: each test of the condition reads what the previous iteration computed"
+WHILE_LOOP = (
+    LoopClass.SEQUENTIAL.prefix + "while loop: each test of the condition reads what the previous iteration computed"
+)
 #: A loop the dependence test finds independent that an earlier pass pinned sequential anyway (the
 #: fallback arm of a specialization). Rendered without a pragma, so it must not read as parallel.
 SEQUENTIAL_PINNED = (
-    "sequential -- kept in order by an earlier pass; the dependence test finds its iterations independent"
+    LoopClass.SEQUENTIAL.prefix
+    + "kept in order by an earlier pass; the dependence test finds its iterations independent"
 )
 
 #: The untiled skew: a sequential diagonal over a parallel front; ``alt`` names the other correct shape. ``{skew}`` is
 #: :func:`skew_label` on the diagonal and :func:`front_label` on the front, both in the loops' own names: the skew
 #: replaced the original counters, so the rendering has no name for them.
 WAVEFRONT_DIAGONAL = (
-    "sequential -- wavefront step: each step reads what the previous step wrote; {skew}; alt: the unskewed nest"
+    LoopClass.SEQUENTIAL.prefix
+    + "wavefront step: each step reads what the previous step wrote; {skew}; alt: the unskewed nest"
 )
-WAVEFRONT_FRONT = "parallel -- one wavefront step: its points do not depend on each other; {skew}"
+WAVEFRONT_FRONT = LoopClass.PARALLEL.prefix + "one wavefront step: its points do not depend on each other; {skew}"
 
 #: The tiled skew: a sequential tile diagonal over a parallel tile column over a sequential interior.
 WAVEFRONT_TILE_DIAGONAL = (
-    "sequential -- wavefront of tiles {tile}: each step reads what the previous step wrote; {skew}; "
+    LoopClass.SEQUENTIAL.prefix + "wavefront of tiles {tile}: each step reads what the previous step wrote; {skew}; "
     "alt: the element wavefront or the unskewed nest"
 )
-WAVEFRONT_TILE_COLUMN = "parallel -- the tiles {tile} of one wavefront step do not depend on each other; {skew}"
-WAVEFRONT_TILE_INTERIOR = "sequential -- inside one wavefront tile {tile}: the original order carries the dependence"
+WAVEFRONT_TILE_COLUMN = (
+    LoopClass.PARALLEL.prefix + "the tiles {tile} of one wavefront step do not depend on each other; {skew}"
+)
+WAVEFRONT_TILE_INTERIOR = (
+    LoopClass.SEQUENTIAL.prefix + "inside one wavefront tile {tile}: the original order carries the dependence"
+)
 
 
 def skew_label(a: int, b: int, step: str, unit: str = "") -> str:
@@ -222,8 +237,8 @@ def carried_symbol_text(refusal: LoopRefusal) -> str:
 
 #: A loop whose order the program itself requires, by the body's structure rather than an access pair: a call with
 #: an ordered side effect, or an exit after which no iteration may run.
-ORDERED_CALL = "sequential -- ordered call: {name} must run in iteration order"
-EARLY_EXIT = "sequential -- early exit ({statement}): iterations after the exit must not run"
+ORDERED_CALL = LoopClass.SEQUENTIAL.prefix + "ordered call: {name} must run in iteration order"
+EARLY_EXIT = LoopClass.SEQUENTIAL.prefix + "early exit ({statement}): iterations after the exit must not run"
 
 #: ``LoopToMap``'s ordered-side-effect message starts with the node's name.
 ORDERED_EFFECT = re.compile(r"^(.+?) has an ordered side effect")
@@ -1354,7 +1369,9 @@ def expanded_map_hint(state: SDFGState, entry: nodes.MapEntry, original: str | N
     re-derived for its own parameters, as :func:`parallel_hint` would, keeping the entry traps the original line rests
     on; the outermost map keeps the original's notes. ``None`` when the original had no class line."""
     lines = (original or "").split("\n")
-    if not lines[0].startswith(("parallel -- independent", "parallel -- reduction")):
+    if not lines[0].startswith(
+        (LoopClass.PARALLEL.prefix + Reason.INDEPENDENT.value, LoopClass.PARALLEL.prefix + Reason.REDUCTION.value)
+    ):
         return None
     first = parallel_hint(state, entry, [])
     assumed = lines[0].find(ASSUMES.split("{")[0])

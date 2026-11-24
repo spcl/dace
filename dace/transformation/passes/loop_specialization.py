@@ -17,23 +17,26 @@ import copy
 from collections.abc import Callable, Sequence
 
 from dace import dtypes, symbolic
+from dace.cpf_lowering import LoopClass, Reason
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 
 #: The class line of a parallel arm: the guard is the evidence the iterations are independent.
 GUARDED = (
-    "parallel -- the runtime check found {guard}, so no iteration writes an element another iteration reads or writes"
+    LoopClass.PARALLEL.prefix
+    + Reason.GUARDED.value
+    + "{guard}, so no iteration writes an element another iteration reads or writes"
 )
 #: The class line of the sequential arm a guard falls back to: the original loop, for the inputs the guard rejects.
 #: The negation is simplified (``inc == 0``, never ``not (not ...)``, review #10), and the arm says why it keeps the
 #: order, not that a dependence was proven (review #1).
 GUARD_FALLBACK = (
-    "sequential -- the runtime check found {negated}: two iterations may then touch the same element, so this arm "
+    LoopClass.SEQUENTIAL.prefix
+    + Reason.GUARDED.value
+    + "{negated}: two iterations may then touch the same element, so this arm "
     "keeps the order"
 )
-#: What both arms of a versioned loop start with, after the class.
-VERSIONED = "the runtime check found "
 
 
 def condition_text(condition: str) -> str:
@@ -288,7 +291,6 @@ def specialize_loop_under_relations(
 __all__ = [
     "GUARDED",
     "GUARD_FALLBACK",
-    "VERSIONED",
     "evaluate_before",
     "invariant_host",
     "label_arms",
