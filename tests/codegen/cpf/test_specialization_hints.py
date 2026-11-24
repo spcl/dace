@@ -697,9 +697,9 @@ def test_a_read_ahead_dependence_is_named_war_not_raw():
     assert second == first + 1 and second < size - 1, hint
 
 
-def test_a_pattern_matched_dependence_names_its_witness_too():
-    """An offset ``K`` that sizes nothing keeps the solver out (a conflict for one chosen ``K`` proves nothing), so
-    the constant distance proves the carry. Its hint still names an execution: the first iteration and the next."""
+def test_an_offset_that_bounds_the_loop_is_named_in_the_witness():
+    """An offset ``K`` that sizes nothing may not be chosen to make a conflict, but here every ``K`` under which the
+    loop runs twice conflicts, so the solver proves the carry. ``K`` bounds the loop, so the example names its value."""
     K = dace.symbol("K", dtype=dace.int64)
 
     @dace.program
@@ -712,12 +712,15 @@ def test_a_pattern_matched_dependence_names_its_witness_too():
     (hint,) = [loop.specialization_hint for loop in loops_of(sdfg)]
     first_line = hint.splitlines()[0]
     reason = re.fullmatch(
-        r"(on a\[(.*)\]: (.*) \(example: iterations (\w+)=1 and (\w+)=2\))",
+        r"(on a\[(.*)\]: (.*) \(example the solver found: N=(\d+), K=(-?\d+), iterations i=(\d+) and i=(\d+)\))",
         first_line.removeprefix(PROVEN_PREFIX + " "),
     )
     assert reason, hint
-    assert reason.group(3) == CONFLICT_MEANING["RAW"] and reason.group(4) == reason.group(5)
+    assert reason.group(3) == CONFLICT_MEANING["RAW"]
     assert first_line == SEQUENTIAL_PROVEN.format(reason=reason.group(1))
+    # The example is an execution: both iterations run, one after the other, for that K
+    size, offset, first, second = (int(g) for g in reason.groups()[3:])
+    assert 1 <= first and second == first + 1 < size - offset, hint
 
 
 def test_no_carried_dependence_is_claimed_for_independent_elements():
@@ -1247,7 +1250,7 @@ if __name__ == "__main__":
     test_an_inner_loop_carried_dependence_is_proven_in_one_outer_iteration()
     test_a_time_loop_over_a_stencil_is_proven_and_names_the_skew_it_is_not_given()
     test_a_read_ahead_dependence_is_named_war_not_raw()
-    test_a_pattern_matched_dependence_names_its_witness_too()
+    test_an_offset_that_bounds_the_loop_is_named_in_the_witness()
     test_no_carried_dependence_is_claimed_for_independent_elements()
     test_a_pinned_independent_loop_does_not_read_as_parallel()
     test_writes_the_test_cannot_separate_are_proven_by_a_witness()

@@ -14,9 +14,17 @@ from dace.memlet import Memlet
 from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_basic, as_range, free_symbols
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    ConditionalBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    SDFGState,
+)
 from dace.subsets import Range, Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -469,7 +477,7 @@ def walk_body(
 
 def unconditional_states(region: ControlFlowRegion) -> Iterator[SDFGState]:
     """The states under ``region`` outside every branch: a branch body may never run, so an access in it proves no
-    dependence (the rule :func:`region_sites` applies to a solver witness)."""
+    dependence by pattern (a solver witness takes the branch condition along instead, see :func:`region_sites`)."""
     for block in region.nodes():
         if isinstance(block, SDFGState):
             yield block
@@ -540,7 +548,7 @@ def pattern_witness(loop: LoopRegion, steps: Any) -> str:
 
 
 class Site(NamedTuple):
-    """An element access every execution of the loop body makes, with the iterators it sits under, outermost first."""
+    """An element access of the loop body, with the iterators it sits under, outermost first."""
 
     access: Access
     iters: tuple[smt_dependence.IterRange, ...]
@@ -548,6 +556,9 @@ class Site(NamedTuple):
     #: happens after it.
     node: nodes.Node | None = None
     state: SDFGState | None = None
+    #: The branch conditions under which the access happens, in the loop's names; ``None`` when one of them cannot be
+    #: written there, so the access proves no dependence.
+    guard: smt_dependence.Guard | None = ()
 
 
 def loop_range(loop: LoopRegion, mapping: dict[str, sympy.Expr]) -> smt_dependence.IterRange | None:
@@ -617,34 +628,128 @@ def copy_sites(
 
 
 def state_sites(
-    state: SDFGState, arrays: ArrayBindings, mapping: dict[str, sympy.Expr], iters: tuple, out: list
+    state: SDFGState,
+    arrays: ArrayBindings,
+    mapping: dict[str, sympy.Expr],
+    iters: tuple,
+    out: list,
+    guard: smt_dependence.Guard | None = (),
+    terms: dict[str, sympy.Basic] | None = None,
 ) -> None:
-    """The element accesses of ``state`` and of the nested SDFGs in it, under ``iters`` and their maps."""
+    """The element accesses of ``state`` and of the nested SDFGs in it, under ``iters`` and their maps; ``guard`` and
+    ``terms`` as :func:`region_sites`."""
+    terms = mapping if terms is None else terms
     for edge in state.edges():
         scoped = edge.dst if isinstance(edge.dst, nodes.Tasklet) else edge.src
         inner = iters + map_ranges(state, scoped, mapping)
         copies = copy_sites(edge, state, arrays, mapping, inner, len(out))
         node = scoped if isinstance(scoped, nodes.Tasklet) else edge.dst
-        out.extend(copies or (Site(a, inner, node, state) for a in edge_accesses(edge, state, arrays, mapping)))
+        found = copies or [Site(a, inner, node, state) for a in edge_accesses(edge, state, arrays, mapping)]
+        out.extend(site._replace(guard=guard) for site in found)
     for node in state.nodes():
         if isinstance(node, nodes.NestedSDFG):
             inner_arrays, inner_mapping = nested_bindings(state, node, arrays, mapping)
-            region_sites(node.sdfg, inner_arrays, inner_mapping, iters + map_ranges(state, node, mapping), out)
+            inner_terms = {
+                name: in_loop_terms(str(value), arrays, terms) for name, value in node.symbol_mapping.items()
+            }
+            inner_terms = {name: value for name, value in inner_terms.items() if value is not None}
+            inner_iters = iters + map_ranges(state, node, mapping)
+            region_sites(node.sdfg, inner_arrays, inner_mapping, inner_iters, out, guard, inner_terms)
 
 
 def region_sites(
-    region: ControlFlowRegion, arrays: ArrayBindings, mapping: dict[str, sympy.Expr], iters: tuple, out: list
+    region: ControlFlowRegion,
+    arrays: ArrayBindings,
+    mapping: dict[str, sympy.Expr],
+    iters: tuple,
+    out: list,
+    guard: smt_dependence.Guard | None = (),
+    terms: dict[str, sympy.Basic] | None = None,
 ) -> None:
-    """Fill ``out`` with the unconditional accesses under ``region``."""
+    """Fill ``out`` with the accesses under ``region``, each with the branch conditions it runs under on top of
+    ``guard``. ``terms`` is ``mapping`` for branch conditions only (``None``: ``mapping``): it also holds the values
+    interstate edges assign, which may be conditions themselves (``c = flag[k] != 0``)."""
+    terms = mapping if terms is None else terms
+    known = assigned_values(region, arrays, terms)
     for block in region.nodes():
+        scope = {**terms, **known.get(block, {})}
+        scope = {name: value for name, value in scope.items() if value is not None}
         if isinstance(block, SDFGState):
-            state_sites(block, arrays, mapping, iters, out)
+            state_sites(block, arrays, mapping, iters, out, guard, scope)
         elif isinstance(block, LoopRegion):
             counter = loop_range(block, mapping) if block.loop_variable else None
+            # A symbol the inner loop's body assigns holds the previous inner iteration's value at its top
+            body = {name: value for name, value in scope.items() if name not in assigned_names(block)}
             if counter is not None:
-                region_sites(block, arrays, mapping, iters + (counter,), out)
-        elif isinstance(block, ControlFlowRegion) and not isinstance(block, ConditionalBlock):
-            region_sites(block, arrays, mapping, iters, out)
+                region_sites(block, arrays, mapping, iters + (counter,), out, guard, body)
+        elif isinstance(block, ConditionalBlock):
+            # A branch runs when its condition holds and every earlier branch's fails
+            failed: smt_dependence.Guard | None = ()
+            for condition, branch in block.branches:
+                term = None if condition is None else in_loop_terms(condition.as_string, arrays, scope)
+                taken = failed if condition is None else (None if term is None else failed + ((term, True),))
+                inner = None if guard is None or taken is None else guard + taken
+                region_sites(branch, arrays, mapping, iters, out, inner, scope)
+                failed = None if failed is None or term is None else failed + ((term, False),)
+        elif isinstance(block, ControlFlowRegion):
+            region_sites(block, arrays, mapping, iters, out, guard, scope)
+
+
+def assigned_names(block: ControlFlowBlock) -> set[str]:
+    """The symbols an interstate edge under ``block`` assigns, nested SDFGs excluded: their names are their own."""
+    if not isinstance(block, AbstractControlFlowRegion):
+        return set()
+    return {name for edge in block.all_interstate_edges() for name in edge.data.assignments}
+
+
+def assigned_values(
+    region: ControlFlowRegion, arrays: ArrayBindings, mapping: dict[str, sympy.Expr]
+) -> dict[ControlFlowBlock, dict[str, sympy.Basic | None]]:
+    """For each block of ``region``, the symbols an interstate edge of ``region`` assigns before it, in the loop's
+    names: a value every path to the block sets, or ``None`` when the paths disagree or the value reads something
+    the loop cannot name. A symbol missing keeps the value it had when ``region`` began."""
+    if not region.edges():
+        return {}
+    order = list(sdutil.dfs_topological_sort(region, [region.start_block]))
+    if len(order) != region.number_of_nodes():  # a cycle: nothing is known along it
+        return {block: dict.fromkeys(assigned_names(region)) for block in region.nodes()}
+    known: dict[ControlFlowBlock, dict[str, sympy.Basic | None]] = {region.start_block: {}}
+    for block in order:
+        incoming = []
+        for edge in region.in_edges(block):
+            if edge.src not in known:
+                return {node: dict.fromkeys(assigned_names(region)) for node in region.nodes()}
+            values = {name: value for name, value in known[edge.src].items() if name not in assigned_names(edge.src)}
+            values.update(dict.fromkeys(assigned_names(edge.src)))
+            scope = {name: value for name, value in {**mapping, **known[edge.src]}.items() if value is not None}
+            for name, text in edge.data.assignments.items():
+                values[name] = in_loop_terms(text, arrays, scope)
+            incoming.append(values)
+        if incoming:
+            names = {name for values in incoming for name in values}
+            known[block] = {
+                name: incoming[0][name] if all(v.get(name, ...) == incoming[0].get(name) for v in incoming) else None
+                for name in names
+            }
+    return known
+
+
+def in_loop_terms(text: str, arrays: ArrayBindings, mapping: dict[str, sympy.Expr]) -> sympy.Basic | None:
+    """``text``, a branch condition or an assigned value, in the loop's names: each array element it reads named in the
+    loop SDFG's container; ``None`` when it reads an array the loop has no name for."""
+    expr = symbolic.pystr_to_symbolic(text)
+    if not isinstance(expr, sympy.Basic):
+        return sympy.sympify(expr)
+    names = {s: mapping[s.name] for s in expr.free_symbols if s.name in mapping}
+    elements = {}
+    for element in expr.atoms(symbolic.Subscript):
+        name = str(element.args[0])
+        if name not in arrays or (arrays[name][1] and len(arrays[name][1]) != len(element.args) - 1):
+            return None
+        outer, offset = arrays[name]
+        index = [as_basic(i).xreplace(names) + (offset[d] if offset else 0) for d, i in enumerate(element.args[1:])]
+        elements[element] = element.func(sympy.Symbol(outer), *index)
+    return expr.xreplace({**names, **elements})
 
 
 def size_symbols(sdfg: SDFG) -> set[str]:
@@ -726,24 +831,28 @@ def witnessed_carrying_access(loop: LoopRegion) -> str | None:
     mapping = {name: sympy.sympify(value) for name, value in loop.sdfg.constants.items()}
     sites: list[Site] = []
     region_sites(loop, arrays, mapping, (counter,), sites)
+    sites = [site._replace(guard=input_guard(loop, site.guard)) for site in sites]
     scratch = {site.access.array for site in sites if is_scratch(loop.sdfg, site.access.array)}
     # A read of scratch that no write of its own iteration reaches first sees an earlier iteration's value, which no
     # private copy has: the one conflict on scratch that proves an order. Every write must be a site for that.
-    if not writes_are_sites(loop):
-        sites = [site for site in sites if site.access.array not in scratch]
+    unseen = unseen_writes(loop)
+    sites = [site for site in sites if site.access.array not in scratch & unseen]
     sizes = size_symbols(loop.sdfg)
     fixed = fixed_symbols(loop) - sizes
     pairs = [(w, o) for w in sites if w.access.write for o in sites if o.access.array == w.access.array]
     pairs.sort(key=lambda pair: pair[1].access.write)
     for write, other in pairs:
         for first, second in ((write, other), (other, write)):
+            if first.guard is None or second.guard is None:
+                continue
             flow = first.access.write and not second.access.write
             if write.access.array in scratch and not flow:
                 continue
             if flow and write.access.array not in scratch and rewritten_in_iteration(second, sites):
                 continue
+            # A write whose condition cannot be written is taken to happen: that only refuses more witnesses
             kills = tuple(
-                (site.access.index, site.iters, flows_into(second, site))
+                (site.access.index, site.iters, flows_into(second, site), site.guard or ())
                 for site in sites
                 if write.access.array in scratch and site.access.write and site.access.array == write.access.array
             )
@@ -758,10 +867,32 @@ def witnessed_carrying_access(loop: LoopRegion) -> str | None:
                     shape=array_extent(loop.sdfg, first.access.array, len(first.access.index)),
                     fixed=fixed,
                     kills=kills,
+                    guards=(first.guard, second.guard),
                 )
             if found is not None:
                 return conflict_label(first, second, found, counter[0])
     return None
+
+
+def input_guard(loop: LoopRegion, guard: smt_dependence.Guard | None) -> smt_dependence.Guard | None:
+    """``guard`` when every array it reads is integer input nothing under ``loop`` writes, so a witness may choose its
+    elements; else ``None``."""
+    if not guard:
+        return guard
+    read = {str(e.args[0]) for term in guard for e in as_basic(term[0]).atoms(symbolic.Subscript)}
+    written = {
+        node.data
+        for block in loop.all_control_flow_blocks()
+        if isinstance(block, SDFGState)
+        for node in block.data_nodes()
+        if block.in_degree(node) > 0
+    }
+    for name in read:
+        desc = loop.sdfg.arrays.get(name)
+        # A solver integer is a value of an integer or boolean element, not always of a float one
+        if name in written or desc is None or desc.dtype not in dtypes.INTEGER_TYPES:
+            return None
+    return guard
 
 
 def flows_into(read: Site, write: Site) -> bool:
@@ -770,24 +901,30 @@ def flows_into(read: Site, write: Site) -> bool:
     return read.state is write.state and read.iters == write.iters and write.node in read.state.bfs_nodes(read.node)
 
 
-def writes_are_sites(loop: LoopRegion) -> bool:
-    """Whether every write under ``loop`` is one :func:`region_sites` sees: no branch, no write that may not happen,
-    no library node writing, every tasklet writing one element."""
-    if has_branch(loop):
-        return False
-    for block in loop.all_control_flow_blocks(recursive=True):
+def unseen_writes(region: ControlFlowRegion) -> set[str]:
+    """The containers of ``region``'s SDFG that some write under ``region`` stores to without a site
+    :func:`region_sites` sees: a write that may not happen, a library node writing, a tasklet writing more than one
+    element, a write in a loop without a constant-stride counter, or such a write inside a nested SDFG (named by the
+    container the nested SDFG writes out to). A write under a branch is a site with its condition."""
+    found: set[str] = set()
+    for block in region.all_control_flow_blocks():
+        if isinstance(block, LoopRegion) and block.loop_variable and loop_range(block, {}) is None:
+            found |= {n.data for s in block.all_states() for n in s.data_nodes() if s.in_degree(n) > 0}
         if not isinstance(block, SDFGState):
             continue
         for edge in block.edges():
-            if isinstance(edge.src, nodes.LibraryNode) or (edge.data.dynamic and not edge.data.is_empty()):
-                return False
-            if (
-                isinstance(edge.src, nodes.Tasklet)
-                and not edge.data.is_empty()
-                and edge.data.subset.num_elements() != 1
+            if edge.data.is_empty() or isinstance(
+                edge.dst, (nodes.Tasklet, nodes.LibraryNode, nodes.NestedSDFG, nodes.EntryNode)
             ):
-                return False
-    return True
+                continue  # a read
+            many = isinstance(edge.src, nodes.Tasklet) and edge.data.subset.num_elements() != 1
+            if isinstance(edge.src, nodes.LibraryNode) or edge.data.dynamic or many:
+                found.add(edge.dst.data if isinstance(edge.dst, nodes.AccessNode) else edge.data.data)
+        for node in block.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                inner = unseen_writes(node.sdfg)
+                found |= {e.data.data for e in block.out_edges(node) if e.src_conn in inner and not e.data.is_empty()}
+    return found
 
 
 def array_extent(sdfg: SDFG, name: str, dims: int) -> tuple[sympy.Expr | None, ...]:
