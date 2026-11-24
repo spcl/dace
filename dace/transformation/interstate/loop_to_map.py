@@ -804,6 +804,18 @@ def carried_local_transients(loop: LoopRegion, candidates: set[str], ctx: Option
     return carried & observable_locals(loop, candidates, ctx)
 
 
+def unclamped_whole(desc: dt.Data) -> subsets.Range:
+    """Every element of ``desc``, an extent ``Max(0, e)`` read as ``e``: the two differ only when the container is
+    empty, and any write covers an empty container (a compaction mask sized ``Max(0, i_end - i_start + 1)`` that a map
+    over ``i_start..i_end`` fills)."""
+    extents = []
+    for extent in desc.shape:
+        if isinstance(extent, sp.Max) and len(extent.args) == 2 and 0 in extent.args:
+            extent = next(arg for arg in extent.args if arg != 0)
+        extents.append((0, extent - 1, 1))
+    return subsets.Range(extents)
+
+
 def read_before_written(
     loop: LoopRegion,
     candidates: set[str],
@@ -882,7 +894,7 @@ def read_before_written(
         if any(subset is None for subset in elements):
             return {dn.data}
         scope = state.entry_node(dn)
-        whole = subsets.Range.from_array(state.sdfg.arrays[dn.data])
+        whole = unclamped_whole(state.sdfg.arrays[dn.data])
         if scope is None and subsets_cover(elements, whole, symbolic.Facts.none()):
             return {dn.data}
         return {(dn.data, subset, scope) for subset in elements}
