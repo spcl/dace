@@ -350,6 +350,21 @@ static inline void cpf_carry(double *o, long size) {
     assert "// library loop (helper cpf_carry): not a tuning target" in cpf_summary.comment_every_loop(code)
 
 
+def test_the_kinds_rendering_names_the_library_construct_not_the_class_word():
+    """In the kinds rendering the comment above a library loop is a class word; it must not be taken for its title."""
+    code = """\
+void f0(double *a, long n) {
+    // sequential: proven dependence on a
+    for (long i = 1; i < n; ++i) {
+        for (long q = 0; q < n; ++q) {
+            a[q] = a[q] + a[i];
+        }
+    }
+}
+"""
+    assert "// library loop (function f0): not a tuning target" in cpf_summary.comment_every_loop(code, kinds=True)
+
+
 if __name__ == "__main__":
     test_a_sequential_loop_over_an_indirect_access_offers_no_wavefront()
     test_an_unproven_loop_over_a_few_iterations_is_unknown_not_sequential()
@@ -360,6 +375,7 @@ if __name__ == "__main__":
     test_the_header_lists_every_reduction_of_a_loop()
     test_a_blas_zero_fill_is_a_library_loop_not_a_sequential_one()
     test_a_library_loop_counting_from_zero_is_not_a_zero_fill()
+    test_the_kinds_rendering_names_the_library_construct_not_the_class_word()
     test_a_sequential_loop_says_its_parallel_loops_fork_once_per_iteration()
     test_a_blas_call_says_it_runs_on_one_thread()
     test_the_closing_line_does_not_steer_away_from_fork_placement()

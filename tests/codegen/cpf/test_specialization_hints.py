@@ -28,6 +28,7 @@ import pytest
 import dace
 from dace import cpf_lowering
 from dace.codegen.cpf import CONTRACT_KINDS, CONTRACT_LINES, render
+from dace.codegen.cpf_summary import LIBRARY_LINE
 from dace.codegen.targets.experimental_cpu import map_hint
 from dace.cpf_lowering import LoopClass
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
@@ -1132,7 +1133,8 @@ def test_the_kinds_rendering_says_its_class_words_and_nothing_else():
     assert all(":" not in line for line in words if line.removeprefix("// ").startswith("parallel")), kinds
     assert all(": " in line for line in words if line.removeprefix("// ").startswith("sequential")), kinds
     # What is left is the unit's own section labels, which the proofs rendering carries word for word.
-    assert all(line in proofs for line in kinds if line not in words), kinds
+    # A library loop's comment names its construct from the provenance comment above it, which this rendering omits
+    assert all(line in proofs for line in kinds if line not in words and not LIBRARY_LINE.match(line)), kinds
     extras = ("--", "witness", "settled", "open:", "example", "alt:", "CPU:", "GPU:")
     assert not [line for line in kinds if any(term in line for term in extras)], kinds
     assert any("example" in line for line in proofs), proofs
@@ -1210,7 +1212,7 @@ def test_the_none_rendering_has_no_loop_comment_and_the_same_code():
     canonicalize(sdfg)
     none, kinds, proofs = (render(sdfg, hints=detail).code for detail in ("none", "kinds", "proofs"))
     known = set(dict(cpf_lowering.KIND_WORDS).values())
-    is_class = lambda line: line.removeprefix("// ").split(":", 1)[0] in known
+    is_class = lambda line: line.removeprefix("// ").split(":", 1)[0] in known or LIBRARY_LINE.match(line)
     assert not [line for line in comment_lines(none) if is_class(line)], none
     assert [line for line in comment_lines(kinds) if not is_class(line)] == comment_lines(none), none
     assert not [line for line in none.splitlines() if "//" in line and line.split("//")[0].strip()], none

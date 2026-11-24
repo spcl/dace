@@ -145,7 +145,7 @@ def construct_of(lines: list[str], index: int, function: str) -> str:
             break  # the enclosing function's head, or code before it
         if not stripped.startswith("// ") or indent_of(line) >= own:
             continue
-        if CLASS_LINE.match(line) or LIBRARY_LINE.match(line) or NESTED_LOOPS.search(line):
+        if CLASS_LINE.match(line) or LIBRARY_LINE.match(line) or KIND_LINE.match(line) or NESTED_LOOPS.search(line):
             continue
         above = lines[n - 1] if n > 0 else ""
         if above.strip().startswith("//") and indent_of(above) == indent_of(line):
