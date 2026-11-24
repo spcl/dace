@@ -309,3 +309,141 @@ def test_a_device_scan_cuda_unit_builds_with_nvcc_through_cpf_functors(
     )
 
     nvcc_library(rendering, tmp_path, name)
+
+
+def persistent_device_sdfg(
+    name: str,
+    lifetime: dace.dtypes.AllocationLifetime,
+    pool: bool = False,
+    setzero: bool = False,
+    assigned_extent: bool = False,
+) -> dace.SDFG:
+    """Two device maps with a ``GPU_Global`` temporary between them: ``tmp = 2 * A``, then ``B = tmp + 1``. With
+    ``assigned_extent`` the temporary is sized by ``M``, which the program assigns (``M = N``) before using it."""
+    sdfg = dace.SDFG(name)
+    gpu = dace.dtypes.StorageType.GPU_Global
+    sdfg.add_array("A", [N], dace.float64, storage=gpu)
+    sdfg.add_array("B", [N], dace.float64, storage=gpu)
+    extent = "N"
+    if assigned_extent:
+        sdfg.add_symbol("M", dace.int32)
+        extent = "M"
+    _, tmp = sdfg.add_transient("tmp", [dace.symbol(extent)], dace.float64, storage=gpu, lifetime=lifetime)
+    tmp.pool = pool
+    write = sdfg.add_state("write")
+    if assigned_extent:
+        start = sdfg.add_state("start", is_start_block=True)
+        sdfg.add_edge(start, write, dace.InterstateEdge(assignments={"M": "N"}))
+    _, double_entry, _ = write.add_mapped_tasklet(
+        "double",
+        {"i": f"0:{extent}"},
+        {"a": dace.Memlet("A[i]")},
+        "t = 2 * a",
+        {"t": dace.Memlet("tmp[i]")},
+        schedule=dace.dtypes.ScheduleType.GPU_Device,
+        external_edges=True,
+    )
+    for node in write.data_nodes():
+        if node.data == "tmp":
+            node.setzero = setzero
+    read = sdfg.add_state_after(write, "read")
+    _, increment_entry, _ = read.add_mapped_tasklet(
+        "increment",
+        {"i": f"0:{extent}"},
+        {"t": dace.Memlet("tmp[i]")},
+        "b = t + 1",
+        {"b": dace.Memlet("B[i]")},
+        schedule=dace.dtypes.ScheduleType.GPU_Device,
+        external_edges=True,
+    )
+    # a block size of its own, so the render does not warn that it falls back to the configured default
+    for entry in (double_entry, increment_entry):
+        entry.map.gpu_block_size = [32, 1, 1]
+    return sdfg
+
+
+def entry_body(code: str, name: str) -> str:
+    start = code.index(f'extern "C" void {name}(')
+    return code[code.index("{", start) : code.index("\n}\n", start)]
+
+
+@pytest.mark.parametrize("language", ["cuda", "hip"])
+@pytest.mark.parametrize("pool", [False, True], ids=["plain", "pooled"])
+def test_a_persistent_device_buffer_is_one_static_allocation(language: str, pool: bool):
+    name = f"cpf_persistent_device_{language}_{'pooled' if pool else 'plain'}"
+    rendering = render(
+        persistent_device_sdfg(name, dace.dtypes.AllocationLifetime.Persistent, pool=pool),
+        language=language,
+        check_compiles=False,
+    )
+    entry = entry_body(rendering.code, name)
+    # No per-call pair: the buffer is the file-scope pointer, allocated by a call that needs more than it holds.
+    assert not re.search(rf"{language}Malloc(Async)?\(\(void\*\*\)&__state->\w*tmp", entry), entry
+    assert not re.search(rf"{language}Free(Async)?\(__state->\w*tmp", entry), entry
+    assert "static double *__cpf_persistent_tmp = nullptr;" in rendering.code
+    assert re.search(r"if \(__cpf_persistent_tmp_count < \(size_t\)\(N\)\)", entry), entry
+    assert re.search(r"__state->\w*tmp = __cpf_persistent_tmp;", entry), entry
+    # Released once, at exit, in the host unit only: the device unit names no host pointer.
+    assert "~__cpf_persistent_tmp_release_t()" in rendering.code
+    assert "__cpf_persistent_tmp" not in (rendering.device_code or "")
+
+
+@pytest.mark.parametrize("lifetime", ["Scope", "SDFG"])
+def test_a_device_buffer_the_gpu_pipeline_makes_persistent_is_one_static_allocation(lifetime: str):
+    # The GPU pipeline runs MakeTransientsPersistent while generating code (after MoveArrayOutOfKernel), after CPF
+    # demoted the lifetimes and named the buffers it holds: the buffer reaches allocation Persistent all the same.
+    name = f"cpf_device_{lifetime.lower()}"
+    rendering = render(
+        persistent_device_sdfg(name, dace.dtypes.AllocationLifetime[lifetime]), language="cuda", check_compiles=False
+    )
+    entry = entry_body(rendering.code, name)
+    assert not re.search(r"cudaMalloc(Async)?\(\(void\*\*\)&__state->\w*tmp", entry), entry
+    assert "static double *__cpf_persistent_tmp = nullptr;" in rendering.code
+
+
+def test_a_device_buffer_sized_by_an_assigned_symbol_stays_one_allocation_per_call():
+    # M is assigned inside the program, so no single size holds across calls: the buffer keeps its per-call pair.
+    name = "cpf_device_assigned_extent"
+    rendering = render(
+        persistent_device_sdfg(name, dace.dtypes.AllocationLifetime.Scope, assigned_extent=True),
+        language="cuda",
+        check_compiles=False,
+    )
+    entry = entry_body(rendering.code, name)
+    # A local pointer or a state member, depending on where the allocation lands
+    assert re.search(r"cudaMalloc(Async)?\(\(void\*\*\)&(__state->)?\w*tmp", entry), entry
+    assert re.search(r"cudaFree(Async)?\((__state->)?\w*tmp", entry), entry
+    assert "__cpf_persistent_tmp" not in rendering.code
+
+
+def test_a_zeroed_persistent_device_buffer_is_zeroed_on_every_call():
+    name = "cpf_persistent_device_zeroed"
+    rendering = render(
+        persistent_device_sdfg(name, dace.dtypes.AllocationLifetime.Persistent, setzero=True),
+        language="cuda",
+        check_compiles=False,
+    )
+    entry = entry_body(rendering.code, name)
+    assert re.search(r"cudaMemset\(__state->\w*tmp, 0,", entry), entry
+    assert "static double *__cpf_persistent_tmp" in rendering.code
+
+
+@pytest.mark.gpu
+def test_a_persistent_device_buffer_grows_and_is_reused(tmp_path: pathlib.Path):
+    require_gpu_backend("cuda")
+    import cupy  # Deferred: the optional GPU dependency, needed only where a GPU runs this test.
+
+    name = "cpf_persistent_device_run"
+    rendering = render(persistent_device_sdfg(name, dace.dtypes.AllocationLifetime.Persistent), language="cuda")
+    entry = ctypes.CDLL(str(nvcc_library(rendering, tmp_path, name)))[name]
+    entry.argtypes = entry_argtypes(rendering.sdfg)
+    # A larger call grows the buffer, a smaller one reuses it.
+    for length in (50, 80, 30):
+        a = np.random.default_rng(length).random(length)
+        device = {"A": cupy.asarray(a), "B": cupy.zeros(length)}
+        arguments = [
+            ctypes.c_void_p(device[arg].data.ptr) if arg in device else length for arg in rendering.sdfg.arglist()
+        ]
+        entry(*arguments)
+        np.testing.assert_allclose(cupy.asnumpy(device["B"]), 2.0 * a + 1.0, rtol=1e-12, atol=0.0)
+
