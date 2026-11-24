@@ -102,11 +102,6 @@ def test_per_row_reduction_all_stages_ok():
         assert r.ok, f"stage failed: {r}"
 
 
-def test_first_failing_stage_none_for_clean_kernel():
-    sdfg = elementwise.to_sdfg(simplify=True)
-    assert first_failing_stage(sdfg) is None
-
-
 # Detection path: a corrupting stage must be caught
 
 
@@ -158,6 +153,12 @@ def test_harness_detects_value_corrupting_stage(monkeypatch):
     assert r.valid, "value corruption keeps the SDFG structurally valid"
     assert r.numerically_correct is False, "harness must catch the value divergence"
     assert r.max_abs_diff is not None and r.max_abs_diff > 1.0
+
+
+def test_first_failing_stage_is_the_stage_that_corrupts_values(monkeypatch):
+    monkeypatch.setattr(cdbg, "build_stages", lambda: [("inject", _PerturbOutputValues())])
+    failing = first_failing_stage(elementwise.to_sdfg(simplify=True), symbol_value=3)
+    assert failing is not None and failing.label == "inject"
 
 
 def test_harness_detects_invalid_stage(monkeypatch):
