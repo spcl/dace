@@ -96,6 +96,7 @@ from dace.transformation.passes.canonicalize.revert_nonreduction_wcr import Reve
 from dace.transformation.passes.canonicalize.route_ordering_through_data import RouteOrderingThroughData
 from dace.transformation.passes.canonicalize.segment_confined_loops import SegmentConfinedLoops
 from dace.transformation.passes.canonicalize.select_branch_maps import SelectBranchMaps
+from dace.transformation.passes.canonicalize.select_same_element_stores import SelectSameElementStores
 from dace.transformation.passes.canonicalize.sink_last_only_scan_store import SinkLastOnlyScanStore
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNumThreads
@@ -670,6 +671,8 @@ def normalize_statements(
     # Whether or not short loops unrolled: the statement round's induction-variable substitution closes a counter
     # bumped several times per iteration (``k = k + 1`` before each unrolled copy) only once it is in SSA form.
     s += [(label, UniqueLoopIterators()), (label, SymbolSSA())]
+    # An if/else-if chain storing one element is one statement for the split below
+    s += [(label, SelectSameElementStores())]
     s += [
         (
             label,
