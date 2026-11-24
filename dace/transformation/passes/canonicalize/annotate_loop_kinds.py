@@ -1442,6 +1442,8 @@ class AnnotateLoopKinds(ppl.Pass):
         labelled = 0
         traps: dict[int, list] = {}
         function_traps(sdfg, [], traps)
+        # The header lists the entry's own abort() preconditions: a loop comment repeats only one a function renamed
+        entry_held = OrderedSet(held for held, names in entry_traps(sdfg))
         # Labelling changes only the hints, which no probe reads
         session = ProbeSession()
         for node, parent_graph in list(sdfg.all_nodes_recursive()):
@@ -1457,7 +1459,11 @@ class AnnotateLoopKinds(ppl.Pass):
             # A note another pass left (an anti-dependence it broke) says what it did, not what the loop is: the
             # verdict goes first, so every loop still opens with its class.
             kind = (
-                parallel_hint(parent_graph, node, traps.get(id(parent_graph.sdfg), []))
+                parallel_hint(
+                    parent_graph,
+                    node,
+                    [trap for trap in traps.get(id(parent_graph.sdfg), []) if trap[0] not in entry_held],
+                )
                 if isinstance(node, nodes.MapEntry)
                 else loop_hint(node, session)
             )

@@ -6,7 +6,7 @@ Each test renders a few-line program and checks the comment string of the loop t
 import dace
 from dace.sdfg import tasklet_utils
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from tests.codegen.cpf.test_specialization_hints import named
+from tests.codegen.cpf.test_specialization_hints import named, trapped_sdfg
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -209,6 +209,19 @@ def test_the_header_lists_the_entry_abort_preconditions():
     assert "// Entry preconditions (the unit abort()s when one holds): N <= 0" in code, code
 
 
+def test_a_loop_comment_does_not_repeat_an_entry_precondition_the_header_lists():
+    """The entry aborts when ``nkb <= 0``; the function keeps the name, so its loop needs no "independent only if"."""
+    code = named(trapped_sdfg("cpf_comment_repeat", "nkb", "nkb"))
+    assert "// Entry preconditions (the unit abort()s when one holds): nkb <= 0" in code, code
+    assert "independent only if" not in code, code
+
+
+def test_a_loop_comment_keeps_a_precondition_a_function_renamed():
+    """The same trap reaches a function as ``n``: only there does the loop comment say what its independence rests on."""
+    code = named(trapped_sdfg("cpf_comment_renamed", "n", "nkb"))
+    assert "; independent only if n > 0 (the program aborts at entry otherwise)" in code, code
+
+
 if __name__ == "__main__":
     test_a_sequential_loop_over_an_indirect_access_offers_no_wavefront()
     test_an_unproven_loop_over_a_few_iterations_is_unknown_not_sequential()
@@ -222,3 +235,5 @@ if __name__ == "__main__":
     test_the_closing_line_does_not_steer_away_from_fork_placement()
     test_a_guarded_loop_names_its_test_once_and_says_what_the_fallback_is()
     test_the_header_lists_the_entry_abort_preconditions()
+    test_a_loop_comment_does_not_repeat_an_entry_precondition_the_header_lists()
+    test_a_loop_comment_keeps_a_precondition_a_function_renamed()

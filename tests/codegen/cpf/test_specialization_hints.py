@@ -1037,8 +1037,9 @@ def trapped_sdfg(name: str, inner_symbol: str, outer_value: str) -> dace.SDFG:
 
 def test_an_entry_trap_reaches_a_nested_function_in_its_own_names():
     """vexx_k: "independent only if nkb > 0" inside a function that has no ``nkb``. A trap enters a nested SDFG
-    through its symbol mapping, renamed, and is dropped where the inner name means something else."""
-    for inner_symbol, outer_value, expected in (("n", "nkb", "n > 0"), ("nkb", "K", None)):
+    through its symbol mapping, renamed, and is dropped where the inner name means something else. A function that
+    keeps the name repeats the entry's own precondition, which the header already lists."""
+    for inner_symbol, outer_value, expected in (("n", "nkb", "n > 0"), ("nkb", "K", None), ("nkb", "nkb", None)):
         sdfg = trapped_sdfg(f"cpf_kind_trap_{inner_symbol}", inner_symbol, outer_value)
         AnnotateLoopKinds().apply_pass(sdfg, {})
         (hint,) = [n.specialization_hint for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
