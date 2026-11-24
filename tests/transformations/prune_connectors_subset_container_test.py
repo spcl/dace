@@ -51,7 +51,7 @@ def test_a_connector_a_subset_reads_is_kept():
     sdfg = build_sdfg()
     sdfg.apply_transformations_repeated(PruneConnectors)
     sdfg.validate()
-    node = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
+    node = next(n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
     assert "off" in node.in_connectors, node.in_connectors
 
 
