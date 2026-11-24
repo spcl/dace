@@ -718,13 +718,17 @@ def write_guard(state: SDFGState, loop: Any, itersym: sp.Symbol, varying: set[st
     """The branch conditions inside ``loop`` that ``state`` runs under and that mean the same in every iteration: they
     read only the iteration variable and symbols the loop never changes, and no array."""
     held = cfg_analysis.collect_enclosing_conditions(state, stop=loop)
-    kept = [
-        c
-        for c in sp.And.make_args(held)
-        if not c.atoms(symbolic.Subscript, sp.Indexed)
-        and not {str(x) for x in c.free_symbols} & (varying - {str(itersym)})
-    ]
-    return sp.And(*kept)
+    # A conjunction may be sympy's ``And`` or DaCe's ``AND`` function: take the conjuncts of either
+    todo, kept = [held], []
+    while todo:
+        c = todo.pop()
+        if isinstance(c, sp.And) or type(c).__name__ == "AND":
+            todo += c.args
+        elif c != sp.true and not (
+            c.atoms(symbolic.Subscript, sp.Indexed) or {str(x) for x in c.free_symbols} & (varying - {str(itersym)})
+        ):
+            kept.append(c)
+    return symbolic.pystr_to_symbolic(" and ".join(f"({c})" for c in kept)) if kept else sp.true
 
 
 def write_refusal(

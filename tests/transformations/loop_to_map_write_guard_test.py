@@ -32,6 +32,20 @@ def write_from_c_on(z: dace.float64[M], x: dace.float64[M]):
             z[c] = x[jm] * 2.0
 
 
+@dace.program
+def write_where_the_iterator_is_c_and_a_flag_holds(z: dace.float64[M], x: dace.float64[M], flag: dace.int32[1]):
+    for jm in range(M):
+        if jm == c and flag[0] > 0:
+            z[c] = x[jm] * 2.0
+
+
+@dace.program
+def write_where_the_iterator_is_c_and_the_symbol_is_positive(z: dace.float64[M], x: dace.float64[M]):
+    for jm in range(M):
+        if jm == c and M > 3:
+            z[c] = x[jm] * 2.0
+
+
 def parallelized(program: dace.program) -> dace.SDFG:
     sdfg = program.to_sdfg(simplify=True)
     ParallelizeLoops().apply_pass(sdfg, {})
@@ -56,6 +70,16 @@ def test_a_write_under_the_iterator_equal_to_a_symbol_is_parallel_and_computes_t
     assert np.array_equal(z, expected)
 
 
+def test_a_write_under_a_conjunction_of_the_iterator_test_and_an_invariant_symbol_is_parallel():
+    sdfg = parallelized(write_where_the_iterator_is_c_and_the_symbol_is_positive)
+    assert (loops(sdfg), maps(sdfg)) == (0, 1)
+
+
+def test_a_write_under_a_conjunction_with_an_array_test_still_uses_the_iterator_test():
+    sdfg = parallelized(write_where_the_iterator_is_c_and_a_flag_holds)
+    assert (loops(sdfg), maps(sdfg)) == (0, 1)
+
+
 def test_a_write_under_a_branch_several_iterations_satisfy_stays_a_loop():
     sdfg = parallelized(write_from_c_on)
     assert (loops(sdfg), maps(sdfg)) == (1, 0)
@@ -63,4 +87,6 @@ def test_a_write_under_a_branch_several_iterations_satisfy_stays_a_loop():
 
 if __name__ == "__main__":
     test_a_write_under_the_iterator_equal_to_a_symbol_is_parallel_and_computes_the_same()
+    test_a_write_under_a_conjunction_of_the_iterator_test_and_an_invariant_symbol_is_parallel()
+    test_a_write_under_a_conjunction_with_an_array_test_still_uses_the_iterator_test()
     test_a_write_under_a_branch_several_iterations_satisfy_stays_a_loop()
