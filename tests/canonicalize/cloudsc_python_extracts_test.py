@@ -24,7 +24,7 @@ Shapes covered:
 * ``test_tidy_small_cloud_water_guarded_multi_write`` -- 2D guarded
   nest with one ``if`` predicate driving 5 sibling writes (the
   "tidy up very small cloud cover" block).
-* ``test_clv_phase_dispatched_three_branch`` -- 3D nest whose body
+* ``test_clv_phase_dispatched_three_branch`` -- 3D nest (jm lifts to a reduction map) whose body
   has an outer ``if`` plus two nested ``if iphase[jm] == K`` arms
   (the "tidy up small CLV variables" block) -- exercises the
   conditional-fission + guard-hoist canonicalize stages.
@@ -308,10 +308,14 @@ def test_clv_phase_dispatched_three_branch():
     # All three guards survive: the outer ``zqx < rlmin`` plus the two ``iphase[jm] ==`` arms. They
     # read per-iteration data, so hoisting or dropping one would change which cells are tidied.
     assert nconds(sdfg) == 3, f"a data-dependent guard was lost or hoisted away: {nconds(sdfg)} left"
-    # jk/jl are independent and collapse into one 2-D map; jm carries the qv/tendency accumulation
-    # and must stay a sequential LoopRegion.
-    assert nmaps(sdfg) == 1, f"expected the one collapsed jk/jl map, got {nmaps(sdfg)}"
-    assert nloops(sdfg) == 1, f"the carried jm axis must stay sequential; got {nloops(sdfg)} loops"
+    # The jm axis carries only the qv/tendency sums: it parallelizes as one map whose three accumulators reduce
+    # through write-conflict resolution, so no sequential loop is left.
+    assert nmaps(sdfg) == 1, f"expected the one map, got {nmaps(sdfg)}"
+    assert nloops(sdfg) == 0, f"the jm accumulation must lift to a reduction; got {nloops(sdfg)} loops"
+    reduced = {
+        e.data.data for e, parent in sdfg.all_edges_recursive() if isinstance(e.data, dace.Memlet) and e.data.wcr
+    }
+    assert {"tendency_loc_q", "tendency_loc_t", "zqx_qv"} <= reduced, f"accumulators without a WCR: {reduced}"
 
 
 # Kernel 5: 2D min-clamp + division chain (saturation block shape)

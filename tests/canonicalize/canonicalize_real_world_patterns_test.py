@@ -409,31 +409,24 @@ def _cloudsc_iphase_oracle(args):
 
 
 def test_cloudsc_iphase_shape_structure():
-    """The outer ``JM`` loop stays sequential. ``tendency_t[jl] += c(jm) *
-    fluxq[jl, jm]`` accumulates over ``JM`` into a per-``JL`` location, but it is
-    only ONE statement of the multi-statement ``JM`` body (alongside the
-    ``fluxq`` write, the two phase guards, and the ``tendency_cld`` write).
-    ``loop_to_reduce`` recognises only single-statement accumulator loops, so it
-    cannot lift this reduction without loop fission first isolating it -- and the
-    front-loaded recipe runs ``loop_to_reduce`` before fission. So ``JM`` remains
-    a ``LoopRegion`` and the four inner ``JL`` statements become two Maps: the guards are
-    scalars read from ``iphase``, so the ``fluxq`` write, the ``tendency_cld`` update and the
-    first guarded accumulation fuse, and the second accumulation (the same ``tendency_t``
-    cell, so not fusable with the first) takes the other. The two per-``JM`` phase guards
-    (``iphase[jm] == 1`` / ``== 2``) survive as ``ConditionalBlock`` s (their
-    condition reads a per-iteration array).
-    Correctness is pinned numerically by ``test_cloudsc_iphase_shape_e2e``.
+    """The outer ``JM`` loop parallelizes. ``tendency_t[jl] += c(jm) * fluxq[jl, jm]`` accumulates over ``JM`` into a
+    per-``JL`` location alongside the ``fluxq`` write, the two phase guards, and the ``tendency_cld`` write; the
+    accumulation reduces through write-conflict resolution, so ``JM`` becomes a map and no loop is left. The two
+    per-``JM`` phase guards (``iphase[jm] == 1`` / ``== 2``) survive as ``ConditionalBlock`` s (their condition reads a
+    per-iteration array). Correctness is pinned numerically by ``test_cloudsc_iphase_shape_e2e``.
     """
     sdfg = cloudsc_iphase_shape.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nloops(sdfg) == 1, (
-        f"outer JM stays sequential (multi-statement reduction, not isolated pre-fission); got {_nloops(sdfg)} loops"
-    )
+    assert _nloops(sdfg) == 0, f"the JM accumulation must lift to a reduction; got {_nloops(sdfg)} loops"
     assert _ncond_blocks(sdfg) == 2, (
         f"both IPHASE phase guards must survive (correct refusal); got {_ncond_blocks(sdfg)} conditionals"
     )
-    assert _nmaps(sdfg) == 2, f"the four JL statements must land in exactly two maps; got {_nmaps(sdfg)}"
+    assert _nmaps(sdfg) == 3, f"the JM map and the two JL maps; got {_nmaps(sdfg)}"
+    reduced = {
+        e.data.data for e, parent in sdfg.all_edges_recursive() if isinstance(e.data, dace.Memlet) and e.data.wcr
+    }
+    assert "tendency_t" in reduced, f"tendency_t must accumulate through a WCR; got {reduced}"
 
 
 def test_cloudsc_iphase_shape_e2e():
