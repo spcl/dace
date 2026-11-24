@@ -4374,6 +4374,32 @@ def vendor_wrapper(path: str, seen: set[str], hip: bool = False) -> tuple[list[s
     return headers, respell_vendor_namespaces(text)
 
 
+#: A state field holding a wrapper class that owns a library handle (``cublasCreate`` / ``cusolverDnCreate`` on first
+#: ``Get()``), in the ``dace`` spelling of the environment's ``state_fields`` or the respelled one.
+LIBRARY_HANDLE_FIELD: "re.Pattern" = re.compile(
+    rf"^(?P<indent>[ \t]*)(?:::)?(?:dace|{VENDOR_NAMESPACE})::"
+    r"(?P<type>(?:blas|lapack)::\w+Handle)[ \t]+(?P<name>\w+);[ \t]*$",
+    re.MULTILINE,
+)
+
+
+def share_library_handles(code: str) -> str:
+    """``code`` with each library handle field of its state struct (:data:`LIBRARY_HANDLE_FIELD`) an ``inline static``
+    member, so the unit holds one handle across calls instead of one per call.
+
+    A standalone entry builds its state struct on its own stack, so a handle held by value in it was created by every
+    call (``cublasCreate`` on the first ``Get()``, a cuSOLVER workspace with it) and destroyed on return. As a static
+    member the field keeps its name and its calls (``__state->cublas_handle.Get()`` reads a static member through the
+    pointer), the aggregate initialization of the struct skips it, and the struct stays one definition in both units
+    of the kernel, which share the one handle. It is created by the first call that uses it and destroyed at exit.
+    Calls share it, so they run one at a time: the entry sets the handle's stream and pointer mode on every call and
+    drains the device before it returns. Unchanged when the unit holds no handle.
+    """
+    return LIBRARY_HANDLE_FIELD.sub(
+        lambda m: f"{m['indent']}inline static {VENDOR_NAMESPACE}::{m['type']} {m['name']};", code
+    )
+
+
 #: A vendor library's family name, and the call prefix that says a unit calls into it. Family names are the ones
 #: a library catalog keys these libraries by (HPCAgent-Bench's ``envs/libraries.yaml``).
 VENDOR_FAMILIES: tuple[tuple[str, "re.Pattern"], ...] = (
