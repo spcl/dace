@@ -26,7 +26,7 @@ from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc_2_5 import tsvc_2_5
 
-#: Corpus defaults, matching tsvc_corpus_test / measure_parallelization. The
+#: Corpus defaults, matching measure_parallelization. The
 #: unroll cap keeps ``heat3d``'s constant tile-8 inner loops from unrolling 512x
 #: (otherwise a single kernel runs for minutes); the rest is the production recipe.
 _PEEL_LIMIT = 4
