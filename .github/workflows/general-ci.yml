@@ -28,7 +28,6 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ['3.14']
-        simplify: [1]
         shard: [codegen, passes, transformations, rest]
         # Four shards by test directory, balanced on measured per-test time (about a quarter of the suite each).
         # ``rest`` takes every path the other three do not, by --ignore, so each test is collected in exactly one shard.
@@ -43,6 +42,9 @@ jobs:
           - shard: transformations
             paths: tests/transformations tests/python_frontend
             ignore: ''
+            # This shard runs with the auto-optimization heuristics on, as main's ``test (3.14, autoopt)``
+            # does: the frontend and transformation tests are where autoopt changes what runs.
+            autoopt: true
           - shard: rest
             paths: tests
             ignore: >-
@@ -50,7 +52,7 @@ jobs:
               --ignore=tests/passes --ignore=tests/offloading --ignore=tests/schedule_tree --ignore=tests/utils
               --ignore=tests/transformation --ignore=tests/transformations --ignore=tests/python_frontend
 
-    name: test (${{ matrix.python-version }}, ${{ matrix.simplify }}, ${{ matrix.shard }})
+    name: ${{ matrix.autoopt && format('test ({0}, autoopt)', matrix.python-version) || format('test ({0}, 1, {1})', matrix.python-version, matrix.shard) }}
 
     steps:
     - uses: actions/checkout@v7
@@ -85,7 +87,8 @@ jobs:
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
-        export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        export DACE_optimizer_automatic_simplification=1
+        if [ "${{ matrix.autoopt }}" = "true" ]; then export DACE_optimizer_autooptimize=1; fi
         # idxalg is an optional out-of-tree symbolic backend; its seam tests stay in the repo but do not run here.
         # --ignore=tests/library: the library-node tree (marked and unmarked) runs once in the
         # libnode-loop2x-transformations job instead of once per matrix cell here.
@@ -101,7 +104,8 @@ jobs:
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
-        export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        export DACE_optimizer_automatic_simplification=1
+        if [ "${{ matrix.autoopt }}" = "true" ]; then export DACE_optimizer_autooptimize=1; fi
         # The dedicated-runner markers are excluded here for the same reason they are excluded from
         # the general selection above: those suites have their own workflows, with their own
         # configuration. A test carrying both `sequential` and one of them would otherwise run here
@@ -120,7 +124,8 @@ jobs:
         export DACE_testing_serialization=0
         export DACE_testing_deserialize_exception=1
         export DACE_cache=single
-        export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        export DACE_optimizer_automatic_simplification=1
+        if [ "${{ matrix.autoopt }}" = "true" ]; then export DACE_optimizer_autooptimize=1; fi
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         ./tests/xform_test.sh
         uv run coverage combine .; uv run coverage report; uv run coverage xml
@@ -187,23 +192,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - cell: canon-vectorization-npbench
-            # The vectorization unit tests plus the npbench / polybench canonicalize-then-vectorize
-            # corpora -- everything except the two TSVC corpora, which are cell 2.
-            paths: >-
-              tests/passes/vectorization
-              --ignore=tests/passes/vectorization/tsvc_canonicalize_vectorize_corpus_test.py
-              --ignore=tests/passes/vectorization/tsvc_2_5_canonicalize_vectorize_corpus_test.py
-          - cell: canon-vectorization-tsvc
-            paths: >-
-              tests/passes/vectorization/tsvc_canonicalize_vectorize_corpus_test.py
-              tests/passes/vectorization/tsvc_2_5_canonicalize_vectorize_corpus_test.py
-
-    name: ${{ matrix.cell }}
+    # One runner for the unit tests and the npbench, polybench and TSVC canonicalize-then-vectorize corpora: two cells
+    # each paid the setup and the build cache warm-up for 6 and 12 minutes of tests.
+    name: canon-vectorization
 
     steps:
     - uses: actions/checkout@v7
@@ -236,14 +227,14 @@ jobs:
         export DACE_compiler_precompiled_header=1
         # loadgroup, not the default load: corpus cases carry xdist_group(kernel) so one kernel's
         # phases land on one worker and share its memoized base SDFG instead of rebuilding per worker.
-        pytest ${{ matrix.paths }} \
+        pytest tests/passes/vectorization \
           -n auto --dist loadgroup --tb=short --timeout_method thread --timeout=600 \
           -m "vectorization and not gpu and not long and not sequential and not perf and not avx512 and not tile"
         # The sequential members of this marker run here too, one at a time. General CI no longer
         # selects them (its own selection excludes this marker), so without this leg a test that is
         # both `vectorization` and `sequential` would run nowhere. Exit status 5 is pytest for
         # "nothing matched", which is the expected outcome while no such test exists.
-        pytest ${{ matrix.paths }} -n 1 --tb=short --timeout_method thread --timeout=600 \
+        pytest tests/passes/vectorization -n 1 --tb=short --timeout_method thread --timeout=600 \
           -m "vectorization and sequential and not gpu and not long and not perf and not avx512 and not tile" \
           || [ $? -eq 5 ]
 
@@ -457,33 +448,13 @@ jobs:
           tests/graphlib \
           -m "not gpu and not long and not sequential and not tile"
 
-  # --- Advisory suite ---
-  # Non-blocking, for the reason recorded on its step. Kept apart from the blocking jobs on purpose:
-  # continue-on-error is a JOB-level setting, so putting it in with a real gate would swallow that
-  # gate's failures too.
-  advisory:
-    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    continue-on-error: true
-    steps:
-    - uses: actions/checkout@v7
-      with:
-        submodules: 'recursive'
-    - uses: ./.github/actions/setup-dace
-      with:
-        python-version: '3.14'
-        apt-packages: >-
-          libyaml-dev cmake
-          libblas-dev libopenblas-dev liblapacke-dev liblapack-dev
-        pip-packages: pytest-xdist
-        groups: testing
-
     # Non-blocking until the ratchet's baselines are re-measured on an idle machine: the numbers in
     # ``_KNOWN_SLOWER`` were taken on a box running eleven other pytest processes, which moved
     # several of them by a factor of two.
     - name: Canonicalization performance ratchet
       if: always()
+      # Step-level, so a red ratchet never hides a failure of the blocking steps above.
+      continue-on-error: true
       run: |
         export NOSTATUSBAR=1
         ulimit -s 65536 || true
@@ -502,3 +473,5 @@ jobs:
         # measurement harness -- a few hundred kernels times eight arms -- and belongs in a
         # deliberate run, not in every push.
         pytest -n 1 --tb=short --timeout_method thread --timeout=1200 -m "perf and not long and not tile"
+
+  # --- Advisory suite ---

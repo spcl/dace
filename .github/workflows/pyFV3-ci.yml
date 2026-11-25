@@ -22,31 +22,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  configure:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
-    name: "Read test configuration"
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-    steps:
-     - name: Checkout to repository
-       uses: actions/checkout@v7
-     - name: Install uv
-       uses: astral-sh/setup-uv@v7
-       with:
-         enable-cache: true
-     - name: Set matrix data
-       id: set-matrix
-       run: echo "matrix={\"include\":$(jq -c . < .github/workflows/pyFV3-regression-matrix.json)}" >> $GITHUB_OUTPUT
-
   build_and_validate_pyFV3:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: configure
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.configure.outputs.matrix) }}
+      # Riem_Solver3 is left out: its download and regression steps were skipped (failing), so its runner only
+      # built pyFV3.
+      matrix:
+        include:
+          - name: "Shallow water lagrangian dynamics on D-grid (D_SW) (on rank 0 only)"
+            archive: "8.1.3_c12_6ranks_standard.D_SW.tar.gz"
+            module: "D_SW"
+            extra_args: "--which_rank=0"
+          - name: "Remapping (on rank 0 only)"
+            archive: "8.1.3_c12_6ranks_standard.Remapping.tar.gz"
+            module: "Remapping"
+            extra_args: "--which_rank=0"
     name: "${{ matrix.module }} regression test"
 
     steps:
@@ -104,8 +97,6 @@ jobs:
         uv pip install ./dace
 
     - name: Download data
-      # Skip "Riemann Solver on D-grid" (currently failing)
-      if: ${{ !startsWith(matrix.module, 'Riem_Solver3') }}
       run: |
         mkdir -p pyFV3/test_data
         cd pyFV3/test_data
@@ -114,8 +105,6 @@ jobs:
         cd ../..
 
     - name: "Regression test: ${{ matrix.name }}"
-      # Skip "Riemann Solver on D-grid" (currently failing)
-      if: ${{ !startsWith(matrix.module, 'Riem_Solver3') }}
       env:
         FV3_DACEMODE: BuildAndRun
         NDSL_LOGLEVEL: Debug
