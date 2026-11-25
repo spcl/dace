@@ -258,11 +258,16 @@ class Access(NamedTuple):
 
 def nested_bindings(state: SDFGState, ns: nodes.NestedSDFG) -> dict[str, sp.Basic]:
     """The symbols ``ns`` assigns exactly once, with their values in the namespace outside it where they read only
-    symbols and the arrays it receives (named as the outer containers): ``target = imelt[jm]``. A value that reads
+    symbols and the arrays it receives or the constant tables it reads (named as the outer containers): ``target = imelt[jm]``. A value that reads
     anything else is left out."""
     outer = {e.dst_conn: e.data.data for e in state.in_edges(ns) if e.dst_conn} | {
         e.src_conn: e.data.data for e in state.out_edges(ns) if e.src_conn
     }
+    # A constant table is no connector: the nest reads it by its name
+    top = state.sdfg
+    while top.parent_sdfg is not None:
+        top = top.parent_sdfg
+    outer |= {name: name for name in top.constants}
     counts: Counter = Counter(name for edge in ns.sdfg.all_interstate_edges() for name in edge.data.assignments)
     found: dict[str, sp.Basic] = {}
     for edge in ns.sdfg.all_interstate_edges():
