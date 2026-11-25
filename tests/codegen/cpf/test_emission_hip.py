@@ -610,7 +610,7 @@ def test_the_host_dialects_do_not_see_the_device_selection(language):
     with cpf_lowering.dialect_scope(cpf.LANGUAGES[language]):
         assert not cpf.on_device_at_host_level(node, state)
         assert cpf.renderable_implementations(node, state) == (
-            cpf.VENDOR_IMPLEMENTATIONS_HOST + cpf.RENDERABLE_BY_NODE["FindFirst"] + cpf.RENDERABLE_IMPLEMENTATIONS
+            cpf.host_vendor_implementations() + cpf.RENDERABLE_BY_NODE["FindFirst"] + cpf.RENDERABLE_IMPLEMENTATIONS
         )
 
 

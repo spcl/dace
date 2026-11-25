@@ -66,7 +66,45 @@ def test_a_store_of_another_value_or_a_varying_element_stays_a_plain_store():
     )
 
 
+@dace.program
+def clip_and_flag(z: dace.float64[KL, NC], flag: dace.bool_[KL], peak: dace.float64[1], wlim: dace.float64):
+    for k in range(KL):
+        flag[k] = False
+    top = 0.0
+    for k in range(KL):
+        for c in range(NC):
+            if z[k, c] > wlim:
+                flag[k] = True
+                top = max(top, z[k, c])
+                z[k, c] = wlim
+    peak[0] = top
+
+
+def test_a_logical_reduction_into_a_scalar_an_outlined_body_takes_by_pointer_compiles():
+    """The guard reads ``z`` before the clip stores it, so the column loop stays one body, which the render outlines
+    to a function taking the private ``flag`` copy as ``bool*``. Three faults met here: the fold assigned that pointer
+    (``x = x || true``), the private copy the fold starts from was never set to ``false``, and ``top`` read ``z`` after
+    the clip (scalar-to-symbol promotion of ``wlim`` dropped the edge ordering the read before the store)."""
+    sdfg = clip_and_flag.to_sdfg(simplify=True)
+    sdfg.name = "logical_clip_and_flag"
+    canonicalize(sdfg, target="cpu")
+    finalize_for_target(sdfg, "cpu")
+    result = render(sdfg, language="c")
+    library = build_standalone(result.code, sdfg.name, language="c")
+    rng = np.random.default_rng(6)
+    kl, nc, wlim = 7, 30, 0.9
+    z = rng.random((kl, nc))
+    z[2, :] = 0.5
+    want = {"z": np.minimum(z, wlim), "flag": (z > wlim).any(axis=1), "peak": np.array([z[z > wlim].max()])}
+    for threads in (1, 3, 8):
+        ctypes.CDLL("libgomp.so.1").omp_set_num_threads(threads)
+        got = {"z": z.copy(), "flag": np.zeros(kl, dtype=np.bool_), "peak": np.zeros(1)}
+        call_standalone(library, result.sdfg, {**got, "wlim": wlim, "KL": kl, "NC": nc})
+        assert_matches(want, got, f"{threads} threads")
+
+
 if __name__ == "__main__":
     os.environ.setdefault("OMP_NUM_THREADS", "4")
     test_a_guarded_truth_store_into_one_element_is_a_logical_reduction()
     test_a_store_of_another_value_or_a_varying_element_stays_a_plain_store()
+    test_a_logical_reduction_into_a_scalar_an_outlined_body_takes_by_pointer_compiles()

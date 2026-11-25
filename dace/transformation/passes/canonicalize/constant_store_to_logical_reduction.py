@@ -6,9 +6,12 @@ into the element it names.
 store writes the same value, so the order of the iterations does not matter, but the loop is not last-write-wins
 either: an iteration whose guard fails writes nothing. As the write-conflict resolution ``flag[k] = flag[k] or True``
 the store means the same in a sequential loop, and the loop lift reads it as a reduction (``||``) instead of a conflict
-on ``flag[k]``. ``False`` reduces with ``and`` alike. Only the boolean literals qualify (Fortran ``.TRUE.``, also into a
-``LOGICAL`` held as an integer): a store of the integer ``0`` or ``1`` is a value (``enabled[s] = 0`` clears a slot of a
-worklist), and reading it as a flag reduction hides the store from the lifts that prove such loops.
+on ``flag[k]``. ``False`` reduces with ``and`` alike. Only the literal truth values qualify: ``x || v`` is ``1``, the
+stored value, only when ``v`` is ``1``.
+
+The element must not move with what an iteration computes: a store through an index the loop assigns from data
+(``s = front[k]; enabled[s] = 0``) clears one slot of a worklist per iteration, a scatter the segment-confined lift
+proves, where reading it as a flag reduction hides the store.
 """
 
 import ast
@@ -26,14 +29,14 @@ LOGICAL_WCR = {True: "lambda a, b: a or b", False: "lambda a, b: a and b"}
 
 
 def stored_truth(tasklet: nodes.Tasklet) -> bool | None:
-    """The truth value a tasklet ``out = True`` (``False``) with no inputs stores, else ``None``."""
+    """The truth value a tasklet ``out = True`` (``False``, ``1``, ``0``) with no inputs stores, else ``None``."""
     if tasklet.code.language != dtypes.Language.Python or tasklet.in_connectors:
         return None
     body = tasklet.code.code
     if len(body) != 1 or not isinstance(body[0], ast.Assign) or not isinstance(body[0].value, ast.Constant):
         return None
     value = body[0].value.value
-    return value if type(value) is bool else None
+    return bool(value) if value in (True, False) and type(value) in (bool, int) else None
 
 
 def constant_stores(loop: LoopRegion) -> dict[str, list[tuple[Any, bool | None]]]:
@@ -78,13 +81,17 @@ class ConstantStoreToLogicalReduction(ppl.Pass):
             if any(not e.data.is_empty() for e in st.out_edges(n))
         }
         read |= loop_analysis.control_reads(loop)
+        moving = {loop.loop_variable} | {name for e in loop.all_interstate_edges() for name in e.data.assignments}
         converted = 0
         for name, stores in constant_stores(loop).items():
             truths = {truth for edge, truth in stores}
             if name in read or len(truths) != 1 or None in truths:
                 continue
-            # A store the counter indexes hits its own element per iteration: no conflict to resolve
-            if any(loop.loop_variable in {str(s) for s in edge.data.subset.free_symbols} for edge, truth in stores):
+            # A store the counter indexes hits its own element per iteration: no conflict to resolve. One through a
+            # symbol the body assigns, or an indirect one, is a scatter
+            if any(
+                edge.data.dynamic or {str(s) for s in edge.data.subset.free_symbols} & moving for edge, truth in stores
+            ):
                 continue
             for edge, truth in stores:
                 edge.data.wcr = LOGICAL_WCR[truth]

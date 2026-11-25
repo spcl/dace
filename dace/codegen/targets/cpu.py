@@ -2195,7 +2195,9 @@ class CPUCodeGen(TargetCodeGenerator):
         # array is a different location and still goes to memory.
         for frame in reversed(self._seq_accumulator_stack):
             acc = frame.get(memlet.data)
-            if acc is not None and str(memlet.subset) == str(acc["subset"]):
+            # Only in the SDFG that holds it: a function a loop body was outlined to names its own container, a
+            # pointer to the held variable, and folding into the caller's register name there assigns the pointer
+            if acc is not None and acc["sdfg"] is sdfg and str(memlet.subset) == str(acc["subset"]):
                 if acc["op"] in ("min", "max"):
                     than = "<" if acc["op"] == "min" else ">"
                     return f"{acc['var']} = ({inname}) {than} {acc['var']} ? ({inname}) : {acc['var']}"
@@ -4663,7 +4665,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 result.write(f"{held[3]} {held[5]} = {held[4]};", cfg, state_id, node)
         self._seq_accumulator_stack.append(
             {
-                dname: {"var": var, "op": op, "subset": subset, "target": target, "ctype": ctype}
+                dname: {"var": var, "op": op, "subset": subset, "target": target, "ctype": ctype, "sdfg": sdfg}
                 for dname, subset, op, ctype, target, var in seq_accumulators
             }
         )

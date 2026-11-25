@@ -39,6 +39,7 @@ import ast
 import contextlib
 import copy
 import dataclasses
+import functools
 import os
 import platform
 import re
@@ -55,6 +56,7 @@ from dace.codegen import codegen, cpf_compact, cpf_summary
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config, set_temporary
 from dace.cpf_lowering import LoopClass
+from dace.libraries.blas.environments import openblas
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.fft.environments import fftw3
 from dace.libraries.tileops.dispatch import FUNCTION_ISAS, ISA, isa_implementation, widest_function_isa
@@ -488,6 +490,15 @@ def narrow_float_operands(node: nodes.LibraryNode, state: SDFGState) -> bool:
     )
 
 
+@functools.cache
+def host_vendor_implementations() -> tuple[str, ...]:
+    """:data:`VENDOR_IMPLEMENTATIONS_HOST` whose library this machine has: :func:`compile_check` compiles the unit
+    against this machine's headers, so a call into a library it lacks (``fftw3.h`` on a host without FFTW3) fails the
+    check every time, where the node's own loop expansion would have rendered."""
+    installed = {"OpenBLAS": openblas.OpenBLAS.is_installed, "FFTW3": fftw3.FFTW3.is_installed}
+    return tuple(impl for impl in VENDOR_IMPLEMENTATIONS_HOST if installed[impl]())
+
+
 def renderable_implementations(node: nodes.LibraryNode, state: SDFGState) -> tuple[str, ...]:
     """The implementations to try for ``node``, best first.
 
@@ -515,7 +526,7 @@ def renderable_implementations(node: nodes.LibraryNode, state: SDFGState) -> tup
         vendor = VENDOR_IMPLEMENTATIONS_DEVICE[cpf_lowering.active_dialect()] if vendored else ()
         preferred = vendor + RENDERABLE_BY_NODE_DEVICE.get(type(node).__name__, ()) + preferred
     elif vendored and not is_devicelevel_gpu(state.sdfg, state, node):
-        preferred = VENDOR_IMPLEMENTATIONS_HOST + preferred
+        preferred = host_vendor_implementations() + preferred
     return preferred + RENDERABLE_IMPLEMENTATIONS
 
 
