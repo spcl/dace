@@ -318,6 +318,7 @@ def test_row_structured_descent_to_tile_only():
     )
 
 
+# Reproducer: fix(promote_nsdfg): revert K>=2 BROADCAST_SYMBOL fallback (correctness) (7313e9b120)
 def test_fully_structured_2d_descent_to_tile_only():
     """``a[jk // 2, jc]`` — affine stride on both dims, lane-replication factor 2 on jk only."""
     sdfg = _fully_structured_2d.to_sdfg()
@@ -333,6 +334,7 @@ def test_fully_structured_2d_descent_to_tile_only():
     )
 
 
+# Reproducer: fix(promote_nsdfg): revert K>=2 BROADCAST_SYMBOL fallback (correctness) (7313e9b120)
 def test_fully_unstructured_separable_descent_to_tile_only():
     """``a[idx_k[jk], idx_j[jc]]``: both source dims must appear in gather_dims."""
     sdfg = _fully_unstructured_separable.to_sdfg()
@@ -345,6 +347,7 @@ def test_fully_unstructured_separable_descent_to_tile_only():
     assert list(gathers[0].gather_dims) == [0, 1], f"expected gather_dims=(0, 1), got {gathers[0].gather_dims}"
 
 
+# Reproducer: fix(promote_nsdfg): revert K>=2 BROADCAST_SYMBOL fallback (correctness) (7313e9b120)
 def test_fully_unstructured_2d_index_descent_to_tile_only():
     """``a[idx[jk, jc]]``: a single (8, 8) masked index load feeds the gather, not two 1-D tiles."""
     sdfg = _fully_unstructured_2d_index.to_sdfg()

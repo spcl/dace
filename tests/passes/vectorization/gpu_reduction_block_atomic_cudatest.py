@@ -97,6 +97,7 @@ def _device_code(sdfg):
 
 
 @pytest.mark.parametrize("kind", list(PROGRAMS))
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_partial_is_thread_local_register(kind):
     """The per-thread reduction partial -- the WCR source feeding the map-exit boundary --
     is a single-element, thread-private transient, detected by structure (not a hardcoded
@@ -124,6 +125,7 @@ def test_partial_is_thread_local_register(kind):
 
 
 @pytest.mark.parametrize("kind", list(PROGRAMS))
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_half2_tile_reduce_fires(kind):
     """The within-thread half2->half fold is a ``TileReduce`` of width 2.
 
@@ -142,6 +144,7 @@ def test_half2_tile_reduce_fires(kind):
 
 
 @pytest.mark.parametrize("kind", list(PROGRAMS))
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_emits_block_reduce_and_single_atomic(kind):
     """The device TU folds the block with ``gpucub::BlockReduce`` and commits ONE atomic
     from thread 0 with the op's reduction functor; the per-thread atomic is suppressed."""
@@ -172,6 +175,7 @@ def test_emits_block_reduce_and_single_atomic(kind):
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("kind", list(PROGRAMS))
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_compiles(kind):
     sdfg = _vectorized(PROGRAMS[kind][0])
     sdfg.name = f"gpu_block_reduction_compile_{kind}"
@@ -188,6 +192,7 @@ def _run_inputs(kind, nval):
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("kind", list(PROGRAMS))
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_runs_exact_multiblock(kind):
     cupy = pytest.importorskip("cupy")
     sdfg = _vectorized(PROGRAMS[kind][0])

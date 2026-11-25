@@ -117,6 +117,7 @@ def canonical(program):
     return sdfg
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_row_map_over_csr_segments_stays_a_map():
     sdfg = canonical(csr_rows)
     assert demote_strided_level_maps(sdfg) == 0
@@ -141,6 +142,7 @@ def test_an_atom_map_over_small_planes_stays_a_map():
     assert demote_strided_level_maps(sdfg) == 0
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_an_atom_map_gathering_its_own_row_is_demoted():
     sdfg = atom_gathers()
     assert demote_strided_level_maps(sdfg) == 1
@@ -151,6 +153,7 @@ def test_an_atom_map_gathering_its_own_row_is_demoted():
     assert np.allclose(out, (table[:, idx] * w).ravel())
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_an_atom_map_with_one_per_atom_plane_is_still_demoted():
     """The G-vector plane spans every atom and moves out; the per-atom plane stays inside the atom loop."""
     sdfg = atom_gathers(atom_plane=True)

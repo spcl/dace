@@ -38,6 +38,7 @@ def test_normalize_is_value_preserving_and_survives_codegen(expression):
 
 
 @pytest.mark.parametrize("expression", ["floor(sqrt(N))", "floor(0.5 * N)", "floor(log(N + 1))"])
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_floor_of_no_integer_quotient_keeps_its_floor(expression):
     n = symbol("N")
     floored = eval(expression, {"N": n, "floor": sympy.floor, "sqrt": sympy.sqrt, "log": sympy.log})

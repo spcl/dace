@@ -186,6 +186,7 @@ def test_a_repeated_pair_routes_to_the_sequential_branch():
     assert np.array_equal(got, ref), "the colliding run must fall back to the sequential branch"
 
 
+# Reproducer: Place a joint scatter guard where it does not cost the nest its rank (e3375bf05d)
 def test_an_index_array_is_read_at_its_own_rank():
     """``xi[1, j]`` is one element of a rank-2 array, so the key fill reads it through a rank-2
     memlet. Flattening the subscript into a single expression string instead makes
@@ -209,6 +210,7 @@ def test_an_index_array_is_read_at_its_own_rank():
     assert np.array_equal(got, ref)
 
 
+# Reproducer: Place a joint scatter guard where it does not cost the nest its rank (e3375bf05d)
 def test_the_key_fill_map_is_not_a_vectorizer_candidate():
     """The fill is program-level scaffolding: flat, sized by the loop's trip count, and of a rank a
     K-dim tiling has nothing to say about. The guard's other pieces are already invisible to the

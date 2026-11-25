@@ -97,6 +97,7 @@ def _signatures(sdfg):
     return sigs
 
 
+# Reproducer: Readable codegen: fix BLAS/reduction-lowered corpus kernels (f06067736c)
 def test_full_subset_same_name_not_renamed():
     """Inner A indexed from (-1, -1) has a different signature than the zero-based outer A and is renamed."""
     sdfg = _nested_view_sdfg((-1, -1))
@@ -111,6 +112,7 @@ def test_full_subset_same_name_not_renamed():
     assert renamed == 1  # the nested A was renamed
 
 
+# Reproducer: Readable codegen: fix BLAS/reduction-lowered corpus kernels (f06067736c)
 def test_identical_signature_kept():
     """Inner A whose signature is identical to the outer A is left alone (emission dedup handles it)."""
     sdfg = _nested_view_sdfg((0, 0))
@@ -120,6 +122,7 @@ def test_identical_signature_kept():
     assert _signatures(sdfg)["A"] == {(2, ("N", "1"), ("0", "0"))}
 
 
+# Reproducer: Readable codegen: fix BLAS/reduction-lowered corpus kernels (f06067736c)
 def test_distinct_inner_name_kept():
     """A nested connector whose name is not present in the parent is never renamed."""
     sdfg = _nested_view_sdfg((-1, -1), inner_name="_inner")
@@ -130,6 +133,7 @@ def test_distinct_inner_name_kept():
     assert set(sigs["_inner"]) and set(sigs["A"])  # both present, no collision
 
 
+# Reproducer: Readable codegen: fix BLAS/reduction-lowered corpus kernels (f06067736c)
 def test_root_argument_never_renamed():
     """The root SDFG's own array names always win; only the nested occurrence is renamed."""
     sdfg = _nested_view_sdfg((-1, -1))
@@ -142,6 +146,7 @@ def test_root_argument_never_renamed():
 
 
 @pytest.mark.parametrize("kernel", ["trisolv", "lu", "ludcmp"])
+# Reproducer: Readable codegen: fix BLAS/reduction-lowered corpus kernels (f06067736c)
 def test_uninlined_kernel_no_duplicate_idx(kernel):
     """The reproduction: a real kernel with every nested SDFG forced no_inline must emit each
     ``<name>_idx`` at most once per translation unit (no ODR redefinition)."""
@@ -332,6 +337,7 @@ def test_scalar_connector_not_renamed():
     assert sdfg.to_json() == before
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_renamed_container_is_renamed_in_the_loop_labels_too():
     """gmres: the label of a loop in a nested body said ``reduction: + into H`` where the body names it ``H_v0``."""
     sdfg = _nested_view_sdfg((-1, -1))

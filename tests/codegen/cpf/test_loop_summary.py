@@ -32,6 +32,7 @@ INNER_PRIVATE = """\
 """
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_private_name_the_loop_body_declares_is_dropped():
     """cloudsc_solver_carry: ``private per iteration: arr60`` named a scalar declared inside the loop body, not a
     buffer before the loop that every iteration shares."""
@@ -39,6 +40,7 @@ def test_a_private_name_the_loop_body_declares_is_dropped():
     assert first.endswith("reads or writes"), first
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_private_buffer_declared_before_the_loop_stays_named():
     """eigh: ``arr18`` is declared before the loop and assigned inside it; the note is the one fact the code hides."""
     code = "double t;\n" + INNER_PRIVATE.replace("double t;", "")
@@ -60,6 +62,7 @@ INNER_SUM = """\
 """
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_reduction_into_a_name_the_loop_body_declares_is_dropped():
     """icon_aes_graupel: the ``j`` loop said ``reduction: + into arr109`` of a scalar each of its iterations declares."""
     first = cpf_summary.drop_inner_reductions(INNER_SUM).splitlines()[0]
@@ -84,6 +87,7 @@ DATA_RANGE = """\
 """
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_label_over_the_bounds_of_a_range_read_from_data_names_its_loop():
     """A map over ``ptr[i]:ptr[i + 1]`` loads its bounds between label and loop: the summary said ``statement`` and
     listed ``k`` open, uncommented."""
@@ -101,12 +105,14 @@ def summary(code: str) -> list[str]:
 CLOSING = "// No reordering is left to prove: every loop is either parallel or a proven recurrence."
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_unit_of_parallel_loops_is_summed_up_as_proven():
     header = summary(named(scaling_sdfg("cpf_audit_summary_parallel")))
     assert re.fullmatch(r"//   parallel: i", header[1]), header
     assert header[-2].startswith(CLOSING) and header[-1] == "// cpf: proven: all", header
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_proven_recurrence_is_summed_up_with_its_dependence():
     header = summary(named(carried_sdfg("cpf_audit_summary_recurrence")))
     sequential = [line for line in header if line.startswith("//   sequential: ")]
@@ -123,6 +129,7 @@ def gather_store(idx: dace.int64[N], b: dace.float64[N], a: dace.float64[M]):
         a[idx[i]] = b[i]
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_unit_with_an_open_loop_names_it_and_does_not_close():
     sdfg = gather_store.to_sdfg(simplify=True)
     sdfg.name = "cpf_audit_summary_open"
@@ -132,6 +139,7 @@ def test_a_unit_with_an_open_loop_names_it_and_does_not_close():
     assert not any(line.startswith(CLOSING) for line in header), header
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_the_kinds_rendering_has_no_summary():
     sdfg = scaling_sdfg("cpf_audit_summary_kinds")
     AnnotateLoopKinds().apply_pass(sdfg, {})
@@ -165,12 +173,14 @@ static inline void other(double* a, int64_t n) {
 PROVEN_LINE = re.compile(r"^// cpf: proven: (all|partial; open: ([^,\n]+(?:, [^,\n]+)*))$")
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_counter_left_repeated_is_numbered_in_the_header():
     """A counter ``ReadableNames`` keeps (one read after its loop) may repeat; the header numbers the repeats."""
     (proven,) = [line for line in cpf_summary.summary_lines(cpf_summary.loops_of(NESTS)) if "cpf: proven" in line]
     assert proven == "// cpf: proven: partial; open: t, i, i#2, i#3", proven
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_the_proven_line_keeps_the_format_the_bench_parses():
     for code in (NESTS, NESTS.replace("// unknown -- a conditional write", "// parallel -- independent: a write")):
         summary = cpf_summary.summary_lines(cpf_summary.loops_of(code))
@@ -181,6 +191,7 @@ def test_the_proven_line_keeps_the_format_the_bench_parses():
         assert len(names) == len(set(names)), names
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_the_legend_explains_only_the_classes_the_unit_uses():
     """s2233: the header explained ``unknown`` loops in a unit that has none."""
     code = named(carried_sdfg("cpf_audit_legend"))
@@ -191,6 +202,7 @@ def test_the_legend_explains_only_the_classes_the_unit_uses():
     assert sequential in code and unknown not in code, code
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_only_unknown_loops_are_open():
     """Owner 11-24: a sequential loop carries a proven dependence, so only ``unknown`` loops keep a form partial."""
     code = (
@@ -212,6 +224,7 @@ def small_fixed_loops(a: dace.float64[4], b: dace.float64[4], c: dace.float64[4]
         c[m] = b[m] * 2.0
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_loop_over_a_few_fixed_iterations_gets_a_real_class():
     """Owner 11-24: a short loop is analyzed like any other; its trip count only decides whether to fork."""
     sdfg = small_fixed_loops.to_sdfg(simplify=True)
@@ -258,6 +271,7 @@ if ((inc != 0)) {
 """
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_versioned_loop_counts_as_proven_and_lists_its_guarded_arm():
     """Owner ruling 11-23: ``if (check) parallel else in order`` is proven; the parallel arms are named apart."""
     summary = cpf_summary.summary_lines(cpf_summary.loops_of(VERSIONED_LOOP))
@@ -276,6 +290,7 @@ def test_a_unit_whose_only_loop_is_a_helper_is_proven():
     assert header[0] == cpf_summary.CLOSING_NO_LOOPS and header[1] == "// cpf: proven: all", header
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_unit_without_a_versioned_loop_has_no_guarded_line():
     summary = cpf_summary.summary_lines(cpf_summary.loops_of(NESTS))
     assert not any(line.startswith("// cpf: guarded") for line in summary), summary
@@ -293,6 +308,7 @@ for (int64_t i = 0; i < n; i += 1) {
 """
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_fusion_note_names_only_intermediates_the_code_holds():
     """qe_vexx_k, correlation: a later pass folded the intermediate away, and the note still named it."""
     notes = [line.strip() for line in cpf_summary.drop_missing_fusion_names(FUSED).splitlines() if "fusion:" in line]
@@ -459,6 +475,7 @@ def test_a_rendered_unit_comments_every_loop_above_its_pragmas():
             )
 
 
+# Reproducer: InlineSDFG does not stage a copy through an input-only container; CPF kinds rendering comm... (71bed4eacf)
 def test_an_added_comment_skips_a_barrier_above_the_loop():
     """A barrier is a statement of its own, not a pragma of the loop under it: the added comment goes between the
     two, so the barrier does not read as part of the loop."""
@@ -479,6 +496,7 @@ static inline void cpf_helper(double *a, long n) {
     assert cpf_summary.ANY_LOOP_HEAD.match(lines[barrier + 2]), lines
 
 
+# Reproducer: InlineSDFG does not stage a copy through an input-only container; CPF kinds rendering comm... (71bed4eacf)
 def test_the_kinds_rendering_gets_a_class_word_on_every_loop():
     """The kinds rendering carries the word alone: a map's other dimensions follow its parallel head, an
     implementation loop of a helper says its class and role, and no line has a proof's dash."""

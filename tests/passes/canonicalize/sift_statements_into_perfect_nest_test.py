@@ -480,6 +480,7 @@ def test_sift_is_idempotent():
     assert sift_imperfect_nests(sdfg) == 0
 
 
+# Reproducer: Passes that move blocks through add_node no longer run set_nested_sdfg_parent_references (bdf3ecd50e)
 def test_sifting_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     """A sift deep-copies statements into guards inside the inner loop; ``add_node`` lists every copy."""
     sdfg = _pre_and_post_shared.to_sdfg(simplify=True)

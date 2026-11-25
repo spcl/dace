@@ -15,6 +15,7 @@ import numpy as np
 import dace
 
 
+# Reproducer: Python frontend: four parse-time fixes and a nested-call state-target fix (aa9da0e7f6)
 def test_numpy_empty_default_dtype_matches_numpy():
 
     @dace.program
@@ -32,6 +33,7 @@ def test_numpy_empty_default_dtype_matches_numpy():
     assert any(dt == dace.float64 for dt in transients)
 
 
+# Reproducer: Python frontend: four parse-time fixes and a nested-call state-target fix (aa9da0e7f6)
 def test_numpy_empty_explicit_dtype_still_honoured():
 
     @dace.program
@@ -49,6 +51,7 @@ def test_numpy_empty_explicit_dtype_still_honoured():
     assert any(dt == dace.int32 for dt in transients)
 
 
+# Reproducer: Python frontend: four parse-time fixes and a nested-call state-target fix (aa9da0e7f6)
 def test_numpy_empty_like_unaffected():
 
     @dace.program
@@ -62,6 +65,7 @@ def test_numpy_empty_like_unaffected():
     assert np.array_equal(x, np.full(10, 2.0))
 
 
+# Reproducer: Python frontend: four parse-time fixes and a nested-call state-target fix (aa9da0e7f6)
 def test_copy_of_column_slice_matches_numpy():
 
     @dace.program
@@ -75,6 +79,7 @@ def test_copy_of_column_slice_matches_numpy():
     assert np.allclose(out, path[:, 1])
 
 
+# Reproducer: Python frontend: four parse-time fixes and a nested-call state-target fix (aa9da0e7f6)
 def test_copy_of_row_slice_matches_numpy():
 
     @dace.program
@@ -88,6 +93,7 @@ def test_copy_of_row_slice_matches_numpy():
     assert np.allclose(out, path[1, :])
 
 
+# Reproducer: Python frontend: four parse-time fixes and a nested-call state-target fix (aa9da0e7f6)
 def test_numpy_copy_function_on_slice_matches_numpy():
 
     @dace.program
@@ -101,6 +107,7 @@ def test_numpy_copy_function_on_slice_matches_numpy():
     assert np.allclose(out, path[:, 1])
 
 
+# Reproducer: Python frontend: four parse-time fixes and a nested-call state-target fix (aa9da0e7f6)
 def test_copy_of_whole_array_still_works():
     """Control: copying a plain (non-view) array must remain unaffected."""
 

@@ -88,6 +88,7 @@ def _zero_loop(dst: dace.float64[N]):
 
 # LoopRegion lift
 @temporarily_disable_autoopt_and_serialization
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_copy_loop_lifts_to_copy_libnode():
     """``for i: dst[i] = src[i]`` -> a single ``CopyLibraryNode``, the loop gone, bit-exact."""
     sdfg = _copy_loop.to_sdfg(simplify=True)
@@ -112,6 +113,7 @@ def test_copy_loop_lifts_to_copy_libnode():
 
 
 @temporarily_disable_autoopt_and_serialization
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_zero_loop_lifts_to_memset_libnode():
     """``for i: dst[i] = 0`` -> a single ``FillLibraryNode``, the loop gone, bit-exact."""
     sdfg = _zero_loop.to_sdfg(simplify=True)
@@ -176,6 +178,7 @@ def test_zero_row_prefix_loop_keeps_the_loop_around_its_row_fill():
 
 
 @temporarily_disable_autoopt_and_serialization
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_self_referential_copy_loop_is_not_lifted():
     """``for i: a[i] = a[i - 1]`` is a carried dependence (same array), not a pure copy -- left alone."""
 
@@ -229,6 +232,7 @@ def test_large_copy_selects_mapped_parallel():
 
 
 @temporarily_disable_autoopt_and_serialization
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_small_copy_selects_serial_no_pragma():
     sdfg, ln = _copy_libnode_sdfg(SMALL_ELEMS)
     sdfg.expand_library_nodes(recursive=True)
@@ -258,6 +262,7 @@ def test_large_memset_selects_mapped_parallel():
 
 
 @temporarily_disable_autoopt_and_serialization
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_small_memset_selects_serial_no_pragma():
     sdfg, ln = _memset_libnode_sdfg(SMALL_ELEMS)
     sdfg.expand_library_nodes(recursive=True)

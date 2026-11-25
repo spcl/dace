@@ -47,6 +47,7 @@ def test_fft_fftw3_lowering():
     np.testing.assert_allclose(z / N, x, rtol=1e-12, atol=1e-12)
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_threaded_companion_library_is_linked_ahead_of_its_base(tmp_path):
     """FFTW's threaded planner ships as ``libfftw3_omp`` / ``libfftw3_threads`` beside ``libfftw3``; without it the
     transform ran on one thread against numba's threaded pocketfft (fft_1d, 10x slower)."""
@@ -62,6 +63,7 @@ def test_a_threaded_companion_library_is_linked_ahead_of_its_base(tmp_path):
 
 
 @pytest.mark.parametrize("threaded", [True, False])
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_threaded_fftw_plans_for_the_team(monkeypatch, threaded):
     from dace import data
     from dace.libraries.fft.environments import fftw3

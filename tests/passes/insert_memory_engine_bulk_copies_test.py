@@ -332,6 +332,7 @@ def test_insert_accepts_squeezed_unit_dims(global_shape, global_subset, shared_s
 
 
 @_DIRECTIONS
+# Reproducer: Fix failing test cases (13ad250bc8)
 def test_insert_accepts_bound_clamped_shared_region(load):
     """A partial tile clamps both regions to the array bound, which the memory engine handles itself."""
     NI = dace.symbol("NI")
@@ -342,6 +343,7 @@ def test_insert_accepts_bound_clamped_shared_region(load):
     _assert_libnode_implementation(sdfg)
 
 
+# Reproducer: Fix failing test cases (13ad250bc8)
 def test_insert_rejects_non_bound_clamp():
     """A clamp that is not the array bound changes the region the copy moves, so it is still a mismatch."""
     NI = dace.symbol("NI")
@@ -513,6 +515,7 @@ def test_preprocess_pipeline_memory_engine_copies_disabled():
 
 
 @pytest.mark.parametrize("kernel", ["transpose", "store"])
+# Reproducer: Fix more compilation errors (ec3434a930)
 def test_codegen_selects_memory_engine_copies(kernel):
     """Code generation applies ``compiler.cuda.memory_engine_copies`` before library nodes get a default expansion."""
     _, _, is_load = _TMA_KERNELS[kernel]

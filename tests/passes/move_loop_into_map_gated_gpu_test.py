@@ -241,6 +241,7 @@ def lane_maps(sdfg: dace.SDFG) -> list:
     ]
 
 
+# Reproducer: GPU lane maps: a host loop until promoted, and a nested argument does not block the kernel (870caa447b)
 def test_the_lane_map_over_kernels_is_a_host_loop_until_it_is_promoted():
     """The lane map the interchange wraps around device maps launches them, so it is created as a host map. Left
     ``Default``, schedule inference made an unpromoted one a device map around the kernels it launches
@@ -251,6 +252,7 @@ def test_the_lane_map_over_kernels_is_a_host_loop_until_it_is_promoted():
     assert len(lanes) == 1 and lanes[0].map.schedule == dace.ScheduleType.Sequential, lanes
 
 
+# Reproducer: GPU lane maps: a host loop until promoted, and a nested argument does not block the kernel (870caa447b)
 def test_a_nested_argument_without_storage_of_its_own_does_not_block_the_kernel():
     """A nested SDFG's non-transient array is the caller's array; its own ``Default`` storage does not keep the lane
     map off the device."""
@@ -277,6 +279,7 @@ def lanes_reading(name: str, desc: dace.data.Data) -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: PromoteHostMapsToKernels: a scalar the body only reads does not block the kernel (1f622a53b7)
 def test_a_host_scalar_the_body_only_reads_does_not_block_the_kernel():
     """A kernel takes a scalar it only reads by value: one in host memory does not keep the lane map off the device
     (cloudsc's ``zqtmst``)."""

@@ -921,6 +921,7 @@ def test_two_copies_into_one_array_are_compared_at_their_destinations() -> None:
     assert not xform.can_be_applied(sdfg, 0, sdfg)
 
 
+# Reproducer: LoopToMap: an elif arm does not guard a later branch on its own condition (39319a4b47)
 def test_an_elif_arm_does_not_cover_a_later_branch_on_its_condition() -> None:
     sdfg = dace.SDFG("elif_write_guard")
     for name, size in (("x", 8), ("o", 8), ("t", 1)):

@@ -889,6 +889,7 @@ def test_loop_fission_cross_iter_same_array_kept_together():
         assert np.allclose(out[k], ref[k]), f"mismatch on {k}"
 
 
+# Reproducer: fix(loop_fission): refuse constant-slot intra-iteration carry (TSVC s257) (308fc26fbe)
 def test_loop_fission_refuses_constant_slot_intra_iter_carry():
     """Regression for TSVC s257 ``a[i] = aa[j,i] - a[i-1]; aa[j,i] = a[i] + bb[j,i]``
     fissioned over the inner ``j`` loop.
@@ -990,6 +991,7 @@ def unfissionable_per_iter_bridge(b: dace.float64[N], c: dace.float64[N], d: dac
         s = c[i]
 
 
+# Reproducer: loop_fission: decide on a copy, so a loop that does not fission is untouched (fd21da92e5)
 def test_unfissionable_loop_is_left_untouched():
     """The bridge rewrite runs before the grouping (it is what makes a producer and its consumer look
     independent), but it is only sound once the fission separates them into their own loops. A loop that
@@ -1013,6 +1015,7 @@ def test_unfissionable_loop_is_left_untouched():
     sdfg.validate()
 
 
+# Reproducer: loop_fission: decide on a copy, so a loop that does not fission is untouched (fd21da92e5)
 def test_unfissionable_per_iter_bridge_is_value_preserving():
     n = 16
     rng = np.random.default_rng(0)

@@ -165,6 +165,7 @@ def test_multicore_leaf_gets_parallel_for_simd(impl):
 
 
 @pytest.mark.parametrize("impl", IMPLS)
+# Reproducer: fix: the simd clause is only stamped on a multicore map whose pragma reaches the innermost... (9da37248d7)
 def test_multicore_multidim_leaf_gets_no_simd(impl):
     """The pragma binds to the loop right after it, so on a two-dimensional map ``simd`` would
     ask for outer-loop vectorization of a nest instead of the element-wise vectorization it is
@@ -268,6 +269,7 @@ def test_map_with_uninlinable_nested_loop_gets_no_simd(impl, schedule):
 
 
 @pytest.mark.parametrize("impl", IMPLS)
+# Reproducer: A sequential loop that accumulates into a fixed element vectorizes as a reduction (d4dbcf0bed)
 def test_sequential_fixed_sum_wcr_gets_simd_reduction(impl):
     """A Sequential map that accumulates into one fixed element holds it in a register for the loop, and the loop
     then vectorizes as a reduction over that register. The lanes reassociate the sum; nothing else changes."""
@@ -299,6 +301,7 @@ def row_sums_sdfg(name: str) -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: A sequential loop that accumulates into a fixed element vectorizes as a reduction (d4dbcf0bed)
 def test_a_row_reduction_vectorizes_its_inner_loop_and_matches_numpy():
     """The innermost loop gets a map of its own; the row's element is its register, reduced across the lanes."""
     import numpy as np
@@ -428,6 +431,7 @@ def map_with_nested_wcr_sdfg(name: str, schedule, wcr: str):
 
 
 @pytest.mark.parametrize("impl", IMPLS)
+# Reproducer: Fix the six extended CI reds: three independent bugs (e1ee0d5d52)
 def test_sequential_wcr_inside_nested_body_gets_no_simd(impl):
     """The WCR hazard does not have to sit on the map exit. An outlined body carries the
     accumulate INSIDE its NestedSDFG, and a Sequential map still lowers it to a plain non-atomic
@@ -443,6 +447,7 @@ def test_sequential_wcr_inside_nested_body_gets_no_simd(impl):
 
 
 @pytest.mark.parametrize("impl", IMPLS)
+# Reproducer: Fix the six extended CI reds: three independent bugs (e1ee0d5d52)
 def test_multicore_minmax_wcr_inside_nested_body_gets_no_simd(impl):
     """Same blind spot on the CPU_Multicore side: ``min``/``max`` withholds the clause there, and
     a nested-body WCR must trigger that refusal exactly as an exit-edge one does."""

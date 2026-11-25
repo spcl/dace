@@ -103,6 +103,7 @@ def _position(code: str, pattern: str) -> int:
     return match.start()
 
 
+# Reproducer: fix: host-sync D2H copies at first cpu consumer (6d79741e06)
 def test_the_synchronization_is_lazy_rather_than_emitted_at_the_copy():
     """Nothing is emitted at the copy site: the sync belongs to the consumer, not the producer."""
     code = _generated_code(_scalar_readback_sdfg("d2h_lazy"))
@@ -110,6 +111,7 @@ def test_the_synchronization_is_lazy_rather_than_emitted_at_the_copy():
     assert copy_block.count("StreamSynchronize") == 1, "more than one synchronization guards a single copy"
 
 
+# Reproducer: fix: host-sync D2H copies at first cpu consumer (6d79741e06)
 def test_a_second_consumer_reuses_the_first_synchronization():
     """One sync before the first consumer suffices; the host's program order covers the rest."""
     code = _generated_code(_scalar_readback_sdfg("d2h_two_consumers", num_kernels=2))
@@ -120,6 +122,7 @@ def test_a_second_consumer_reuses_the_first_synchronization():
     )
 
 
+# Reproducer: fix: host-sync D2H copies at first cpu consumer (6d79741e06)
 def test_a_host_tasklet_consumer_is_synchronized():
     """A plain host tasklet reading the destination is a host consumer like any other."""
     code = _generated_code(_host_consumer_sdfg("d2h_host_tasklet"))
@@ -132,6 +135,7 @@ def test_a_host_tasklet_consumer_is_synchronized():
     assert copy < sync < read, "the host tasklet reads the destination of an unsynchronized copy"
 
 
+# Reproducer: fix: host-sync D2H copies at first cpu consumer (6d79741e06)
 def test_a_host_to_device_copy_is_not_synchronized_before_the_kernel():
     """The kernel is issued on the copy's stream, which orders it without blocking the host."""
     code = _generated_code(_host_upload_sdfg("h2d_no_sync"))

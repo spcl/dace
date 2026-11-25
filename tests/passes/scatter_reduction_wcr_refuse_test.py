@@ -206,6 +206,7 @@ def build_self_ref_via_view() -> dace.SDFG:
 
 
 # Detection unit tests
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_data_dependent_scatter_sink_is_op_agnostic():
     """``is_data_dependent_scatter_sink`` fires for ANY op (the fail-safe refuse predicate),
     while ``scatter_reduction_wcr_edge`` narrows to the OpenMP-reducible ops."""
@@ -220,6 +221,7 @@ def test_data_dependent_scatter_sink_is_op_agnostic():
         assert (scatter_reduction_wcr_edge(n, oc) is not None) is reducible
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_map_is_parallel_predicate():
     """``map_is_parallel``: top-level non-Sequential map -> parallel; explicit Sequential or
     a nested map -> not parallel."""
@@ -232,6 +234,7 @@ def test_map_is_parallel_predicate():
 
 # NormalizeWCR / NormalizeWCR refuse (bugs 1 + 2)
 @pytest.mark.parametrize("prog", [weighted_histogram, subtracted_histogram], ids=["plus", "minus"])
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_normalize_wcr_refuses_data_dependent_scatter(prog):
     """``NormalizeWCR`` alone refuses the drop-WCR / whole-buffer rewrite for a
     data-dependent multi-element scatter sink (any op) -- no ``_nnr_out`` buffer, no rewrite."""
@@ -241,6 +244,7 @@ def test_normalize_wcr_refuses_data_dependent_scatter(prog):
     assert not nnr_out_arrays(sdfg), "no per-iteration whole-array _nnr_out buffer may be inserted"
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_normalize_wcr_source_skips_scatter_sink_regardless_of_op():
     """``NormalizeWCR`` skips a data-dependent scatter sink for a NON-reducible op too:
     even with a ``-`` WCR surfaced onto the ``NestedSDFG -> MapExit`` edge, the edge is left
@@ -259,6 +263,7 @@ def test_normalize_wcr_source_skips_scatter_sink_regardless_of_op():
 
 
 # CPU end-to-end: parallel privatizes, refuse cases fall back
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_cpu_parallel_reducible_scatter_privatized_and_bit_exact():
     """Regression guard (do not over-refuse): the parallel ``+`` histogram STILL privatizes to
     the fast ``reduction(+:hist[0:n])`` clause, with no ``_nnr_out`` buffer, and matches numpy."""
@@ -279,6 +284,7 @@ def test_cpu_parallel_reducible_scatter_privatized_and_bit_exact():
     assert np.allclose(res, ref), f"maxerr={np.max(np.abs(res - ref))}"
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_cpu_subtraction_scatter_refused_and_bit_exact():
     """Bug 2: a ``-`` scatter is non-reducible, so ``PrivatizeScatterReduction`` refuses it AND
     ``NormalizeWCR`` must NOT apply the unsound whole-buffer rewrite -- it falls back to the
@@ -300,6 +306,7 @@ def test_cpu_subtraction_scatter_refused_and_bit_exact():
     assert np.allclose(res, ref), f"maxerr={np.max(np.abs(res - ref))}"
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_gpu_target_scatter_not_whole_array_buffered():
     """Bug 1 (GPU face, structural): canonicalize never privatizes a scatter (a CPU specialization),
     so ``NormalizeWCR`` must refuse the scatter (leaving the inner WCR to lower to an
@@ -356,6 +363,7 @@ def test_self_reference_via_view_refused_and_matches_reference():
 
 
 # Sequential scatter is not privatized (refinement)
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_sequential_scatter_not_privatized_and_bit_exact():
     """A SEQUENTIAL scatter has no cross-thread contention, so it is left a plain serial WCR
     accumulate -- ``PrivatizeScatterReduction`` does not fire and no OpenMP reduction clause is

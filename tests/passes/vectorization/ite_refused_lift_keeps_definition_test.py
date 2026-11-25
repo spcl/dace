@@ -108,6 +108,7 @@ def build_refused_if_else_in_a_loop() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: Make the vectorization tests fail when the vectorizer does nothing (336e09f74c)
 def test_the_public_pass_leaves_a_validating_sdfg_when_the_lift_refuses():
     """The shipped symptom, through the public entry point: "Missing symbols on nested SDFG".
 

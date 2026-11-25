@@ -72,6 +72,7 @@ def test_a_lowered_map_is_known_parallel_and_lifts_without_a_dependence_test():
     assert not LoopToMap.can_be_applied_to(loops[0].sdfg, loop=loops[0])
 
 
+# Reproducer: Known-parallel loops: the signature is the header plus the elements one iteration touches... (b38615fa87)
 def test_a_known_parallel_loop_over_a_small_symbol_is_still_mapped():
     """The SMALL-scale rule keeps a loop a loop only when its independence is unknown: a lowered map is mapped back,
     and the CPU specialization decides whether it runs single-core."""

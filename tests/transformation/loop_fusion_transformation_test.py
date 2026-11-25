@@ -987,6 +987,7 @@ def test_provable_read_behind_symbolic_still_fuses():
     )
 
 
+# Reproducer: Passes that move blocks through add_node no longer run set_nested_sdfg_parent_references (bdf3ecd50e)
 def test_fusion_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     """Splicing the second loop's body into the first moves blocks between regions in place."""
 

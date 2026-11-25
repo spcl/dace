@@ -237,6 +237,7 @@ def test_transitive_chain_is_hoisted():
     _run_and_check(sdfg, py_ref, a=np.array([2.0]), b=np.array([3.0]), c=np.array([4.0]), outp=np.zeros(6), N=6)
 
 
+# Reproducer: fix(licm): reuse hoisted producer node in preheader instead of a fresh read (c4779bce98)
 def test_hoisted_chain_producer_and_consumer_stay_connected():
     """A hoisted producer/consumer chain must share ONE transient node in the
     preheader, not a disconnected write node and read node.
@@ -1359,6 +1360,7 @@ def _map_invariant_scalar_kernel(a: dace.float64[_LICM_N], b: dace.float64[_LICM
             a[i] = a[i] + b[i + m - j - 1] * c[j]
 
 
+# Reproducer: fix(canonicalize): correctness fixes in LICM, move-if, symbol-prop, split-tasklets (aaed2278a9)
 def test_map_invariant_scalar_read_hoist_uses_inner_memlet():
     """Reproducer (TSVC s176): hoisting a map-invariant scalar read (``c[j]``) out
     of a map must use the inner edge's single-element memlet, not the MapEntry's
@@ -1708,6 +1710,7 @@ def test_the_map_query_answers_as_the_hoist_does_and_changes_nothing():
     sdfg.validate()
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_tasklet_reading_a_value_the_enclosing_map_writes_keeps_its_producer():
     """On CPU the inner map's invariant ``y = s * 2`` leaves ``map j`` for ``map i``, whose body writes ``s`` per ``i``.
     The hoisted tasklet reads that ``s`` node itself: a fresh read of ``s`` outside both maps would read it before the

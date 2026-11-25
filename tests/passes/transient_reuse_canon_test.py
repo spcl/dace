@@ -203,6 +203,7 @@ def test_transient_read_by_later_nested_sdfg_is_not_shared():
     assert np.allclose(E, 6 * A)
 
 
+# Reproducer: TransientReuse: a transient a nested SDFG's connector is bound to shares a buffer only of... (3453ed2362)
 def test_transient_bound_to_a_nested_sdfg_keeps_its_shape():
     """A nested SDFG's connector must match the array it is bound to: ``T`` (``N``) reaches one, so it may share a
     buffer only of its own shape, never the larger ``Big`` (cp2k_trs4's ``diag_offset`` into a ``9 N`` scratch)."""

@@ -274,6 +274,7 @@ def scaled_by(x: dace.float64, A: dace.float64[N]):
     A[:] = A * x
 
 
+# Reproducer: Fix the code review findings in the Python, tile and Tile C++ backends (226a77aeb6)
 def test_positional_arguments_bind_in_the_order_of_the_program_signature():
     sdfg = scaled_by.to_sdfg()
     with python_backend():
@@ -285,6 +286,7 @@ def test_positional_arguments_bind_in_the_order_of_the_program_signature():
     assert np.array_equal(a, [2.0, 2.0, 2.0])
 
 
+# Reproducer: Fix the code review findings in the Python, tile and Tile C++ backends (226a77aeb6)
 def test_a_constant_sizes_a_transient_and_reaches_a_tasklet():
     sdfg = dace.SDFG("constant_sized")
     sdfg.add_symbol("C", dace.int64)
@@ -321,6 +323,7 @@ def conditional_accumulate_sdfg() -> dace.SDFG:
 
 
 @pytest.mark.parametrize("condition, expected", [(-1.0, 1.0), (1.0, 6.0)])
+# Reproducer: Fix the code review findings in the Python, tile and Tile C++ backends (226a77aeb6)
 def test_a_dynamic_accumulation_adds_only_on_the_path_that_writes(condition: float, expected: float):
     a = np.ones(1)
 
@@ -358,6 +361,7 @@ def branch_sized_sdfg() -> dace.SDFG:
 
 
 @pytest.mark.parametrize("n, expected", [(9, 1.0), (2, 2.0)])
+# Reproducer: Fix the code review findings in the Python, tile and Tile C++ backends (226a77aeb6)
 def test_a_transient_sized_by_an_assigned_symbol_exists_in_every_branch(n: int, expected: float):
     out = np.zeros(1)
 
@@ -385,6 +389,7 @@ def modulo_family_sdfg() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: Fix three Python and tile backend bugs and add two CuPy expansions (1aee258e3f)
 def test_python_modulo_floors_and_c_modulo_truncates_a_negative_dividend():
     out = np.zeros(3, dtype=np.int64)
 
@@ -414,6 +419,7 @@ def modulo_bounded_loops_sdfg() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: Tile op backends: fix index tiles with a ONE dim, modulo spellings, nested bindings and Cu... (b0d5a9e595)
 def test_a_symbolic_modulo_bound_keeps_its_rounding():
     """``Mod(-4, 5)`` is 1 and C's ``-4 % 5`` is -4: one trip each, where Python's ``%`` would give six."""
     out = np.zeros(2, dtype=np.int64)
@@ -487,6 +493,7 @@ def doubler_sdfg(label: str) -> dace.SDFG:
     return inner
 
 
+# Reproducer: Tile op backends: fix index tiles with a ONE dim, modulo spellings, nested bindings and Cu... (b0d5a9e595)
 def test_two_nested_sdfgs_with_one_connector_name_each_bind_their_own_arrays():
     """Emitted as they are, not inlined, as a tile kernel emits them: the second binds ``_x`` and ``_y`` anew."""
     sdfg = dace.SDFG("two_doublers")

@@ -47,6 +47,7 @@ def _openmp_runtime_loadable():
     return False
 
 
+# Reproducer: Fix DaCe compile hangs + OpenMP/OpenBLAS discovery under srun on daint (26cff007fe)
 def test_some_blas_environment_detected_when_a_blas_is_present():
     """If the machine has a BLAS at all, at least one DaCe BLAS environment must detect it."""
     assert _system_has_a_blas(), "no BLAS library installed on this machine"
@@ -57,6 +58,7 @@ def test_some_blas_environment_detected_when_a_blas_is_present():
     )
 
 
+# Reproducer: Fix DaCe compile hangs + OpenMP/OpenBLAS discovery under srun on daint (26cff007fe)
 def test_openblas_single_library_is_detected():
     """The spack/conda single-``libopenblas`` layout must be detected (the reported bug)."""
     assert ctypes.util.find_library("openblas"), "libopenblas not loadable (run `spack load openblas` / not installed)"
@@ -110,6 +112,7 @@ def test_openblas_threading_flavor_is_probed_and_never_fatal():
         assert flavor_warnings, f"{openblas_env.OPENBLAS_PARALLEL_NAMES[code]} OpenBLAS was not warned about"
 
 
+# Reproducer: Fix DaCe compile hangs + OpenMP/OpenBLAS discovery under srun on daint (26cff007fe)
 def test_gemm_compiles_and_runs_through_openblas():
     """End-to-end: a GEMM library node compiles and runs via the OpenBLAS implementation
     (finding + including + linking libopenblas) and matches numpy."""
@@ -136,6 +139,7 @@ def test_gemm_compiles_and_runs_through_openblas():
         Gemm.default_implementation = prev
 
 
+# Reproducer: A pthreads OpenBLAS stays on one thread so it does not compete with the OpenMP team (0f8a52f430)
 def test_a_program_using_openblas_defers_its_threads_to_openmp():
     """The program's initialization keeps a pthreads OpenBLAS on one thread, so its pool does not compete with
     the OpenMP team for the cores; the check runs in the generated code, so a netlib link still builds."""

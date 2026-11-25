@@ -46,6 +46,7 @@ def _build_minmax_interstate_sdfg(rhs: str) -> SDFG:
     return sdfg
 
 
+# Reproducer: fix(codegen): make Min/Max type-strict (reject mixed int/float) (2e38612c3e)
 def test_min_mixed_int_double_is_compile_error():
     """A ``Min`` mixing an integer literal with a double must fail to compile."""
     sdfg = _build_minmax_interstate_sdfg("Min(1, zanew)")
@@ -55,6 +56,7 @@ def test_min_mixed_int_double_is_compile_error():
     assert _MIXED_TYPE_ERROR_FRAGMENT in str(excinfo.value)
 
 
+# Reproducer: fix(codegen): make Min/Max type-strict (reject mixed int/float) (2e38612c3e)
 def test_max_mixed_int_double_is_compile_error():
     """A ``Max`` mixing an integer literal with a double must fail to compile."""
     sdfg = _build_minmax_interstate_sdfg("Max(0, zanew)")
@@ -64,6 +66,7 @@ def test_max_mixed_int_double_is_compile_error():
     assert _MIXED_TYPE_ERROR_FRAGMENT in str(excinfo.value)
 
 
+# Reproducer: fix(codegen): make Min/Max type-strict (reject mixed int/float) (2e38612c3e)
 def test_min_all_double_compiles_and_runs():
     """``Min`` over doubles compiles and keeps full precision (no truncation)."""
     sdfg = _build_minmax_interstate_sdfg("Min(1.0, zanew)")
@@ -72,6 +75,7 @@ def test_min_all_double_compiles_and_runs():
     assert out[0] == pytest.approx(0.375)
 
 
+# Reproducer: fix(codegen): make Min/Max type-strict (reject mixed int/float) (2e38612c3e)
 def test_max_all_double_compiles_and_runs():
     """``Max`` over doubles compiles and keeps full precision (no truncation)."""
     sdfg = _build_minmax_interstate_sdfg("Max(0.0, zanew)")
@@ -80,6 +84,7 @@ def test_max_all_double_compiles_and_runs():
     assert out[0] == pytest.approx(0.375)
 
 
+# Reproducer: fix(codegen): make Min/Max type-strict (reject mixed int/float) (2e38612c3e)
 def test_min_all_integer_range_compiles_and_runs():
     """``Min`` over integer arguments (the common tiling case) is allowed.
 

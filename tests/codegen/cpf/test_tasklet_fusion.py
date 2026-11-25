@@ -29,6 +29,7 @@ def widened_quotient_sdfg(name: str) -> dace.SDFG:
 
 
 @pytest.mark.parametrize("language", ["c++", "c"])
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_folded_integer_into_a_float64_scalar_divides_in_double(language):
     name = f"cpf_fold_widened_{'cpp' if language == 'c++' else 'c'}"
     result = render(widened_quotient_sdfg(name), language=language)

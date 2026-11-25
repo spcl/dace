@@ -272,6 +272,7 @@ def test_only_the_frontend_boundary_reads_symbol_declarations():
     assert {r for r in readers if not r.startswith("frontend/python/")} <= boundary
 
 
+# Reproducer: Fix ten symbol-registry review findings (648819b75d)
 def test_symbol_removed_through_the_repository_is_no_longer_shape_declared():
     sdfg = dace.SDFG("repo_removed_shape_symbol")
     sdfg.add_transient("t", [symbolic.pystr_to_symbolic("i")], dace.float64)
@@ -280,12 +281,14 @@ def test_symbol_removed_through_the_repository_is_no_longer_shape_declared():
     assert "i" not in sdfg.symbols
 
 
+# Reproducer: Fix ten symbol-registry review findings (648819b75d)
 def test_shape_declares_a_symbol_with_its_dtype():
     sdfg = dace.SDFG("shape_symbol_dtype")
     sdfg.add_array("A", [dace.symbol("L", dace.int64)], dace.float64)
     assert sdfg.symbols["L"] == dace.int64
 
 
+# Reproducer: Fix ten symbol-registry review findings (648819b75d)
 def test_replacing_by_expression_keeps_declared_types_and_declares_no_scope_names():
     sdfg = dace.SDFG("replace_keeps_types")
     sdfg.add_symbol("N", dace.int32)
@@ -297,6 +300,7 @@ def test_replacing_by_expression_keeps_declared_types_and_declares_no_scope_name
     assert sdfg.symbols == {"M": dace.int64}
 
 
+# Reproducer: Fix the second round of symbol-registry review findings (88205a5616)
 def test_type_inference_takes_the_declared_type_of_a_symbol():
     assert infer_types(dace.symbol("L", dace.int64), {}) == {"L": dace.int64}
     assert dace.dtypes.result_type_of(dace.symbol("L", dace.int64), dace.int64) == dace.int64

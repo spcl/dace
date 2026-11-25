@@ -60,6 +60,7 @@ def _compute_ops(sdfg):
     ]
 
 
+# Reproducer: Fix four empty-happens-before-memlet defects in vectorization and LoopToMap (9785608b08)
 def test_every_compute_op_produces_a_real_output():
     """The defect directly: a result connector wired to an empty (data-less) memlet."""
     sdfg = _vectorized("tileop_order_struct")
@@ -74,6 +75,7 @@ def test_every_compute_op_produces_a_real_output():
             )
 
 
+# Reproducer: Fix four empty-happens-before-memlet defects in vectorization and LoopToMap (9785608b08)
 def test_ordering_edges_survive_conversion():
     """A converted tasklet's happens-before edges must re-anchor onto the lib node, not vanish.
 
@@ -105,6 +107,7 @@ def test_ordering_edges_survive_conversion():
 
 
 @pytest.mark.parametrize("n", [64, 61])
+# Reproducer: Fix four empty-happens-before-memlet defects in vectorization and LoopToMap (9785608b08)
 def test_value_preserving(n):
     """``n=61`` exercises the masked remainder tile as well as the full ones."""
     rng = np.random.default_rng(1251)

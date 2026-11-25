@@ -58,6 +58,7 @@ def _masked_reduction(a: dace.float64[N], acc: dace.float64[1]):
             acc[0] = acc[0] + a[i]
 
 
+# Reproducer: fix(loop-to-reduce): reduce into the carried accumulator, not the staging temp (92d37f89f4)
 def test_masked_conditional_reduction_value_preserving():
     """CLOUDSC-style masked accumulation ``if a[i] > 0.5: acc += a[i]`` -- the sum
     over only the elements passing a data-dependent guard. Canonicalize must keep it
@@ -88,6 +89,7 @@ def _two_pass_normalize(a: dace.float64[N], b: dace.float64[N]):
         b[i] = a[i] / s
 
 
+# Reproducer: fix(loop-to-reduce): reduce into the carried accumulator, not the staging temp (92d37f89f4)
 def test_two_pass_normalize_value_preserving():
     """ECRAD-style normalization ``s = sum(a); b[i] = a[i] / s`` -- a reduction pass
     feeding an independent elementwise pass. Value-preserving, and the second pass

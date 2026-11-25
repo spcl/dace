@@ -120,6 +120,7 @@ def test_single_guarded_map_pushed_in():
     assert np.allclose(out, ref) and np.allclose(out, a + 1.0)
 
 
+# Reproducer: fix(transformation): MoveIfIntoMap pushes outer-map-param conditions into the inner map (a5f6366f62)
 def test_condition_on_outer_param_pushed_in():
     """A condition that varies with the outer map parameter (``if j > 0``) is
     pushed DOWN into the inner map, not hoisted up: the guard is replicated

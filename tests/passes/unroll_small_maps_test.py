@@ -54,6 +54,7 @@ if __name__ == "__main__":
     test_a_map_over_a_large_range_is_left_alone()
 
 
+# Reproducer: Fix the untested 11-18 GPU and hint commits: all_states, SymExpr trip counts, stale tests (06214771fe)
 def test_trip_count_reads_a_bound_that_carries_an_approximation():
     """A device map's bound can be an exact value with an approximation attached; the count is the exact one's, and a
     symbolic one is no literal count at all (the HIP rendering of a nested launch raised here)."""

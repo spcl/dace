@@ -83,6 +83,7 @@ def test_dead_code_neither_breaks_simplify_nor_changes_the_result():
     assert np.allclose(a, b * 2.0)
 
 
+# Reproducer: Fix three extended CI regressions from 09-14 commits (f112039b8e)
 def test_codegen_drops_a_block_no_path_reaches():
     """ControlFlowRaising runs before codegen and deletes a block unreachable from its region's start block, since
     that block never runs: its write is neither emitted nor executed."""

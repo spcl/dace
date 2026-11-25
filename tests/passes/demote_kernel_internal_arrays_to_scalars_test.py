@@ -176,6 +176,7 @@ def test_library_node_output_not_demoted():
     assert isinstance(sdfg.arrays["tB"], data.Array), sdfg.arrays["tB"]
 
 
+# Reproducer: [GPU codegen] Fix demotion pass: NestedSDFG crash + post-expansion cub reduce (f3121cb81b)
 def test_block_reduce_output_not_scalarized_end_to_end():
     """End-to-end through the experimental GPU codegen pipeline (text-gen only, no GPU needed).
 
@@ -191,6 +192,7 @@ def test_block_reduce_output_not_scalarized_end_to_end():
     assert not re.search(r"\bfloat\s+tB\s*;", code), "reduce output tB was wrongly scalarized"
 
 
+# Reproducer: [GPU codegen] Fix demotion pass: NestedSDFG crash + post-expansion cub reduce (f3121cb81b)
 def test_cpp_tasklet_neighbor_not_demoted():
     """A length-1 array written by a non-Python (C++) tasklet inside a GPU kernel is kept: raw C++
     ``buf[0]`` indexing is opaque to the scalar-conversion rewrite (the post-expansion cub case)."""
@@ -213,6 +215,7 @@ def test_cpp_tasklet_neighbor_not_demoted():
     assert isinstance(sdfg.arrays["buf"], data.Array), sdfg.arrays["buf"]
 
 
+# Reproducer: [GPU codegen] Fix demotion pass: NestedSDFG crash + post-expansion cub reduce (f3121cb81b)
 def test_nested_sdfg_neighbor_does_not_crash():
     """A length-1 array adjacent to a ``NestedSDFG`` inside a GPU kernel must not crash the pass.
 

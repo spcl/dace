@@ -111,6 +111,7 @@ def test_elementwise_single_map():
     assert np.allclose(out, a * 2.0 + 1.0)
 
 
+# Reproducer: canonicalize: lock UniqueLoopIterators postamble OFF + fix dead-symbol cleanup gate (0303c21e07)
 def test_two_independent_statements_single_map():
     """Two data-independent statements over the same iteration space fuse
     into a single map: each statement becomes a sibling component in the
@@ -129,6 +130,7 @@ def test_two_independent_statements_single_map():
     assert np.allclose(ob, a + 1.0) and np.allclose(od, c * 3.0)
 
 
+# Reproducer: canonicalize: lock UniqueLoopIterators postamble OFF + fix dead-symbol cleanup gate (0303c21e07)
 def test_producer_consumer_single_map():
     """Producer and consumer over the same iteration space, communicating
     through a transient, fuse into a single map. (Earlier the pipeline
@@ -230,6 +232,7 @@ def mixed_direct_indirect_stencil(a: dace.float64[N, M], idx: dace.int32[N], b: 
         b[i, j] = 0.25 * (a[i, j] + a[i, j - 1] + a[i, j + 1] + a[idx[i], j])
 
 
+# Reproducer: canonicalize: lock UniqueLoopIterators postamble OFF + fix dead-symbol cleanup gate (0303c21e07)
 def test_mixed_direct_indirect_stencil_value_preserving():
     rng = np.random.default_rng(42)
     n, m = 12, 9
@@ -263,6 +266,7 @@ def two_ranges_same_arith_bound(a: dace.float64[N], b: dace.float64[N], c: dace.
         c[i] = a[i] - a[i - 1]
 
 
+# Reproducer: canonicalize: lock UniqueLoopIterators postamble OFF + fix dead-symbol cleanup gate (0303c21e07)
 def test_two_ranges_share_arith_bound_no_symbol_duplication():
     rng = np.random.default_rng(42)
     n = 16
@@ -303,6 +307,7 @@ def guarded_arith_bound(a: dace.float64[N], b: dace.float64[N], c: dace.int32[1]
             b[i] = a[i] + a[i + 1]
 
 
+# Reproducer: canonicalize: lock UniqueLoopIterators postamble OFF + fix dead-symbol cleanup gate (0303c21e07)
 def test_guarded_arith_bound_clean_after_canonicalize():
     rng = np.random.default_rng(42)
     n = 10
@@ -350,6 +355,7 @@ def stencil_reduction_mixed(a: dace.float64[N, M], b: dace.float64[N]):
         b[i] = s
 
 
+# Reproducer: canonicalize: lock UniqueLoopIterators postamble OFF + fix dead-symbol cleanup gate (0303c21e07)
 def test_stencil_reduction_mixed_value_preserving():
     rng = np.random.default_rng(42)
     n, m = 8, 11

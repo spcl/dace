@@ -78,6 +78,7 @@ def _run(sdfg, **kwargs):
 
 
 @pytest.mark.parametrize("N", [8, 16, 32])
+# Reproducer: vec(K-dim): orchestrator end-to-end numerical correctness gate -- 3 fixes (be40e3f4d3)
 def test_k1_copy_matches_reference(N):
     """K=1 trivial copy: walker-primary output bit-equal to unvectorized reference."""
     rng = np.random.default_rng(seed=N)
@@ -96,6 +97,7 @@ def test_k1_copy_matches_reference(N):
 
 
 @pytest.mark.parametrize("N", [8, 16, 32])
+# Reproducer: vec(K-dim): orchestrator end-to-end numerical correctness gate -- 3 fixes (be40e3f4d3)
 def test_k1_axpy_matches_reference(N):
     """K=1 axpy ``C = A + B``: walker-primary output equals unvectorized."""
     rng = np.random.default_rng(seed=N + 1)
@@ -115,6 +117,7 @@ def test_k1_axpy_matches_reference(N):
 
 
 @pytest.mark.parametrize("N", [8, 16, 32])
+# Reproducer: vec(K-dim): orchestrator end-to-end numerical correctness gate -- 3 fixes (be40e3f4d3)
 def test_k1_unop_matches_reference(N):
     """K=1 unop ``C = abs(A)``: walker-primary output equals unvectorized."""
     rng = np.random.default_rng(seed=N + 2)

@@ -869,6 +869,7 @@ def overlapping_lane_accumulators(a: dace.float64[N], c: dace.float64[1]):
     c[0] = s0 + s1 + s2
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_overlapping_lane_accumulators_keep_their_count():
     """Step 2 over lanes ``{0, 1, 2}``: every interior even ``a[i]`` is summed by two lanes, once per lane."""
     n = 13
@@ -882,6 +883,7 @@ def test_overlapping_lane_accumulators_keep_their_count():
     assert np.isclose(c[0], exp, rtol=_RTOL), f"got {c[0]} expected {exp}"
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_declined_scaled_iterator_loop_keeps_its_states():
     """``a[2*i] = ...`` then ``b[2*i + 1] = ...`` in two states: the iterator unscales, no matcher accepts the
     two different statements, and the body must keep both states."""

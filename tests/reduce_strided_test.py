@@ -7,6 +7,7 @@ import dace.sdfg.nodes
 
 
 @pytest.mark.parametrize("implementation", ["pure", "CPU"])
+# Reproducer: CPU: fix reduce code generation w.r.t. offsets and strides (fc518762af)
 def test_strided_reduce(implementation):
     """Reduce a strided input subset ``A[::2, ::2]`` over axis 0. The pure and
     OpenMP expansions index each reduced element with the ARRAY stride times the

@@ -110,6 +110,7 @@ def _inputs(kind, nval):
 
 
 @pytest.mark.parametrize("kind", list(PROGRAMS))
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_emits_omp_reduction_clause(kind):
     """Parallel map carries ``reduction(op:acc)`` clause; body tiles the fold with
     ``tile_reduce``, not a per-iteration atomic."""
@@ -120,6 +121,7 @@ def test_emits_omp_reduction_clause(kind):
 
 
 @pytest.mark.parametrize("kind", list(PROGRAMS))
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_partial_folds_to_single_element(kind):
     """The interposed reduction partial (``NormalizeWCR``'s ``_wcr_priv_*_acc`` on the
     ``NSDFG -> AccessNode -[wcr]-> MapExit`` boundary) folds onto a single element -- a scalar,
@@ -152,6 +154,7 @@ def test_partial_folds_to_single_element(kind):
 
 
 @pytest.mark.parametrize("kind", list(PROGRAMS))
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_numeric_exact(kind):
     """Bit-exact result under the (parallel, per-thread-privatized) reduction order."""
     sdfg = _vectorized(PROGRAMS[kind][0])

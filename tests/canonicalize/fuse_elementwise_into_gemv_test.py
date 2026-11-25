@@ -75,6 +75,7 @@ def _pairwise_acc_over_m(x: dace.float64[m], mass: dace.float64[m], ax: dace.flo
     ax[:] = (dx * dx) @ mass
 
 
+# Reproducer: FuseElementwiseIntoGemv: the lowered map's connectors take names the SDFG does not use (ve... (1d449b7e87)
 def test_the_lowered_gemv_avoids_the_names_of_the_sdfg():
     """vexx_k: its extent symbol ``m`` is not a free connector name."""
     sdfg = _pairwise_acc_over_m.to_sdfg(simplify=True)

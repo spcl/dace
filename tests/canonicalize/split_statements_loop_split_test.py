@@ -486,6 +486,7 @@ def test_three_groups_are_ordered_by_topological_sort():
 
 
 @pytest.mark.parametrize("reversed_by", ["subscript", "stride"])
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_flow_dependence_through_reversed_iteration_runs_writer_first(reversed_by):
     """``a[w(i)] = x[i] + 1; b[i] = a[w(i) + 1] * 2`` where ``w`` falls as the loop runs.
 

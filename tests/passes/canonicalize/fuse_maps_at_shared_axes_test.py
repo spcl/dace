@@ -199,6 +199,7 @@ def test_a_consumer_sharing_an_inner_axis_keeps_its_order_and_both_maps_get_a_hi
     assert np.allclose(out, 2.0 * x[None, :] + np.arange(4.0)[:, None])
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_both_fusion_notes_name_the_intermediate_and_the_other_loop():
     """nbody, examinimd: the note named neither the intermediate nor the loop on the other side."""
     sdfg = per_particle_then_taps.to_sdfg(simplify=True)
@@ -238,6 +239,7 @@ def test_a_reduction_every_iteration_contributes_to_keeps_the_producer():
     assert np.allclose(b, 2.0 * a.sum())
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_fusion_hint_names_no_map_and_is_said_once_per_pair():
     """nbody: one producer handing a consumer nine intermediates stacked nine hint lines naming DaCe map labels.
     One line per map, naming every intermediate of the pair (``ReadableNames`` gives them the rendered names)."""

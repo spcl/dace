@@ -45,6 +45,7 @@ def bmm_per_batch_slice(a: dace.float64[BATCH, M, K], b: dace.float64[BATCH, K, 
         c[__bm0] = np.matmul(a[__bm0], b[__bm0])
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_batched_matmul_3d_3d():
     a, b = rng.random((BATCH, M, K)), rng.random((BATCH, K, N))
     c = bmm_3d_3d(a, b)
@@ -52,6 +53,7 @@ def test_batched_matmul_3d_3d():
     assert np.allclose(c, np.matmul(a, b))
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_batched_matmul_4d_4d():
     a, b = rng.random((BATCH2, BATCH, M, K)), rng.random((BATCH2, BATCH, K, N))
     c = bmm_4d_4d(a, b)
@@ -59,6 +61,7 @@ def test_batched_matmul_4d_4d():
     assert np.allclose(c, np.matmul(a, b))
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_batched_matmul_3d_2d():
     """A plain matrix on the right is reused for every batch element -- NumPy's degenerate broadcast."""
     a, b = rng.random((BATCH, M, K)), rng.random((K, N))
@@ -67,6 +70,7 @@ def test_batched_matmul_3d_2d():
     assert np.allclose(c, np.matmul(a, b))
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_batched_matmul_2d_3d():
     a, b = rng.random((M, K)), rng.random((BATCH, K, N))
     c = bmm_2d_3d(a, b)
@@ -74,6 +78,7 @@ def test_batched_matmul_2d_3d():
     assert np.allclose(c, np.matmul(a, b))
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_batched_matmul_per_batch_slice():
     """The already-sliced spelling: 2-D operands under a map, one GEMM per batch element."""
     a, b = rng.random((BATCH, M, K)), rng.random((BATCH, K, N))
@@ -83,6 +88,7 @@ def test_batched_matmul_per_batch_slice():
     assert np.allclose(c, np.matmul(a, b))
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_batched_matmul_lowers_to_batched_matmul_node():
     """The point of the batched path: it must reach ``BatchedMatMul``, not a loop of GEMMs."""
     sdfg = bmm_3d_3d.to_sdfg(simplify=True)
@@ -90,6 +96,7 @@ def test_batched_matmul_lowers_to_batched_matmul_node():
     assert any(isinstance(node, BatchedMatMul) for node, _ in sdfg.all_nodes_recursive())
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_broadcast_batch_dimension():
     """``(B, 1, M, K) @ (1, C, K, N)`` is NumPy-legal and now lowered, not refused.
 
@@ -109,6 +116,7 @@ def test_broadcast_batch_dimension():
     assert np.allclose(res, expected)
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_mismatched_batch_rank():
     """``(B, C, M, K) @ (C, K, N)``: NumPy right-aligns the shorter batch, so this is legal.
 
@@ -128,6 +136,7 @@ def test_mismatched_batch_rank():
     assert np.allclose(res, expected), f"max|diff| = {np.max(np.abs(res - expected))}"
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_unequal_batch_size_refused():
     """The plain disagreement, which used to reach the library node as a wrong-sized batch."""
 

@@ -39,6 +39,7 @@ def products(sdfg: dace.SDFG) -> list[nodes.LibraryNode]:
     return [node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, (MatMul, Gemm))]
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_small_product_per_map_iteration_is_one_rowwise_sequential_loop_on_the_cpu():
     sdfg = products_per_row.to_sdfg(simplify=True)
     assert SpecializeSmallGemms(dtypes.DeviceType.CPU).apply_pass(sdfg, {}) == 1
@@ -57,6 +58,7 @@ def test_a_small_product_per_map_iteration_is_one_rowwise_sequential_loop_on_the
     assert np.allclose(c, a @ b)
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_small_product_under_a_parallel_map_runs_inside_the_kernel_on_the_gpu():
     """Selected before the offload: a ``MatMul`` becomes its ``Gemm`` and takes the in-thread loop, which the
     offload reads as kernel code, so the map stays the kernel."""
@@ -69,6 +71,7 @@ def test_a_small_product_under_a_parallel_map_runs_inside_the_kernel_on_the_gpu(
     assert not is_device_wide_libnode(found[0])
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_specialized_extents_count_as_compile_time_constants():
     sdfg = products_of_runtime_size.to_sdfg(simplify=True)
     assert SpecializeSmallGemms(dtypes.DeviceType.GPU).apply_pass(sdfg, {}) is None, (

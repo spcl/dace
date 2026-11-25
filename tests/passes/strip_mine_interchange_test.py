@@ -111,6 +111,7 @@ def test_the_tiles_cover_the_axis_exactly_once():
     assert "Min(" in code, "the last tile must stop at the axis end"
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_tile_size_is_one_ceiling_division():
     """The tile is ``ceil(size / (P * r))`` rounded up to a multiple of ``MIN_TILE``: one ``int_ceil`` by
     ``P * r * MIN_TILE``, not a ceiling of a ceiling an agent re-checks by hand (tsvc_2_s2233)."""

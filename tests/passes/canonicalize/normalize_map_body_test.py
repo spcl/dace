@@ -140,6 +140,7 @@ def _sibling_nsdfg(label: str, with_tmp_conn: bool, with_tmp_array: bool):
     return nsdfg
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_merge_siblings_data_vs_connector_name_collision():
     """``_merge_siblings`` must uniquify a tail array against base's tasklet connector
     names, not only its array names: base sibling writes through a connector ``tmp``,
@@ -332,6 +333,7 @@ def _producer_consumer_siblings() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_data_dependent_siblings_merge_without_a_cycle():
     """The carrier's dependence must move INSIDE the merged nested SDFG.
 
@@ -417,6 +419,7 @@ def _sibling_nsdfgs_with_ordering_edge(n: int) -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_ordering_memlet_into_sibling_keeps_no_connector():
     """An ordering (empty) memlet into the dropped sibling must move over WITHOUT a connector."""
     n = 8

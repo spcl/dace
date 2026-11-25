@@ -432,6 +432,7 @@ def guard_beside_an_independent_statement(a: dace.float64[N], b: dace.float64[N]
             b[k] = a[k] + 1.0
 
 
+# Reproducer: Passes that move blocks through add_node no longer run set_nested_sdfg_parent_references (bdf3ecd50e)
 def test_splitting_and_hoisting_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     """The split clones the loop once per group and the hoist moves it under the guard; neither needs a
     whole-tree CFG-list rebuild."""

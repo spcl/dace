@@ -238,6 +238,7 @@ def test_both_targets_block_and_the_gpu_also_skews_the_tile(prog):
         assert np.array_equal(got, ref), f"{prog.name}/{label}: max abs diff {np.max(np.abs(got - ref)):.3e}"
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_steep_gauss_seidel_diagonal_tiles_only_after_the_inner_preskew():
     """The distance ``(1, -1)`` makes rectangular ``(u, v)`` tiles illegal; over ``w = v + u`` every distance is
     non-negative, so the pass tiles ``(u, w)``: the innermost loop's tile window moves with the tile row."""

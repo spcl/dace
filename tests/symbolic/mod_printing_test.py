@@ -40,6 +40,7 @@ def test_the_facts_keep_a_wrapping_modulo_floored():
         assert "py_mod" in printed("PyMod(i - 1, N)")
 
 
+# Reproducer: Registry on extended: fix the #2475 CI failures (04dbb5035f)
 def test_a_modulo_proven_under_facts_is_not_served_where_they_do_not_hold():
     """The printers memoize; the facts at the code being generated have to key that memo, or a ``%`` proven inside
     one map is handed to code outside it."""

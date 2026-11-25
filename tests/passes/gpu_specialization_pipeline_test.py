@@ -38,6 +38,7 @@ def _topology_signature(sdfg: SDFG):
     return arrays, state_sizes
 
 
+# Reproducer: Fix things (7214cb03d1)
 def test_pipeline_idempotent_on_simple_sdfg():
     """Re-applying the pipeline leaves topology + properties untouched."""
     sdfg = _build_simple_gpu_copy_sdfg()
@@ -81,18 +82,21 @@ def _wrap_with_outer_map(inner: SDFG, schedule: dtypes.ScheduleType) -> SDFG:
     return outer
 
 
+# Reproducer: Fix things (7214cb03d1)
 def test_is_inside_gpu_device_kernel_true_for_inside_gpu_device_map():
     inner = _trivial_inner_sdfg("inner_gpu")
     _wrap_with_outer_map(inner, dtypes.ScheduleType.GPU_Device)
     assert is_inside_gpu_device_kernel(inner) is True
 
 
+# Reproducer: Fix things (7214cb03d1)
 def test_is_inside_gpu_device_kernel_false_for_inside_sequential_map():
     inner = _trivial_inner_sdfg("inner_seq")
     _wrap_with_outer_map(inner, dtypes.ScheduleType.Sequential)
     assert is_inside_gpu_device_kernel(inner) is False
 
 
+# Reproducer: Fix things (7214cb03d1)
 def test_is_inside_gpu_device_kernel_false_for_sibling_consumer():
     """Sibling-scope NSDFG consuming a kernel's output is not nested in the GPU_Device scope, so the
     answer is ``False`` (a naive data-flow predecessor walk would get this wrong)."""

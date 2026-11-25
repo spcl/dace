@@ -329,6 +329,7 @@ CASES: dict[str, Callable[[], Case]] = {
 }
 
 
+# Reproducer: Restore extended fixes the #2259/main merges dropped; experimental CUDA folds map-exit WCR... (0ff7297339)
 def test_the_cpp_sort_is_the_standard_sort_without_an_execution_policy():
     """A ``std::execution`` policy needs a backend library (TBB under libstdc++) a standalone unit cannot link."""
     sdfg, helpers, arguments, expected = sort_case()
@@ -341,6 +342,7 @@ def test_the_cpp_sort_is_the_standard_sort_without_an_execution_policy():
     assert np.array_equal(arguments["ordered"], expected["ordered"])
 
 
+# Reproducer: Restore extended fixes the #2259/main merges dropped; experimental CUDA folds map-exit WCR... (0ff7297339)
 def test_the_c_sort_is_an_openmp_task_mergesort_over_heapsorted_leaves():
     """C has no ``std::sort``, so the parallel form is spelled out: tasks halve the range, leaves
     heapsort, joins merge. Large enough that the recursion actually splits."""

@@ -489,6 +489,7 @@ def test_cpu_scan_does_not_emit_the_composite_inscan_loop():
         assert "parallel for simd" not in src, src
 
 
+# Reproducer: Auto dispatch copies the picked expansion's environments after it runs: ExpandCUDA fills t... (7e427d059d)
 def test_first_gpu_auto_expansion_carries_the_cub_environment():
     """``ExpandCUDA`` fills its environments inside ``expansion()``; the 'Auto' dispatch must copy them after."""
     from dace.libraries.standard.nodes import scan as scan_module

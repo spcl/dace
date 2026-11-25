@@ -55,6 +55,7 @@ def maps(sdfg: dace.SDFG) -> int:
     return sum(isinstance(n, nodes.MapEntry) for n, parent in sdfg.all_nodes_recursive())
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_nested_one_trip_maps_go_as_the_repeated_form_removes_them():
     sdfg = one_trip_outer.to_sdfg(simplify=False)
     assert maps(sdfg) >= 3
@@ -65,12 +66,14 @@ def test_nested_one_trip_maps_go_as_the_repeated_form_removes_them():
     assert old[0] >= 2, "both one-trip maps are eliminated"
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_partly_trivial_map_keeps_its_other_dimension():
     old, new = both_ways(partly_trivial.to_sdfg(simplify=True))
 
     assert new == old and old[0] == 1
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_thread_team_keeps_its_maps_and_its_rendering():
     sdfg = team_sweep.to_sdfg(simplify=True)
     canonicalize(sdfg, target="cpu")
@@ -83,6 +86,7 @@ def test_a_thread_team_keeps_its_maps_and_its_rendering():
     assert "#pragma omp parallel" in rendered, "the team survives the sweep inside prepare"
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_second_run_finds_nothing():
     sdfg = one_trip_outer.to_sdfg(simplify=False)
     EliminateTrivialMaps().apply_pass(sdfg, {})

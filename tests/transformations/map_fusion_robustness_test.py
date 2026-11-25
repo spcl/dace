@@ -173,20 +173,24 @@ def make_happens_before_view_sdfg() -> SDFG:
     return sdfg
 
 
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_vertical_refuses_unresolvable_view(recwarn):
     """The View chain cannot be resolved, so the fusion must be refused, not crash."""
     assert_clean_refusal(make_unresolvable_view_sdfg(), MapFusionVertical, recwarn)
 
 
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_horizontal_refuses_unresolvable_view(recwarn):
     assert_clean_refusal(make_unresolvable_view_sdfg(), MapFusionHorizontal, recwarn)
 
 
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_horizontal_refuses_unresolvable_view_in_scope(recwarn):
     """The de-aliasing inside ``analyze_happens_before_fusion()`` must refuse, not raise."""
     assert_clean_refusal(make_happens_before_view_sdfg(), MapFusionHorizontal, recwarn)
 
 
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_view_source_resolution_is_decidable():
     """``resolve_view_source()`` reports the undecidable View shape instead of raising."""
     sdfg = make_unresolvable_view_sdfg()
@@ -196,6 +200,7 @@ def test_view_source_resolution_is_decidable():
     assert mfhelper.resolve_view_source(state, views[0]) is None
 
 
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_view_source_still_resolves_a_normal_view():
     """The guard must not refuse a View that ``get_view_edge()`` can perfectly well resolve."""
     sdfg, state, built = serial_maps_sdfg("resolvable_view")
@@ -209,14 +214,17 @@ def test_view_source_still_resolves_a_normal_view():
     assert resolved is not None and resolved.data == "A"
 
 
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_vertical_refuses_subset_union_producer(recwarn):
     assert_clean_refusal(make_subset_union_producer_sdfg(), MapFusionVertical, recwarn)
 
 
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_vertical_refuses_subset_union_consumer(recwarn):
     assert_clean_refusal(make_subset_union_consumer_sdfg(), MapFusionVertical, recwarn)
 
 
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_horizontal_refuses_subset_union_producer(recwarn):
     assert_clean_refusal(make_subset_union_producer_sdfg(), MapFusionHorizontal, recwarn)
 
@@ -235,6 +243,7 @@ def test_single_element_subsets_are_fused(recwarn):
     sdfg.validate()
 
 
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_plain_serial_maps_still_fuse(recwarn):
     """The baseline the guards above must not have cost."""
     sdfg = serial_maps_sdfg("plain_serial")[0]
@@ -245,6 +254,7 @@ def test_plain_serial_maps_still_fuse(recwarn):
     sdfg.validate()
 
 
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_plain_parallel_maps_still_fuse(recwarn):
     sdfg = parallel_maps_sdfg("plain_parallel")[0]
     sdfg.validate()
@@ -255,6 +265,7 @@ def test_plain_parallel_maps_still_fuse(recwarn):
 
 
 @pytest.mark.parametrize("xform", [MapFusionVertical, MapFusionHorizontal])
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_stale_descriptor_is_refused(xform, recwarn):
     """A Memlet naming an array whose descriptor is gone must refuse, not raise."""
     sdfg, state, built = serial_maps_sdfg("stale_descriptor")
@@ -273,6 +284,7 @@ def test_stale_descriptor_is_refused(xform, recwarn):
 
 
 @pytest.mark.parametrize("xform", [MapFusionVertical, MapFusionHorizontal])
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_dangling_scope_connector_is_refused(xform, recwarn):
     """A declared connector with no edge breaks ``relocate_nodes()`` half way through."""
     sdfg, state, built = serial_maps_sdfg("dangling_connector")
@@ -282,6 +294,7 @@ def test_dangling_scope_connector_is_refused(xform, recwarn):
 
 
 @pytest.mark.parametrize("xform", [MapFusionVertical, MapFusionHorizontal])
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_stream_intermediate_is_refused(xform, recwarn):
     """A Stream has no reducible layout, so ``compute_offset_subset()`` must never see it."""
     sdfg, state, built = serial_maps_sdfg("stream_intermediate")
@@ -291,6 +304,7 @@ def test_stream_intermediate_is_refused(xform, recwarn):
 
 
 @pytest.mark.parametrize("xform", [MapFusionVertical, MapFusionHorizontal])
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_duplicated_map_parameter_is_refused(xform, recwarn):
     """A repeated parameter name collapses the ``param -> range`` dicts of the remapping."""
     sdfg, state, built = serial_maps_sdfg("duplicated_parameter")
@@ -300,6 +314,7 @@ def test_duplicated_map_parameter_is_refused(xform, recwarn):
 
 
 @pytest.mark.parametrize("xform", [MapFusionVertical, MapFusionHorizontal])
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_params_range_length_mismatch_is_refused(xform, recwarn):
     """More parameters than range dimensions makes the remapping ``zip()`` drop entries."""
     sdfg, state, built = serial_maps_sdfg("params_range_mismatch")
@@ -308,6 +323,7 @@ def test_params_range_length_mismatch_is_refused(xform, recwarn):
 
 
 @pytest.mark.parametrize("xform", [MapFusionVertical, MapFusionHorizontal])
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_cycle_elsewhere_in_state_does_not_crash(xform, recwarn):
     """``scope_dict()`` raises for a cycle anywhere in the state, even a disjoint one."""
     sdfg, state, built = serial_maps_sdfg("cycle_elsewhere")
@@ -321,6 +337,7 @@ def test_cycle_elsewhere_in_state_does_not_crash(xform, recwarn):
 
 
 @pytest.mark.parametrize("xform", [MapFusionVertical, MapFusionHorizontal])
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_ordering_edges_survive_a_fusion(xform, recwarn):
     """An empty Memlet is an ordering edge: fusing must never silently drop one."""
     sdfg, state, built = serial_maps_sdfg("ordering_edges_survive")
@@ -337,6 +354,7 @@ def test_ordering_edges_survive_a_fusion(xform, recwarn):
 
 
 @pytest.mark.parametrize("xform", [MapFusionVertical, MapFusionHorizontal])
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_wcr_producer_is_refused_or_valid(xform, recwarn):
     """A WCR write into the intermediate is an accumulate, never a plain write."""
     sdfg, state, built = serial_maps_sdfg("wcr_producer")
@@ -350,6 +368,7 @@ def test_wcr_producer_is_refused_or_valid(xform, recwarn):
 
 
 @pytest.mark.parametrize("xform", [MapFusionVertical, MapFusionHorizontal])
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_dynamic_map_range_from_the_same_source(xform, recwarn):
     """Both Maps bind the same dynamic-map-range symbol to the same value."""
     sdfg, state, built = serial_maps_sdfg("dynamic_map_range")
@@ -366,6 +385,7 @@ def test_dynamic_map_range_from_the_same_source(xform, recwarn):
 
 
 @pytest.mark.parametrize("xform", [MapFusionVertical, MapFusionHorizontal])
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_nested_sdfg_body_does_not_crash(xform, recwarn):
     """A NestedSDFG consumer of the intermediate reaches the stride-rewriting path."""
     sdfg, state, built = serial_maps_sdfg("nested_sdfg_body")
@@ -394,6 +414,7 @@ def test_nested_sdfg_body_does_not_crash(xform, recwarn):
 
 
 @pytest.mark.parametrize("xform", [MapFusionVertical, MapFusionHorizontal])
+# Reproducer: MapFusion: turn two crash classes into clean refusals (e7c9cf69d9)
 def test_three_map_chain_reaches_a_fixpoint(xform, recwarn):
     """Repeated application must terminate and leave a valid SDFG."""
     sdfg = SDFG("three_map_chain")

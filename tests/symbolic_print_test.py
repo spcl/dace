@@ -131,6 +131,7 @@ def test_cpp_floor_of_fraction_difference_recombines_to_integer_division():
         1234567890.1234567,
     ],
 )
+# Reproducer: fix(symbol-propagation): invalidate carried value whose RHS reads a symbol the current edg... (7598db1a7d)
 def test_format_float_is_idempotent_under_parse_and_reformat(value):
     """The float-to-string serializer must be idempotent: ``f -> str -> f -> str``
     yields the same string as ``f -> str``. Otherwise SDFG save -> load -> save
@@ -146,6 +147,7 @@ def test_format_float_is_idempotent_under_parse_and_reformat(value):
 
 
 @pytest.mark.parametrize("value", [1.0 / 21.0, 0.1 + 0.2, 1e-300, 1e300, 5.0, 3.14])
+# Reproducer: fix(symbolic): route Python float through _format_float in serialize_symbolic (9bfcf00898)
 def test_serialize_symbolic_float_path_is_idempotent(value):
     """``serialize_symbolic`` dispatches on type: ``isinstance(expr, float)`` is a
     distinct branch from ``isinstance(expr, sympy.Basic)``. Both must produce the
@@ -167,6 +169,7 @@ def test_serialize_symbolic_float_path_is_idempotent(value):
 
 
 @pytest.mark.parametrize("numerator, denominator", [("(N + 1) * 4", 8), ("i - 1", 2), ("2 * i + 3", 4)])
+# Reproducer: fix: use int_floor, never `//`, for symbolic index/shape arithmetic (21a432d4f5)
 def test_int_floor_survives_codegen_where_floordiv_does_not(numerator, denominator):
     """Symbolic index/shape arithmetic must use ``int_floor``, never ``//``.
 
@@ -189,6 +192,7 @@ def test_int_floor_survives_codegen_where_floordiv_does_not(numerator, denominat
         assert actual == expected, f"int_floor({expr}, {denominator}) at {value}: {actual} != {expected}"
 
 
+# Reproducer: fix: use int_floor, never `//`, for symbolic index/shape arithmetic (21a432d4f5)
 def test_floordiv_does_not_survive_codegen():
     """Pins WHY int_floor is mandatory: the ``//`` spelling loses its divisor on the way to C, so a
     well-meaning revert to ``//`` fails here rather than in a wrong number."""

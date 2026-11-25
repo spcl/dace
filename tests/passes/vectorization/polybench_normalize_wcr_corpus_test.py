@@ -54,6 +54,7 @@ def _pipelined_sdfg(kernel, pipeline):
 
 @pytest.mark.parametrize("name", KERNELS)
 @pytest.mark.parametrize("pipeline", PIPELINES)
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_polybench_normalize_wcr(name, pipeline):
     """``NormalizeWCR`` preserves semantics after ``pipeline`` (value vs untransformed baseline)."""
     kernel, call_arrays, psize, ref = _prep(name)
@@ -68,6 +69,7 @@ def test_polybench_normalize_wcr(name, pipeline):
 
 @pytest.mark.parametrize("name", KERNELS)
 @pytest.mark.parametrize("pipeline", PIPELINES)
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_polybench_normalize_wcr_idempotent(name, pipeline):
     """A second ``NormalizeWCR`` rewrites nothing (returns ``None``) and leaves a valid SDFG."""
     kernel, call_arrays, psize, baseline_reference = _prep(name)

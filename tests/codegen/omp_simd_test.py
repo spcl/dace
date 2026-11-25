@@ -266,6 +266,7 @@ def test_multicore_reduction_keeps_the_clause_and_the_value():
     assert np.allclose(out[0], a.sum())
 
 
+# Reproducer: MarkSIMDMaps: refuse a body carrying its own OpenMP construct, and fix what it uncovered (b085446172)
 def test_unexpanded_library_node_withholds_the_clause():
     """A library node in the body expands to a Map after this pass has run, and an
     ``omp parallel for`` lexically inside a simd region is not valid OpenMP."""
@@ -288,6 +289,7 @@ def test_unexpanded_library_node_withholds_the_clause():
     assert np.allclose(out, a.sum(axis=1))
 
 
+# Reproducer: MarkSIMDMaps: refuse a body carrying its own OpenMP construct, and fix what it uncovered (b085446172)
 def test_tasklet_carrying_a_directive_withholds_the_clause():
     """The OpenMP Reduce expansion writes ``#pragma omp parallel for`` into the tasklet body, and
     that construct is illegal inside a simd region."""
@@ -380,6 +382,7 @@ def test_outlined_body_is_opened_not_refused(payload, leaf):
     assert outer.map.omp_simd is leaf
 
 
+# Reproducer: MarkSIMDMaps: refuse a body carrying its own OpenMP construct, and fix what it uncovered (b085446172)
 def test_the_mark_survives_a_round_trip():
     """The pass marks Sequential maps too, so the property has to serialize for them -- otherwise
     a save/load between the pass and code generation silently drops the clause."""

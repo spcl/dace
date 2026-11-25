@@ -119,6 +119,7 @@ def _tiled_map_steps(sdfg: dace.SDFG):
 # Structural: the pass rewrites the array-slot WCR into a scalar accumulator.
 
 
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_array_slot_wcr_becomes_scalar():
     """``s[3] += a[i]*b[i]`` -- the array-element WCR target becomes a transient Scalar; an init +
     writeback state materialize; count == 1."""
@@ -140,6 +141,7 @@ def test_array_slot_wcr_becomes_scalar():
 
 
 @pytest.mark.parametrize("prog", [min_rmw_slot, sum_into_slot, dot_into_slot, prod_into_slot])
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_prep_is_value_preserving_structural(prog):
     """After the pass the SDFG still validates and holds no array-slot WCR (either privatized to a
     scalar, or -- for the RMW ``min`` -- never a WCR to begin with)."""
@@ -149,6 +151,7 @@ def test_prep_is_value_preserving_structural(prog):
     assert _wcr_targets(sdfg)[0] == 0
 
 
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_scalar_accumulator_is_left_alone():
     """A length-1 accumulator ``s[0] += a[i]`` (already widenable) must NOT be rewritten."""
 
@@ -163,6 +166,7 @@ def test_scalar_accumulator_is_left_alone():
     assert not any(k.startswith("_priv_") for k in sdfg.arrays)
 
 
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_min_rmw_slot_is_left_alone():
     """``s[2] = min(s[2], a[i])`` is an RMW read+write, not a WCR reduction -- not matched."""
     sdfg = min_rmw_slot.to_sdfg(simplify=True)
@@ -170,6 +174,7 @@ def test_min_rmw_slot_is_left_alone():
     assert not count
 
 
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_recurrence_is_left_alone():
     """A scan recurrence carries no WCR -- the pass must not touch it."""
     sdfg = scan_recurrence.to_sdfg(simplify=True)
@@ -236,6 +241,7 @@ def test_array_slot_dot_widens_with_or_without_the_prep():
     assert np.allclose(s, ref, rtol=1e-9, atol=1e-12), f"got {s}, ref {ref}"
 
 
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_sum_into_slot_widens_and_correct():
     """Sum into a fixed slot ``s[2] += a[i]`` -- widened result matches numpy (all-zero elsewhere)."""
     rng = np.random.default_rng(42)
@@ -250,6 +256,7 @@ def test_sum_into_slot_widens_and_correct():
     assert np.allclose(s, ref, rtol=1e-9, atol=1e-12), f"got {s}, ref {ref}"
 
 
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_prod_into_slot_widens_and_correct():
     """Product into a fixed slot ``s[1] *= a[i]`` -- widened result matches numpy."""
     rng = np.random.default_rng(42)
@@ -264,6 +271,7 @@ def test_prod_into_slot_widens_and_correct():
     assert np.allclose(s, ref, rtol=1e-9, atol=1e-12), f"got {s}, ref {ref}"
 
 
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_recurrence_value_preserving_through_pipeline():
     """A scan recurrence stays sequential + correct through the pipeline (prep is a no-op on it)."""
     rng = np.random.default_rng(42)

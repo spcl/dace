@@ -148,6 +148,7 @@ def _guard_over_bound_dependent_loop(
 
 
 @pytest.mark.parametrize("kk", [3, 0])
+# Reproducer: fix(canonicalize): correctness fixes in LICM, move-if, symbol-prop, split-tasklets (aaed2278a9)
 def test_refuses_when_prep_produces_loop_bound(kk):
     """Reproducer (TSVC s162): the guarded loop's trip count ``_MIL_N - kk`` is a
     prep value the loop condition consumes. ``_move`` sinks the prep into the body,
@@ -181,6 +182,7 @@ def carried_prep(a: dace.float64[N], b: dace.float64[N], c: dace.int32[1], acc: 
             b[i] = a[i] + acc[0]
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_refuses_a_prep_that_carries_its_own_value():
     """``_move`` re-runs the prep every iteration, so the chain must be idempotent.
 
@@ -207,6 +209,7 @@ def test_refuses_a_prep_that_carries_its_own_value():
             assert np.allclose(acc, 3.0), "the guard was false: the prep must not run"
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_staged_prep_still_sinks():
     """Guard against over-reach: a prep that reads what an EARLIER prep state wrote recomputes the
     same value from the same loop-invariant inputs, so it stays idempotent and must still move.

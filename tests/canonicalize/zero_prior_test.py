@@ -124,6 +124,7 @@ def test_partial_zeros_are_folded_onto():
     assert fill_maps(sdfg) == ["zero_map"]
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_strided_zeros_are_folded_onto():
     """Only the even rows are zeroed: their bounding box covers every row, but the odd rows keep a prior value."""
     sdfg = block_products(rows="0:N:2")
@@ -176,6 +177,7 @@ def gemm_accum_even_rows_zeroed(A: dace.float64[N, N], B: dace.float64[N, N], C:
                 C[i, j] += A[i, k] * B[k, j]
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_strided_zeros_ahead_of_an_accumulate_loop_are_folded_onto():
     """``C[0:N:2, :] = 0`` leaves the odd rows of the caller's ``C`` as the prior value the nest adds onto."""
     sdfg = gemm_accum_even_rows_zeroed.to_sdfg(simplify=True)

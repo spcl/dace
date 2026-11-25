@@ -196,6 +196,7 @@ def test_symm_loop_nest_lifted_to_symm_node():
     assert np.allclose(got, ref), f"maxdiff {np.max(np.abs(got - ref))}"
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_gemm_nest_not_matched():
     """A plain contraction (no triangular self-scatter) must not be lifted to Symm."""
     sdfg = _normalized(gemm_loops)

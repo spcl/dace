@@ -77,6 +77,7 @@ def size_from_size_one_array(nt: dace.int64[1], out: dace.float64[4]):
     out[0] = b[0]
 
 
+# Reproducer: Fix symbol promotion and squeezing in the frontend (992d8f0ad5)
 def test_scalar_size_as_shape():
     n, nt = 5, 7
     a = np.arange(n, dtype=np.float64)
@@ -85,6 +86,7 @@ def test_scalar_size_as_shape():
     assert np.allclose(out, a * 2.0)
 
 
+# Reproducer: Fix symbol promotion and squeezing in the frontend (992d8f0ad5)
 def test_size_descriptor_survives_its_use_as_a_shape():
     """Promotion must not delete the scalar: the program still reads it afterwards."""
     n, nt = 5, 7
@@ -94,6 +96,7 @@ def test_size_descriptor_survives_its_use_as_a_shape():
     assert np.allclose(out, a + (nt + 1))
 
 
+# Reproducer: Fix symbol promotion and squeezing in the frontend (992d8f0ad5)
 def test_size_can_be_reassigned_after_use_as_a_shape():
     n, nt = 5, 7
     a = np.arange(n, dtype=np.float64)
@@ -102,6 +105,7 @@ def test_size_can_be_reassigned_after_use_as_a_shape():
     assert np.allclose(out, a + 99)
 
 
+# Reproducer: Fix symbol promotion and squeezing in the frontend (992d8f0ad5)
 def test_two_arrays_from_a_reassigned_size_keep_their_own_extents():
     """Reusing one size name for two arrays must not collapse their extents.
 
@@ -112,6 +116,7 @@ def test_two_arrays_from_a_reassigned_size_keep_their_own_extents():
     assert np.isclose(out[0], 64.0)
 
 
+# Reproducer: Fix symbol promotion and squeezing in the frontend (992d8f0ad5)
 def test_a_size_reused_as_an_index_does_not_rebind_the_extent():
     """The shape's symbol must differ from the one a later index access of the same name binds.
 
@@ -123,6 +128,7 @@ def test_a_size_reused_as_an_index_does_not_rebind_the_extent():
     assert np.isclose(out[0], 2.0)
 
 
+# Reproducer: Fix symbol promotion and squeezing in the frontend (992d8f0ad5)
 def test_promotion_leaves_the_descriptor_in_place():
     sdfg = size_read_after_use.to_sdfg(simplify=False)
     # The scalar read by each ``__sym_... = <scalar>`` assignment must survive as a descriptor;
@@ -135,6 +141,7 @@ def test_promotion_leaves_the_descriptor_in_place():
     sdfg.validate()
 
 
+# Reproducer: Fix symbol promotion and squeezing in the frontend (992d8f0ad5)
 def test_shape_stays_correct_through_simplify():
     """simplify() may rewrite the promotion, but the array must keep the right extent either way.
 
@@ -149,6 +156,7 @@ def test_shape_stays_correct_through_simplify():
         assert np.allclose(out, a * 2.0), f"wrong result with simplify={simplify}"
 
 
+# Reproducer: Fix symbol promotion and squeezing in the frontend (992d8f0ad5)
 def test_a_size_one_array_is_read_through_a_subscript():
     """A size-1 array is a valid extent, but the assignment must read ``nt[0]``, not the pointer."""
     out = np.zeros(4)
@@ -175,6 +183,7 @@ def calls_size_from_empty(a: dace.float64[N], Nt: dace.int64, out: dace.float64[
 
 
 @pytest.mark.parametrize("program", [size_from_empty_into_a_branch, calls_size_from_empty])
+# Reproducer: Fix symbol promotion and squeezing in the frontend (992d8f0ad5)
 def test_a_size_assigned_into_a_region_is_defined_before_the_allocation(program):
     """The promoted size reaches a conditional, or a nested SDFG's loops, on the edge entering it."""
     n, nt = 6, 9
@@ -197,6 +206,7 @@ def ones_from_size(Nt: dace.int64, out: dace.float64[1]):
 
 
 @pytest.mark.parametrize("program,expected", [(zeros_from_size, 0.0), (ones_from_size, 4.0)])
+# Reproducer: Fix symbol promotion and squeezing in the frontend (992d8f0ad5)
 def test_the_fill_constructors_accept_a_computed_size(program, expected):
     """zeros/ones/full build their transient on their own path, which also has to promote the size."""
     out = np.zeros(1)

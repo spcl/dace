@@ -45,6 +45,7 @@ def _build_aliased_body_sdfg():
     return sdfg, nsdfg, inner
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_resolve_alias_inlines_rename_into_inner_body():
     sdfg, nsdfg, inner = _build_aliased_body_sdfg()
     assert "_loop_it_2" in inner.symbols
@@ -66,6 +67,7 @@ def test_resolve_alias_inlines_rename_into_inner_body():
     sdfg.validate()
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_resolve_alias_leaves_offset_and_identity_mappings_untouched():
     """Only a bare non-identity symbol rename is inlined; an offset expression
     (a real value, not a rename) and an identity mapping are left as-is."""

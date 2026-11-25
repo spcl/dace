@@ -18,6 +18,7 @@ def transpose_and_dot(a: dace.float64[Lb**3, P], b: dace.float64[P, Lb**3], x: d
     r[0] = np.dot(x, x)
 
 
+# Reproducer: BLAS expansions print their extents and strides as C++ (an omatcopy or dot over Lb**3 did... (18febd6841)
 def test_blas_extents_are_cpp():
     # Asked here, not in a skipif: that runs at collection, and this question loads OpenBLAS's OpenMP runtime
     if openblas.exports_symbol("cblas_domatcopy") is False:

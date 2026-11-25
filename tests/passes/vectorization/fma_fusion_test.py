@@ -138,6 +138,7 @@ def test_cpu_fma_lowers_and_runs(dt):
 
 @pytest.mark.host_isa
 @pytest.mark.parametrize("dt", [dace.float32, dace.float64])
+# Reproducer: Make the vectorization tests fail when the vectorizer does nothing (336e09f74c)
 def test_cpu_fma_lowers_and_runs_on_the_host_isa(dt):
     """The same contract on whatever ``detect_host_isa`` reports -- a machine-dependent case, so
     it is marked rather than folded into the portable parametrization, where a SCALAR host made it

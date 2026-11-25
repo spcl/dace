@@ -295,6 +295,7 @@ def test_targeted_helper_refuses_non_wcr_edge():
     assert set(sdfg.arrays.keys()) == arrays_before
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_ordering_memlet_is_not_an_in_state_init():
     """An empty memlet into a second accumulator AccessNode writes nothing, so it must not be
     mistaken for an in-state ``acc = 0``: that drops the incoming seed."""

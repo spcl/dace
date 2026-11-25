@@ -76,6 +76,7 @@ def run_comparison(sdfg1, sdfg2, arrays, params):
 
 
 @pytest.mark.parametrize("apply_only_if_subsets_not_equal", [True, False])
+# Reproducer: Fix things (0d642c59c8)
 def test_jacobi2d(apply_only_if_subsets_not_equal: bool):
     sdfg = jacobi2d.to_sdfg(simplify=True)
     sdfg.name += "_apply_only_if_subsets_not_equal_" + str(apply_only_if_subsets_not_equal)

@@ -135,6 +135,7 @@ def test_matmul_keeps_a_view_with_a_unit_row():
     assert views(sdfg) == ["av"]
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_a_whole_operand_spelled_with_int_floor_is_read_in_place_of_the_view():
     """The Reduce reads all of ``pv``, its memlet spelled ``int_floor`` against the View's ``floor`` extent: a whole
     operand, so the View goes."""

@@ -115,6 +115,7 @@ def arg_reduce_sdfg(name: str, op: str, dtype: dace.typeclass, tie: str = "first
 @pytest.mark.parametrize("op", ["max", "min"])
 @pytest.mark.parametrize("dtype", [dace.float64, dace.int32, dace.complex128], ids=str)
 @pytest.mark.parametrize("tie", ["first", "last"])
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_argmax_and_argmin_merge_per_thread_pairs_and_keep_the_tied_extreme(language, op, dtype, tie):
     lang = "c" if language == "c" else "cpp"
     sdfg = arg_reduce_sdfg(f"cpf_arg_{op}_{dtype.to_string()}_{tie}_{lang}", op, dtype, tie)

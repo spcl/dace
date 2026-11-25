@@ -97,6 +97,7 @@ def nested(sdfg: dace.SDFG) -> dace.SDFG:
     return next(n.sdfg for n in sdfg.start_block.nodes() if isinstance(n, dace.nodes.NestedSDFG))
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_single_element_matrix_a_helper_writes_is_a_scalar_on_both_sides():
     sdfg = written_by_a_helper_sdfg()
     assert ConvertLengthOneArraysToScalars(single_element=True).apply_pass(sdfg, {}) >= {"t"}
@@ -109,6 +110,7 @@ def test_a_single_element_matrix_a_helper_writes_is_a_scalar_on_both_sides():
     assert np.allclose(b, [2.0, -1.0, 5.0, 1.0])
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_single_element_cube_a_helper_reads_in_a_guard_is_a_scalar_on_both_sides():
     sdfg = read_in_a_guard_sdfg(transient=True)
     assert ConvertLengthOneArraysToScalars(single_element=True).apply_pass(sdfg, {}) >= {"t"}
@@ -121,6 +123,7 @@ def test_a_single_element_cube_a_helper_reads_in_a_guard_is_a_scalar_on_both_sid
     assert np.allclose(b, [-1.0, -1.0, 1.6, 2.8, -1.0, 1.52])
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_single_element_argument_keeps_its_array_on_both_sides():
     sdfg = read_in_a_guard_sdfg(transient=False)
     ConvertLengthOneArraysToScalars(single_element=True).apply_pass(sdfg, {})
@@ -160,6 +163,7 @@ def library_results_sdfg() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_single_element_results_of_a_reduce_and_a_dot_are_scalars():
     sdfg = library_results_sdfg()
     assert ConvertLengthOneArraysToScalars(single_element=True).apply_pass(sdfg, {}) >= {"s", "d"}
@@ -178,6 +182,7 @@ def invert(a: dace.float64[4, 4], out: dace.float64[4, 4]):
 
 
 @pytest.mark.lapack
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_host_lapack_status_is_a_scalar():
     sdfg = invert.to_sdfg()
     for node, parent in sdfg.all_nodes_recursive():

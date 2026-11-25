@@ -200,6 +200,7 @@ def test_condsum_gpu_emits_block_reduce():
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("n", [1, 511, 512, 513, 100003])
+# Reproducer: Restore extended fixes the #2259/main merges dropped; experimental CUDA folds map-exit WCR... (0ff7297339)
 def test_condsum_gpu_block_reduce_matches_numpy(n):
     """The block fold runs on the device: every thread, in range or not, reaches the barrier-using
     ``BlockReduce``, and one atomic per block commits -- across a partial trailing block too."""

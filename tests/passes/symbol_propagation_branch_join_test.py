@@ -72,11 +72,13 @@ def tasklet_sources(sdfg: dace.SDFG):
     return [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
 
 
+# Reproducer: fix(symbol_propagation): make _combine_syms a real meet at control-flow joins (4a9e2e8537)
 def test_untransformed_else_path_reads_the_array():
     """Baseline: without any pass the else path yields src[0]."""
     assert run_else_path(build_branch_join_sdfg(), "baseline") == 7.0
 
 
+# Reproducer: fix(symbol_propagation): make _combine_syms a real meet at control-flow joins (4a9e2e8537)
 def test_one_sided_binding_does_not_escape_the_join():
     """The regression: the then-branch's literal must not be folded into the post-join use."""
     sdfg = build_branch_join_sdfg()
@@ -85,6 +87,7 @@ def test_one_sided_binding_does_not_escape_the_join():
     assert run_else_path(sdfg, "symprop") == 7.0
 
 
+# Reproducer: fix(symbol_propagation): make _combine_syms a real meet at control-flow joins (4a9e2e8537)
 def test_disagreeing_plain_symbols_are_still_invalidated():
     """Control: when the else RHS has no array access its key survives the filters, so the
     existing disagreement branch of the meet already marks the symbol live. This must keep
@@ -94,6 +97,7 @@ def test_disagreeing_plain_symbols_are_still_invalidated():
     assert tasklet_sources(sdfg) == ["o = fac"], tasklet_sources(sdfg)
 
 
+# Reproducer: fix(symbol_propagation): make _combine_syms a real meet at control-flow joins (4a9e2e8537)
 def test_agreeing_branches_still_propagate():
     """Both branches bind the same literal, so folding it is correct and must still happen --
     otherwise the fix would have disabled propagation across joins entirely."""

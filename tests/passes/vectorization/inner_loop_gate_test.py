@@ -119,6 +119,7 @@ def _conditional_body(guard: str = "lim > 0"):
     return inner
 
 
+# Reproducer: Fix vectorizer refusal paths; make IT a first-class conditional write (64577de55c)
 def test_flat_body_is_accepted():
     """The gate is narrow: a pure-dataflow body stays vectorizable."""
     sdfg, state, map_entry = _map_over_body(_flat_body(), ["p"])
@@ -149,6 +150,7 @@ def test_a_loop_bounded_by_the_tiled_param_is_refused():
     assert is_vectorizable_map(state, map_entry, 1) is False
 
 
+# Reproducer: Fix vectorizer refusal paths; make IT a first-class conditional write (64577de55c)
 def test_conditional_body_is_still_allowed():
     """A lane-uniform guard is MASKABLE, so this gate must let it through -- refusing every
     conditional would strip 18 TSVC kernels of their vectorization for no soundness gain."""

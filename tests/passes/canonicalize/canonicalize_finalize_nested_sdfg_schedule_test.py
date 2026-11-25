@@ -83,6 +83,7 @@ def test_decide_cpu_parallel_axes_pins_nested_reduce():
     assert reduce_node.schedule == dtypes.ScheduleType.Sequential
 
 
+# Reproducer: canon(finalize): fix AttributeError on NestedSDFG.schedule in libnode_is_sequential (941bef4eaa)
 def test_libnode_is_sequential_survives_unpinned_schedule_in_nested_sdfg():
     """The actual crash site: ``libnode_is_sequential`` called on a library node whose own
     schedule was NOT already pinned ``Sequential`` (``DecideCpuParallelAxes``

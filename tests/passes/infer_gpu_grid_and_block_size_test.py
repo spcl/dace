@@ -29,6 +29,7 @@ def _kernel_with_nested_threadblock(user_block_size, tb_extent: int) -> tuple:
     return sdfg, state, dev_me
 
 
+# Reproducer: Fix block-size conflict detection in InferGPUGridAndBlockSize (cb9264d94e)
 def test_infer_block_size_conflict_with_larger_threadblock_map():
     """A user ``gpu_block_size`` smaller than a nested ``GPU_ThreadBlock`` map is a conflict and must
     raise. Regression: the conflict check compared the running elementwise max against the current
@@ -39,6 +40,7 @@ def test_infer_block_size_conflict_with_larger_threadblock_map():
         InferGPUGridAndBlockSize().infer(sdfg, set())
 
 
+# Reproducer: Fix block-size conflict detection in InferGPUGridAndBlockSize (cb9264d94e)
 def test_infer_block_size_matching_user_and_threadblock_no_conflict():
     """A user ``gpu_block_size`` equal to the nested thread-block size is not a conflict."""
     sdfg, _state, dev = _kernel_with_nested_threadblock([64, 1, 1], tb_extent=64)
@@ -47,6 +49,7 @@ def test_infer_block_size_matching_user_and_threadblock_no_conflict():
     assert [int(b) for b in block] == [64, 1, 1], block
 
 
+# Reproducer: Fix GPU tree-reduction codegen bugs found in review (4b6f1c8552)
 def test_infer_block_size_non_3d_user_size_matching_no_conflict():
     """A user ``gpu_block_size`` given in non-3D form ([64]) that matches the nested thread-block
     size must not be flagged as a conflict. Regression: ``detected_block_sizes`` was seeded with the

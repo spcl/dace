@@ -45,6 +45,7 @@ def build_sdfg() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: LoopToMap does not privatize a transient a header outside the loop reads (e9d70f3627)
 def test_a_transient_an_outside_header_reads_stays_in_the_parent():
     sdfg = build_sdfg()
     sdfg.apply_transformations_repeated(LoopToMap)
@@ -53,6 +54,7 @@ def test_a_transient_an_outside_header_reads_stays_in_the_parent():
     assert "o" not in {str(s) for s in sdfg.free_symbols}, sdfg.free_symbols
 
 
+# Reproducer: LoopToMap does not privatize a transient a header outside the loop reads (e9d70f3627)
 def test_a_transient_an_outside_header_reads_keeps_its_value():
     sdfg = build_sdfg()
     sdfg.apply_transformations_repeated(LoopToMap)

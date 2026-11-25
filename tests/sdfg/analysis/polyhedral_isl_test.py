@@ -62,6 +62,7 @@ def test_to_isl_renders_the_floored_modulo_as_isls_mod():
     assert poly.render_affine(p("PyMod(N, 8)"), poly.build_name_map([], ["N"])).endswith("mod 8)")
 
 
+# Reproducer: Fix three extended CI failures: copy connector names, ISL modulo test, kmp loop shape (a396a0aeb5)
 def test_to_isl_refuses_cs_modulo_of_unknown_sign():
     """An SDFG's ``%`` is C's: it truncates, which ISL's ``mod`` matches only for a nonnegative dividend."""
     with pytest.raises(ValueError):

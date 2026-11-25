@@ -35,6 +35,7 @@ N = dace.symbol("N")
 HOST_ISA = detect_host_isa()
 
 
+# Reproducer: Fix vectorizer power lowering for a negative base with a non-literal exponent (12cb82b6b5)
 def test_expand_pow_non_literal_exponent_keeps_pow_not_exp_log():
     """A connector/call exponent stays ``**`` (-> ``std::pow``); no ``exp``/``log``."""
     for src in ("__out = __in1 ** __in2", "__out = pow(__in1, __in2)"):
@@ -43,6 +44,7 @@ def test_expand_pow_non_literal_exponent_keeps_pow_not_exp_log():
         assert "**" in out, f"{src!r} -> {out!r} dropped the power op"
 
 
+# Reproducer: Fix vectorizer power lowering for a negative base with a non-literal exponent (12cb82b6b5)
 def test_expand_pow_literal_integer_exponent_still_unrolls():
     """A literal integer exponent keeps the fast unrolled-product path (``x*x``)."""
     assert _expand_pow("__out = __in1 ** 2") == "__out = __in1 * __in1"
@@ -57,6 +59,7 @@ def sin_squared(x: dace.float64[N], y: dace.float64[N]):
 
 
 @pytest.mark.parametrize("isa", [ISA.SCALAR, HOST_ISA])
+# Reproducer: Fix vectorizer power lowering for a negative base with a non-literal exponent (12cb82b6b5)
 def test_sin_squared_negative_base_vectorizes_without_nan(isa):
     """``np.sin(x) ** 2`` over a range where ``sin(x) < 0`` must vectorize to the
     numpy result, not NaN (the ``exp(2 * log(sin))`` regression)."""

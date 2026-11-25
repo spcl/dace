@@ -128,6 +128,7 @@ def _split_mixed_numeric_none(A: dace.float64[N], B: dace.float64[N], E: dace.fl
         D[i] = A[i + 1] * 2.0  # reads the value the SIBLING ``A[i+1]=E[i]`` just wrote this iteration
 
 
+# Reproducer: fix(canonicalize): statement-fission stale-snapshot and in-place-RMW miscompiles (e17f44e316)
 def test_split_mixed_read_kept_live_when_none_coexists_with_war():
     """K0a (compile-time, no symbolic guard involved): the read ``A[i+1]`` is read-ahead (``WAR``,
     offset +1) versus the write ``A[i]`` but offset-0 (``'none'``) versus the write ``A[i+1]=E[i]`` in

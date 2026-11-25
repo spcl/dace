@@ -20,6 +20,7 @@ def doubled(a: dace.float64[2 * N]):
     a[:] = 1.0
 
 
+# Reproducer: Registry on extended: fix the #2475 CI failures (04dbb5035f)
 def test_an_annotation_does_not_replace_the_declared_global():
     sdfg = doubled.to_sdfg()
     assert predicate_relation(Predicate.POSITIVE, N) in sdfg.facts().relations, sdfg.facts().relations

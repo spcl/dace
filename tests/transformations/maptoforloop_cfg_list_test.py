@@ -35,6 +35,7 @@ def fresh_cfg_list(sdfg: dace.SDFG) -> list:
     return list(sdfg.all_control_flow_regions(recursive=True))
 
 
+# Reproducer: MapToForLoop rebuilds the CFG list only where the inline does not (b198ae204a)
 def test_cfg_list_is_current_after_each_lowering():
     sdfg = two_map_sdfg()
     for _ in range(2):
@@ -50,6 +51,7 @@ def test_cfg_list_is_current_after_each_lowering():
     assert (a == 2.0).all()
 
 
+# Reproducer: MapToForLoop rebuilds the CFG list only where the inline does not (b198ae204a)
 def test_inlined_lowering_does_not_rebuild_after_the_inline():
     sdfg = two_map_sdfg()
     original = AbstractControlFlowRegion.reset_cfg_list

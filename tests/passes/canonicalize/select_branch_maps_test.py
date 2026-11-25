@@ -84,6 +84,7 @@ def test_a_branch_the_guard_protects_stays_a_branch():
         assert SelectBranchMaps().apply_pass(sdfg, {}) is None
 
 
+# Reproducer: Fix the canon-perf regressions extended CI caught (06303cc353)
 def test_branch_maps_without_a_fusion_partner_stay_apart():
     """Merged, each element would compute both arms with nothing to fuse with: the branch stays."""
     sdfg = lone_branches.to_sdfg(simplify=True)

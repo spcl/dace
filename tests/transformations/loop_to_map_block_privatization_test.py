@@ -143,6 +143,7 @@ def test_a_level_recurrence_under_a_first_iteration_guard_stays_inside_the_block
     lift_and_compare(level_above, {"A": rng.random((4, 5, 3)), "B": np.zeros((4, 5, 3))}, {"N": 4, "M": 5, "F": 3})
 
 
+# Reproducer: LoopToMap: a level recurrence read in a map body no longer keeps the block loop sequential (c0c80840d1)
 def test_a_level_recurrence_read_in_a_map_body_stays_inside_the_block():
     rng = np.random.default_rng(0)
     lift_and_compare(

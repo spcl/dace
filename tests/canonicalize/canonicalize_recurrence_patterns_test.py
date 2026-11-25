@@ -246,6 +246,7 @@ def _ambiguous_write_nodes(sdfg):
     return hits
 
 
+# Reproducer: Fix two StateFusion legality holes: any-node ordering and skipped fusion barriers (0bad419f6a)
 def test_carried_scratch_slot_value_preserving():
     """Regression: ``StateFusion._check_paths`` used to treat "SOME first-state write of
     the candidate is ordered before the second state" as "ALL of them are", so an

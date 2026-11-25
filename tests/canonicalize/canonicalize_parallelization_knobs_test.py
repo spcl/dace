@@ -98,6 +98,7 @@ def _back_conflict(A: dace.float64[N], B: dace.float64[N]):
             A[0] = A[0] + 1.0
 
 
+# Reproducer: feat(canonicalize): peeling-driven parallelization — back-peel fix, range-aware LiftTrivia... (eb99dcf5a5)
 def test_loop_peeling_back_conflict_knob_parallelizes():
     """A last-iteration guard writes a conflicting extra location
     (``if i==N-1: A[0]+=1``): off by default the write-write conflict keeps the
@@ -133,6 +134,7 @@ def _multi_front(A: dace.float64[N], B: dace.float64[N]):
             A[N - 2] = A[N - 2] + 1.0
 
 
+# Reproducer: feat(canonicalize): peeling-driven parallelization — back-peel fix, range-aware LiftTrivia... (eb99dcf5a5)
 def test_loop_peeling_multi_front_iter_knob_parallelizes():
     """Two first-iteration guards each write a conflicting extra location
     (``if i==0: A[N-1]+=1 elif i==1: A[N-2]+=1``): peeling must take off the first
@@ -167,6 +169,7 @@ def _multi_front_else(A: dace.float64[N], B: dace.float64[N]):
             A[i] = B[i] * 2.0
 
 
+# Reproducer: feat(canonicalize): peeling-driven parallelization — back-peel fix, range-aware LiftTrivia... (eb99dcf5a5)
 def test_loop_peeling_multi_front_else_iter_knob_parallelizes():
     """The if/elif/**else** form (``if i==0 ... elif i==1 ... else: A[i]=...``): after
     peeling two front iterations the special-cased arms are dead contradictions and
@@ -200,6 +203,7 @@ def _multi_back(A: dace.float64[N], B: dace.float64[N]):
             A[1] = A[1] + 1.0
 
 
+# Reproducer: feat(canonicalize): peeling-driven parallelization — back-peel fix, range-aware LiftTrivia... (eb99dcf5a5)
 def test_loop_peeling_multi_back_iter_knob_parallelizes():
     """The final-iterations analogue (``if i==N-1 ... elif i==N-2 ...``): peeling must
     take off the last *two* iterations (anchored on the loop end, no loop symbol
@@ -227,6 +231,7 @@ def _fixed_read(a: dace.float64[N], b: dace.float64[N]):
         a[i] = a[0] + b[i]
 
 
+# Reproducer: fix(loop-to-map, licm): parallelize the peeled fixed-read pattern (762cb2b9d4)
 def test_loop_peeling_fixed_read_first_iter_knob_parallelizes():
     """``a[i] = a[1] + b[i]`` (textbook): every iteration reads the fixed ``a[1]``,
     which iteration 1 itself writes -- a loop-carried flow dependence (0-indexed:
@@ -272,6 +277,7 @@ def _mod_wrap_plus3(A: dace.float64[N], B: dace.float64[N]):
 
 
 @pytest.mark.parametrize("prog,offset", [(_mod_wrap_plus1, 1), (_mod_wrap_minus1, -1), (_mod_wrap_plus3, 3)])
+# Reproducer: feat(canonicalize): peeling-driven parallelization — back-peel fix, range-aware LiftTrivia... (eb99dcf5a5)
 def test_loop_peeling_modulo_wraparound_knob_parallelizes(prog, offset):
     """A wrap-around write ``A[(i + k) % N] = ...`` is non-affine (the ``% N`` wraps
     at the boundary): without the knob it maps only as a scatter through ``% N``, once
@@ -318,6 +324,7 @@ def _mod_read_wrap_plus1(A: dace.float64[N], B: dace.float64[N]):
 
 
 @pytest.mark.parametrize("prog,offset", [(_mod_read_wrap_minus1, -1), (_mod_read_wrap_plus1, 1)])
+# Reproducer: fix(parallelize): peel a wrapping READ modulo to its floor-correct affine form (22517cb677)
 def test_loop_peeling_modulo_read_wraparound_knob_is_correct(prog, offset):
     """A wrap-around READ ``A[i] = (B[i] + B[(i + k) % N]) * 0.5`` (TSVC s291) already
     maps as-is -- the modulo is a pure read, no parallelization blocker -- but the
@@ -355,6 +362,7 @@ def _specialize_conditionals(sdfg):
     return [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_loop_peeling_modulo_symbolic_offset_specializes_if_par_else_seq():
     """A wrap-around write with a SYMBOLIC offset ``A[(i + K) % N]`` wraps at the
     boundary ``i = N - K`` -- a symbolic index no constant-count peel can reach. The
@@ -411,6 +419,7 @@ def _interior_guard(A: dace.float64[N], B: dace.float64[N]):
             A[0] = A[0] + 1.0
 
 
+# Reproducer: feat(canonicalize): peeling-driven parallelization — back-peel fix, range-aware LiftTrivia... (eb99dcf5a5)
 def test_index_set_split_interior_guard_knob_parallelizes():
     """An interior special-case iteration (``if i == 4: A[0] += 1``) writes a
     conflicting fixed location, so the loop is not parallel and -- being interior --
@@ -444,6 +453,7 @@ def _interior_guard_surrounded(A: dace.float64[N], B: dace.float64[N]):
         A[i] = A[i] + 1.0  # body after the guard
 
 
+# Reproducer: feat(canonicalize): peeling-driven parallelization — back-peel fix, range-aware LiftTrivia... (eb99dcf5a5)
 def test_index_set_split_body_around_guard_knob_parallelizes():
     """The ``body1; if i == x: body2; body3`` shape: unconditional work surrounds an
     interior special-case guard. The index-set split puts ``body1; body3`` in the two
@@ -474,6 +484,7 @@ def _front_range_guard(A: dace.float64[N], B: dace.float64[N]):
             A[N - 1] = A[N - 1] + 1.0
 
 
+# Reproducer: test(tsvc): full 151-kernel corpus + numpy oracle; canonicalize/l2map fixes (a2ce24f4af)
 def test_loop_peeling_front_range_guard_knob_parallelizes():
     """A *range* guard firing only on the first iterations (``if i < 2``) -- LLVM's
     canonical 'peel to eliminate the comparison' case (distinct from the ``i == x``

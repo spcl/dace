@@ -606,6 +606,7 @@ def _indirect_scatter(A: dace.int64[N, 5], B: dace.float64[N, 5]):
             B[jl, idx] = 1.0  # idx used as a subset index -- must STAY a symbol
 
 
+# Reproducer: fix(canonicalize): data-dep + arithmetic array-index lowering hardening (8ed33033c9)
 def test_array_load_not_inlined_as_iv_program():
     """Frontend shape: ``idx = A[jl, jm]`` inside a loop must not be dissolved into the
     ``B[jl, idx]`` subset by IV substitution -- no array-dependent symbol is an IV."""
@@ -624,6 +625,7 @@ def test_array_load_not_inlined_as_iv_program():
     assert np.array_equal(B, expected)
 
 
+# Reproducer: fix(canonicalize): data-dep + arithmetic array-index lowering hardening (8ed33033c9)
 def test_array_load_not_inlined_as_iv_handbuilt():
     """The exact post-promotion shape -- an interstate load ``idx := A[jl, jm]`` feeding a
     ``B[jl, idx]`` memlet -- IV substitution must leave alone (direct structural regression)."""
@@ -655,6 +657,7 @@ def test_array_load_not_inlined_as_iv_handbuilt():
     )
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_a_wcr_accumulator_is_not_an_induction_variable():
     """A WCR store is `acc = wcr(acc, rhs)`; closing it as `acc = rhs` drops the accumulation."""
     import copy
@@ -708,6 +711,7 @@ def test_a_counter_of_a_loop_that_does_not_run_keeps_its_entry_value():
         assert out[0] == expected
 
 
+# Reproducer: InductionVariableSubstitution: a loop that does not run leaves a derived symbol's entry value (48dce3a0fc)
 def test_a_derived_symbol_of_a_loop_that_does_not_run_keeps_its_entry_value():
     sdfg = counter_after_loop_sdfg("derived_zero_trip", "5", "0", "i")
     assert InductionVariableSubstitution().apply_pass(sdfg, {})

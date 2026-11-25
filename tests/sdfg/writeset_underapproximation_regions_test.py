@@ -46,6 +46,7 @@ def build_conditional_with_nested_sdfg() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: fix(writeset_underapproximation): only return SDFGStates from the dominator scan (2c0431bd15)
 def test_only_sdfg_states_are_returned():
     sdfg = build_conditional_with_nested_sdfg()
     blocks = _find_unconditionally_executed_states(sdfg)
@@ -53,6 +54,7 @@ def test_only_sdfg_states_are_returned():
     assert not offenders, offenders
 
 
+# Reproducer: fix(writeset_underapproximation): only return SDFGStates from the dominator scan (2c0431bd15)
 def test_underapproximate_writes_handles_regions():
     """The regression: this raised KeyError when a region reached the AccessNode loop."""
     sdfg = build_conditional_with_nested_sdfg()

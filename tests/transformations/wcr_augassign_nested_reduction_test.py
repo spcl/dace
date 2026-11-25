@@ -76,6 +76,7 @@ def _inner_wcr_edges(sdfg: dace.SDFG) -> int:
     return n
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_nested_cross_iteration_reduction_keeps_wcr():
     """An inner ``map[k]`` WCR write ``C[k]`` invariant over the outer map's ``i`` is a
     reduction over ``i``; WCRToAugAssign must keep it (not revert), and the result must
@@ -116,6 +117,7 @@ def _toplevel_wcr_edges(sdfg: dace.SDFG) -> int:
     return sum(1 for st in sdfg.states() for e in st.edges() if e.data is not None and e.data.wcr is not None)
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_toplevel_injective_write_still_reverts():
     """The nested-SDFG guard must not disturb the ordinary top-level path: an injective
     ``C[i] += A[i]`` map (``sdfg.parent is None``) still reverts to a plain RMW."""

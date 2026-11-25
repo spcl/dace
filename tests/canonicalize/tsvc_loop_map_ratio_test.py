@@ -77,6 +77,7 @@ def loop_map_table():
     return rows
 
 
+# Reproducer: canonicalize: preserve TSVC canonicalize->vectorize corpus + canonicalize fixes (327d797d0b)
 def test_loop_map_ratio_table():
     """``canonicalize`` over both corpora produces a renderable for-loop% table."""
     rows = loop_map_table()

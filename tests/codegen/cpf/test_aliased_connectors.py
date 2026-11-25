@@ -106,6 +106,7 @@ def rendered_once(program: dace.frontend.python.parser.DaceProgram, name: str) -
     return aliased, result
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_helper_reading_one_array_at_two_places_takes_it_once():
     aliased, result = rendered_once(gather_twice, "cpf_gather_twice")
     # A loop nested by canonicalization binds A twice; rendering takes it once
@@ -128,6 +129,7 @@ def test_a_helper_reading_one_array_at_two_places_takes_it_once():
     assert_matches({"out": expected, "out_semi": expected_semi}, got)
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_two_copies_of_one_column_that_canonicalization_folds_are_passed_once():
     aliased, result = rendered_once(scatter_twice, "cpf_scatter_twice")
     # The copies fold into reads of ``val`` after the last canonical cleanup: only the render's run merges them
@@ -148,6 +150,7 @@ def test_two_copies_of_one_column_that_canonicalization_folds_are_passed_once():
     assert_matches({"out": expected, "out2": expected2}, got)
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_neighbouring_columns_read_inside_a_map_are_passed_once():
     aliased, result = rendered_once(gather_columns, "cpf_gather_columns")
     # ``A[:, j]`` and ``A[:, j + 1]`` overlap no element but share the array: one pointer, the hull of both subsets
@@ -165,6 +168,7 @@ def test_neighbouring_columns_read_inside_a_map_are_passed_once():
     assert_matches({"B": expected}, got)
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_self_copy_lowered_at_codegen_passes_its_array_once():
     # fv3_dycore's ``q[5, :] -> q[0, :]``: the copy becomes a nest only inside code generation, binding q twice
     sdfg = dace.SDFG("cpf_self_copy")

@@ -59,6 +59,7 @@ def build_sdfg() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: LoopToMap: carried-local-transient and nested-header-container fixes (e1bceef71f)
 def test_header_container_below_a_branch_is_routed():
     """The threshold reaches the lifted body as a connector, not as a re-typed ``int`` symbol."""
     sdfg = build_sdfg()
@@ -71,6 +72,7 @@ def test_header_container_below_a_branch_is_routed():
     assert "thr" in nsdfg_node.in_connectors
 
 
+# Reproducer: LoopToMap: carried-local-transient and nested-header-container fixes (e1bceef71f)
 def test_header_container_below_a_branch_keeps_its_value():
     """End-to-end: an ``int``-truncated threshold would take the else branch and write -1."""
     sdfg = build_sdfg()

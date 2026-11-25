@@ -66,6 +66,7 @@ def _vectorize(sdfg: dace.SDFG, *, expand_tile_nodes: bool) -> None:
     ).apply_pass(sdfg, {})
 
 
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_expand_tile_nodes_true_leaves_no_tile_lib_nodes():
     """``expand_tile_nodes=True`` lowers every ``Tile*`` lib node so the
     returned SDFG is ready to compile (the default leaves them present)."""

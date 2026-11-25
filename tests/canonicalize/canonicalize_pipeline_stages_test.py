@@ -113,6 +113,7 @@ def copy_through_tasklet(state, read_subset):
     state.add_edge(tasklet, "y", state.add_write("b"), None, Memlet("b[0]"))
 
 
+# Reproducer: PropagateAndPrune: a round that changed nothing does not report a change (eee19147e5)
 def test_propagate_and_prune_leaves_a_graph_with_nothing_to_fold_and_reports_no_change():
     sdfg = dace.SDFG("nothing_to_fold")
     sdfg.add_array("a", [8], dace.float64)

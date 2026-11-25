@@ -635,6 +635,7 @@ def _rmw_accumulator(a: dace.float64[_RMW_N], sum_out: dace.float64[_RMW_N]):
         sum_out[0] = sum_out[0] + a[i]
 
 
+# Reproducer: fix(promote_constant_index_access): refuse read-modify-write reduction-accumulator slots (d1541edbdc)
 def test_refuses_reduction_accumulator_rmw():
     """PCIA must refuse to promote a slot whose body forms a read-modify-write
     recurrence (the value at iteration ``i`` is computed from the value at
@@ -663,6 +664,7 @@ def test_refuses_reduction_accumulator_rmw():
     assert np.isclose(sum_out[0], a.sum()), f"value mismatch: got {sum_out[0]}, expected {a.sum()}"
 
 
+# Reproducer: fix(promote_constant_index_access): extend RMW refusal across states and iedges (a202455b20)
 def test_refuses_multi_state_rmw_through_transient():
     """PCIA must refuse an RMW recurrence whose read-to-write dataflow path
     threads through a TRANSIENT intermediate across TWO body states.
@@ -708,6 +710,7 @@ def test_refuses_multi_state_rmw_through_transient():
     assert res is None, f"PCIA must refuse a multi-state RMW recurrence; got promotions: {res}"
 
 
+# Reproducer: fix(promote_constant_index_access): extend RMW refusal across states and iedges (a202455b20)
 def test_refuses_iedge_mediated_rmw():
     """PCIA must refuse when an interstate-edge assignment inside the loop
     body reads ``arr[c]`` and propagates the value into a downstream write
@@ -743,6 +746,7 @@ def test_refuses_iedge_mediated_rmw():
     assert res is None, f"PCIA must refuse iedge-mediated RMW; got promotions: {res}"
 
 
+# Reproducer: fix(canonicalize): data-dep + arithmetic array-index lowering hardening (8ed33033c9)
 def test_undo_restores_all_arr_nodes_when_state_has_several():
     """Regression: a speculative promotion that is later reverted must restore EVERY
     ``arr`` AccessNode it removed, even when one state held more than one.

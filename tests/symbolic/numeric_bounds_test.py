@@ -18,6 +18,7 @@ def ask(predicate: str, expr, positive: frozenset[str] = frozenset()) -> bool | 
     return ANSWERS[symbolic.ask(relation, symbolic.contract_facts(expr, positive=positive))]
 
 
+# Reproducer: symbolic.ask bounds Min, Max and the rounding heads; the divide fix mints DaCe's int_floor (772101470e)
 def test_min_bounds_a_peeled_first_trip():
     """``14:Min(14, klev - 1) + 1`` is at most one iteration, whatever ``klev`` is."""
     count = symbolic.pystr_to_symbolic("Min(14, klev - 1) - 13")
@@ -26,21 +27,25 @@ def test_min_bounds_a_peeled_first_trip():
     assert ask("nonnegative", count) is None, "klev < 14 leaves the loop empty or negative"
 
 
+# Reproducer: symbolic.ask bounds Min, Max and the rounding heads; the divide fix mints DaCe's int_floor (772101470e)
 def test_max_bounds_from_below():
     assert ask("positive", "Max(3, N) - 2") is True
     assert ask("negative", "-Max(3, N) + 2") is True
 
 
+# Reproducer: symbolic.ask bounds Min, Max and the rounding heads; the divide fix mints DaCe's int_floor (772101470e)
 def test_int_ceil_is_at_most_one_above_the_quotient():
     assert ask("nonnegative", "N/64 + 1 - int_ceil(N, 64)") is True
     assert ask("nonnegative", "int_ceil(N, 64) - N/64") is True
 
 
+# Reproducer: symbolic.ask bounds Min, Max and the rounding heads; the divide fix mints DaCe's int_floor (772101470e)
 def test_int_floor_is_at_most_the_quotient():
     assert ask("nonnegative", "N/8 - int_floor(N, 8)") is True
     assert ask("positive", "int_floor(N, 8) - N/8") is False
 
 
+# Reproducer: symbolic.ask bounds Min, Max and the rounding heads; the divide fix mints DaCe's int_floor (772101470e)
 def test_floor_ceiling_and_mod():
     assert ask("nonnegative", "ceiling(N/3) - N/3") is True
     assert ask("nonnegative", "N/3 - floor(N/3)") is True
@@ -48,17 +53,20 @@ def test_floor_ceiling_and_mod():
     assert ask("positive", "Mod(N, 8) - 8") is False
 
 
+# Reproducer: symbolic.ask bounds Min, Max and the rounding heads; the divide fix mints DaCe's int_floor (772101470e)
 def test_an_unbounded_symbol_stays_undecided():
     assert ask("negative", "N - 3") is None
     assert symbolic.numeric_bounds(symbolic.pystr_to_symbolic("N + Min(N, 4)")) == (None, None)
 
 
+# Reproducer: symbolic.ask bounds Min, Max and the rounding heads; the divide fix mints DaCe's int_floor (772101470e)
 def test_int_floor_and_int_ceil_know_their_sign():
     n = dace.symbol("n")
     assert ask("nonnegative", symbolic.int_floor(n, 4), positive=frozenset({"n"})) is True
     assert ask("positive", symbolic.int_ceil(n, 4), positive=frozenset({"n"})) is True
 
 
+# Reproducer: symbolic.ask bounds Min, Max and the rounding heads; the divide fix mints DaCe's int_floor (772101470e)
 def test_divide_fix_writes_dace_int_floor():
     """The printing fix that turns ``tid * (1/2)`` into a floor division mints DaCe's ``int_floor``, which
     carries integrality and sign, not an undefined function of the same name."""

@@ -396,6 +396,7 @@ def test_a_difference_is_not_nonnegative():
     assert {"a", "b", "s"} <= known and "d" not in known
 
 
+# Reproducer: array_facts: a fill's value is wired by its edge; only validation drops the unwired connec... (df703d9b74)
 def test_a_constant_fill_is_nonnegative_before_validation_drops_its_unwired_value_connector():
     """Only validation removes the unwired value connector of a fill; the fact must not depend on that having run."""
     sdfg = dace.SDFG("nonneg_fill")

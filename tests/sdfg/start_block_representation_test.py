@@ -42,6 +42,7 @@ def test_removing_an_earlier_node_keeps_the_start_block():
     assert start in sdfg.nodes()
 
 
+# Reproducer: fix: reorder_nodes moves the start-block pin with the block it names, explanation: _start_... (0308ba82e3)
 def test_reordering_the_nodes_moves_the_pin_with_the_block():
     """A permutation moves the pinned block without moving the index, so the pin would name
     whichever block landed in that slot -- and ``to_json`` writes the index."""

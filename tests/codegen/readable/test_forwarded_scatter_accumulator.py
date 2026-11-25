@@ -29,6 +29,7 @@ def reference(data, bin_edges):
 
 
 @pytest.mark.gpu
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_gpu_scatter_accumulator_compiles(require_experimental):
     """A const-qualified forwarded pointer fails to compile with a ``const int64_t*`` / ``int64_t*`` mismatch."""
     rng = np.random.default_rng(0)

@@ -203,6 +203,7 @@ def _s3_oracle(items, goal, ways0, m):
     return ways
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_prep_that_reads_loop_written_data_is_not_sunk():
     """The prep state must stay OUTSIDE the loop.
 

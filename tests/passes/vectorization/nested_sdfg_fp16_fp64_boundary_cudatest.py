@@ -85,6 +85,7 @@ def device_code(sdfg: dace.SDFG) -> str:
     return "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_an_fp16_array_for_an_fp64_parameter_is_refused():
     """Handing float16 bytes to a float64 parameter reinterpreted them; the call must convert first."""
     with pytest.raises(dace.frontend.python.common.DaceSyntaxError, match="declared float64"):
@@ -113,13 +114,7 @@ def test_boundary_division_operand_is_explicitly_typed():
             )
 
 
-# GPU: compiling and running the same program
-@pytest.mark.gpu
-def test_generated_code_compiles():
-    """nvcc is where the ambiguous ``operator/`` overload surfaces; the host compiler never sees it."""
-    offloaded(1024, name="nested_fp16_fp64_boundary_compile").compile()
-
-
+# GPU: compiling (nvcc is where the ambiguous ``operator/`` overload surfaces) and running the same program
 @pytest.mark.gpu
 @pytest.mark.parametrize("n", EXTENTS)
 def test_numeric_matches_fp64_then_fp16_cast(n):
@@ -143,6 +138,5 @@ def test_numeric_matches_fp64_then_fp16_cast(n):
 if __name__ == "__main__":
     test_an_fp16_array_for_an_fp64_parameter_is_refused()
     test_boundary_division_operand_is_explicitly_typed()
-    test_generated_code_compiles()
     for n in EXTENTS:
         test_numeric_matches_fp64_then_fp16_cast(n)

@@ -92,6 +92,7 @@ def bounded_inputs() -> dict[str, np.ndarray]:
     return {"counts": np.array([2, 3, 0, 1], dtype=np.int64), "nl": rng.random((4, 3)), "out": np.zeros(4)}
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_an_access_of_an_argument_bounds_a_data_read_extent():
     sdfg = canonical(rows_bounded_by_argument, "canon_fix_rows_bounded_by_argument")
     assert data_sized(sdfg), "canonicalization kept no data-sized buffer to bound"
@@ -104,6 +105,7 @@ def test_an_access_of_an_argument_bounds_a_data_read_extent():
     np.testing.assert_allclose(args["out"], expected)
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_an_access_under_another_buffers_trip_count_bounds_nothing():
     """Row 1 runs no trip and counts 5 > W: only the copy in the loop would have bounded ``count``."""
     sdfg = canonical(rows_guarded_by_other_trip, "canon_fix_rows_guarded_by_other_trip")
@@ -123,6 +125,7 @@ def test_an_access_under_another_buffers_trip_count_bounds_nothing():
 
 
 @pytest.mark.gpu
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_the_offload_bounds_a_data_read_extent_by_an_argument_extent():
     import cupy
 
@@ -161,6 +164,7 @@ def halved_snapshot(a: dace.float64[(N - 7) // 2 + 1], b: dace.float64[(N - 7) /
         b[i] = t[(N - 7) // 2 - i] + a[i]
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_a_copy_spelled_two_ways_leaves_no_buffer():
     sdfg = finalized(canonical(halved_copy, "canon_fix_halved_copy"))
     assert not transient_extents(sdfg), transient_extents(sdfg)
@@ -169,6 +173,7 @@ def test_a_copy_spelled_two_ways_leaves_no_buffer():
     np.testing.assert_allclose(b, 2.0 * a)
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_a_snapshot_spelled_two_ways_keeps_its_buffer():
     """``a`` is zeroed before ``t`` is read reversed: ``t`` holds the values ``a`` had."""
     sdfg = finalized(canonical(halved_snapshot, "canon_fix_halved_snapshot"))
@@ -201,6 +206,7 @@ def shifted_reads_in_loop_writing_source(q: dace.float64[N + 1], out: dace.float
             q[i + 1] = q[i + 1] + 1.0
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_a_shifted_copy_read_in_a_later_loop_is_forwarded():
     sdfg = finalized(canonical(shifted_reads_in_loop, "canon_fix_shifted_loop"))
     assert ("N",) not in transient_extents(sdfg), transient_extents(sdfg)
@@ -245,6 +251,7 @@ def shifted_reads_in_branch_writing_source(q: dace.float64[N + 1], out: dace.flo
             out[i] = t[N - 1 - i] * 3.0
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_a_shifted_copy_read_in_a_branch_is_forwarded():
     sdfg = finalized(canonical(shifted_reads_in_branch, "canon_fix_shifted_branch"))
     assert ("N",) not in transient_extents(sdfg), transient_extents(sdfg)
@@ -254,6 +261,7 @@ def test_a_shifted_copy_read_in_a_branch_is_forwarded():
         np.testing.assert_allclose(out, factor * q[1:][::-1])
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_a_branch_writing_the_source_keeps_the_shifted_copy():
     sdfg = finalized(canonical(shifted_reads_in_branch_writing_source, "canon_fix_shifted_branch_writer"))
     assert ("N",) in transient_extents(sdfg), transient_extents(sdfg)
@@ -288,6 +296,7 @@ def row_scratch_read_after(A: dace.float64[N, K], B: dace.float64[N, K], C: dace
     C[:] = t
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_a_row_scratch_keeps_no_full_extent_buffer():
     sdfg = finalized(canonical(row_scratch, "canon_fix_row_scratch"))
     assert ("N", "K") not in transient_extents(sdfg), transient_extents(sdfg)
@@ -296,6 +305,7 @@ def test_a_row_scratch_keeps_no_full_extent_buffer():
     np.testing.assert_allclose(B, 2.0 * A[:, ::-1] + 1.0)
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_a_row_scratch_read_after_the_map_keeps_every_row():
     """``C = t`` after the map reads every row at once: no buffer may be cut to one row."""
     sdfg = finalized(canonical(row_scratch_read_after, "canon_fix_row_scratch_read_after"))
@@ -329,6 +339,7 @@ def views(sdfg: dace.SDFG) -> list[str]:
     ]
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_a_whole_view_spelled_int_floor_is_removed():
     sdfg = finalized(canonical(sum_of_whole_view, "canon_fix_sum_of_whole_view"))
     assert not views(sdfg), views(sdfg)
@@ -337,6 +348,7 @@ def test_a_whole_view_spelled_int_floor_is_removed():
     np.testing.assert_allclose(out[0], P.sum())
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_a_view_one_row_short_reads_one_row_less():
     """``P[0:(N - 7) // 2]`` is one row short of ``P``: not the identity, whatever spells the extents."""
     sdfg = finalized(canonical(sum_of_partial_view, "canon_fix_sum_of_partial_view"))

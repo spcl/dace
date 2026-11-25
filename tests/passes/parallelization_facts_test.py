@@ -143,6 +143,7 @@ def test_break_anti_dependence_snapshots_a_read_ahead_only_under_a_nonnegative_i
     assert np.allclose(a, ref)
 
 
+# Reproducer: SolverFacts: only the loop's own unconditional edges bind a symbol per iteration; a branch... (2eef5a1d4f)
 def test_a_symbol_one_branch_assigns_is_not_bound_on_every_iteration():
     """``row`` keeps its old value on the other iterations, so ``x[row]`` is not a distinct store per iteration."""
 

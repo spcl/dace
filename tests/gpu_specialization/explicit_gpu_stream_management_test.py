@@ -186,6 +186,7 @@ def test_numerical_correctness_complex():
     assert np.allclose(D_gpu, expected_D, rtol=1e-12, atol=1e-14)
 
 
+# Reproducer: Fix (84d07ec9db)
 def test_three_kernels_dependent_and_independent():
     """
     K1:  B = A * 2        -- produces B
@@ -296,6 +297,7 @@ def test_three_kernels_dependent_and_independent():
 # Structural sanity tests (no compile / run).
 
 
+# Reproducer: Fix (84d07ec9db)
 def test_empty_state():
     """An SDFG with a single empty state must pass through the pipeline without crashing."""
     sdfg = dace.SDFG("empty_sdfg_empty_state")
@@ -310,6 +312,7 @@ def test_empty_state():
     assert _sync_tasklets(state) == []
 
 
+# Reproducer: Fix (84d07ec9db)
 def test_single_copy_library_node():
     """Single CopyLibraryNode (CPU->GPU) in one state: wired stream chain + sync tasklet."""
     sdfg = dace.SDFG("single_copy_node")
@@ -380,6 +383,7 @@ def test_single_fill_library_node():
     assert state.out_degree(syncs[0]) == 0
 
 
+# Reproducer: Fix (84d07ec9db)
 def test_conditional_gpu_kernel_in_sequential_map():
     """Conditional GPU kernel under an outer Sequential map (kernel ends up in
     a nested SDFG): the stream pipeline must propagate ``gpu_streams`` into
@@ -430,6 +434,7 @@ def test_conditional_gpu_kernel_in_sequential_map():
     assert any_sync, "Expected at least one stream-sync tasklet across the SDFG hierarchy"
 
 
+# Reproducer: New GPU codegen fixes (e9b14384d1)
 def test_libnode_expansion_propagates_stream_to_child_libnode():
     """A library node whose expansion produces another library node
     (``MatMul`` -> ``Gemm`` via ``SpecializeMatMul``) must propagate its
@@ -495,6 +500,7 @@ def test_libnode_expansion_propagates_stream_to_child_libnode():
     assert child_stream_in[0].src.data == _STREAM_ARRAY
 
 
+# Reproducer: New GPU codegen fixes (e9b14384d1)
 def test_libnode_expansion_to_nested_sdfg_wires_inner_libnodes():
     """A library node whose expansion produces a nested SDFG of more library
     nodes (``Cholesky`` cuSolverDn -> NestedSDFG{Potrf, Transpose, Transpose})
@@ -545,6 +551,7 @@ def test_libnode_expansion_to_nested_sdfg_wires_inner_libnodes():
         )
 
 
+# Reproducer: Fix __dace_current_stream undeclared: scheduler wires a connector of that name onto pre-ex... (8f58ddecf5)
 def test_preexpanded_legacy_ambient_stream_tasklet_is_wired():
     """A tasklet that baked ``__dace_current_stream`` with no stream connector
     (a libnode expanded before stream scheduling) gets an in-connector of that

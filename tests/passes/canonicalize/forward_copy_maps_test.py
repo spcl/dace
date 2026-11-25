@@ -64,6 +64,7 @@ def run(sdfg: dace.SDFG, pos: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return pos, out
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_transposed_column_copy_is_read_from_the_column():
     sdfg = column_copy_sdfg("column_copy")
     assert ForwardCopyMaps().apply_pass(sdfg, {}) == 1
@@ -77,6 +78,7 @@ def test_a_transposed_column_copy_is_read_from_the_column():
     assert np.allclose(new_pos[:, 2], pos[0, 2] - pos[:, 2]) and np.allclose(new_pos[:, :2], pos[:, :2])
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_reader_that_writes_the_column_keeps_the_copy():
     sdfg = column_copy_sdfg("column_copy_rewritten", reader_writes_source=True)
     reference = copy.deepcopy(sdfg)

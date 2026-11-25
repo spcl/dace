@@ -28,6 +28,7 @@ def build_chain() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: fix: BlockFusion resolves pattern nodes before remove_node shifts ids (a3a6400ed5)
 def test_fusing_away_the_noop_start_block():
     sdfg = build_chain()
     applied = sdfg.apply_transformations_repeated(BlockFusion, validate=True)

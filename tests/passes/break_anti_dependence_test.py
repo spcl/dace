@@ -418,6 +418,7 @@ def test_break_anti_dependence_alpha_minus_one_with_larger_offset():
     assert np.allclose(out, ref)
 
 
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_break_anti_dependence_cast_wrapped_iterator_in_indirected_chain():
     """Regression: the frontend emits the index tasklet as ``__out = dace.int32(i) + idx_index``
     -- the iterator ``i`` is wrapped in a type-cast CALL, not a bare ``Name``. The indirected
@@ -458,6 +459,7 @@ def test_break_anti_dependence_cast_wrapped_iterator_in_indirected_chain():
     assert np.allclose(out, ref)
 
 
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_break_anti_dependence_loop_invariant_array_offset_refused():
     """``a[i + idx[0]]`` -- a LOOP-INVARIANT offset read from an ARRAY (``idx[0]``, not the
     iterator). The value is not known at compile time and, being array-sourced, is NOT assumed

@@ -76,6 +76,7 @@ def _guarded_fallback_loops(sdfg) -> int:
     return n
 
 
+# Reproducer: Fix five canonicalization miscompiles and close guarded-parallel fallbacks (ce6403bce4)
 def test_provably_nonneg_symbolic_discharges_the_floor_membership_sides():
     """Both sides of the ``x = int_floor(N, 2)`` membership hold for every ``N >= 0``."""
     peel = BestEffortLoopPeeling(peel_limit=4)
@@ -88,6 +89,7 @@ def test_provably_nonneg_symbolic_discharges_the_floor_membership_sides():
     assert peel.provably_nonneg_symbolic((n - 1) + 1 - x, facts) is True
 
 
+# Reproducer: Fix five canonicalization miscompiles and close guarded-parallel fallbacks (ce6403bce4)
 def test_provably_nonneg_symbolic_rejects_the_over_strict_bound_and_false_claims():
     """Soundness: the prover must NOT prove things that are false for some nonnegative ``N``."""
     peel = BestEffortLoopPeeling(peel_limit=4)
@@ -106,6 +108,7 @@ def test_provably_nonneg_symbolic_rejects_the_over_strict_bound_and_false_claims
     assert peel.provably_nonneg_symbolic(n - k, facts) is False
 
 
+# Reproducer: Fix five canonicalization miscompiles and close guarded-parallel fallbacks (ce6403bce4)
 def test_split_range_relations_are_fully_discharged():
     """The broadcast split emits NO runtime guard: an empty relation set."""
     sdfg = broadcast_half.to_sdfg(simplify=True)
@@ -132,6 +135,7 @@ def test_split_range_relations_are_fully_discharged():
     assert peel._split_range_relations(loop, x) == frozenset(), "both membership sides must be provable"
 
 
+# Reproducer: Fix five canonicalization miscompiles and close guarded-parallel fallbacks (ce6403bce4)
 def test_broadcast_split_drops_the_pinned_sequential_fallback():
     """The loop is UNCONDITIONALLY parallelized: g goes 1 -> 0 and no pinned fallback survives."""
     sdfg = broadcast_half.to_sdfg(simplify=True)
@@ -143,6 +147,7 @@ def test_broadcast_split_drops_the_pinned_sequential_fallback():
 
 
 @pytest.mark.parametrize("n", [0, 1, 2, 3, 5, 128])
+# Reproducer: Fix five canonicalization miscompiles and close guarded-parallel fallbacks (ce6403bce4)
 def test_broadcast_split_is_bit_exact_including_the_edge_trip_counts(n):
     """The unconditionally-split form reproduces the sequential result BIT-EXACTLY.
 

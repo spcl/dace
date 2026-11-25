@@ -487,6 +487,7 @@ def test_walker_stages_K2_multi_tile_dim_gather():
     assert "_idx_0" in load.in_connectors
 
 
+# Reproducer: vec(K-dim): StageInsideBody walker consumer-rewiring + freeze stale promote_helpers test (8d63a15288)
 def test_walker_rewires_consumers_to_bridge_for_tile_branch():
     """After staging a LINEAR access, the downstream tasklet's ``_b`` connector must read
     from the bridge transient, not the original non-transient AccessNode."""
@@ -503,6 +504,7 @@ def test_walker_rewires_consumers_to_bridge_for_tile_branch():
     assert tuple(desc.shape) == (8,), "expected the bridge to be (W,)-shaped"
 
 
+# Reproducer: vec(K-dim): StageInsideBody walker consumer-rewiring + freeze stale promote_helpers test (8d63a15288)
 def test_walker_rewires_consumers_to_bridge_for_constant_branch():
     """After staging a CONSTANT access, downstream consumers read from the Scalar bridge."""
     sdfg, inner = _build_const_only_tile_fixture()

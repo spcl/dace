@@ -355,6 +355,7 @@ def test_snippet_from_cloudsc_three_with_scalar_use(opt_parameters, branch_mode,
 # the only fact these two add, and the knob matrix above already covers the inlined form,
 # so they run once each rather than across ``opt_parameters x branch_mode x remainder``.
 @pytest.mark.parametrize("map_range_dependent_subset", [False, True])
+# Reproducer: Make the vectorization tests fail when the vectorizer does nothing (336e09f74c)
 def test_snippet_three_vectorizes_through_a_nested_sdfg_boundary(map_range_dependent_subset, vectorize_config):
     sdfg = _get_cloudsc_snippet_three(add_scalar=False, map_range_dependent_subset=map_range_dependent_subset)
     sdfg.name = (

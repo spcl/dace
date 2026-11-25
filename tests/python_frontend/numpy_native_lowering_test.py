@@ -386,6 +386,7 @@ def test_count_nonzero_matches_numpy():
     check(prog_count_nonzero_matches_numpy, np.count_nonzero(a), a=a, out=np.zeros(1, dtype=np.int64))
 
 
+# Reproducer: Count nonzeros over int64 flags so a bool operand's count does not saturate at one (262e9035d4)
 def test_count_nonzero_of_a_bool_array_counts_past_one_inside_a_loop():
     """The 0/1 flags of a bool operand stayed bool, so their sum saturated at one: cegterg's unconverged count
     read 1 every Davidson iteration and its restart guard let ``ew[nbase + j]`` run past the buffer."""

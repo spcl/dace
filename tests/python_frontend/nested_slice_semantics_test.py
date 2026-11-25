@@ -28,6 +28,7 @@ def view_write_in_map(A: dace.float64[8, 8], B: dace.float64[8]):
         v[0] = B[i]
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_view_write_in_map():
     sdfg = view_write_in_map.to_sdfg(simplify=False)
     sdfg.validate()
@@ -52,6 +53,7 @@ def view_of_view_write_in_map(A: dace.float64[4, 6, 8], B: dace.float64[4]):
         q[3] = B[i]
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_view_of_view_write_in_map():
     A = np.arange(192, dtype=np.float64).reshape(4, 6, 8).copy()
     B = np.arange(1, 5, dtype=np.float64).copy()
@@ -68,6 +70,7 @@ def augmented_view_write_in_map(A: dace.float64[8, 8], B: dace.float64[8]):
         v[2:4] += B[i]
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_augmented_view_write_in_map():
     A = np.arange(64, dtype=np.float64).reshape(8, 8).copy()
     B = np.arange(1, 9, dtype=np.float64).copy()
@@ -89,6 +92,7 @@ def index_in_map(A: dace.float64[4, 4, 4], B: dace.float64[4, 4, 4], out: dace.f
         out[i, :, :] = A[i, :, 0] * B[i, :, :]
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_len1_slice_keeps_its_axis_in_map():
     sdfg = len1_slice_in_map.to_sdfg(simplify=False)
     inner = [sd for sd in sdfg.all_sdfgs_recursive() if sd is not sdfg][0]
@@ -103,6 +107,7 @@ def test_len1_slice_keeps_its_axis_in_map():
     assert np.allclose(out, A[:, :, 0:1] * B)
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_integer_index_drops_its_axis_in_map():
     A = np.arange(64, dtype=np.float64).reshape(4, 4, 4).copy()
     B = (np.arange(64, dtype=np.float64).reshape(4, 4, 4) % 7 + 1).copy()
@@ -120,6 +125,7 @@ def newaxis_in_map(A: dace.float64[4, 8], B: dace.float64[4, 8], out: dace.float
         out[i] = A[i, :, None] * B[i, None, :]
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_newaxis_in_map():
     sdfg = newaxis_in_map.to_sdfg(simplify=False)
     inner = [sd for sd in sdfg.all_sdfgs_recursive() if sd is not sdfg][0]
@@ -139,6 +145,7 @@ def overlapping_row_copy_in_map(A: dace.float64[8, 8]):
         A[i, 1:] = A[i, :-1]
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_overlapping_slice_copy_in_map():
     # Both sides become connectors that POINT INTO the same row, so the copy needs a temporary.
     sdfg = overlapping_row_copy_in_map.to_sdfg(simplify=False)
@@ -160,6 +167,7 @@ def negative_step_in_map(A: dace.float64[8, 8], out: dace.float64[8, 8]):
         out[i, :] = A[i, ::-1]
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_negative_step_in_map_is_refused():
     with pytest.raises(DaceSyntaxError, match="Negative strides"):
         negative_step_in_map.to_sdfg(simplify=False)
@@ -171,6 +179,7 @@ def fancy_index_in_map(A: dace.float64[4, 8], idx: dace.int64[3], out: dace.floa
         out[i, :] = A[i, idx]
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_fancy_index_in_map():
     sdfg = fancy_index_in_map.to_sdfg(simplify=False)
     sdfg.validate()
@@ -201,6 +210,7 @@ def fancy_index_leading_in_map(A: dace.float64[4, 8], idx: dace.int64[3], out: d
         out[i] = A[idx, i]
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_fancy_index_leading_in_map():
     A = np.arange(32, dtype=np.float64).reshape(4, 8).copy()
     idx = np.array([3, 0, 2], dtype=np.int64)
@@ -216,6 +226,7 @@ def boolean_mask_read_in_map(A: dace.float64[4, 8], m: dace.bool[4, 8], out: dac
         out[i] = np.sum(A[m])
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_boolean_mask_read_in_map_is_refused():
     with pytest.raises(IndexError, match="Boolean array indexing"):
         boolean_mask_read_in_map.to_sdfg(simplify=False)
@@ -227,6 +238,7 @@ def subscripted_binop_in_map(A: dace.float64[4, 8], B: dace.float64[4, 8], out: 
         out[i] = (A[i] + B[i])[2]
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_subscripted_binop_in_map():
     A = np.arange(32, dtype=np.float64).reshape(4, 8).copy()
     B = np.ones((4, 8))

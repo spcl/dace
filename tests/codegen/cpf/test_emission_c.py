@@ -694,6 +694,7 @@ def c_gramschmidt(A: dace.float64[M, N], Q: dace.float64[M, N], R: dace.float64[
         A[:, k + 1 :] = A[:, k + 1 :] - Q[:, k][:, None] * R[k, k + 1 :][None, :]
 
 
+# Reproducer: CPF fixes from the llr40 and scicomp prerender (f91e1cfe51)
 def test_a_library_expansion_writing_a_scalar_takes_a_pointer_in_c():
     """The ``Dot`` inside gramschmidt's loop expands into a function that writes its result through a
     scalar connector. That expansion happens after the signature scalars are promoted, so it reached C
@@ -723,6 +724,7 @@ def accumulating_copy_sdfg(name: str) -> dace.SDFG:
 
 
 @pytest.mark.parametrize("language", ["c", "c++"])
+# Reproducer: CPF fixes from the llr40 and scicomp prerender (f91e1cfe51)
 def test_an_accumulating_copy_renders_as_a_map_without_the_runtime(language: str):
     """An accumulating copy is a reduction, so no copy node takes it and the generator fell back to
     ``dace::CopyND::Accumulate``, refusing icon_scatter, seissol_tensor_contraction and spmm."""
@@ -740,6 +742,7 @@ def test_an_accumulating_copy_renders_as_a_map_without_the_runtime(language: str
 
 
 @pytest.mark.parametrize("language", ["c", "c++"])
+# Reproducer: CPF fixes from the llr40 and scicomp prerender (f91e1cfe51)
 def test_a_one_element_accumulating_copy_from_a_scalar_renders_without_the_runtime(language: str):
     """``out[3] += s`` from a Scalar: no map can index the scalar end, so it is one accumulating tasklet."""
     name = "cpf_scalar_accumulate_%s" % language.replace("+", "x")

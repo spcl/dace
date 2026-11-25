@@ -27,6 +27,7 @@ ENVIRONMENTS = (
 
 
 @pytest.mark.parametrize("environment", ENVIRONMENTS, ids=lambda env: env.__name__)
+# Reproducer: Make the PBLAS nodes refuse the two states that answer with wrong numbers (cb89ec0ea8)
 def test_environment_brings_mpi_up_at_a_level_it_can_keep(environment):
     """Left to BLACS, an unlaunched rank's MPI comes up under a bare ``MPI_Init``."""
     init = environment.init_code
@@ -37,6 +38,7 @@ def test_environment_brings_mpi_up_at_a_level_it_can_keep(environment):
 
 
 @pytest.mark.parametrize("environment", ENVIRONMENTS, ids=lambda env: env.__name__)
+# Reproducer: Make the PBLAS nodes refuse the two states that answer with wrong numbers (cb89ec0ea8)
 def test_environment_refuses_a_thread_level_below_funneled(environment):
     """Someone else's bring-up is not ours to fix; refusing to run is all that is left."""
     init = environment.init_code
@@ -70,6 +72,7 @@ def assert_every_descinit_is_read(code, descriptors):
 
 
 @pytest.mark.parametrize("implementation", ("MKLMPICH", "MKLOpenMPI", "ReferenceMPICH", "ReferenceOpenMPI"))
+# Reproducer: Make the PBLAS nodes refuse the two states that answer with wrong numbers (cb89ec0ea8)
 def test_pgemm_checks_every_descinit_info(implementation):
     """A descriptor ``descinit_`` rejected must stop the multiply, not feed it."""
     LMx, LNy, LKx, LKy, Px, Py, GK = (

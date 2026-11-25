@@ -106,6 +106,7 @@ def test_a_dependent_read_after_write_splits_by_recomputing_the_local():
     assert not _materialized_buffers(cand)
 
 
+# Reproducer: fix(canonicalize): statement-fission stale-snapshot and in-place-RMW miscompiles (e17f44e316)
 def test_in_place_read_modify_write_map_is_left_unsplit():
     """A map that reads a global array via a local and writes it IN PLACE (``t=A[i]; A[i]=t+B[i]; C[i]=t*2``)
     must NOT be split: cloning per output lets one clone recompute ``t=A[i]`` AFTER a sibling clone

@@ -39,6 +39,7 @@ def scale_row_through_view() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_get_view_edge_ignores_ordering_out_edges() -> None:
     """An empty out-edge must not make a well-formed view look ambiguous (dace/sdfg/utils.py)."""
     sdfg = dace.SDFG("view_with_ordering_out_edge")
@@ -60,6 +61,7 @@ def test_get_view_edge_ignores_ordering_out_edges() -> None:
     sdfg.validate()
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_partial_view_write_survives_simplify() -> None:
     """The ordering out-edges of a partially written view used to make simplify() reject it."""
 
@@ -78,6 +80,7 @@ def test_partial_view_write_survives_simplify() -> None:
     assert np.allclose(got, expected), got
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_redundant_array_copying_in_declines_a_view_chain() -> None:
     """The A -> B -> C fold deleted the binding edge of a View, losing the write-through."""
     sdfg = scale_row_through_view()
@@ -92,6 +95,7 @@ def test_redundant_array_copying_in_declines_a_view_chain() -> None:
     assert np.allclose(got, expected), got
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_redundant_array_copying_declines_a_view_chain() -> None:
     """Folding the chain moved the 'views' connector onto a node that views nothing."""
     sdfg = scale_row_through_view()
@@ -153,6 +157,7 @@ def build_read_view_with_ordering_in_edge() -> dace.SDFG:
 
 
 @pytest.mark.parametrize("builder", [build_write_view_with_ordering_out_edge, build_read_view_with_ordering_in_edge])
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_remove_slice_view_keeps_the_ordering_edge(builder) -> None:
     """RemoveSliceView rewired one side only, so the ordering edge died with the node."""
     sdfg = builder()
@@ -277,6 +282,7 @@ def build_fission_border_view(viewed_is_border_transient: bool) -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_map_fission_declines_a_view_of_non_border_data() -> None:
     """Nothing may widen data the scope does not own, and one descriptor holds one binding."""
     sdfg = build_fission_border_view(viewed_is_border_transient=False)
@@ -290,6 +296,7 @@ def test_map_fission_declines_a_view_of_non_border_data() -> None:
     assert np.allclose(b, (a + 1.0) * 2.0), b
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_map_fission_does_not_push_a_view_into_a_nested_sdfg() -> None:
     """The nested SDFG connector took the outer View descriptor, which has no binding inside."""
 
@@ -315,6 +322,7 @@ def test_map_fission_does_not_push_a_view_into_a_nested_sdfg() -> None:
     assert np.allclose(got, expected), got
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_redundant_array_race_guard_skips_ordering_edges() -> None:
     """The data-race guards fed ordering memlets to _validate_subsets, which warned and refused."""
 

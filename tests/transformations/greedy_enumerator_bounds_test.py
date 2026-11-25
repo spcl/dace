@@ -104,6 +104,7 @@ def _enumerate(sdfg: dace.SDFG, measure: bool = False) -> tuple[list[tuple[nodes
     return groups, calls[0], peak
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_greedy_enumerator_is_linear_in_map_count():
     # Warm up the symbolic and descriptor caches so the traced peak measures the
     # enumerator rather than first-use allocations elsewhere in dace.
@@ -139,6 +140,7 @@ def measure_in_fresh_process(num_maps: int) -> tuple[int, int]:
     return int(calls), int(peak)
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_greedy_enumerator_scales_linearly():
     """Doubling the map count must not more than double the cost."""
     small_calls, small_peak = measure_in_fresh_process(N_MAPS // 2)
@@ -154,6 +156,7 @@ def test_greedy_enumerator_scales_linearly():
     )
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_greedy_fuse_terminates_on_map_heavy_state():
     """End-to-end guard: the driver completes and leaves a valid, acyclic SDFG."""
     sdfg = _clique_state_sdfg(N_MAPS)

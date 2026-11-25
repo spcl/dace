@@ -5,6 +5,7 @@ import dace
 from dace import subsets
 
 
+# Reproducer: fix(subsets,symbolic): compare Range by symbol name, and hash to match (9a64bd9f26)
 def test_equal_ranges_across_symbol_instances():
     """``0:QN`` written with either instance is the same region, and covers() already said so."""
     wide = dace.symbol("QN", dace.int32)
@@ -21,6 +22,7 @@ def test_equal_ranges_across_symbol_instances():
     assert subsets.intersects(rng1, rng2, facts) is dace.symbolic.Truth.TRUE
 
 
+# Reproducer: fix(subsets,symbolic): compare Range by symbol name, and hash to match (9a64bd9f26)
 def test_equal_ranges_hash_alike():
     """__eq__ without __hash__ makes equal Ranges miss each other in every dict and set."""
     wide = dace.symbol("QN", dace.int32)
@@ -33,6 +35,7 @@ def test_equal_ranges_hash_alike():
     assert {rng1: "value"}.get(rng2) == "value"
 
 
+# Reproducer: fix(subsets,symbolic): compare Range by symbol name, and hash to match (9a64bd9f26)
 def test_genuinely_different_ranges_stay_unequal():
     """The fix must not make everything equal: name, extent and step still separate regions."""
     wide = dace.symbol("QN", dace.int32)
@@ -46,6 +49,7 @@ def test_genuinely_different_ranges_stay_unequal():
     assert hash(base) != hash(subsets.Range([(0, wide - 1, 2)]))
 
 
+# Reproducer: fix(subsets,symbolic): compare Range by symbol name, and hash to match (9a64bd9f26)
 def test_multidim_range_equality():
     """Every dimension is compared, not just the first."""
     n32, n64 = dace.symbol("QN", dace.int32), dace.symbol("QN", dace.int64)

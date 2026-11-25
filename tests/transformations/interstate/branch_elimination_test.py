@@ -2578,6 +2578,7 @@ def interstate_boolean_op(A: dace.float64[N, N], B: dace.float64[N, N], c0: dace
             A[i, j] = A[i, j] + B[i, j]
 
 
+# Reproducer: Fix bugs, use Python code for fallbacks (72cc9f151b)
 def test_interstate_boolean():
     sdfg = parsed_simplified(interstate_boolean_op)
     sdfg.name = "interstate_boolean_op"
@@ -2668,6 +2669,7 @@ def interstate_boolean_op_two(A: dace.float64[N, N], B: dace.float64[N, N], c0: 
             A[i, j] = A[i, j] + B[i, j]
 
 
+# Reproducer: Many small fixes and stuff (df9b0a84d5)
 def test_interstate_boolean_op_two():
     # Allocate random inputs
     A = np.random.rand(N, N).astype(np.float64)
@@ -2705,6 +2707,7 @@ def dace_s1161(
                 a[i] = c[i] + d[i] * e[i]
 
 
+# Reproducer: Fixes and tests and things (30b3aa638b)
 def test_s1161():
     sdfg = parsed_simplified(dace_s1161)
     from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
@@ -2817,6 +2820,7 @@ def test_lowering_a_guard_assignment_never_registers_the_enclosing_iterator():
     assert "i" not in sdfg.symbols
 
 
+# Reproducer: Narrow symbolic arguments of int() through as_expr; regression test for while-style loops... (e09e47b837)
 def test_symbol_read_check_handles_while_loop_without_init_or_update():
     """A while-style LoopRegion has no init / update statement; the symbol-read scan must skip them, not crash."""
     sdfg = dace.SDFG("while_loop_symbol_read")

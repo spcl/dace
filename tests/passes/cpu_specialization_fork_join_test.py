@@ -108,6 +108,7 @@ def test_symbolic_extent_stays_parallel():
     assert entry.map.schedule == dtypes.ScheduleType.CPU_Multicore
 
 
+# Reproducer: canonicalize: fix untile test assertion, and sequentialize only provably-small top-level maps (1981aec775)
 def test_map_re_entered_by_symbolic_loop_stays_parallel():
     """An enclosing loop is not a reason to sequentialize: a region entered ``E`` times costs
     ``E * (fork + work/P)`` against ``E * work``, so ``E`` multiplies both sides and cancels.
@@ -137,6 +138,7 @@ def csr_segment_sdfg(name, in_loop):
 
 
 @pytest.mark.parametrize("in_loop", [True, False])
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_data_segment_map_in_a_sequential_loop_goes_sequential(in_loop):
     """ilu0's shape: inside a sequential loop, a map over a range read from data forks once per outer iteration over a
     few elements (1.5 s against numba's 11 ms). At top level the same map is one region and keeps it."""
@@ -177,6 +179,7 @@ def csr_row_sum_sdfg() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_sequential_map_made_after_the_labels_says_it_reduces():
     """sgs_pcg, sparse_cholesky: a lifted row sum kept in order on CPU read ``parallel -- independent``."""
     sdfg = csr_row_sum_sdfg()
@@ -499,6 +502,7 @@ def test_cpu_specialize_decides_before_inference_pins_the_body():
     assert schedules(sdfg) == {"atom": dtypes.ScheduleType.Sequential, "plane": dtypes.ScheduleType.CPU_Multicore}
 
 
+# Reproducer: canonicalize: fix untile test assertion, and sequentialize only provably-small top-level maps (1981aec775)
 def test_triangular_map_in_loop_stays_parallel():
     """s115 exactly: ``for j in 0:N { map i in j+1:N }``. The inner map IS data-parallel -- that is
     why it is a Map -- and its extent ``N - j - 1`` is symbolic, so it keeps its region. Reading it at the last iteration (empty) is an artifact of substituting the sweep variable with
@@ -581,6 +585,7 @@ def reduce_in_loop(name, loop_end):
     return sdfg, node
 
 
+# Reproducer: Fork/join cost model: a sequential loop alone does not serialize a compute library node (a... (2778ef3375)
 def test_library_node_in_long_loop_stays_parallel():
     """A library node is a map over a blackbox: a loop around it multiplies its fork and its work alike
     (cp2k_trs4's iteration loop over a 1.2M-block batched einsum ran single-core)."""
@@ -589,6 +594,7 @@ def test_library_node_in_long_loop_stays_parallel():
     assert node.schedule == dtypes.ScheduleType.CPU_Multicore
 
 
+# Reproducer: Fork/join cost model: a sequential loop alone does not serialize a compute library node (a... (2778ef3375)
 def test_library_node_over_a_data_segment_in_a_loop_goes_sequential():
     """Rule 3 for a blackbox: a reduction over a CSR row, ``row[b:e]`` with both ends read from data each trip."""
     sdfg = dace.SDFG("reduce_csr_row")
@@ -676,6 +682,7 @@ def test_a_small_copy_out_of_a_host_stack_array_is_one_memcpy():
 
 
 @pytest.mark.parametrize("kind,parallel", [("copy", "MappedTasklet"), ("memset", "pure")])
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_loop_that_keeps_the_transfer_size_does_not_sequentialize_it(kind, parallel):
     """bicgstab's per-iteration ``N``-element memsets: every entry is the same size, so the entry count cancels
     out of the fork-or-not decision and only the size decides -- not the loop around it."""
@@ -711,6 +718,7 @@ def test_strided_re_entered_copy_is_a_sequential_element_map():
     assert expanded and maps and all(m.map.schedule == dtypes.ScheduleType.Sequential for m in maps)
 
 
+# Reproducer: Fix  copies between different types (#2663) (e219ad0e89)
 def test_converting_re_entered_copy_is_not_memcpy():
     """A converting copy is a cast, so a ``memcpy`` cannot do it: the values must be converted."""
     sdfg, node = transfer_sdfg("converting_copy_in_loop", "N", "copy")

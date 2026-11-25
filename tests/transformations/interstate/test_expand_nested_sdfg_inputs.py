@@ -104,6 +104,7 @@ def _masked_power(A: dace.float64[N, N], I: dace.bool[N, N]):
     np.power(A, -1.5, out=A, where=I)
 
 
+# Reproducer: Try fix canon and auto-vec (e627f42c9a)
 def test_uncollapse_multidim_condition_keeps_all_map_dims():
     """A collapsed mask ``I[0]`` (inner ``Array(1,)``) read by an interstate assignment inside
     an N-D map must uncollapse to ALL map dims, not just the first.
@@ -545,6 +546,7 @@ def _inplace_tile_rmw(a: dace.float64[N, M], b: dace.float64[N, M]):
             a[ii + i + 1, jj + j + 1] = a[ii + i + 1, jj + j + 1] * 2.0 + b[ii + i + 1, jj + j + 1]
 
 
+# Reproducer: canonicalize: fix reduction/scan/nested-SDFG correctness hazards + tests (b0394ccd10)
 def test_inplace_same_array_read_and_write_no_double_offset():
     """In-place RMW (``a[idx] = a[idx]*2 + b[idx]``) makes the SAME array ``a``
     both an in- AND out-connector of the post-MapToForLoop NSDFG.
@@ -635,6 +637,7 @@ def _index_reached_a_body(sdfg, index_name):
     return any(index_name in n.sdfg.arrays for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_threads_direct_array_gather_index():
     """A direct-array gather index ``src[ip[i]]`` (``ip`` is never a boundary
     connector) must be threaded into the body NSDFG as a full-array read, else
@@ -650,6 +653,7 @@ def test_threads_direct_array_gather_index():
     assert np.allclose(dst, src[ip]), f"gather diverged, max|diff|={np.abs(dst - src[ip]).max():.3e}"
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_threads_scalar_connector_scatter_index():
     """A scatter whose index is hoisted into a collapsed scalar connector
     ``dst[__tmp]`` (from ``dst[idx[i]] = src[i]*scale``) must keep its

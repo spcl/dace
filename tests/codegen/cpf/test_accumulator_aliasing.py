@@ -59,6 +59,7 @@ def run(sdfg: dace.SDFG, arguments: dict) -> str:
     return code
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_sibling_loops_hold_one_element_each_in_their_own_scope():
     sdfg = two_row_sums.to_sdfg(simplify=True)
     sdfg.name = "aliasing_two_row_sums"
@@ -70,6 +71,7 @@ def test_sibling_loops_hold_one_element_each_in_their_own_scope():
     np.testing.assert_allclose(c, want, err_msg=code)
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_reduction_clause_covers_every_write_of_its_array():
     sdfg = two_accumulations("aliasing_sum_and_scatter", "0", "j")
     sdfg.openmp_array_reductions = True

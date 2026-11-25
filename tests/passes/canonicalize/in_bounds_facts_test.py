@@ -80,6 +80,7 @@ def write_in_nested_under_map(name: str) -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_an_access_under_a_map_that_may_not_run_bounds_nothing():
     """With ``M == 0`` neither map runs, so ``NZ == 1`` is a valid input and no bound on ``NZ`` holds."""
     assert declare_in_bounds_extents(read_under_map("possibly_empty_map", "M")) == {}

@@ -57,6 +57,7 @@ def _build_split_scope_transient_sdfg():
 
 
 @pytest.mark.gpu
+# Reproducer: fix(experimental_cuda): register split-DECLARE/ALLOCATE transients in ``defined_vars`` at... (4a839fef80)
 def test_split_scope_lifetime_transient_across_states():
     with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
         sdfg = _build_split_scope_transient_sdfg()

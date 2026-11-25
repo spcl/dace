@@ -162,6 +162,7 @@ def test_repeated_includes_go_only_outside_conditional_blocks():
     assert drop_repeated_includes(code) == "#include <a.h>\n#ifdef X\n#include <a.h>\n#endif\nint x;\n"
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_guarded_repeat_of_omp_h_goes_with_its_block():
     """tsvc_2_s2233 included ``<omp.h>`` in the preamble and again under the frame's ``#ifdef _OPENMP``."""
     from dace.codegen.cpf import drop_repeated_includes

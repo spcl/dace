@@ -68,6 +68,7 @@ def test_redundant_second_array_folds_a_copy_spelled_with_int_floor():
     assert not any(n.data == "t" for n in state.data_nodes())
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_a_copy_between_shapes_spelled_two_ways_is_no_reshape():
     """``t`` declared ``int_floor``, ``B`` declared ``floor``: one shape, so ``t`` is removed, not turned into a View."""
     sdfg, state = copy_sdfg("redundant_array_floor_spelling_no_reshape", True, transient_extent=PARSED_EXTENT)
@@ -126,6 +127,7 @@ def test_a_view_read_from_its_array_whose_shape_is_spelled_floor_is_removed():
     run_double(sdfg, 2)
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_a_whole_view_spelled_floor_before_a_library_node_is_removed():
     """``v`` is all of ``A``, its extent spelled ``floor`` against ``A``'s ``int_floor``: an identity view, which a
     library node reads exactly as it read the View."""
@@ -149,6 +151,7 @@ def test_a_whole_view_spelled_floor_before_a_library_node_is_removed():
     np.testing.assert_allclose(out[0], a.sum())
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_a_staging_copy_spelled_with_int_floor_is_folded():
     """``t = src[n, :]`` inside a map, ``t`` declared ``floor`` and the copy written ``int_floor``: the copy covers
     ``t`` and keeps its one dimension, so the readers take ``src``."""

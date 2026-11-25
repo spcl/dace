@@ -84,6 +84,7 @@ def has_map(region) -> bool:
     return any(isinstance(n, nodes.MapEntry) for n, parent in region.all_nodes_recursive())
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_symbolic_distance_versions_loop():
     sdfg = shift_add.to_sdfg(simplify=True)
     assert ParallelizeUnderConstraint().apply_pass(sdfg, {}) == 1
@@ -97,6 +98,7 @@ def test_symbolic_distance_versions_loop():
 
 
 @pytest.mark.parametrize("k", [0, 3, 8, 16])
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_symbolic_distance_both_arms_compute(k: int):
     """``K`` = 0 and ``K >= N`` take the parallel arm, ``K = 3`` the fallback."""
     n = 8
@@ -110,6 +112,7 @@ def test_symbolic_distance_both_arms_compute(k: int):
     assert np.allclose(s, expected)
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_distance_check_runs_once_before_time_loop():
     sdfg = shift_add_steps.to_sdfg(simplify=True)
     assert ParallelizeUnderConstraint().apply_pass(sdfg, {}) == 1
@@ -131,6 +134,7 @@ def test_distance_check_runs_once_before_time_loop():
         assert np.allclose(s, expected_s) and np.allclose(q, expected_q)
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_canonical_shift_add_versions_the_snapshot_fallback():
     """The snapshot covers ``K <= 0``; its fallback is versioned again on ``K >= N``. Every ``K`` computes."""
     sdfg = shift_add.to_sdfg(simplify=True)
@@ -153,6 +157,7 @@ def test_canonical_shift_add_versions_the_snapshot_fallback():
         assert np.allclose(s, expected), k
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_convolution_keeps_reduction_across_outer_map():
     """``s[i + j] +=`` over a parallel ``i`` and an inner ``j``: rows ``i`` and ``i + 1`` meet, so the update stays a
     reduction (WCR) instead of a plain read-modify-write."""
@@ -171,6 +176,7 @@ def test_convolution_keeps_reduction_across_outer_map():
     assert np.allclose(s, expected)
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_segment_writes_versioned_on_one_hoisted_pointer_check():
     """Rows write ``z[ptr[r] : ptr[r + 1]]``: parallel when ``ptr`` is non-decreasing, checked once before ``t``."""
     sdfg = segment_scale.to_sdfg(simplify=True)
@@ -198,6 +204,7 @@ def test_segment_writes_versioned_on_one_hoisted_pointer_check():
         assert np.allclose(z, expected_z) and np.allclose(d, expected_d)
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_offset_scatter_is_a_reduction():
     """``s[i + idx[i]] +=`` combines colliding updates in any order: a parallel reduction, never a kept loop."""
     sdfg = offset_scatter.to_sdfg(simplify=True)

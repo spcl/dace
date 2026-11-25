@@ -194,6 +194,7 @@ def test_scoped_check_does_not_warn_about_transients_initialized_elsewhere():
     assert not spurious, f"scoped validation warned about a transient another state initializes: {spurious}"
 
 
+# Reproducer: fix(sdfg,passes): repair two regressions from the validation perf pass (3fb3db284e)
 def test_scoped_check_accepts_a_match_inside_a_nested_sdfg():
     """The state a match rewrites may belong to a NESTED SDFG. validate_state rejects a state
     whose ``.sdfg`` is not the one passed in, so the scoped check must use the OWNING SDFG --

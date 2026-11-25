@@ -119,6 +119,7 @@ def same_guard_inside_inner_map(A: dace.float64[N], B: dace.float64[N, M], C: da
                 B[i, j] = t + C[j]
 
 
+# Reproducer: LoopToMap: carried-local-transient and nested-header-container fixes (e1bceef71f)
 def test_guarded_write_carry_is_refused():
     """The guarded write leaves ``t`` carrying the previous iteration, so the loop is not DOALL."""
     sdfg = guarded_carry.to_sdfg(simplify=False)
@@ -139,6 +140,7 @@ def test_guarded_write_carry_is_refused():
     assert np.array_equal(b, ref)
 
 
+# Reproducer: LoopToMap: carried-local-transient and nested-header-container fixes (e1bceef71f)
 def test_private_scratch_still_maps():
     sdfg = private_scratch.to_sdfg(simplify=False)
     assert sdfg.apply_transformations_repeated(LoopToMap) > 0
@@ -152,6 +154,7 @@ def test_private_scratch_still_maps():
     assert np.allclose(b, a * 2.0 + 1.0)
 
 
+# Reproducer: LoopToMap: carried-local-transient and nested-header-container fixes (e1bceef71f)
 def test_exhaustive_branches_still_map():
     """Every branch of an if/else writes ``t``, so no iteration can observe an older value."""
     sdfg = exhaustive_branches.to_sdfg(simplify=False)
@@ -166,6 +169,7 @@ def test_exhaustive_branches_still_map():
     assert np.allclose(b, np.where(a > 0.5, a, -a))
 
 
+# Reproducer: LoopToMap: carried-local-transient and nested-header-container fixes (e1bceef71f)
 def test_scratch_filled_by_inner_loop_still_maps():
     """A nested loop's write counts as written: the CloudSC fill-then-read-back scratch row."""
     sdfg = scratch_row_refilled.to_sdfg(simplify=False)

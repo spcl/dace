@@ -18,6 +18,7 @@ def guarded_products(a: dace.float64[N, K, K], b: dace.float64[N, K, K]):
             b[i] = a[i] @ a[i]
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_lifted_loop_maps_a_specialized_extent_of_its_containers():
     sdfg = guarded_products.to_sdfg(simplify=True)
     sdfg.specialize(dict(K=3))

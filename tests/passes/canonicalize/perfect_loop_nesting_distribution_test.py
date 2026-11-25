@@ -618,6 +618,7 @@ def test_distribution_order_is_stable_across_runs():
 
 
 @pytest.mark.parametrize("name", SIBLING_NESTS)
+# Reproducer: Passes that move blocks through add_node no longer run set_nested_sdfg_parent_references (bdf3ecd50e)
 def test_distribution_keeps_the_cfg_list_of_a_fresh_reset(name, monkeypatch):
     """Each distribution clones the parent loop per group; ``add_node`` lists and re-homes every clone."""
     kernel, sdfg = build(name, f"cfg_{name}")

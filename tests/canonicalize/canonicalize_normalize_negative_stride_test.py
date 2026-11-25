@@ -195,6 +195,7 @@ def test_the_rebound_iterator_keeps_its_range():
 
 
 @pytest.mark.parametrize("n", [5, 0])
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_iterator_read_after_the_loop_keeps_its_exit_value(n):
     """``for i = N - 1; i >= 0; i -= 1`` then ``out[0] = i``: the loop leaves ``i == -1``, also when it runs no
     iteration."""

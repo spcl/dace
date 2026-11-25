@@ -307,6 +307,7 @@ def scatter_with_a_compaction_counter(a: dace.float64[N], b: dace.float64[N], ip
             n += 1
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_the_contract_waives_only_the_scatter_and_a_carried_counter_stays_sequential():
     """The uniqueness contract answers for the scatter target alone; the compaction counter is a dependence it
     does not cover, so the loop is neither guarded nor lifted, and the kept indices stay in order."""
@@ -441,6 +442,7 @@ def test_detect_and_lift_nested_map_scatter():
     )
 
 
+# Reproducer: fix(scatter,wavefront): scope LoopToMap to proven-safe loops via direct apply (2fada3d0d8)
 def test_no_scatter_elementwise_no_op_modified_skips_global_permissive_lift():
     """**Contract changed.** A plain elementwise loop has no scatter idx; the
     pass now leaves it untouched (the previous behaviour ran a global permissive
@@ -472,6 +474,7 @@ def test_no_scatter_elementwise_no_op_modified_skips_global_permissive_lift():
     assert np.allclose(a, b * 2.0)
 
 
+# Reproducer: fix(scatter,wavefront): scope LoopToMap to proven-safe loops via direct apply (2fada3d0d8)
 def test_carry_loop_not_permissively_lifted_by_scatter_pass():
     """**New regression** for the bug this fix addresses. A loop with a genuine
     loop-carried dependence (``a[i] = a[i - 1] + 1``) that lives alongside a

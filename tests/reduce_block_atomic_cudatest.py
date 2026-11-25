@@ -63,6 +63,7 @@ def _generated_cuda(sdfg):
     )
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_block_atomic_emits_cub_and_atomic():
     sdfg = _build_block_atomic_sum_sdfg()
     code = _generated_cuda(sdfg)
@@ -74,12 +75,14 @@ def test_block_atomic_emits_cub_and_atomic():
 
 
 @pytest.mark.gpu
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_block_atomic_compiles():
     sdfg = _build_block_atomic_sum_sdfg()
     sdfg.compile()
 
 
 @pytest.mark.gpu
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_block_atomic_runs():
     """Runs on the device. ``A`` and ``B`` are read and written by the kernel, so they are device
     arrays here. Host buffers under a ``GPU_Device`` map cause a memory-access fault on a discrete GPU."""

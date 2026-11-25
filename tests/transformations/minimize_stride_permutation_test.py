@@ -340,6 +340,7 @@ def plane_map_over_level_map(A: dace.float64[N, K, M], B: dace.float64[N, K, M])
             B[i, k, j] = A[i, k, j] + 1.0
 
 
+# Reproducer: MinimizeStridePermutation: a nest does not cross a GPU schedule boundary (9ddd337c94)
 def test_a_kernel_around_each_threads_loop_is_not_a_nest():
     """A GPU kernel over ``(i, j)`` of ``B[i, k, j]`` around a ``Sequential`` map over ``k`` (qe_vexx_k's offloaded
     fill: each thread walks a SMALL axis) stays as it is: the order across the device boundary is the offload's, and

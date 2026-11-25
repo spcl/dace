@@ -52,6 +52,7 @@ def map_local_scalar_sdfg() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: CPF: race-free forms, TaskletFusion and guard fixes, loop-kind annotations (8fbddbc0a7)
 def test_a_map_local_scalar_is_declared_inside_its_parallel_loop():
     sdfg = map_local_scalar_sdfg()
     result = render(sdfg, language="c")
@@ -74,6 +75,7 @@ def trmm(alpha: dace.float64, A: dace.float64[M, M], B: dace.float64[M, N]):
     B *= alpha
 
 
+# Reproducer: CPF: race-free forms, TaskletFusion and guard fixes, loop-kind annotations (8fbddbc0a7)
 def test_an_outlined_loop_exports_no_unread_exit_value():
     sdfg = trmm.to_sdfg(simplify=True)
     sdfg.name = "cpf_trmm_exit"

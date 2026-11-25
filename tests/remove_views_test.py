@@ -667,6 +667,7 @@ def test_flatten_view():
         assert num_after < num_before
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_flatten_of_an_extent_spelled_floor_is_linearized():
     """``A``'s rows declared with Python's ``//`` (``floor``), the view edge written ``int_floor``: the edge covers
     ``A``, so the flat View is linearized away."""

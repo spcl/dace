@@ -52,6 +52,7 @@ def fills(sdfg: dace.SDFG) -> int:
     return sum(isinstance(n, FillLibraryNode) for n, _ in sdfg.all_nodes_recursive())
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_overwritten_memset_is_dropped():
     sdfg = zeroed_then_written()
     assert DeadFillElimination().apply_pass(sdfg, {}) == 1
@@ -63,18 +64,21 @@ def test_overwritten_memset_is_dropped():
     assert np.allclose(out, b)
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_memset_kept_when_the_map_misses_elements():
     sdfg = zeroed_then_written(map_range="1:N")
     assert DeadFillElimination().apply_pass(sdfg, {}) is None
     assert fills(sdfg) == 1
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_memset_kept_under_an_indirect_write():
     sdfg = zeroed_then_written(index="__k")
     assert DeadFillElimination().apply_pass(sdfg, {}) is None
     assert fills(sdfg) == 1
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_memset_kept_when_the_map_reads_it():
     sdfg = zeroed_then_written(read_back=True)
     assert DeadFillElimination().apply_pass(sdfg, {}) is None

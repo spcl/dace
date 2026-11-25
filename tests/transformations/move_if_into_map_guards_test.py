@@ -53,6 +53,7 @@ def test_a_guard_over_a_map_nest_moves_under_the_innermost_map():
         assert np.array_equal(out, np.full((N, N), float(flag)))
 
 
+# Reproducer: Fix adi/gemver/ludcmp miscompiles; canonicalization stage-order (a47792b2a1)
 def test_data_dependent_guard_does_not_produce_an_invalid_sdfg():
     """A guard whose definition reads data (``a[i] > thr``) moves inside with that data piped in."""
 
@@ -113,6 +114,7 @@ def _two_predecessor_guard():
     return sdfg
 
 
+# Reproducer: Fix adi/gemver/ludcmp miscompiles; canonicalization stage-order (a47792b2a1)
 def test_guard_symbol_defined_on_two_edges_is_refused():
     """Two predecessors defining the guard symbol differently.
 
@@ -124,6 +126,7 @@ def test_guard_symbol_defined_on_two_edges_is_refused():
     assert _apply(sdfg) is None, "ambiguous guard definition must be refused"
 
 
+# Reproducer: Fix adi/gemver/ludcmp miscompiles; canonicalization stage-order (a47792b2a1)
 def test_guard_symbol_used_by_a_map_range_is_not_deleted():
     """The moved guard symbol must survive if dataflow still reads it.
 

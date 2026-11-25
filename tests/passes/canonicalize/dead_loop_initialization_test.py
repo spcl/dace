@@ -116,6 +116,7 @@ def test_a_fill_read_after_the_loop_stays():
     assert fills(sdfg) == 1
 
 
+# Reproducer: LoopToMap carried analysis: an ordering edge does not order a read after its state's stores (d77bb4b596)
 def test_a_fill_read_first_behind_an_ordering_edge_stays():
     """cloudsc's ``zcldtopdist`` accumulates over the levels: an empty edge into the access node that reads it orders
     that read after an unrelated map, not after the write of ``w`` later in the same state."""

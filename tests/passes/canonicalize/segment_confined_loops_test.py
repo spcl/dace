@@ -133,6 +133,7 @@ def segment_maps(sdfg: dace.SDFG) -> list:
     ]
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_component_loop_lifts_behind_its_entry_guard_and_computes_the_reference():
     sdfg = canonical(frontier_walk)
     assert len(segment_maps(sdfg)) == 1
@@ -163,15 +164,18 @@ def test_a_component_loop_lifts_behind_its_entry_guard_and_computes_the_referenc
     assert np.array_equal(sizes, want_sizes)
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_write_one_past_a_member_keeps_the_loop():
     sdfg = canonical(frontier_walk_neighbour_write)
     assert not segment_maps(sdfg)
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_the_hint_names_the_pointer_array():
     assert "{pointer}" in SEGMENT_HINT and "{var}" in SEGMENT_HINT
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_the_hint_states_the_checks_its_proof_rests_on():
     """nfa_frontier: the hint said ``c touches only comp_ptr[c] .. comp_ptr[c + 1]``, though the loop reads other
     elements, and left out that the proof holds only behind the entry checks."""
@@ -268,6 +272,7 @@ def worklist_count_carried_across_components() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_worklist_count_never_reset_per_component_keeps_the_loop():
     """Component ``c`` writes ``out[comp_ptr[c] + S_c + j]``, ``S_c`` the starts of the earlier components: a lifted
     map would restart ``n_out`` in every component and write ``out[comp_ptr[c] + j]``."""

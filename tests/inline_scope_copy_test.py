@@ -90,6 +90,7 @@ def whole_copy_in_a_map_of_a_nest() -> tuple[dace.SDFG, dace.SDFG]:
     return sdfg, body
 
 
+# Reproducer: InlineSDFG does not stage a copy through an input-only container; CPF kinds rendering comm... (71bed4eacf)
 def test_a_copy_staged_through_an_input_only_container_is_not_inlined():
     """Staging the identity copy adds an access node of the input's container with an incoming edge, a write; where
     the enclosing nest takes that container as an input only, the SDFG became invalid ("written to, but only given

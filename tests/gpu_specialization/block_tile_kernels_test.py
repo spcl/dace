@@ -240,6 +240,7 @@ def test_a_dot_over_a_gathered_row_fuses_into_one_block_reduction():
     assert "- __tid" not in code
 
 
+# Reproducer: BlockTileKernels: run in-place updates on lane 0; fix the extended CI failures (93e3d95ac0)
 def test_an_in_place_update_outside_the_inner_map_runs_on_lane_zero_between_barriers():
     """``b[i] -= s`` read-modify-writes shared memory: once per lane would subtract ``s`` 256 times."""
     sdfg = canonical_gpu(subtract_rowsum)
@@ -290,6 +291,7 @@ def test_a_per_thread_scratch_read_after_the_inner_map_keeps_one_thread_per_iter
     assert not maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_per_thread_buffer_filled_outside_the_inner_map_keeps_one_thread_per_iteration():
     """Every lane would allocate and fill the whole row: 256 copies per block, which the device codegen hoists out of
     the kernel sized for every thread (icon_scatter's staging copies, ~54 GB at preset M)."""

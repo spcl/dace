@@ -106,6 +106,7 @@ def test_a_derived_iv_live_after_the_loop_folds_once_and_a_rerun_reports_no_chan
     assert any("j" in e.data.assignments for e in loop.all_interstate_edges())
 
 
+# Reproducer: SimplifyInductionVariables folds the variable into loop-local descriptors, so a rerun repo... (ca2f4dd9d1)
 def test_a_derived_iv_folds_into_a_loop_local_descriptor_and_a_rerun_reports_no_change():
     """mixed_precision_ir: a view sized by the IV kept naming it, since the loop's substitution does not reach the
     SDFG's descriptors, so every rerun found the read again and simplify's fixed point looped forever."""
@@ -615,6 +616,7 @@ def test_llvm_two_independent_derived_ivs_same_basis():
             assert "i" in syms
 
 
+# Reproducer: fix(simplify): don't fold conditionally-carried, live-outside induction variables (329f53a58e)
 def test_does_not_fold_conditional_argmax_iv():
     """Argmax ``index`` is conditionally carried and live past the loop.
 
@@ -679,6 +681,7 @@ def test_counter_reseeded_without_reading_itself_is_not_folded():
     assert str(read.data.subset) == "k"
 
 
+# Reproducer: SimplifyInductionVariables: a step naming a symbol the loop assigns does not fold (ad77f8d881)
 def test_a_step_assigned_in_the_loop_is_not_folded():
     """``k += step`` with ``step`` reassigned in a body branch has no closed form."""
     sdfg = dace.SDFG("iv_step_reassigned")

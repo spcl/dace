@@ -39,6 +39,7 @@ def _states_with_no_owner(sdfg: dace.SDFG):
     return [st.label for sub in sdfg.all_sdfgs_recursive() for st in sub.states() if st.sdfg is None]
 
 
+# Reproducer: Fix vectorizer refusal paths; make IT a first-class conditional write (64577de55c)
 def test_nested_states_are_repointed_at_the_target():
     """Every block, at every nesting level, must own-point at ``target`` -- not at ``source``."""
     target = _nested_loop_sdfg("target")
@@ -55,6 +56,7 @@ def test_nested_states_are_repointed_at_the_target():
     assert target.name == "source", "the restore must adopt the snapshot contents"
 
 
+# Reproducer: Fix vectorizer refusal paths; make IT a first-class conditional write (64577de55c)
 def test_restored_sdfg_survives_a_deep_copy():
     """The regression itself: the stale owner only shows up one ``deepcopy`` later."""
     target = _nested_loop_sdfg("target")
@@ -65,6 +67,7 @@ def test_restored_sdfg_survives_a_deep_copy():
 
 
 @pytest.mark.parametrize("name", ["lu", "gramschmidt"])
+# Reproducer: Fix vectorizer refusal paths; make IT a first-class conditional write (64577de55c)
 def test_refused_kernels_finalize(name):
     """End-to-end: the polybench kernels that take the WCR refusal path finalize and are correct.
 

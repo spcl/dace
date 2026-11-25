@@ -8,6 +8,7 @@ import dace.libraries.blas as blas
 from dace.memlet import Memlet
 
 
+# Reproducer: fix(libraries): library node validate compares dims by symbol name (259c250d59)
 def test_validate_accepts_reparsed_symbol_instances():
     """Same-named ``N`` reaching Scal.validate at two dtypes (one array's dace.int32
     instance vs the other's dace.int64 instance) must compare equal by name -- and a

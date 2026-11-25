@@ -34,6 +34,7 @@ def histogram(dtype):
 
 
 @pytest.mark.parametrize("dtype", [dace.int64, dace.float64])
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_count_histogram_is_a_parallel_array_reduction(dtype):
     sdfg = histogram(dtype).to_sdfg(simplify=True)
     canonicalize(sdfg, target="cpu")

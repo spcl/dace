@@ -6,6 +6,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.induction_variable_substitution import sink_chained_iv_update
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_counter_bumped_by_a_comparison_flag_is_left_alone():
     """histogram_equalization: ``t = x < y; k = k + t`` substituted the comparison into the step and raised."""
     sdfg = dace.SDFG("flag_temp_counter")

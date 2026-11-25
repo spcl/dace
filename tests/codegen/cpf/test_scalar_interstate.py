@@ -33,6 +33,7 @@ def scalar_index_sdfg() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: Render an interstate read of a Scalar as the variable, so CPF does not emit name[0] (7de032763e)
 def test_an_interstate_edge_reads_a_scalar_by_name():
     """``idx[0]`` on the edge is rendered as the variable ``idx``, and the unit compiles."""
     sdfg = scalar_index_sdfg()

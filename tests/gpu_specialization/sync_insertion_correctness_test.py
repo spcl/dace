@@ -109,6 +109,7 @@ def _three_state_cpu_gpu_cpu(A: dace.float64[_N], B: dace.float64[_N], C: dace.f
         C[i] = B[i] + 1.0
 
 
+# Reproducer: AutoSingleStreamGPUScheduler: fix sync over-count + tuple-unpack + CFG boundaries (95b8a7419d)
 def test_three_state_cpu_gpu_cpu_chain_has_one_sync_and_matches_numpy():
     """CPU prefix -> GPU kernel -> CPU suffix reading the kernel output. Expect one
     sync tasklet between the GPU state and the CPU suffix (the suffix reads B)."""
@@ -141,6 +142,7 @@ def _mixed_class_single_state(A: dace.float64[_N], B: dace.float64[_N]):
         B[i] = scratch[i] * 2.0
 
 
+# Reproducer: AutoSingleStreamGPUScheduler: fix sync over-count + tuple-unpack + CFG boundaries (95b8a7419d)
 def test_mixed_class_single_state_has_one_sync_and_matches_numpy():
     """Host-side scratch init feeds a parallel-map consumer. ``SplitStateByGPUClass``
     must lift the prefix out; expect one program-end sync (the residual sink is the
@@ -171,6 +173,7 @@ def _two_parallel_writers_one_host_reader(A: dace.float64[_N], B: dace.float64[_
         C[i] = X[i] + Y[i]
 
 
+# Reproducer: AutoSingleStreamGPUScheduler: fix sync over-count + tuple-unpack + CFG boundaries (95b8a7419d)
 def test_two_independent_parallel_writers_one_host_reader_has_one_sync_and_matches_numpy():
     """Two parallel kernels feed a single host-side reader. Expect one sync tasklet
     before the host reader (the scheduler folds both kernels' flushes into one)."""
@@ -197,6 +200,7 @@ def _parallel_output_consumed_by_host_loop(A: dace.float64[_N], B: dace.float64[
         C[i] = B[i] * 0.25
 
 
+# Reproducer: AutoSingleStreamGPUScheduler: fix sync over-count + tuple-unpack + CFG boundaries (95b8a7419d)
 def test_parallel_output_consumed_by_host_loop_has_one_sync_and_matches_numpy():
     """A parallel kernel writes B; a subsequent host loop reads B. Expect one sync
     tasklet between the kernel state and the host loop."""
@@ -229,6 +233,7 @@ def _per_iter_host_then_parallel_then_host(A: dace.float64[_N], B: dace.float64[
             B[i] = B[i] + gscratch[i]
 
 
+# Reproducer: AutoSingleStreamGPUScheduler: fix sync over-count + tuple-unpack + CFG boundaries (95b8a7419d)
 def test_loop_body_alternating_host_parallel_has_one_sync_and_matches_numpy():
     """Loop body does host init -> parallel kernel -> host accumulate. The sync lives
     statically *inside* the loop body (executed every iteration), so expect one sync

@@ -142,6 +142,7 @@ def _waw_two_maps(write_offset: int) -> SDFG:
     return sdfg
 
 
+# Reproducer: Fix apply_pass modification-contract + StateFusionExtended soundness/perf; drop Accumulato... (30ca89148f)
 def test_cross_iteration_war_between_maps_is_not_map_fused():
     """``B[i] = A[i+1]`` then ``A[i] = 99``. After state fusion the two Maps are ordered
     only by happens-before edges. Fusing them would make the ordering per-iteration, so
@@ -163,6 +164,7 @@ def test_cross_iteration_war_between_maps_is_not_map_fused():
     _assert_matches(ref, _run(map_fused, "mf", **arrays), "after MapFusion")
 
 
+# Reproducer: Fix apply_pass modification-contract + StateFusionExtended soundness/perf; drop Accumulato... (30ca89148f)
 def test_cross_iteration_waw_between_maps_is_not_map_fused():
     """``A[i] = 1`` then ``A[i+1] = 2``. The two writes of iterations i and i+1 overlap, so
     per-iteration ordering does not cover the output dependency and MapFusion must refuse:
@@ -178,6 +180,7 @@ def test_cross_iteration_waw_between_maps_is_not_map_fused():
     _assert_matches(ref, _run(map_fused, "mf", **arrays), "after MapFusion")
 
 
+# Reproducer: Fix apply_pass modification-contract + StateFusionExtended soundness/perf; drop Accumulato... (30ca89148f)
 def test_raw_between_maps_still_map_fuses_after_state_fusion():
     """``T[i] = A[i]*2`` then ``B[i] = T[i]+1``. RAW is a TRUE dependency and is handled by
     merging the common ``T`` node -- no ordering edge -- so the
@@ -219,6 +222,7 @@ def test_raw_between_maps_still_map_fuses_after_state_fusion():
     _assert_matches(ref, _run(map_fused, "mf", **arrays), "after MapFusion")
 
 
+# Reproducer: Fix apply_pass modification-contract + StateFusionExtended soundness/perf; drop Accumulato... (30ca89148f)
 def test_elementwise_war_between_maps_fuses_with_inner_ordering():
     """``B[i] = A[i]`` then ``A[i] = 99``: the anti-dependency is ELEMENT-WISE, so per
     iteration the read of ``A[i]`` still precedes the overwrite of ``A[i]`` and the Maps may
@@ -237,6 +241,7 @@ def test_elementwise_war_between_maps_fuses_with_inner_ordering():
     _assert_matches(ref, _run(map_fused, "mf", **arrays), "after MapFusion")
 
 
+# Reproducer: Fix apply_pass modification-contract + StateFusionExtended soundness/perf; drop Accumulato... (30ca89148f)
 def test_elementwise_waw_between_maps_fuses_with_inner_ordering():
     """``A[i] = 1`` then ``A[i] = 2``: the output dependency is element-wise, so the Maps
     fuse and the surviving write must still be the second one. The ordering edge inside the
@@ -285,6 +290,7 @@ def _war_two_dimensional(read_whole_first_dim: bool) -> SDFG:
     return sdfg
 
 
+# Reproducer: Fix apply_pass modification-contract + StateFusionExtended soundness/perf; drop Accumulato... (30ca89148f)
 def test_two_dimensional_elementwise_war_fuses():
     """Both Map parameters are pinned by the ``A[i, j]`` accesses, so the hazard cannot
     cross iterations and the Maps fuse."""
@@ -298,6 +304,7 @@ def test_two_dimensional_elementwise_war_fuses():
     _assert_matches(ref, _run(map_fused, "mf", **arrays), "after MapFusion")
 
 
+# Reproducer: Fix apply_pass modification-contract + StateFusionExtended soundness/perf; drop Accumulato... (30ca89148f)
 def test_war_with_unpinned_map_parameter_is_not_fused():
     """The read ``A[0:N, j]`` does not depend on ``i``, so iteration (0, j) reads what
     iteration (1, j) overwrites. Per-iteration ordering does not cover that and the Maps
@@ -311,6 +318,7 @@ def test_war_with_unpinned_map_parameter_is_not_fused():
     _assert_matches(ref, _run(map_fused, "mf", **arrays), "after MapFusion")
 
 
+# Reproducer: Fix apply_pass modification-contract + StateFusionExtended soundness/perf; drop Accumulato... (30ca89148f)
 def test_ordering_edge_of_a_third_map_is_not_dropped():
     """``B[i] = A[i]`` (0:N) then ``A[k] = 1`` (0:N/2) then ``A[i] = 2`` (0:N).
 
@@ -417,6 +425,7 @@ def test_rebound_read_view_does_not_block_map_fusion():
     _assert_matches(ref, _run(map_fused, "mf", **arrays), "after MapFusion")
 
 
+# Reproducer: Fix apply_pass modification-contract + StateFusionExtended soundness/perf; drop Accumulato... (30ca89148f)
 def test_war_from_dace_program_fuses_and_matches_reference():
     """The same element-wise WAR, but built by the frontend rather than by hand, so the
     Memlet/scope shapes are the ones the pipeline really sees."""

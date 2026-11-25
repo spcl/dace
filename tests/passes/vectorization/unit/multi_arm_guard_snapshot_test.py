@@ -97,6 +97,7 @@ def array_guard_reference(a: np.ndarray, b: np.ndarray) -> None:
             b[i] = -1.0
 
 
+# Reproducer: Fix FlattenBranches re-testing guards that earlier arms mutated (49e48a96a2)
 def test_every_flattened_guard_reads_a_snapshot_taken_before_the_arms():
     sdfg, body = array_guard_program()
 
@@ -119,6 +120,7 @@ def test_every_flattened_guard_reads_a_snapshot_taken_before_the_arms():
     assert len(snapshots) == 2, [block.label for block in snapshots]
 
 
+# Reproducer: Fix FlattenBranches re-testing guards that earlier arms mutated (49e48a96a2)
 def test_array_guard_chain_keeps_first_match_semantics_when_an_arm_mutates_a_later_guard():
     rng = np.random.default_rng(7)
     a, b = rng.uniform(-1.0, 1.0, LENGTH), rng.uniform(-1.0, 1.0, LENGTH)

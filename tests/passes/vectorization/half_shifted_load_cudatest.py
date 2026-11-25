@@ -264,6 +264,7 @@ def test_the_stride_guard_compiles_wherever_its_map_ended_up():
         )
 
 
+# Reproducer: fix(tileops): widen fp16 loads whose alignment proof needs symbol assumptions (8edefd3bcc)
 def test_interior_transient_stride_widens():
     """A transient covering a stencil's INTERIOR is strided by ``N - 2``, and that expression is
     not provably non-negative as written -- so the coefficient test refused it even though the very

@@ -40,6 +40,7 @@ def assignment_map(sdfg: dace.SDFG) -> dict[tuple[str, str], dict[str, str]]:
     return {(e.src.label, e.dst.label): dict(e.data.assignments) for e in sdfg.all_interstate_edges()}
 
 
+# Reproducer: Stop losing ordering edges and stale destinations across fusion, arglist and hoisting (d4f5cd7e28)
 def test_cascade_refuses_to_create_an_interstate_race():
     sdfg = build_gather_loop()
     sdfg.validate()

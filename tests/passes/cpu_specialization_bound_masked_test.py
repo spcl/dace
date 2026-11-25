@@ -194,6 +194,7 @@ def slot_indexed_sum_sdfg():
     return sdfg
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_masked_sum_into_a_slot_indexed_element_refuses():
     sdfg = slot_indexed_sum_sdfg()
     assert BoundMaskedMaps().apply_pass(sdfg, {}) is None

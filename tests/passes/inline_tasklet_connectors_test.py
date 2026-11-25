@@ -99,6 +99,7 @@ def test_wcr_output_not_inlined():
 
 
 @readable_cpu_generator
+# Reproducer: fix: keep shadowed connectors out of tasklet inlining (037f790973)
 def test_shadowed_connector_not_inlined():
 
     # A lambda parameter sharing a connector's name denotes the parameter inside the lambda,

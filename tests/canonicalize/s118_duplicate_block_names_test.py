@@ -75,6 +75,7 @@ def _single_iteration_loop(sdfg: dace.SDFG, label: str, body_label: str) -> Loop
     return loop
 
 
+# Reproducer: Fix five canonicalization miscompiles and close guarded-parallel fallbacks (ce6403bce4)
 def test_trivial_loop_elimination_reparents_clone_bodies_uniquely():
     """Two sibling trivial loops cloned from one original share a body-block name. Splicing both
     into the shared parent must rename on arrival rather than duplicate the label.
@@ -129,6 +130,7 @@ def test_unique_block_name_survives_an_in_place_rename():
     sdfg.validate()
 
 
+# Reproducer: Fix five canonicalization miscompiles and close guarded-parallel fallbacks (ce6403bce4)
 def test_s118_canonicalizes_to_a_valid_sdfg():
     """The reported failure: ``s118`` canonicalization raised ``Found multiple blocks with the same
     name in for_259_par``. Repeated in-process because the producing order is not deterministic."""

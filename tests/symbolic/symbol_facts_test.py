@@ -239,21 +239,25 @@ def test_simplify_keeps_names_of_its_scope():
     assert symbolic.simplify(2 * N + 1 - N, facts) == N + 1
 
 
+# Reproducer: Fix ten symbol-registry review findings (648819b75d)
 def test_divisibility_keeps_the_order_facts_of_its_multiple():
     facts = facts_of(Relation(RelationKind.DIVIDES, sympy.Integer(4), N), Relation(RelationKind.LT, ZERO, N))
     assert ask(Relation(RelationKind.LE, ZERO, N), facts) is Truth.TRUE
     assert ask(Relation(RelationKind.DIVIDES, sympy.Integer(4), N), facts) is Truth.TRUE
 
 
+# Reproducer: Fix the second round of symbol-registry review findings (88205a5616)
 def test_simplify_writes_a_divisibility_quotient_back():
     facts = facts_of(Relation(RelationKind.DIVIDES, sympy.Integer(4), N))
     assert {str(free) for free in sympy.sympify(symbolic.simplify(N / 4, facts)).free_symbols} == {"N"}
 
 
+# Reproducer: Fix the second round of symbol-registry review findings (88205a5616)
 def test_inequality_of_identical_expressions_is_false():
     assert ask(Relation(RelationKind.NE, N, N), Facts.none()) is Truth.FALSE
 
 
+# Reproducer: Facts: ask a division-generalized query whole, not split on an extremum it lost (786bb63ba8)
 def test_extremum_only_inside_a_division_is_generalized_away_without_error():
     """A Min that occurs only inside a division leaves no extremum once the division is generalized to a fresh
     symbol; the generalized query must still be asked rather than split on an extremum it no longer has. The trip

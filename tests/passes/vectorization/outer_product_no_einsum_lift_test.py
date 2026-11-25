@@ -47,6 +47,7 @@ def _gemm_libnodes(sdfg):
     ]
 
 
+# Reproducer: Fix adi/gemver/ludcmp miscompiles; canonicalization stage-order (a47792b2a1)
 def test_default_mode_lifts_outer_products_contraction_only_does_not():
     """On gemver's rank-2 update, the default lift produces GEMM/Einsum nodes
     from the outer products; the contraction-only mode produces none."""
@@ -66,6 +67,7 @@ def test_default_mode_lifts_outer_products_contraction_only_does_not():
     assert len(_gemm_libnodes(default)) > len(_gemm_libnodes(guarded))
 
 
+# Reproducer: Fix adi/gemver/ludcmp miscompiles; canonicalization stage-order (a47792b2a1)
 def test_existing_matmul_contractions_are_untouched():
     """The two GEMV MatMuls gemver already carries survive either mode -- the
     guard only affects the map-level outer-product lift, not real contractions."""
@@ -84,6 +86,7 @@ def test_existing_matmul_contractions_are_untouched():
     assert matmuls_before == matmuls_after == 2, "the existing GEMV MatMuls must be untouched"
 
 
+# Reproducer: Fix adi/gemver/ludcmp miscompiles; canonicalization stage-order (a47792b2a1)
 def test_gemver_vectorizes_correctly_both_pipelines():
     """End-to-end: gemver (a rank-2 update + two GEMVs) is value-correct under
     both canon+vec and parallelize+vec once the outer-product lift is refused.
