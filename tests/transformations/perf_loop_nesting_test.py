@@ -486,6 +486,7 @@ def test_pln_on_parent_inside_nested_sdfg_must_use_owning_sdfg():
     assert len(top_entries) == 2
 
 
+# Reproducer: PerfLoopNesting: refuse a library node or nested SDFG at the top level of the inner state:... (3677c80d99)
 def test_library_node_beside_the_children_refuses():
     inner = SDFG("inner")
     inner.add_array("x", [3], dace.float64)

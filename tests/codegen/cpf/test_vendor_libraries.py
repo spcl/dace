@@ -225,6 +225,7 @@ if __name__ == "__main__":
         test_a_product_whose_operand_no_blas_call_addresses_keeps_its_loops(lang)
 
 
+# Reproducer: CPF names LAPACKE on the link line: a distro packages it apart from OpenBLAS, so a unit ca... (8ec999547e)
 def test_a_unit_that_calls_lapacke_links_the_lapacke_this_machine_packages_apart():
     """Debian and Ubuntu ship LAPACKE as its own library; libopenblas there has no ``LAPACKE_*``."""
     packaged_apart = ctypes.util.find_library("lapacke") is not None

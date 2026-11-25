@@ -168,6 +168,7 @@ def arm(label: str, value: str) -> ControlFlowRegion:
     return body
 
 
+# Reproducer: MergeGuards lifts a guard alone in an else into elif arms; CI fixes (5125dd72f7)
 def test_a_guard_alone_in_an_else_becomes_elif_arms():
     sdfg = dace.SDFG("merge_guards_else_ladder")
     sdfg.add_symbol("c", dace.int64)

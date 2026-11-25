@@ -31,6 +31,7 @@ def matmul_matrix_vector(a: dace.float64[M, K], b: dace.float64[K], res: dace.fl
     res[:] = np.matmul(a, b)
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_matmul_2d():
     rng = np.random.default_rng(42)
     a = rng.random((4, 5))
@@ -40,6 +41,7 @@ def test_matmul_2d():
     assert np.allclose(res, a @ b)
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_matmul_batched():
     """The batched case matters on its own: the operator picks a different output shape for it."""
     rng = np.random.default_rng(42)
@@ -50,6 +52,7 @@ def test_matmul_batched():
     assert np.allclose(res, a @ b)
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_matmul_matrix_vector():
     rng = np.random.default_rng(42)
     a = rng.random((4, 5))
@@ -59,6 +62,7 @@ def test_matmul_matrix_vector():
     assert np.allclose(res, a @ b)
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_matmul_agrees_with_the_operator_it_delegates_to():
     """Two spellings, one implementation -- the property that keeps them from drifting apart."""
 

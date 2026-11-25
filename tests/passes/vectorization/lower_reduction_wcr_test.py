@@ -34,6 +34,7 @@ def _body_with_reduction_wcr(op_lambda: str):
     return sdfg, state
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_tiled_rewrites_to_augassign():
     """``tiled=True`` replaces the WCR edge with an ``__out = __in1 + __in2`` reduce-accum
     tasklet (accumulator read back), leaving no in-body WCR."""
@@ -55,6 +56,7 @@ def test_tiled_rewrites_to_augassign():
     ), "expected an accumulator read-back into __in1"
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_tail_strips_wcr():
     """``tiled=False`` (a step-1 postamble tail) drops the in-body WCR without adding a
     tasklet -- the boundary WCR already sums per iteration."""
@@ -64,6 +66,7 @@ def test_tail_strips_wcr():
     assert not [n for n in state.nodes() if isinstance(n, nodes.Tasklet)], "tail must not add a fold tasklet"
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_min_max_use_function_form():
     """``min`` / ``max`` WCRs lower to the call-form body ``__out = min(__in1, __in2)``."""
     for fn in ("min", "max"):
@@ -73,6 +76,7 @@ def test_min_max_use_function_form():
         assert t.code.as_string.strip() == f"__out = {fn}(__in1, __in2)"
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_transient_sink_untouched():
     """A WCR into a TRANSIENT sink is not a reduction output -- left alone."""
     sdfg = dace.SDFG("t_transient_sink_untouched")
@@ -90,6 +94,7 @@ def test_transient_sink_untouched():
     assert any(e.data is not None and e.data.wcr is not None for e in state.edges())
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_nest_reduction_is_idempotent():
     """``NestInnermostMapBodyIntoNSDFG`` run twice on a reduction map is a no-op the second time
     and never re-buries the boundary WCR inside the body NSDFG."""

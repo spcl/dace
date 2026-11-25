@@ -101,6 +101,7 @@ def _normalize_only(sdfg: dace.SDFG) -> dace.SDFG:
 
 
 @pytest.mark.parametrize("suite,name", _NESTED_REDUCTION_KERNELS)
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_normalize_only_preserves_semantics(suite, name):
     """``NormalizeWCR`` alone (no canonicalize) is value-preserving."""
     ctx = CS.make(suite, name)
@@ -109,6 +110,7 @@ def test_normalize_only_preserves_semantics(suite, name):
 
 
 @pytest.mark.parametrize("suite,name", _NESTED_REDUCTION_KERNELS)
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_normalize_is_idempotent(suite, name):
     """A second apply is a no-op (returns ``None``) and the output still matches."""
     ctx = CS.make(suite, name)
@@ -182,6 +184,7 @@ def _build_slice_wcr_scatter() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_symm_slice_wcr_extracted_to_single_element():
     """A hand-built ``symm``-shape fixture (see ``_build_slice_wcr_scatter``): a
     per-instance scatter trapped in a 2-state nsdfg, surfacing as a multi-element WCR at
@@ -216,6 +219,7 @@ def test_symm_slice_wcr_extracted_to_single_element():
     assert np.allclose(dest, ref), "slice-WCR extraction changed the fixture output vs reference"
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_azimint_naive_structure_after_normalize():
     """On ``azimint_naive`` the pass fires: no write-only in-nsdfg scalar WCR remains, and
     the map-exit edge feeding the accumulator ``tmp`` now carries a WCR."""
@@ -282,6 +286,7 @@ def _build_masked_reduction(op_wcr: str, seed_outer: bool) -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_micro_single_accumulator_sum():
     """The single-scalar ``+`` reduction is bit-exact after normalization (the bug drops
     the cross-iteration accumulation -> ~one lane's value)."""
@@ -300,6 +305,7 @@ def test_micro_single_accumulator_sum():
     assert np.isclose(acc[0], data[mask > 0].sum())
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_micro_single_accumulator_min_seeds_outer_accumulator():
     """The ``min`` reduction seeds the outer accumulator to ``+inf`` when it is not already
     seeded (a ``min`` reduction started from 0, or from garbage, is silently wrong)."""
@@ -316,6 +322,7 @@ def test_micro_single_accumulator_min_seeds_outer_accumulator():
     assert np.isclose(acc[0], data[mask > 0].min())
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_micro_no_op_when_map_exit_edge_already_has_wcr():
     """A NestedSDFG whose ``NestedSDFG -> MapExit`` edge already carries a WCR (the
     already-normalized / native ``symm`` shape) is left untouched."""
@@ -380,6 +387,7 @@ def _run_two_reductions(sdfg):
     return a1, a2, d1, d2
 
 
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_micro_two_independent_reductions_normalize():
     """``NormalizeWCR`` normalizes BOTH write-only scalar reductions; each stays bit-exact
     and independent (``acc1 == data1.sum()``, ``acc2 == data2.sum()``)."""
@@ -392,6 +400,7 @@ def test_micro_two_independent_reductions_normalize():
     assert np.isclose(a1[0], d1.sum()) and np.isclose(a2[0], d2.sum())
 
 
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_two_independent_reductions_through_nest_body_and_expand():
     """The vectorizer entry nests the innermost map body one level deeper
     (``NestInnermostMapBodyIntoNSDFG``) and later widens the boundary
@@ -465,6 +474,7 @@ def _body_wcr_edges(sdfg):
     ]
 
 
+# Reproducer: Checkpoint: fix real-bug xfails + port perf_loop_nesting/simplify_expressions from FaCe (4aeca8316b)
 def test_readwrite_redundant_interior_wcr_is_cleared():
     """The redundant interior WCR on a read-write connector is rewritten to an explicit
     plain read-modify-write, so no self-contained WCR survives inside the body NSDFG."""
@@ -474,6 +484,7 @@ def test_readwrite_redundant_interior_wcr_is_cleared():
     assert not surviving, f"read-write redundant interior WCR should be cleared; got {surviving}"
 
 
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_readwrite_redundant_interior_wcr_should_be_cleared():
     """The redundant interior WCR on a read-write connector is rewritten to an explicit
     plain read-modify-write, so no self-contained WCR survives in the body."""
@@ -482,6 +493,7 @@ def test_readwrite_redundant_interior_wcr_should_be_cleared():
     assert not _body_wcr_edges(sdfg), "interior WCR should become a read-modify-write, no body WCR"
 
 
+# Reproducer: Checkpoint: fix real-bug xfails + port perf_loop_nesting/simplify_expressions from FaCe (4aeca8316b)
 def test_readwrite_redundant_interior_wcr_value_preserving():
     """After normalization the aug-assign ``b[i] += data[i]`` is bit-exact, including
     the pre-existing ``b`` values (the bug a naive drop-to-plain would lose)."""
@@ -628,6 +640,7 @@ def nested_masked_count(lens: dace.int64[NE], vals: dace.int64[NE, LOOKUP], out:
     out[0] = count
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_masked_count_two_map_levels_deep_keeps_its_accumulator_path_named():
     """triangle_count: a while-loop search inside a map inside a map counts its hits. The inner level's masked
     count gets a seeded private accumulator; every edge of the memlet path into it must then name that private
@@ -778,6 +791,7 @@ def test_a_min_over_a_caller_array_starts_from_its_value():
     assert acc[0] == 1.0
 
 
+# Reproducer: NormalizeWCR: the read-write rewrite needs every enclosing map parameter as an index of th... (4465396389)
 def test_a_read_write_element_shared_by_an_outer_map_keeps_its_wcr():
     """``acc[j]`` is the inner map's own element, but every iteration of the outer map updates it."""
     wcr = "lambda a, b: a + b"

@@ -64,6 +64,7 @@ def test_a_scratch_sized_by_the_iteration_goes_on_the_stack(small):
     assert np.allclose(out, ref)
 
 
+# Reproducer: Finalize: no per-iteration heap allocation in a sequential loop: an iteration-sized transi... (994b2c9e69)
 def test_a_scratch_the_loop_does_not_resize_is_allocated_once_per_call():
     sdfg = per_iteration_scratch("loop_invariant_scratch", "N", small=True)
     finalize_transient_storage(sdfg, dtypes.DeviceType.CPU)

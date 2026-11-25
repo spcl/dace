@@ -45,6 +45,7 @@ def test_a_write_offset_by_an_inner_iterator_stays_ordered():
     _assert_canon_keeps(diagonal_update, "diagonal_update", {"A": rng.random(120), "C": rng.random(120)}, N=100, M=20)
 
 
+# Reproducer: LoopFusion, dep_class: unrelated fixed indices may alias; an inner iterator, a body-first... (d08b1a8b48)
 def test_loop_fusion_keeps_a_write_read_pair_at_unrelated_fixed_indices():
     """``b[K]`` and ``b[M]`` are one cell when ``K == M``: the running value must not reach the second loop's reads."""
     sdfg = dace.SDFG("fusion_fixed_indices")

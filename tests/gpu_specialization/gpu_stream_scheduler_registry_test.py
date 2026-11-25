@@ -46,6 +46,7 @@ def test_abstract_assign_streams_raises():
         GPUStreamSchedulingStrategy().assign_streams(dace.SDFG("abc_abstract_assign_streams_raises"))
 
 
+# Reproducer: Pluggable stream scheduler + presync cfg/state fix + npbench matrix (21fe7532eb)
 def test_abstract_apply_pass_also_raises():
     """``apply_pass`` routes through ``assign_streams``, so the contract holds
     via the pass machinery too."""

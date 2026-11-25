@@ -63,6 +63,7 @@ def _build_sdfg(v_dtype: dace.dtypes.typeclass = dace.float64) -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: fix(vectorization): refuse to demote a symbol the SDFG cannot express as a scalar (2b1efe6d6a)
 def test_argument_and_loop_symbols_are_not_demoted():
     """``N`` (argument) and ``i`` (loop variable / memlet index) survive as symbols; ``v``
     becomes a transient scalar wired into the tasklet."""
@@ -88,6 +89,7 @@ def test_argument_and_loop_symbols_are_not_demoted():
     assert "N" in code and "i" in code, f"the refused symbols must stay symbolic in the tasklet: {code}"
 
 
+# Reproducer: fix(vectorization): refuse to demote a symbol the SDFG cannot express as a scalar (2b1efe6d6a)
 def test_demotion_guards_classify_the_three_symbols():
     """The two guards the pass consults, read directly: ``N`` cannot become a transient
     scalar at all, ``i`` carries graph structure, ``v`` is clear on both counts."""

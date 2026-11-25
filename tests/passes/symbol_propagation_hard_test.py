@@ -1020,6 +1020,7 @@ def selfref_counter_range(C: dace.int64[16], start: dace.int64, step: dace.int64
 # Pattern A: same-edge multi-assignment race -- swap {x: y, y: expr_using_x}
 
 
+# Reproducer: fix(symbol-propagation): same-edge race guard + cross-CFG assert softening + termination cap (8afc4c6d71)
 def test_swap_pair_with_upstream_temp_api():
     """
     Edge ``{x: ty, y: tx}`` where ``tx = x`` and ``ty = y`` are assigned upstream.
@@ -1070,6 +1071,7 @@ def test_swap_pair_with_upstream_temp_api():
     assert np.array_equal(got, expected)
 
 
+# Reproducer: fix(symbol-propagation): same-edge race guard + cross-CFG assert softening + termination cap (8afc4c6d71)
 def test_two_keys_share_upstream_temp_api():
     """
     Edge ``{a: t, b: t}`` where ``t = a + 1`` upstream (reintroduces ``a`` next to its write).
@@ -1116,6 +1118,7 @@ def test_two_keys_share_upstream_temp_api():
     assert np.array_equal(got, expected)
 
 
+# Reproducer: fix(symbol-propagation): same-edge race guard + cross-CFG assert softening + termination cap (8afc4c6d71)
 def test_three_cycle_rotation_via_temps_api():
     """
     Rotation ``{p: tq, q: tr, r: tp}`` where ``tp=p, tq=q, tr=r`` are captured upstream.
@@ -1166,6 +1169,7 @@ def test_three_cycle_rotation_via_temps_api():
     assert np.array_equal(got, expected)
 
 
+# Reproducer: fix(symbol-propagation): same-edge race guard + cross-CFG assert softening + termination cap (8afc4c6d71)
 def test_swap_via_temps_acyclic_api():
     """
     Acyclic swap ``{x: tx, y: ty}`` where ``tx = y`` and ``ty = x`` upstream.
@@ -1217,6 +1221,7 @@ def test_swap_via_temps_acyclic_api():
 # Pattern B: substitution into a non-loop multi-assignment edge (ordering)
 
 
+# Reproducer: fix(symbol-propagation): same-edge race guard + cross-CFG assert softening + termination cap (8afc4c6d71)
 def test_multi_assign_temp_substitution_acyclic_api():
     """
     Acyclic ``{m: t, n: t + 1}`` edge where ``t = m + 2`` is assigned upstream.
@@ -1266,6 +1271,7 @@ def test_multi_assign_temp_substitution_acyclic_api():
         assert np.allclose(got, expected[b]), b
 
 
+# Reproducer: fix(symbol-propagation): same-edge race guard + cross-CFG assert softening + termination cap (8afc4c6d71)
 def test_chained_simultaneous_feeds_index_api():
     """
     Edge ``{idx: tmp, s: base + 10}`` then ``B[idx]``, with ``tmp = base + s`` upstream.
@@ -1322,6 +1328,7 @@ def test_chained_simultaneous_feeds_index_api():
 # Pattern C: self-referential propagation across edges
 
 
+# Reproducer: fix(symbol-propagation): same-edge race guard + cross-CFG assert softening + termination cap (8afc4c6d71)
 def test_selfref_counter_range_frontend():
     """Self-referential ``cnt = cnt + step`` loop-carried counter (frontend)."""
     rng = np.random.default_rng(80)
@@ -1336,6 +1343,7 @@ def test_selfref_counter_range_frontend():
         assert np.array_equal(got, expected), (start, step)
 
 
+# Reproducer: fix(symbol-propagation): same-edge race guard + cross-CFG assert softening + termination cap (8afc4c6d71)
 def test_selfref_with_upstream_alias_api():
     """
     Self-referential ``cnt = cnt + d`` where ``d = cnt`` is assigned just upstream.
@@ -1386,6 +1394,7 @@ def test_selfref_with_upstream_alias_api():
 # Pattern D: propagation into a LoopRegion update edge / condition
 
 
+# Reproducer: fix(symbol-propagation): same-edge race guard + cross-CFG assert softening + termination cap (8afc4c6d71)
 def test_loop_update_reads_propagated_symbol_api():
     """
     A ``LoopRegion`` whose ``i = i + step`` update reads a propagated symbol.
@@ -1431,6 +1440,7 @@ def test_loop_update_reads_propagated_symbol_api():
         assert np.array_equal(got, expected[s]), s
 
 
+# Reproducer: fix(symbol-propagation): same-edge race guard + cross-CFG assert softening + termination cap (8afc4c6d71)
 def test_loop_condition_reads_simultaneously_assigned_symbol_api():
     """
     Loop condition ``i < lim`` where ``lim`` is set alongside another symbol on the in-edge.
@@ -1483,6 +1493,7 @@ def test_loop_condition_reads_simultaneously_assigned_symbol_api():
 # Pattern E: ConditionalBlock branch condition reading a co-assigned symbol
 
 
+# Reproducer: fix(symbol-propagation): same-edge race guard + cross-CFG assert softening + termination cap (8afc4c6d71)
 def test_branch_condition_reads_coassigned_symbol_api():
     """
     Branch condition ``pick > 0`` where ``pick`` and ``v`` are co-assigned on the in-edge.
@@ -1549,6 +1560,7 @@ def test_branch_condition_reads_coassigned_symbol_api():
 # Pattern F: diamond merge where both branches reduce to the same value
 
 
+# Reproducer: fix(symbol-propagation): same-edge race guard + cross-CFG assert softening + termination cap (8afc4c6d71)
 def test_diamond_merge_equal_via_propagation_api():
     """
     Two branches assign ``m`` to syntactically different but value-equal expressions.
@@ -1607,6 +1619,7 @@ def test_diamond_merge_equal_via_propagation_api():
         assert np.allclose(got, expected), (sel, base)
 
 
+# Reproducer: fix(symbol-propagation): same-edge race guard + cross-CFG assert softening + termination cap (8afc4c6d71)
 def test_diamond_merge_unequal_must_not_propagate_api():
     """
     Diamond where branches assign ``m`` to genuinely different values.
@@ -1668,6 +1681,7 @@ def test_diamond_merge_unequal_must_not_propagate_api():
 # Pattern G: chained simultaneous assignments feeding an index, then B[idx]
 
 
+# Reproducer: fix(symbol-propagation): same-edge race guard + cross-CFG assert softening + termination cap (8afc4c6d71)
 def test_simultaneous_index_pair_then_use_api():
     """
     Edge ``{lo: clo, hi: chi}`` (index swap via capture temps) with both used as indices.

@@ -737,6 +737,7 @@ def test_scatter_then_interstate_edge_read_is_not_fused():
     assert np.array_equal(run(sdfg), oracle)
 
 
+# Reproducer: LoopFusion: an index a body binds is no fixed index: dep_class took two inner iterators, i... (4924bd9d6e)
 def test_inner_iterators_over_overlapping_segments_can_meet():
     n = dace.symbol("n", dace.int64, positive=True)
     m = dace.symbol("m", dace.int64, positive=True)

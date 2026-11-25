@@ -152,6 +152,7 @@ def test_nothing_accepted_returns_none_and_leaves_the_graph_alone():
     assert ordered_signature(sdfg) == before
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_an_inlined_body_whose_inner_map_kept_its_element_memlets_names_no_inner_parameter_outside():
     """A lane-narrowed body (``MoveLoopIntoMap``) keeps its inner map's memlets as they were: the edges around ``map
     j`` over ``[k, k]`` still read ``A[j]``. Inlined into ``map i``, propagation must start from ``map j``; from the

@@ -226,6 +226,7 @@ def _scope_passthrough_consistent(sdfg) -> bool:
     return True
 
 
+# Reproducer: fix(vectorization): bypass must not splice across map scope boundary + symmetric WCR preco... (b0b58013e4)
 def test_map_exit_boundary_assign_not_corrupted():
     """A trivial copy whose source is fed by a MapExit -- the spmv per-row
     accumulator shape ``MapExit:OUT -> AN(transient) -> [_out=_in] -> AN`` -- must
@@ -253,6 +254,7 @@ def test_map_exit_boundary_assign_not_corrupted():
     assert _scope_passthrough_consistent(outer), "bypass half-renamed a Map scope passthrough connector"
 
 
+# Reproducer: fix(vectorization): bypass must not splice across map scope boundary + symmetric WCR preco... (b0b58013e4)
 def test_spmv_bypass_keeps_sdfg_valid():
     """Regression (user-directed before/after): the spmv per-row reduction
     accumulator ``tmp`` is fed by the inner idx-map's MapExit, and the trivial
@@ -305,6 +307,7 @@ def test_spmv_bypass_keeps_sdfg_valid():
     assert _scope_passthrough_consistent(sdfg)
 
 
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_bypass_dead_dst_resolves_to_copy_not_isolated():
     """A trivial assign whose transient ``dst`` has NO in-state consumer must not
     be folded by orphaning its ``src``: the tasklet's incoming edge is ``src``'s
@@ -339,6 +342,7 @@ def test_bypass_dead_dst_resolves_to_copy_not_isolated():
     outer.validate()  # valid after bypass
 
 
+# Reproducer: fix(vectorization): BypassTrivialAssignTasklets must not collapse cross-state transients (efef0b5b79)
 def test_does_not_collapse_cross_state_transient():
     """Regression (cloudsc_one ``zqx`` Isolated-node crash): a transient staged in
     state A and read in state B is a CROSS-STATE value. In state A its

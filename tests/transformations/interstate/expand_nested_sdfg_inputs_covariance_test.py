@@ -56,6 +56,7 @@ def _rowsum16_via_map_to_for_loop(sdfg: dace.SDFG) -> None:
     PatternMatchAndApplyRepeated([to_loop]).apply_pass(sdfg, {})
 
 
+# Reproducer: canon: fix ExpandNestedSDFGInputs miscompile on multi-output NSDFGs (a06dcdc428)
 def test_rowsum16_expand_inline_value_exact():
     """Bug 2: a per-row reduction whose boundary read is the sliced row
     ``a[i, 0:16]`` (rank-reduced) must widen + inline value-exactly.
@@ -83,6 +84,7 @@ def test_rowsum16_expand_inline_value_exact():
     assert np.max(np.abs(out - ref)) < 1e-9
 
 
+# Reproducer: canon: fix ExpandNestedSDFGInputs miscompile on multi-output NSDFGs (a06dcdc428)
 def test_rowsum16_nest_innermost_then_expand_value_exact():
     """The vectorization-prep driver (``NestInnermostMapBodyIntoNSDFG`` ->
     ``ExpandNestedSDFGInputs``) on the same row reduction: the widen must not

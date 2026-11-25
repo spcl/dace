@@ -111,6 +111,7 @@ def _gather_idx_direct(
                 z_ekinh[jb, jk, jc] = z_kin_hor_e[jb, jk, edge_idx[jb, jc, 0]]
 
 
+# Reproducer: fix(vectorization): ICON zekinh gather + cloudsc tidy branch e2e (guardrails green) (ecb3b797d1)
 def test_direct_gather_to_output_store():
     """``out[jb,jk,jc] = A[jb,jk,idx[jb,jc,0]]`` -- direct gather assigned to the
     output (no compute). Regression: the bridge->output TileScatter dropped the
@@ -133,6 +134,7 @@ def _gather_both_direct(
                 z_ekinh[jb, jk, jc] = z_kin_hor_e[edge_blk[jb, jc, 0], jk, edge_idx[jb, jc, 0]]
 
 
+# Reproducer: fix(vectorization): ICON zekinh gather + cloudsc tidy branch e2e (guardrails green) (ecb3b797d1)
 def test_direct_double_gather_to_output_store():
     """Direct two-dim gather (blk dim-0 + idx dim-2) assigned to output."""
     _run_compare(_gather_both_direct, _icon_inputs, ICON_PARAMS)
@@ -176,6 +178,7 @@ def _gather_sum3(
 
 
 @pytest.mark.parametrize("kern", [_gather_sum2, _gather_sum3])
+# Reproducer: fix(vectorization): ICON zekinh gather + cloudsc tidy branch e2e (guardrails green) (ecb3b797d1)
 def test_multiple_distinct_gathers_of_one_array(kern):
     """``A[idx0] + A[idx1] (+ A[idx2])`` -- each distinct gather index must
     materialise its OWN index tile + TileGather (regression: all aliased idx0)."""
@@ -199,6 +202,7 @@ def _struct_sum3(
                 z_ekinh[jb, jk, jc] = e_bln[jb, 0, jc] + e_bln[jb, 1, jc] + e_bln[jb, 2, jc]
 
 
+# Reproducer: fix(vectorization): ICON zekinh gather + cloudsc tidy branch e2e (guardrails green) (ecb3b797d1)
 def test_multiple_distinct_structured_reads_of_one_array():
     """``e[.,0,.] + e[.,1,.] + e[.,2,.]`` -- distinct constant non-tile index per
     read; each needs its own structured TileGather (regression: aliased to m=0)."""
@@ -226,6 +230,7 @@ def _icon_zekinh_full(
                 )
 
 
+# Reproducer: fix(vectorization): ICON zekinh gather + cloudsc tidy branch e2e (guardrails green) (ecb3b797d1)
 def test_icon_zekinh_full_gather_times_structured():
     """The full ICON ``zekinh`` shape: 3 terms of ``e[.,m,.] * A[blk[.,m], ..,
     idx[.,m]]`` summed -- combines per-distinct-gather + per-distinct-structured
@@ -272,6 +277,7 @@ def _pred_chain(a: dace.float64[S1, S2], b: dace.float64[S1, S2], c: dace.float6
 
 @pytest.mark.parametrize("kern", [_pred_store, _pred_rmw, _pred_chain])
 @pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
+# Reproducer: fix(vectorization): ICON zekinh gather + cloudsc tidy branch e2e (guardrails green) (ecb3b797d1)
 def test_predicated_branch_body(kern, branch_mode):
     """Guarded ``if a < 0.5: ...`` body. Regression: the K=1 comparison cast its
     operands to the (bool) output type -- ``(bool)1e-12 -> 1`` -- so the mask was

@@ -17,6 +17,7 @@ def matmul_2d_2d(A: dace.float64[M, K], B: dace.float64[K, N], C: dace.float64[M
     C[:] = np.matmul(A, B)
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_matmul_2d_2d():
     A, B = rng.random((M, K)), rng.random((K, N))
     C = np.zeros((M, N))
@@ -32,6 +33,7 @@ def matmul_2d_2d_symbolic(A: dace.float64[SM, SK], B: dace.float64[SK, SN], C: d
     C[:] = np.matmul(A, B)
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_matmul_2d_2d_symbolic():
     A, B = rng.random((M, K)), rng.random((K, N))
     C = np.zeros((M, N))
@@ -44,6 +46,7 @@ def matmul_2d_1d(A: dace.float64[M, K], x: dace.float64[K], y: dace.float64[M]):
     y[:] = np.matmul(A, x)
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_matmul_2d_1d():
     A, x = rng.random((M, K)), rng.random(K)
     y = np.zeros(M)
@@ -56,6 +59,7 @@ def matmul_1d_2d(x: dace.float64[M], A: dace.float64[M, N], y: dace.float64[N]):
     y[:] = np.matmul(x, A)
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_matmul_1d_2d():
     x, A = rng.random(M), rng.random((M, N))
     y = np.zeros(N)
@@ -68,6 +72,7 @@ def matmul_1d_1d(x: dace.float64[K], y: dace.float64[K], out: dace.float64[1]):
     out[:] = np.matmul(x, y)
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_matmul_1d_1d():
     x, y = rng.random(K), rng.random(K)
     out = np.zeros(1)
@@ -81,6 +86,7 @@ def matmul_3d_3d(A: dace.float64[B1, M, K], B: dace.float64[B1, K, N], C: dace.f
     C[:] = np.matmul(A, B)
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_matmul_3d_3d():
     A, B = rng.random((B1, M, K)), rng.random((B1, K, N))
     C = np.zeros((B1, M, N))
@@ -93,6 +99,7 @@ def matmul_3d_2d(A: dace.float64[B1, M, K], B: dace.float64[K, N], C: dace.float
     C[:] = np.matmul(A, B)
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_matmul_3d_2d():
     A, B = rng.random((B1, M, K)), rng.random((K, N))
     C = np.zeros((B1, M, N))
@@ -105,6 +112,7 @@ def matmul_2d_3d(A: dace.float64[M, K], B: dace.float64[B1, K, N], C: dace.float
     C[:] = np.matmul(A, B)
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_matmul_2d_3d():
     A, B = rng.random((M, K)), rng.random((B1, K, N))
     C = np.zeros((B1, M, N))
@@ -117,6 +125,7 @@ def matmul_4d_4d(A: dace.float64[B1, B2, M, K], B: dace.float64[B1, B2, K, N], C
     C[:] = np.matmul(A, B)
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_matmul_4d_4d():
     A, B = rng.random((B1, B2, M, K)), rng.random((B1, B2, K, N))
     C = np.zeros((B1, B2, M, N))
@@ -130,6 +139,7 @@ def matmul_in_map(A: dace.float64[B1, M, K], B: dace.float64[B1, K, N], C: dace.
         C[i] = np.matmul(A[i], B[i])
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_matmul_in_map():
     A, B = rng.random((B1, M, K)), rng.random((B1, K, N))
     C = np.zeros((B1, M, N))
@@ -137,6 +147,7 @@ def test_matmul_in_map():
     assert np.allclose(C, np.matmul(A, B))
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_matmul_3d_1d_refused():
     """A 1-D operand against a rank >= 3 one needs NumPy's promote-batch-demote rule, unimplemented."""
 
@@ -148,6 +159,7 @@ def test_matmul_3d_1d_refused():
         matmul_3d_1d.to_sdfg()
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_matmul_broadcast_batch():
     """NumPy broadcasts a length-1 batch dimension, and so does the pure lowering now.
 
@@ -165,6 +177,7 @@ def test_matmul_broadcast_batch():
     assert np.allclose(c, a @ b), f"max|diff| = {np.max(np.abs(c - a @ b))}"
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_matmul_1d_3d_refused():
 
     @dace.program

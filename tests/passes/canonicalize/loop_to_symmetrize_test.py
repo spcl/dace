@@ -284,6 +284,7 @@ def test_the_tiled_cuda_kernel_mirrors_every_size(source_upper, m):
     assert np.allclose(got, got.T)
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_the_bounding_box_skips_rows_with_no_column():
     """Rows ``M - 2`` and ``M - 1`` of ``for j in range(i + 2, M)`` are empty; clamped into the box, row ``M - 2``
     copied ``X[M - 2, M - 1]`` onto ``X[M - 1, M - 2]``, an element the nest never writes."""

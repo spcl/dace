@@ -35,6 +35,7 @@ def generate_experimental_cuda(sdfg: dace.SDFG):
         return sdfg.generate_code()
 
 
+# Reproducer: fix(experimental_cuda): resolve kernel stream descriptor from the memlet, not edge.src (1398d116b9)
 def test_kernel_nested_in_host_map_generates_code():
     """Regression: resolving the stream descriptor via ``edge.src.desc`` raised
     ``AttributeError: 'MapEntry' object has no attribute 'desc'`` for this shape."""
@@ -46,6 +47,7 @@ def test_kernel_nested_in_host_map_generates_code():
     assert kernels == 1, f"expected exactly one kernel, generated {kernels}"
 
 
+# Reproducer: fix(experimental_cuda): resolve kernel stream descriptor from the memlet, not edge.src (1398d116b9)
 def test_nested_kernel_launches_on_the_real_stream():
     """The wrapper must receive the stream that reached it through the enclosing map, not the
     ``nullptr`` default-stream fallback used when no stream edge is wired at all."""

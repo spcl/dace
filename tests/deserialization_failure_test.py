@@ -21,6 +21,7 @@ def context():
     return {"version": dace.__version__}
 
 
+# Reproducer: Report a failed deserialization where it happens instead of passing a placeholder on (57f24f6913)
 def test_an_unregistered_type_still_becomes_a_placeholder(monkeypatch):
     """The documented case, unchanged: this build cannot know the type, so keep the raw JSON.
 
@@ -42,6 +43,7 @@ def test_an_unregistered_type_still_becomes_a_placeholder(monkeypatch):
             serialize.from_json(unknown, context())
 
 
+# Reproducer: Report a failed deserialization where it happens instead of passing a placeholder on (57f24f6913)
 def test_a_registered_type_that_fails_to_parse_raises_where_it_failed():
     """``Range`` IS registered, so a parse failure is a genuine error about data we understand.
     The original exception must survive -- callers catch these by type -- carrying a note that says
@@ -59,6 +61,7 @@ def test_a_registered_type_that_fails_to_parse_raises_where_it_failed():
     )
 
 
+# Reproducer: Report a failed deserialization where it happens instead of passing a placeholder on (57f24f6913)
 def test_a_registered_failure_does_not_become_a_placeholder():
     """The load must not hand back a lossy object it can neither validate nor round-trip.
 
@@ -74,6 +77,7 @@ def test_a_registered_failure_does_not_become_a_placeholder():
     pytest.fail(f"returned {type(got).__name__} instead of raising")
 
 
+# Reproducer: Report a failed deserialization where it happens instead of passing a placeholder on (57f24f6913)
 def test_add_branch_refuses_a_non_region():
     """``ConditionalBlock.from_json`` builds branches directly and nothing downstream type-checks the
     region, so a wrong object here would sit in the branch list and fail in some later pass instead.

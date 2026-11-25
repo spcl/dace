@@ -142,6 +142,7 @@ def _vectorize(prog, name, expand=True):
 
 
 @pytest.mark.parametrize("n", [16, 17])
+# Reproducer: fix(vectorization): modernize mark_tile_dims + promote-body tests off deleted descent; K=0... (4964d3d65c)
 def test_const_store_to_output_matches_reference(n):
     """``a[i] = 3.0`` into an output connector, nested into an NSDFG body, tiles
     through the walker (const-fill tile + masked store) and matches the
@@ -157,6 +158,7 @@ def test_const_store_to_output_matches_reference(n):
 
 
 @pytest.mark.parametrize("n", [16, 17])
+# Reproducer: fix(vectorization): modernize mark_tile_dims + promote-body tests off deleted descent; K=0... (4964d3d65c)
 def test_vbor_nsdfg_body_matches_reference(n):
     """vbor's flat body-NSDFG is tiled in place and matches the
     unvectorized reference (n=17 forces the masked i-tail)."""
@@ -186,6 +188,7 @@ def test_vbor_emits_tile_ops():
 
 
 @pytest.mark.parametrize("n", [16, 17])
+# Reproducer: fix(vectorization): modernize mark_tile_dims + promote-body tests off deleted descent; K=0... (4964d3d65c)
 def test_unop_chain_matches_reference(n):
     """A reused-scalar chain with unary-minus unops tiles through the walker
     (NSDFG body) and matches the unvectorized reference (n=17 forces the
@@ -212,6 +215,7 @@ def test_unop_chain_emits_tile_unop():
 
 
 @pytest.mark.parametrize("n", [16, 17])
+# Reproducer: fix(vectorization): modernize mark_tile_dims + promote-body tests off deleted descent; K=0... (4964d3d65c)
 def test_s231_carried_dep_vectorizes_on_parallel_dim(n):
     """The carried-dependency ``s231`` nest: the inner ``j`` loop carries a
     dependency (``aa[j] = aa[j-1] + bb[j]``), so LoopToMap leaves it sequential

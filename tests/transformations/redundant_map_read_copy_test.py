@@ -75,6 +75,7 @@ def staged_index_through_nested() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_staging_copy_read_by_a_nested_sdfg_is_folded():
     sdfg = staged_index_through_nested()
     assert sdfg.apply_transformations_repeated(RedundantMapReadCopy) == 1
@@ -86,6 +87,7 @@ def test_a_staging_copy_read_by_a_nested_sdfg_is_folded():
     assert np.allclose(out, vals[cols[:, 0]] + cols[:, 1])
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_read_only_staging_copy_in_a_map_is_folded():
     sdfg = staged_gather()
     assert sdfg.apply_transformations_repeated(RedundantMapReadCopy) == 1
@@ -121,6 +123,7 @@ def test_an_ordering_edge_out_of_the_folded_copy_stays_an_ordering_edge():
     assert np.allclose(out, src[:, idx]) and np.all(flag == 1.0)
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_copy_of_a_container_the_scope_writes_is_kept():
     sdfg = staged_gather(write_source=True)
     assert sdfg.apply_transformations_repeated(RedundantMapReadCopy) == 0

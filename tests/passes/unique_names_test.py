@@ -152,6 +152,7 @@ def test_a_second_application_renames_nothing():
     assert renamed is None
 
 
+# Reproducer: Fix the code review findings in the Python, tile and Tile C++ backends (226a77aeb6)
 def test_renaming_nothing_leaves_tile_expressions_alone():
     from dace.libraries.tileops import TileIota
     from dace.transformation.passes.unique_names import rename_strings

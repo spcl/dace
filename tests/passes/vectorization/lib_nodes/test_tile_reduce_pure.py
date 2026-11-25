@@ -90,6 +90,7 @@ def _run_reduce(widths, op, axis, has_mask, seed, mask_arr=None):
 # K=1 unmasked
 
 
+# Reproducer: feat(tile_reduce): 9 e2e tests + fix axis=0 init-loop codegen (42d0710ed6)
 def test_k1_sum_full():
     """Sum-reduce a K=1 tile to a scalar."""
     SRC, DST, _ = _run_reduce(widths=(8,), op="+", axis=None, has_mask=False, seed=1)
@@ -97,6 +98,7 @@ def test_k1_sum_full():
     np.testing.assert_allclose(DST.flatten(), [ref], rtol=1e-12, atol=1e-12)
 
 
+# Reproducer: feat(tile_reduce): 9 e2e tests + fix axis=0 init-loop codegen (42d0710ed6)
 def test_k1_max_full():
     """Max-reduce a K=1 tile to a scalar."""
     SRC, DST, _ = _run_reduce(widths=(8,), op="max", axis=None, has_mask=False, seed=2)
@@ -107,6 +109,7 @@ def test_k1_max_full():
 # K=2 full reduction
 
 
+# Reproducer: feat(tile_reduce): 9 e2e tests + fix axis=0 init-loop codegen (42d0710ed6)
 def test_k2_sum_full():
     """Sum-reduce a K=2 tile to a scalar (all lanes combined)."""
     SRC, DST, _ = _run_reduce(widths=(4, 8), op="+", axis=None, has_mask=False, seed=3)
@@ -114,6 +117,7 @@ def test_k2_sum_full():
     np.testing.assert_allclose(DST.flatten(), [ref], rtol=1e-12, atol=1e-12)
 
 
+# Reproducer: feat(tile_reduce): 9 e2e tests + fix axis=0 init-loop codegen (42d0710ed6)
 def test_k2_prod_full():
     """Product-reduce a K=2 tile to a scalar."""
     SRC, DST, _ = _run_reduce(widths=(4, 8), op="*", axis=None, has_mask=False, seed=4)
@@ -124,6 +128,7 @@ def test_k2_prod_full():
 # K=2 axis reduction
 
 
+# Reproducer: feat(tile_reduce): 9 e2e tests + fix axis=0 init-loop codegen (42d0710ed6)
 def test_k2_sum_axis0():
     """Sum-reduce a K=2 tile along axis 0 — output shape (W1,)."""
     SRC, DST, dst_shape = _run_reduce(widths=(4, 8), op="+", axis=0, has_mask=False, seed=5)
@@ -132,6 +137,7 @@ def test_k2_sum_axis0():
     np.testing.assert_allclose(DST, ref, rtol=1e-12, atol=1e-12)
 
 
+# Reproducer: feat(tile_reduce): 9 e2e tests + fix axis=0 init-loop codegen (42d0710ed6)
 def test_k2_sum_axis1():
     """Sum-reduce a K=2 tile along axis 1 — output shape (W0,)."""
     SRC, DST, dst_shape = _run_reduce(widths=(4, 8), op="+", axis=1, has_mask=False, seed=6)
@@ -143,6 +149,7 @@ def test_k2_sum_axis1():
 # masked variants
 
 
+# Reproducer: feat(tile_reduce): 9 e2e tests + fix axis=0 init-loop codegen (42d0710ed6)
 def test_k1_sum_full_masked():
     """Masked sum reduction: inactive lanes contribute the ``+`` identity (0)."""
     widths = (8,)
@@ -154,6 +161,7 @@ def test_k1_sum_full_masked():
     np.testing.assert_allclose(DST.flatten(), [ref], rtol=1e-12, atol=1e-12)
 
 
+# Reproducer: feat(tile_reduce): 9 e2e tests + fix axis=0 init-loop codegen (42d0710ed6)
 def test_k2_sum_full_masked():
     """Masked sum reduction on a K=2 tile to a scalar."""
     widths = (4, 8)
@@ -165,6 +173,7 @@ def test_k2_sum_full_masked():
     np.testing.assert_allclose(DST.flatten(), [ref], rtol=1e-12, atol=1e-12)
 
 
+# Reproducer: feat(tile_reduce): 9 e2e tests + fix axis=0 init-loop codegen (42d0710ed6)
 def test_k2_sum_axis0_masked():
     """Masked single-axis reduction: inactive lanes contribute identity (0)
     so each kept-dim slot is the sum of active lanes mapping to it."""

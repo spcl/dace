@@ -173,6 +173,7 @@ def test_three_level_nest_cascades():
     assert np.allclose(x1, 1.0) and np.allclose(y1, 2.0)
 
 
+# Reproducer: Fix MapFission boundary rewiring for nested parent maps (519a630dea)
 def test_nested_parent_with_intervening_producer():
     """A three-level nest whose middle map has an intervening producer feeding
     both inner maps: the structured fission must cascade the nested split

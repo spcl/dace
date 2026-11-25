@@ -102,10 +102,12 @@ def product_sdfg(pinned: str | None) -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: CPF keeps a library node's implementation when it was chosen deliberately (auto_select_imp... (98482ac25a)
 def test_an_unpinned_product_renders_as_the_host_blas_call():
     assert "cblas_dgemm" in render(product_sdfg(None)).code
 
 
+# Reproducer: CPF keeps a library node's implementation when it was chosen deliberately (auto_select_imp... (98482ac25a)
 def test_a_product_pinned_to_its_pure_expansion_keeps_it_and_renders_as_loops():
     code = render(product_sdfg("pure")).code
 

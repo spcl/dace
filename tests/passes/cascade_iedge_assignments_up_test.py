@@ -768,6 +768,7 @@ def test_constant_index_element_read_of_a_loop_written_array_stays_inside():
     assert got[0] == oracle[0], f"hoisted element read: {got[0]} != {oracle[0]}"
 
 
+# Reproducer: Passes that move blocks through add_node no longer run set_nested_sdfg_parent_references (bdf3ecd50e)
 def test_hoisting_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     """A hoist only adds states and moves assignments; it never needed a whole-tree CFG-list rebuild."""
     sdfg = dace.SDFG("two_sibling_loops_cfg")

@@ -74,6 +74,7 @@ def copies_in(states) -> list[tuple[str, str]]:
     ]
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_the_skipped_path_refreshes_what_the_copy_after_the_conditional_reads():
     sdfg = offloaded()
     (guard,) = [block for block in sdfg.nodes() if isinstance(block, ConditionalBlock)]
@@ -86,6 +87,7 @@ def test_the_skipped_path_refreshes_what_the_copy_after_the_conditional_reads():
 
 
 @pytest.mark.gpu
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_the_host_update_survives_a_skipped_device_arm():
     sdfg = offloaded()
     A = np.zeros(8)
@@ -95,6 +97,7 @@ def test_the_host_update_survives_a_skipped_device_arm():
 
 
 @pytest.mark.gpu
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_the_device_arm_still_doubles_the_host_update():
     sdfg = offloaded()
     A = np.zeros(8)

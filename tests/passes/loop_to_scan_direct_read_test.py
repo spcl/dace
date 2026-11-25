@@ -57,6 +57,7 @@ def copies(sdfg: dace.SDFG) -> list[str]:
 
 
 @pytest.mark.parametrize("distance", [1, 2, 3])
+# Reproducer: LoopToScan: a scan whose input is a plain read of an array the loop does not write reads i... (5abf740137)
 def test_a_scan_over_an_array_the_loop_does_not_write_reads_it_in_place(distance: int) -> None:
     sut = lifted(carried_sum(distance))
     assert scan_inputs(sut) == ["x"]
@@ -73,6 +74,7 @@ def test_a_scan_over_an_array_the_loop_does_not_write_reads_it_in_place(distance
 
 
 @pytest.mark.parametrize("distance", [1, 2])
+# Reproducer: LoopToScan: a scan whose input is a plain read of an array the loop does not write reads i... (5abf740137)
 def test_a_scan_over_a_computed_delta_reads_a_copy(distance: int) -> None:
     sut = lifted(carried_sum_of_products(distance))
     assert len(copies(sut)) == 1

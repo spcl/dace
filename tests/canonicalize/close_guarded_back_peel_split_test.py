@@ -89,6 +89,7 @@ def test_the_near_end_split_clamps_its_unproven_side_and_emits_no_runtime_guard(
     assert guarded is False, "the clamped segments must map as well as bare ones, so no guard is worth its fallback"
 
 
+# Reproducer: Fix five canonicalization miscompiles and close guarded-parallel fallbacks (ce6403bce4)
 def test_back_peel_split_drops_the_pinned_sequential_fallback():
     """After the split the loop is UNCONDITIONALLY parallelized: no guarded sequential fallback
     remains (g: 1 -> 0) and a Map is present."""
@@ -101,6 +102,7 @@ def test_back_peel_split_drops_the_pinned_sequential_fallback():
     assert not any(r.pinned_sequential for r in _loops(sdfg))
 
 
+# Reproducer: Fix five canonicalization miscompiles and close guarded-parallel fallbacks (ce6403bce4)
 def test_back_peel_split_is_bit_exact_against_the_sequential_reference():
     """The unconditionally-split form reproduces the sequential result exactly."""
     sdfg = back_peel_multi.to_sdfg(simplify=True)

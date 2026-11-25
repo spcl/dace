@@ -126,6 +126,7 @@ def _k2_col_broadcast(a: dace.float64[NK], c: dace.float64[NK, NJ]):
             c[jk, jc] = a[jk // 2]
 
 
+# Reproducer: fix(vectorization): multi-dim tile-op session checkpoint + inner-dim stencil offset fix (d761436fde)
 def test_k2_broadcast_tile_k1_tail_stays_valid_through_nest():
     """Regression for the #1d descent gap (symbolic-dim K=2 broadcast + tile_k1 tail).
 
@@ -197,6 +198,7 @@ def _build_k2_scalar_staged_map_body() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: fix(vectorization): multi-dim tile-op session checkpoint + inner-dim stencil offset fix (d761436fde)
 def test_k2_scalar_staged_body_nest_alone_is_valid():
     """Nesting a K=2 scalar-staged body must leave a VALID SDFG on its own.
 

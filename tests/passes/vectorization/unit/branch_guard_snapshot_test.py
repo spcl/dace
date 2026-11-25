@@ -79,6 +79,7 @@ def branch_lowered(tag):
     return sdfg
 
 
+# Reproducer: Fix four empty-happens-before-memlet defects in vectorization and LoopToMap (9785608b08)
 def test_guard_is_evaluated_once():
     """Only ONE tasklet may read the guard's operands; the serialized halves share its result.
 
@@ -98,6 +99,7 @@ def test_guard_is_evaluated_once():
     assert len(guard_producers) == 1, f"guard re-derived from a/b in several states: {guard_producers}"
 
 
+# Reproducer: Fix four empty-happens-before-memlet defects in vectorization and LoopToMap (9785608b08)
 def test_value_preserving():
     n = 61
     rng = np.random.default_rng(1)

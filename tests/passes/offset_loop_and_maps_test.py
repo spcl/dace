@@ -398,6 +398,7 @@ def test_empty_memlet_does_not_crash_offset_loops_and_maps():
     sdfg.validate()
 
 
+# Reproducer: Fix (44cfe62d2e)
 def test_maps_inside_nested_sdfg_are_offset():
     """Regression: the pass previously only walked the enclosing SDFG's
     direct ``ControlFlowRegion`` / ``ConditionalBlock`` children,

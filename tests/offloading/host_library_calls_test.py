@@ -90,6 +90,7 @@ def test_a_kernel_around_a_matrix_vector_product_computes_what_numpy_computes():
     np.testing.assert_allclose(cupy.asnumpy(out), A @ C4, rtol=1e-13)
 
 
+# Reproducer: OffloadToAccelerator: only a map around fixed-size calls no kernel can run stays host code (ef883dd0b7)
 def test_a_map_around_a_problem_sized_fft_calls_it_on_the_device():
     sdfg = gpu_final("plane_ffts_structure", plane_ffts)
     ffts = [(n, parent) for n, parent in sdfg.all_nodes_recursive() if isinstance(n, FFT)]
@@ -104,6 +105,7 @@ def test_a_map_around_a_problem_sized_fft_calls_it_on_the_device():
 
 
 @pytest.mark.gpu
+# Reproducer: OffloadToAccelerator: only a map around fixed-size calls no kernel can run stays host code (ef883dd0b7)
 def test_a_map_around_a_problem_sized_fft_computes_what_numpy_computes():
     import cupy
 

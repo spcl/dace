@@ -54,6 +54,7 @@ def _duplicate_block_names(sdfg: dace.SDFG):
     return duplicates
 
 
+# Reproducer: Fix apply_pass modification-contract + StateFusionExtended soundness/perf; drop Accumulato... (30ca89148f)
 def test_no_stage_introduces_duplicate_block_names():
     """Walk the pipeline stage by stage and name the stage that breaks the invariant.
 
@@ -66,6 +67,7 @@ def test_no_stage_introduces_duplicate_block_names():
         assert not duplicates, f"stage {label!r} introduced duplicate block names: {duplicates}"
 
 
+# Reproducer: Fix apply_pass modification-contract + StateFusionExtended soundness/perf; drop Accumulato... (30ca89148f)
 def test_canonicalize_result_is_valid_and_correct():
     """End to end: the canonicalized SDFG validates and computes what the Python does."""
     sdfg = stencil_reduce_recurrence.to_sdfg(simplify=False)

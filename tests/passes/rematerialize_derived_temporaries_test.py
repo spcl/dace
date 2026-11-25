@@ -152,6 +152,7 @@ def test_multi_tasklet_chain():
     check_values(deep_chain, 128)
 
 
+# Reproducer: Rematerialize: fix the rewrite's edge and connector bookkeeping (76f28cbb71)
 def test_two_reads_of_the_same_temporary():
     sdfg = fused(two_reads)
     assert RematerializeDerivedTemporaries().apply_pass(sdfg, {})
@@ -187,6 +188,7 @@ def second_read_of_the_temporary(sdfg: dace.SDFG):
     return state
 
 
+# Reproducer: Rematerialize: fix the rewrite's edge and connector bookkeeping (76f28cbb71)
 def test_two_reads_at_the_same_point_share_one_clone():
     """The trade is flops for bytes, so a value two reads want at the SAME index is recomputed ONCE and
     both reads take it from the one register."""
@@ -203,6 +205,7 @@ def test_two_reads_at_the_same_point_share_one_clone():
     assert len(feeders) == 1, "each read got its own clone"
 
 
+# Reproducer: Rematerialize: fix the rewrite's edge and connector bookkeeping (76f28cbb71)
 def test_two_reads_of_one_temporary_are_bit_exact():
     """Both reads have to end up on the recomputed value, not one of them on a stale register."""
     size = 128
@@ -224,6 +227,7 @@ def test_two_reads_of_one_temporary_are_bit_exact():
         assert np.array_equal(outputs[0][name].view(np.uint64), outputs[1][name].view(np.uint64)), name
 
 
+# Reproducer: Rematerialize: fix the rewrite's edge and connector bookkeeping (76f28cbb71)
 def test_refuses_a_chain_fed_by_the_temporary_itself():
     """Route the write through a scope-local register -- the shape fusion leaves when it renames a value
     before storing it. The only container that register is stored to is then the temporary, so the
@@ -252,6 +256,7 @@ def test_refuses_a_chain_fed_by_the_temporary_itself():
     sdfg.validate()
 
 
+# Reproducer: Rematerialize: fix the rewrite's edge and connector bookkeeping (76f28cbb71)
 def test_a_chain_longer_than_the_budget_is_refused():
     """The bound is cloned tasklets times distinct reads. At 1 the multi-tasklet chain is over it, and a
     pass that does not apply must leave the SDFG exactly as it found it."""
@@ -266,6 +271,7 @@ def test_a_chain_longer_than_the_budget_is_refused():
     assert RematerializeDerivedTemporaries().apply_pass(fused(deep_chain), {}) == 1
 
 
+# Reproducer: Rematerialize: fix the rewrite's edge and connector bookkeeping (76f28cbb71)
 def test_nothing_still_names_the_deleted_temporary():
     """Whatever the rewrite rewires, no memlet and no access node may still name the container it
     deleted: such a reference points at a descriptor that is gone, and it surfaces in codegen rather
@@ -284,6 +290,7 @@ def test_nothing_still_names_the_deleted_temporary():
 
 
 @pytest.mark.parametrize("build", [lambda: fused(deep_chain), lambda: heat3d_after_loop_to_map_and_fusion()])
+# Reproducer: Rematerialize: fix the rewrite's edge and connector bookkeeping (76f28cbb71)
 def test_every_rematerialized_register_is_written(build):
     """A clone whose sink is never filled is SILENT garbage -- the consumer reads an uninitialised
     register, validation has nothing to object to, and the wrong values come out of a passing test."""

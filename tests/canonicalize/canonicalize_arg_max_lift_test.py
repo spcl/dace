@@ -175,6 +175,7 @@ def test_lifts_abs_transform_s3113():
     assert np.isclose(out[0], np.max(np.abs(a))), f"got {out[0]}, expected {np.max(np.abs(a))}"
 
 
+# Reproducer: Fix the extended canon/vectorize corpus failures: dominators, distribution order, renamed... (a4cd2cc99f)
 def test_lifts_a_seed_bound_through_a_renamed_copy():
     """TSVC s3113 as the corpus spells it: a dead ``maxv = 0`` renames the live seed, ``maxv := maxv_0``."""
     from dace.transformation.passes.canonicalize import canonicalize
@@ -2145,10 +2146,12 @@ def guarded_scan_sdfg(name: str) -> tuple[dace.SDFG, LoopRegion, ConditionalBloc
     return sdfg, loop, block, taken
 
 
+# Reproducer: ArgMaxLift: a loop edge binding what the guard does not read keeps the loop (7c50a08732)
 def test_a_guarded_scan_lifts():
     assert ArgMaxLift().apply_pass(guarded_scan_sdfg("guarded_scan")[0], {})
 
 
+# Reproducer: ArgMaxLift: a loop edge binding what the guard does not read keeps the loop (7c50a08732)
 def test_a_loop_edge_binding_what_the_guard_ignores_keeps_the_loop():
     sdfg, loop, block, _ = guarded_scan_sdfg("guarded_scan_counter")
     loop.edges_between(loop.start_block, block)[0].data.assignments["c"] = "c + 2"

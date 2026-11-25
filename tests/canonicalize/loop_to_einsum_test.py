@@ -424,6 +424,7 @@ def test_a_subtracting_contraction_is_lifted_with_a_negative_alpha():
     assert np.allclose(C, expected)
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_ordering_memlet_is_not_a_prior_writer():
     """An empty memlet on the accumulator must not turn ``beta`` into 1 -- that folds the
     contraction onto uninitialized transient memory."""
@@ -459,6 +460,7 @@ def test_ordering_memlet_is_not_a_prior_writer():
         assert np.allclose(c, ref), f"max diff {np.abs(c - ref).max()}"
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_map_form_lift_refuses_a_boundary_ordering_memlet():
     """Replacing a map scope deletes it whole, so an empty memlet crossing its boundary would
     lose a happens-before constraint. Refuse instead of dropping it."""

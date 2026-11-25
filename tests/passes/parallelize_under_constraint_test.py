@@ -94,6 +94,7 @@ def _single_state_stride_loop(read_subset):
     return sdfg, loop
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_symbolic_stride_specializes_if_par_else_seq():
     sdfg = affine_stride_rmw.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
@@ -109,6 +110,7 @@ def test_symbolic_stride_specializes_if_par_else_seq():
     )
 
 
+# Reproducer: fix(vectorize): TSVC corpus 567->570 passing, 0 failures (multidim C++ ABI + reroll/guards... (4f8076186d)
 def test_value_preserving_under_nonzero_stride():
     # inc=1 keeps every i*inc in bounds (the realistic stride); the parallel Map
     # under the trap guard must reproduce the sequential in-place update.
@@ -124,6 +126,7 @@ def test_value_preserving_under_nonzero_stride():
     assert np.allclose(got, exp), "value mismatch at inc=1"
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_symbolic_stride_condition_matches_store_and_rmw_excludes_recurrence():
     """The structural matcher admits an injective symbolic-stride write -- a plain
     store *or* a same-subset read-modify-write -- and refuses a loop-carried
@@ -187,6 +190,7 @@ def test_constraint_answers_only_for_its_strided_write():
         assert not _has_map(sdfg), f"{program.name}: the constraint does not cover this conflict"
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_symbolic_stride_store_specializes_if_par_else_seq():
     sdfg = symbolic_stride_store.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)

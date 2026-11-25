@@ -177,6 +177,7 @@ def test_shapes_outside_the_proven_rules_are_handed_to_sympy(
     assert result == REFERENCE_SIMPLIFY(expr)
 
 
+# Reproducer: symbolic.simplify: skip sympy for the fixed-point shapes the slack rewrite produces (5e060d25ab)
 def test_an_unevaluated_sum_the_rewrite_folds_to_a_linear_form_skips_sympy(monkeypatch: pytest.MonkeyPatch) -> None:
     """``N + N`` built unevaluated is rebuilt as ``2*N`` by the facts' rewrite, a linear form sympy returns unchanged."""
     expr = sympy.Add(sympy.Symbol("N"), sympy.Symbol("N"), evaluate=False)
@@ -188,6 +189,7 @@ def test_an_unevaluated_sum_the_rewrite_folds_to_a_linear_form_skips_sympy(monke
     assert result == REFERENCE_SIMPLIFY(expr)
 
 
+# Reproducer: symbolic.simplify: skip sympy for the fixed-point shapes the slack rewrite produces (5e060d25ab)
 def test_products_of_primitive_linear_forms_skip_sympy_and_match_it(monkeypatch: pytest.MonkeyPatch) -> None:
     """``(N + 1)*(M - K + 1)*J**2``: coefficient one, symbol-disjoint primitive factors -- sympy returns it unchanged."""
     N, M, K, J = (sympy.Symbol(name) for name in "NMKJ")

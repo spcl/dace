@@ -496,6 +496,7 @@ def test_horizontal_fusion_must_not_merge_a_read_with_an_unordered_in_place_upda
     assert not xform.can_be_applied(state, 0, sdfg)
 
 
+# Reproducer: MapFusionVertical: a read of the first Map that does not feed the intermediate is not orde... (06fe177a7f)
 def test_vertical_fusion_must_not_move_a_side_read_past_the_in_place_write():
     """The first Map reads ``X`` into ``d`` (the intermediate) and, in another tasklet, into ``s``; the second updates
     ``X`` from ``d``. The intermediate orders only the read feeding it: fused, an edge in the body keeps the copy into
@@ -619,6 +620,7 @@ def _fused_shift(fuse: bool) -> np.ndarray:
     return x
 
 
+# Reproducer: MapFusionVertical: a View no longer hides a hazard from the data dependency tests (c7c62094df)
 def test_vertical_fusion_sees_a_read_through_a_view_of_what_the_second_map_writes():
     """The read and write name different containers (View and viewed), so the point-wise test never ran on them."""
     expected = np.concatenate(([0.0], np.arange(N - 1, dtype=np.float64)))
@@ -626,6 +628,7 @@ def test_vertical_fusion_sees_a_read_through_a_view_of_what_the_second_map_write
     assert np.array_equal(_fused_shift(True), expected)
 
 
+# Reproducer: MapFusionVertical: a View no longer hides a hazard from the data dependency tests (c7c62094df)
 def test_writes_through_a_view_do_not_count_as_written_disjointly():
     """A View's edges name the View, so a comparison over the container's edges was an empty ``all()``."""
     sdfg = dace.SDFG(unique_name("view_written_disjointly"))

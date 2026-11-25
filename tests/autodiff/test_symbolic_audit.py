@@ -65,6 +65,7 @@ def nested_sdfg_nodes(sdfg: dace.SDFG) -> list[tuple[nd.NestedSDFG, dace.SDFGSta
 
 
 # Issue 1: subset dimensions are parsed with DaCe's parser, not sympy's.
+# Reproducer: fix(autodiff): dace symbols, explicit nested-SDFG symbol maps, ordered connectors (e301768284)
 def test_stored_dimension_parse_keeps_integer_division():
     sdfg, loop = counting_loop()
     generator = BoundsGeneratorStub(sdfg)
@@ -82,6 +83,7 @@ def test_stored_dimension_parse_keeps_integer_division():
 
 
 # Issue 2: no bare sympy symbol reaches a caller of the symbolic-differentiation path.
+# Reproducer: fix(autodiff): dace symbols, explicit nested-SDFG symbol maps, ordered connectors (e301768284)
 def test_code_to_exprs_yields_dace_symbols_with_the_sdfg_dtype():
     sdfg = dace.SDFG("tasklet_symbols")
     sdfg.add_symbol("N", dace.int64)
@@ -99,6 +101,7 @@ def test_code_to_exprs_yields_dace_symbols_with_the_sdfg_dtype():
     assert free["a"].dtype == dace.float64
 
 
+# Reproducer: fix(autodiff): dace symbols, explicit nested-SDFG symbol maps, ordered connectors (e301768284)
 def test_differentiation_target_is_the_instance_inside_the_expression():
     x_in_expr = symbolic.symbol("x", dace.float64)
     expr = x_in_expr * 3
@@ -116,6 +119,7 @@ def test_differentiation_target_is_the_instance_inside_the_expression():
     assert expr.diff(missing) == 0
 
 
+# Reproducer: fix(autodiff): dace symbols, explicit nested-SDFG symbol maps, ordered connectors (e301768284)
 def test_indexed_differentiation_target_is_the_instance_inside_the_expression():
     base = sympy.IndexedBase("A")
     expr = base[ad_utils.index_symbol("i", dace.int64)] * 2
@@ -130,6 +134,7 @@ def test_indexed_differentiation_target_is_the_instance_inside_the_expression():
 
 # Issue 3: every backward nested SDFG declares its symbols explicitly.
 @pytest.mark.autodiff
+# Reproducer: fix(autodiff): dace symbols, explicit nested-SDFG symbol maps, ordered connectors (e301768284)
 def test_backward_nested_sdfgs_declare_their_symbol_mapping():
     sdfg, _ = differentiated_sdfg()
     nested = nested_sdfg_nodes(sdfg)
@@ -151,6 +156,7 @@ def test_backward_nested_sdfgs_declare_their_symbol_mapping():
             assert mapped.dtype == declared, f"{node.label}:{name} mapped as {mapped.dtype}, parent says {declared}"
 
 
+# Reproducer: fix(autodiff): dace symbols, explicit nested-SDFG symbol maps, ordered connectors (e301768284)
 def test_backward_symbol_mapping_carries_the_parent_dtype():
     parent = dace.SDFG("parent")
     parent.add_symbol("N", dace.int64)
@@ -167,6 +173,7 @@ def test_backward_symbol_mapping_carries_the_parent_dtype():
 
 
 @pytest.mark.autodiff
+# Reproducer: fix(autodiff): dace symbols, explicit nested-SDFG symbol maps, ordered connectors (e301768284)
 def test_backward_pass_does_not_build_nested_sdfgs_from_sets():
     sdfg, caught = differentiated_sdfg()
 
@@ -181,6 +188,7 @@ def test_backward_pass_does_not_build_nested_sdfgs_from_sets():
 
 
 # Issues 5 and 6: the forward references in annotations name a class that exists.
+# Reproducer: fix(autodiff): dace symbols, explicit nested-SDFG symbol maps, ordered connectors (e301768284)
 def test_backward_pass_generator_forward_references_resolve():
     annotated = [
         ad_store.get_symbol_upper_bound_from_loop,

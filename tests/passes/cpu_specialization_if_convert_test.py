@@ -144,6 +144,7 @@ def test_a_guarded_gather_keeps_its_branch():
     assert conditionals(sdfg) == 1
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_switch_whose_arms_read_their_own_arrays_keeps_its_branches():
     """As selects, every element would stream b, c, d and e and store a, where the branches touch one of them on
     the elements that take an arm (40.9 ms against 29.2 ms on s442 at preset L)."""

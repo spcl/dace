@@ -118,6 +118,7 @@ def test_case_b_absolute_inner_collapses_to_single_loop():
 # ``for i in 0:N:32 / for ii in i:i+32:2 / a[ii] = b[ii]*2``).
 
 
+# Reproducer: feat(canonicalize): LoopToScan interchange + UntileLoops + supporting fixes (c22745cf06)
 def test_case_b_inner_stride_2_collapses_preserving_step():
     """Case B with non-unit inner stride.
 
@@ -154,6 +155,7 @@ def test_case_b_inner_stride_2_collapses_preserving_step():
     assert np.allclose(a, ref_a), f"value mismatch: got {a}, expected {ref_a}"
 
 
+# Reproducer: feat(canonicalize): LoopToScan interchange + UntileLoops + supporting fixes (c22745cf06)
 def test_case_b_3level_cascade_collapses_via_fixpoint_preserving_stride():
     """Three-level Case B cascade with stride-2 innermost:
 
@@ -198,6 +200,7 @@ def test_case_b_3level_cascade_collapses_via_fixpoint_preserving_stride():
 # Refusal contracts.
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_untiles_when_outer_stride_is_bare_symbol():
     """``for i in range(0, N, BS): for ii in range(BS): a[i+ii] = ...`` with a
     bare-**symbol** tile ``BS``. A symbol is assumed non-negative by DaCe
@@ -230,6 +233,7 @@ def test_untiles_when_outer_stride_is_bare_symbol():
     assert np.allclose(a, b * 2.0), f"value mismatch: got {a}"
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_untiles_when_outer_stride_is_bare_symbol_case_b():
     """Case B with a bare-symbol tile: ``for i in range(0, N, BS):
     for ii in range(i, i + BS): a[ii] = ...`` collapses to a single loop."""
@@ -255,6 +259,7 @@ def test_untiles_when_outer_stride_is_bare_symbol_case_b():
     assert np.allclose(a, b + 1.0)
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_refuses_when_outer_stride_is_compound_symbolic_expr():
     """A **compound** symbolic expression tile (``M - 2``) is refused: DaCe
     assumes bare symbols are non-negative but does NOT prove the sign of an
@@ -460,6 +465,7 @@ def _count_maps(sdfg):
 # Tiled jacobi2d
 
 
+# Reproducer: feat(canonicalize): LoopToScan interchange + UntileLoops + supporting fixes (c22745cf06)
 def test_jacobi2d_tiled_1lvl_range_collapses_to_2d_nest():
     """1-level 2D tile in range form. Untile must collapse (ii, i) and
     (jj, j) tile pairs in two fixpoint iterations to leave a single
@@ -498,6 +504,7 @@ def test_jacobi2d_tiled_1lvl_range_collapses_to_2d_nest():
     assert np.allclose(b, ref)
 
 
+# Reproducer: feat(canonicalize): LoopToScan interchange + UntileLoops + supporting fixes (c22745cf06)
 def test_jacobi2d_tiled_1lvl_map_collapses_to_2d_map():
     """1-level 2D tile in dace.map form. ``UntileLoops()``
     lowers every Map to a LoopRegion via ``MapExpansion`` + ``MapToForLoop``,
@@ -536,6 +543,7 @@ def test_jacobi2d_tiled_1lvl_map_collapses_to_2d_map():
     assert np.allclose(b, ref)
 
 
+# Reproducer: feat(canonicalize): LoopToScan interchange + UntileLoops + supporting fixes (c22745cf06)
 def test_jacobi2d_tiled_2lvl_range_collapses_via_cascade_fixpoint():
     """2-level cascade per axis in range form. Each axis has three loops:
     outer step ``K1``, middle stride ``K2`` over ``[outer, outer+K1)``,
@@ -580,6 +588,7 @@ def test_jacobi2d_tiled_2lvl_range_collapses_via_cascade_fixpoint():
 # Tiled heat3d
 
 
+# Reproducer: feat(canonicalize): LoopToScan interchange + UntileLoops + supporting fixes (c22745cf06)
 def test_heat3d_tiled_1lvl_range_collapses_to_3d_nest():
     """1-level 3D tile in range form. Untile fixpoint must collapse all
     three tile axes."""
@@ -626,6 +635,7 @@ def test_heat3d_tiled_1lvl_range_collapses_to_3d_nest():
     assert np.allclose(b, ref)
 
 
+# Reproducer: feat(canonicalize): LoopToScan interchange + UntileLoops + supporting fixes (c22745cf06)
 def test_heat3d_tiled_1lvl_map_collapses_to_3d_map():
     """1-level 3D tile in dace.map form. Same in-place collapse as the 2D
     case, three axes."""
@@ -668,6 +678,7 @@ def test_heat3d_tiled_1lvl_map_collapses_to_3d_map():
     assert np.allclose(b, ref)
 
 
+# Reproducer: feat(canonicalize): LoopToScan interchange + UntileLoops + supporting fixes (c22745cf06)
 def test_heat3d_tiled_2lvl_range_collapses_via_cascade_fixpoint():
     """2-level tile cascade in 3D. Per-axis triple: outer step K1,
     middle stride K2, inner stride 1."""
@@ -719,6 +730,7 @@ def test_heat3d_tiled_2lvl_range_collapses_via_cascade_fixpoint():
 # Symbolic-tile multi-dim coverage
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_jacobi2d_tiled_1lvl_sym_range_collapses_to_2d_nest():
     """1-level 2D tile with a bare-**symbol** tile ``BS`` per axis. The
     fixpoint collapses (ii, i) and (jj, j) in two iterations, leaving a
@@ -757,6 +769,7 @@ def test_jacobi2d_tiled_1lvl_sym_range_collapses_to_2d_nest():
     assert np.allclose(b, ref)
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_heat3d_tiled_1lvl_sym_range_collapses_to_3d_nest():
     """1-level 3D tile with a bare-symbol tile ``BS`` per axis; fixpoint
     collapses all three tile axes to a single 3D nest."""
@@ -804,6 +817,7 @@ def test_heat3d_tiled_1lvl_sym_range_collapses_to_3d_nest():
     assert np.allclose(b, ref)
 
 
+# Reproducer: Try fix canon and auto-vec (e627f42c9a)
 def test_symbolic_tile_nonunit_inner_stride_collapses_under_assumption():
     """A symbolic tile with a non-unit inner stride collapses as a cascade rung
     under a recorded ``tile % stride == 0`` divisibility assumption. The stride's

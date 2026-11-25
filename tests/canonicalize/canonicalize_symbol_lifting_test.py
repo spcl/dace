@@ -105,6 +105,7 @@ def outer_only_promoted_bound(a: dace.float64[N], b: dace.float64[N]):
         b[i] = a[i] + a[i + 1]
 
 
+# Reproducer: canonicalize: lock UniqueLoopIterators postamble OFF + fix dead-symbol cleanup gate (0303c21e07)
 def test_outer_only_promoted_bound_value_preserving():
     rng = np.random.default_rng(42)
     n = 10
@@ -120,6 +121,7 @@ def test_outer_only_promoted_bound_value_preserving():
     assert np.allclose(out, exp)
 
 
+# Reproducer: canonicalize: lock UniqueLoopIterators postamble OFF + fix dead-symbol cleanup gate (0303c21e07)
 def test_outer_only_promoted_bound_idempotent_symbol_count():
     """Re-running canonicalize must not snowball the promoted-bound count."""
     sdfg = outer_only_promoted_bound.to_sdfg(simplify=True)
@@ -141,6 +143,7 @@ def two_loops_share_promoted_bound(a: dace.float64[N], b: dace.float64[N], c: da
         c[i] = a[i] * 2.0
 
 
+# Reproducer: canonicalize: lock UniqueLoopIterators postamble OFF + fix dead-symbol cleanup gate (0303c21e07)
 def test_two_loops_share_promoted_bound_no_runaway():
     sdfg = two_loops_share_promoted_bound.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
@@ -162,6 +165,7 @@ def transitive_invariant_chain(a: dace.float64[N], b: dace.float64[N]):
         b[i] = a[i] - 0.5
 
 
+# Reproducer: canonicalize: lock UniqueLoopIterators postamble OFF + fix dead-symbol cleanup gate (0303c21e07)
 def test_transitive_invariant_chain_value_preserving():
     rng = np.random.default_rng(42)
     n, k = 12, 7
@@ -188,6 +192,7 @@ def multiple_distinct_outer_bounds(a: dace.float64[N], b: dace.float64[N]):
         b[i] += a[i + 1] - a[i]
 
 
+# Reproducer: canonicalize: lock UniqueLoopIterators postamble OFF + fix dead-symbol cleanup gate (0303c21e07)
 def test_multiple_distinct_outer_bounds_value_preserving():
     rng = np.random.default_rng(42)
     n = 14
@@ -221,6 +226,7 @@ def loop_var_dependent_inner_bound(a: dace.float64[N, M], b: dace.float64[N]):
         b[i] = s
 
 
+# Reproducer: canonicalize: lock UniqueLoopIterators postamble OFF + fix dead-symbol cleanup gate (0303c21e07)
 def test_loop_var_dependent_inner_bound_value_preserving():
     rng = np.random.default_rng(42)
     n, m = 6, 8
@@ -257,6 +263,7 @@ def mixed_outer_plus_loop_var(a: dace.float64[N, M], b: dace.float64[N], k: dace
         b[i] = a[i, k + 1] + a[i, k]
 
 
+# Reproducer: canonicalize: lock UniqueLoopIterators postamble OFF + fix dead-symbol cleanup gate (0303c21e07)
 def test_mixed_outer_plus_loop_var_value_preserving():
     rng = np.random.default_rng(42)
     n, m, k = 8, 11, 4
@@ -289,6 +296,7 @@ def data_dependent_index(a: dace.float64[N], idx: dace.int32[N], b: dace.float64
         b[i] = a[idx[i]] * 2.0
 
 
+# Reproducer: canonicalize: lock UniqueLoopIterators postamble OFF + fix dead-symbol cleanup gate (0303c21e07)
 def test_data_dependent_index_value_preserving():
     rng = np.random.default_rng(42)
     n = 12
@@ -318,6 +326,7 @@ def data_dependent_bound(a: dace.float64[N], lengths: dace.int32[N], b: dace.flo
             b[i, j] = a[i] + j
 
 
+# Reproducer: canonicalize: lock UniqueLoopIterators postamble OFF + fix dead-symbol cleanup gate (0303c21e07)
 def test_data_dependent_bound_value_preserving():
     rng = np.random.default_rng(42)
     n, m = 7, 10
@@ -353,6 +362,7 @@ def irrelevant_outer_symbol_clutter(a: dace.float64[N], b: dace.float64[N]):
         b[i] = a[i] + 1.0
 
 
+# Reproducer: canonicalize: lock UniqueLoopIterators postamble OFF + fix dead-symbol cleanup gate (0303c21e07)
 def test_irrelevant_outer_symbol_clutter_robust_to_unused_symbols():
     """Dead-symbol cleanup REMOVES a declared symbol the program never reads, so the compiled
     signature drops it and the program keeps its meaning. Pinned rather than tolerated: whether a
@@ -390,6 +400,7 @@ def cloudsc_style_range_plus_one(a: dace.float64[N], b: dace.float64[N]):
         b[i] = a[i] * 3.0
 
 
+# Reproducer: canonicalize: lock UniqueLoopIterators postamble OFF + fix dead-symbol cleanup gate (0303c21e07)
 def test_cloudsc_style_range_plus_one_value_preserving():
     rng = np.random.default_rng(42)
     n = 12
@@ -428,6 +439,7 @@ def guarded_promoted_bound(a: dace.float64[N], b: dace.float64[N], c: dace.int32
 
 
 @pytest.mark.parametrize("cv", [1, 0])
+# Reproducer: canonicalize: lock UniqueLoopIterators postamble OFF + fix dead-symbol cleanup gate (0303c21e07)
 def test_guarded_promoted_bound_value_preserving(cv):
     rng = np.random.default_rng(42)
     n = 10
@@ -468,6 +480,7 @@ def reduction_with_inner_accumulator(a: dace.float64[N, M], b: dace.float64[N]):
         b[i] = s
 
 
+# Reproducer: canonicalize: lock UniqueLoopIterators postamble OFF + fix dead-symbol cleanup gate (0303c21e07)
 def test_reduction_with_inner_accumulator_value_preserving():
     rng = np.random.default_rng(42)
     n, m = 6, 9

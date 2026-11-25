@@ -258,6 +258,7 @@ def test_body_defined_condition_symbol_is_never_stranded():
     assert np.allclose(_run(sdfg, a=a), ref, rtol=1e-9, atol=1e-9, equal_nan=True)
 
 
+# Reproducer: Fix adi/gemver/ludcmp miscompiles; canonicalization stage-order (a47792b2a1)
 def test_require_full_hoist_refuses_a_partial_hoist():
     """GPU mode: a guard that would stall between two maps is left alone.
 
@@ -281,6 +282,7 @@ def test_require_full_hoist_refuses_a_partial_hoist():
     assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) == 1
 
 
+# Reproducer: Fix adi/gemver/ludcmp miscompiles; canonicalization stage-order (a47792b2a1)
 def test_require_full_hoist_takes_a_whole_chain_hoist():
     """GPU mode still accepts a guard invariant w.r.t. every enclosing map."""
     K = dace.symbol("K")
@@ -302,6 +304,7 @@ def test_require_full_hoist_takes_a_whole_chain_hoist():
     assert np.allclose(out, np.ones((N, N)), rtol=1e-9, atol=1e-9, equal_nan=True)
 
 
+# Reproducer: Fix adi/gemver/ludcmp miscompiles; canonicalization stage-order (a47792b2a1)
 def test_does_not_ping_pong_with_move_if_into_map():
     """The two passes must not trade the same guard back and forth.
 
@@ -339,6 +342,7 @@ def test_does_not_ping_pong_with_move_if_into_map():
     assert np.allclose(out, ref, rtol=1e-9, atol=1e-9, equal_nan=True)
 
 
+# Reproducer: Fix adi/gemver/ludcmp miscompiles; canonicalization stage-order (a47792b2a1)
 def test_partial_hoist_over_a_branch_with_maps_is_refused():
     """A guard over a branch holding a map is only hoisted if it clears the
     whole chain; a partial hoist would undo ``MoveIfIntoMap``'s co-location."""
@@ -357,6 +361,7 @@ def test_partial_hoist_over_a_branch_with_maps_is_refused():
     assert sdfg.to_json() == before, "refusing must not mutate the graph"
 
 
+# Reproducer: Fix adi/gemver/ludcmp miscompiles; canonicalization stage-order (a47792b2a1)
 def test_unrelated_dataflow_in_the_state_blocks_the_hoist():
     """A map-free component sharing the state must not be swept into the guard.
 
@@ -415,6 +420,7 @@ def test_idempotent():
     sdfg.validate()
 
 
+# Reproducer: Passes that move blocks through add_node no longer run set_nested_sdfg_parent_references (bdf3ecd50e)
 def test_hoisting_through_every_map_level_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     """Each hoist and each inner-map isolation rebuilt the whole CFG list; the graph operations keep it."""
     K = dace.symbol("K")

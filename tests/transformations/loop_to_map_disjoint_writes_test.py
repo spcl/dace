@@ -257,6 +257,7 @@ def shared_constant_dim_shifted(A: dace.int64[8, N + 1]):
         A[M, i + 1] = 2
 
 
+# Reproducer: fix(loop-to-map): a shared affine iteration-var dimension is cross-iteration disjoint (31d043fd34)
 def test_accepts_shared_iteration_dimension():
     """``A[0, M, i]`` and ``A[M, 0, i]`` share the loop variable ``i`` in their
     last dimension, so each iteration owns column ``i`` and they never
@@ -275,6 +276,7 @@ def test_accepts_shared_iteration_dimension():
     assert np.array_equal(a, ref)
 
 
+# Reproducer: fix(loop-to-map): a shared affine iteration-var dimension is cross-iteration disjoint (31d043fd34)
 def test_rejects_shared_constant_dimension_with_shift():
     """Guard: the shared dimension here is the *constant* ``M`` (no dependence
     on ``i``), so it does not pin iterations together; ``A[M, i]`` and
@@ -404,6 +406,7 @@ def _forward_dep_recurrence(
         a[i] = b[i] + a[i + 1] * d[i]
 
 
+# Reproducer: fix(loop_to_map): refuse loop-carried forward/backward read dependence (92f4c1f377)
 def test_loop_to_map_refuses_forward_carried_read():
     """``LoopToMap`` must refuse a loop where a read of an array references a
     position that another iteration WRITES (forward / backward loop-carried

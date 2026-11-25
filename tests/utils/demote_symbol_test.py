@@ -97,6 +97,7 @@ def run_two_sdfgs(sdfg1, sdfg2, inputs: dict):
 
 # Pytest test function
 @pytest.mark.parametrize("input", input_sets)
+# Reproducer: Fix many things (f977d545a9)
 def test_single_edge(input: tuple[int, str, str, int]):
     rng = np.random.default_rng(42)
     sdfgA = make_sdfg(input[1], input[2])
@@ -130,6 +131,7 @@ def test_single_edge(input: tuple[int, str, str, int]):
 
 
 # Pytest test function
+# Reproducer: Fix many things (f977d545a9)
 def test_complex_expr_and_connector_names():
     sdfgA = make_type2_sdfg()
     sdfgB = make_type2_sdfg()

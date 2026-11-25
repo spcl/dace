@@ -30,12 +30,14 @@ def compare_against_zero(
     return sdfg, state, node
 
 
+# Reproducer: Fail a corpus vectorize test on a refusal, and stop refusing a comparison into an int8 mask (6ec59ced20)
 def test_a_double_compared_into_an_int8_mask_validates():
     sdfg, state, sut = compare_against_zero("double_gt_into_int8", ">", dace.float64, dace.int8)
 
     sut.validate(sdfg, state)
 
 
+# Reproducer: Fail a corpus vectorize test on a refusal, and stop refusing a comparison into an int8 mask (6ec59ced20)
 def test_the_int8_mask_holds_each_double_compared_at_its_own_precision():
     """``0.25`` and ``1e-300`` read as ``0`` if the operand were cast to the int8 output first."""
     sdfg, _, _ = compare_against_zero("double_gt_into_int8_run", ">", dace.float64, dace.int8)
@@ -47,6 +49,7 @@ def test_the_int8_mask_holds_each_double_compared_at_its_own_precision():
     np.testing.assert_array_equal(c, np.array([0, 1, 0, 1, 0, 1, 0, 1], dtype=np.int8))
 
 
+# Reproducer: Fail a corpus vectorize test on a refusal, and stop refusing a comparison into an int8 mask (6ec59ced20)
 def test_arithmetic_on_a_double_into_an_int8_output_is_still_narrowing():
     sdfg, state, sut = compare_against_zero("double_plus_into_int8", "+", dace.float64, dace.int8)
 

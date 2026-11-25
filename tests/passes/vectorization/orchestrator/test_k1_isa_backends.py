@@ -70,6 +70,7 @@ def _k1_axpy_sdfg(name):
 
 
 @pytest.mark.parametrize("isa,flag,backend", ISA_CASES)
+# Reproducer: feat(tileops): TileUnop + max/min + full prep prefix; fix RRA wcr/map-body guard (2ef9b8f3eb)
 def test_k1_axpy_isa_backend(isa, flag, backend):
     """K=1 axpy under ``target_isa=<ISA>`` calls the ISA tile function and matches numpy."""
     if flag not in FLAGS:
@@ -144,6 +145,7 @@ def _k1_masked_ite_sdfg(name):
 
 
 @pytest.mark.parametrize("isa,flag,backend", MASKGEN_CASES)
+# Reproducer: fix(vectorization): emit TileMaskGen in a dominating start state (ITE+masked-remainder) (1fa7c27d35)
 def test_k1_masked_ite_isa_backend(isa, flag, backend):
     """A data-dependent ``if`` (-> ``TileITE``) under a masked remainder lowers
     ``TileMaskGen`` through the per-ISA function AND reads the iteration mask from a

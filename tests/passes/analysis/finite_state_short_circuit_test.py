@@ -7,6 +7,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.analysis.finite_state import short_circuit_guard
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_the_guard_is_read_off_the_enclosing_region_not_the_branch():
     """kmp, gromacs_nbnxm: naming the branch body ``region`` shadowed the enclosing region, and the edge lookup
     raised ``KeyError: ConditionalBlock``."""

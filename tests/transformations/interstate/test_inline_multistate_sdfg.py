@@ -238,6 +238,7 @@ def _build_clashing_connector_names_sdfg() -> SDFG:
     return outer
 
 
+# Reproducer: fix: do not rename library-node connectors when inlining a multistate SDFG, explanation: _... (c2cf4233d0)
 def test_inline_keeps_library_node_connectors_but_renames_tasklet_ones():
     """Library-node connector names are an interface (schema parameters, BLAS
     operands); the inline pass must not disambiguate them, while tasklet

@@ -72,6 +72,7 @@ def reaches(state: dace.SDFGState, src: nodes.Node, dst: nodes.Node) -> bool:
     return False
 
 
+# Reproducer: InlineSDFG: ordering edges on connector access nodes no longer block inlining; an empty ta... (816be4c6b5)
 def test_inline_keeps_ordering_edges_of_boundary_nodes_on_a_tasklet():
     sdfg = ordered_inputs("inline_ordering_edges", copy_input=False)
     node = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
@@ -88,6 +89,7 @@ def test_inline_keeps_ordering_edges_of_boundary_nodes_on_a_tasklet():
     assert np.allclose(r, 2 * s) and np.allclose(c, f + 1)
 
 
+# Reproducer: InlineSDFG: ordering edges on connector access nodes no longer block inlining; an empty ta... (816be4c6b5)
 def test_inline_refuses_an_input_copied_into_another_behind_ordering_edges():
     sdfg = ordered_inputs("inline_ordering_edges_copy", copy_input=True)
     node = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))

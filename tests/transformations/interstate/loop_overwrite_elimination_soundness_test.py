@@ -49,6 +49,7 @@ def _loops(sdfg):
     return [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
 
 
+# Reproducer: Fix four silent miscompiles in ControlGraphView.replace and LoopOverwriteElimination (2ef8bdd6a1)
 def test_nondividing_stride_readback_is_not_eliminated():
     """``for i in range(0, 10, 2): A[8] = A[i] * 2`` carries a dependency and must survive.
 
@@ -70,6 +71,7 @@ def test_nondividing_stride_readback_is_not_eliminated():
     assert len(_loops(sdfg)) == 1
 
 
+# Reproducer: Fix four silent miscompiles in ControlGraphView.replace and LoopOverwriteElimination (2ef8bdd6a1)
 def test_nondividing_stride_readback_is_value_preserving():
     """The same kernel, compared BIT-EXACTLY against the untransformed SDFG.
 
@@ -94,6 +96,7 @@ def test_nondividing_stride_readback_is_value_preserving():
     np.testing.assert_equal(got, ref)
 
 
+# Reproducer: Fix four silent miscompiles in ControlGraphView.replace and LoopOverwriteElimination (2ef8bdd6a1)
 def test_nondividing_stride_without_readback_still_eliminates():
     """Over-refusal guard for fix 1: ``A[9]`` is never read back, so elimination stays legal.
 
@@ -122,6 +125,7 @@ def test_nondividing_stride_without_readback_still_eliminates():
     np.testing.assert_equal(got, ref)
 
 
+# Reproducer: Fix four silent miscompiles in ControlGraphView.replace and LoopOverwriteElimination (2ef8bdd6a1)
 def test_symbolic_bound_nonunit_stride_is_value_preserving():
     """Fix 2: a SYMBOLIC bound with a non-unit stride must pin the body to the right iterate.
 
@@ -148,6 +152,7 @@ def test_symbolic_bound_nonunit_stride_is_value_preserving():
         np.testing.assert_equal(got, expected, err_msg=f"wrong last iterate pinned for N={n}")
 
 
+# Reproducer: Fix four silent miscompiles in ControlGraphView.replace and LoopOverwriteElimination (2ef8bdd6a1)
 def test_reparenting_does_not_collide_block_names():
     """Fix 3 (structural): reparenting the body must not leave two blocks sharing one name.
 

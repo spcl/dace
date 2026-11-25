@@ -111,6 +111,7 @@ def test_unconsumed_symbol_is_still_dropped():
 
 
 @pytest.mark.parametrize("kind", ["condition", "tasklet"])
+# Reproducer: Make the vectorization tests fail when the vectorizer does nothing (336e09f74c)
 def test_the_public_pass_leaves_a_validating_sdfg(kind):
     """The shipped symptom, through the public entry point: "Missing symbols on nested SDFG".
 

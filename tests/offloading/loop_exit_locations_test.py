@@ -36,6 +36,7 @@ def copies_to_device(region) -> list[str]:
     return [b.label for b in region.nodes() if isinstance(b, dace.SDFGState) and b.label.startswith("copy_A_to_gpu")]
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_an_enclosing_loop_does_not_copy_back_what_the_inner_loop_already_did():
     sdfg = offloaded()
     time_loop = next(b for b in sdfg.nodes() if isinstance(b, LoopRegion))
@@ -45,6 +46,7 @@ def test_an_enclosing_loop_does_not_copy_back_what_the_inner_loop_already_did():
 
 
 @pytest.mark.gpu
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_the_nest_still_computes_the_reference():
     """``A`` stays a host argument: the offloading stages its device copy itself."""
     n, steps = 17, 3

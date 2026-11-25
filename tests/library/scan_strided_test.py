@@ -589,6 +589,7 @@ def strided_scan_in_map(name: str, op: ScanOp, rows: int) -> dace.SDFG:
 
 
 @pytest.mark.parametrize("op", [ScanOp.SUM, ScanOp.MIN])
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_the_sequential_form_takes_one_arm_per_carry_distance(op: ScanOp):
     """The sequential form inside a parallel map tests the symbolic carry distance once per scan and runs its arm."""
     sdfg = strided_scan_in_map(f"sequential_arms_{op.value}", op, rows=3)

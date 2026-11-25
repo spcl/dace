@@ -159,6 +159,7 @@ def barriers(sdfg: dace.SDFG) -> int:
     )
 
 
+# Reproducer: ColumnLaneKernels: fixed lane count, block-stride over columns (c86f092947)
 def test_a_level_loop_over_column_maps_runs_its_body_per_chunk_of_columns_without_barriers():
     sdfg = offloaded(column_physics)
     assert ColumnLaneKernels().apply_pass(sdfg, {}) == 1
@@ -175,6 +176,7 @@ def test_a_level_loop_over_column_maps_runs_its_body_per_chunk_of_columns_withou
     assert acc and all(tuple(desc.shape) == (1,) and desc.storage != dtypes.StorageType.GPU_Global for desc in acc)
 
 
+# Reproducer: ColumnLaneKernels: fixed lane count, block-stride over columns (c86f092947)
 def test_a_constant_extent_up_to_the_lane_limit_is_one_chunk_of_a_lane_per_column():
     sdfg = offloaded(sixty_four_columns)
     assert ColumnLaneKernels().apply_pass(sdfg, {}) == 1
@@ -185,6 +187,7 @@ def test_a_constant_extent_up_to_the_lane_limit_is_one_chunk_of_a_lane_per_colum
     assert len(column_maps(sdfg, "__tid")) == 3
 
 
+# Reproducer: ColumnLaneKernels: fixed lane count, block-stride over columns (c86f092947)
 def test_a_read_of_another_lanes_column_is_fenced_by_barriers_every_lane_reaches():
     sdfg = offloaded(last_column_feeds_all)
     assert ColumnLaneKernels().apply_pass(sdfg, {}) == 1
@@ -199,6 +202,7 @@ def test_a_read_of_another_lanes_column_is_fenced_by_barriers_every_lane_reaches
     assert all(desc.storage == dtypes.StorageType.GPU_Global for desc in acc)
 
 
+# Reproducer: ColumnLaneKernels: fixed lane count, block-stride over columns (c86f092947)
 def test_a_fill_inside_a_map_writes_only_its_lanes_columns():
     sdfg = offloaded(species_reset_per_level)
     assert ColumnLaneKernels().apply_pass(sdfg, {}) == 1

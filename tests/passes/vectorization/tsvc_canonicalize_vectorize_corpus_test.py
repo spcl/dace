@@ -158,6 +158,7 @@ def _vectorize_and_check(name, sdfg, kernel, arrays, ck, ref, vec_pass):
 
 
 @pytest.mark.parametrize("idx,name", list(enumerate(KERNELS)))
+# Reproducer: canonicalize: preserve TSVC canonicalize->vectorize corpus + canonicalize fixes (327d797d0b)
 def test_tsvc_canonicalize_then_multidim_vectorize(idx, name):
     """Canonicalize -> verify -> multidim VectorizeCPUMultiDim (round-robin knob,
     K=2 when the canonicalized body is a 2-D nested map) -> verify."""

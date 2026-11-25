@@ -15,6 +15,7 @@ def create_array(shape, strides):
     return sdfg, array
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_get_packed_fortran_strides_1d():
     """Test Fortran strides for 1D array"""
     _, array = create_array((10,), None)
@@ -23,6 +24,7 @@ def test_get_packed_fortran_strides_1d():
     assert result == expected
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_get_packed_fortran_strides_2d():
     """Test Fortran strides for 2D array"""
     _, array = create_array((10, 20), None)
@@ -31,6 +33,7 @@ def test_get_packed_fortran_strides_2d():
     assert result == expected
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_get_packed_fortran_strides_3d():
     """Test Fortran strides for 3D array"""
     _, array = create_array((10, 20, 30), None)
@@ -39,6 +42,7 @@ def test_get_packed_fortran_strides_3d():
     assert result == expected
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_get_packed_fortran_strides_4d():
     """Test Fortran strides for 4D array"""
     _, array = create_array((5, 10, 15, 20), None)
@@ -47,6 +51,7 @@ def test_get_packed_fortran_strides_4d():
     assert result == expected
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_get_packed_c_strides_1d():
     """Test C strides for 1D array"""
     _, array = create_array((10,), None)
@@ -55,6 +60,7 @@ def test_get_packed_c_strides_1d():
     assert result == expected
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_get_packed_c_strides_2d():
     """Test C strides for 2D array"""
     _, array = create_array((10, 20), None)
@@ -63,6 +69,7 @@ def test_get_packed_c_strides_2d():
     assert result == expected
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_get_packed_c_strides_3d():
     """Test C strides for 3D array"""
     _, array = create_array((10, 20, 30), None)
@@ -71,6 +78,7 @@ def test_get_packed_c_strides_3d():
     assert result == expected
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_get_packed_c_strides_4d():
     """Test C strides for 4D array"""
     _, array = create_array((5, 10, 15, 20), None)
@@ -79,6 +87,7 @@ def test_get_packed_c_strides_4d():
     assert result == expected
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_is_packed_fortran_strides_true_3d():
     """Test 3D array with Fortran strides"""
     _, array = create_array((10, 20, 30), (1, 10, 200))
@@ -86,6 +95,7 @@ def test_is_packed_fortran_strides_true_3d():
     assert result is True
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_is_packed_fortran_strides_false_c_layout():
     """Test array with C strides returns False"""
     _, array = create_array((10, 20, 30), (600, 30, 1))
@@ -93,6 +103,7 @@ def test_is_packed_fortran_strides_false_c_layout():
     assert result is False
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_is_packed_fortran_strides_false_custom_strides():
     """Test array with custom strides returns False"""
     _, array = create_array((10, 20, 30), (2, 20, 400))
@@ -100,6 +111,7 @@ def test_is_packed_fortran_strides_false_custom_strides():
     assert result is False
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_is_packed_fortran_strides_false_wrong_order():
     """Test array with incorrect stride ordering"""
     _, array = create_array((10, 20, 30), (10, 1, 200))
@@ -107,6 +119,7 @@ def test_is_packed_fortran_strides_false_wrong_order():
     assert result is False
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_is_packed_c_strides_true_1d():
     """Test 1D array with C strides"""
     _, array = create_array((10,), (1,))
@@ -114,6 +127,7 @@ def test_is_packed_c_strides_true_1d():
     assert result is True
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_is_packed_c_strides_true_2d():
     """Test 2D array with C strides"""
     _, array = create_array((10, 20), (20, 1))
@@ -121,6 +135,7 @@ def test_is_packed_c_strides_true_2d():
     assert result is True
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_is_packed_c_strides_true_3d():
     """Test 3D array with C strides"""
     _, array = create_array((10, 20, 30), (600, 30, 1))
@@ -128,6 +143,7 @@ def test_is_packed_c_strides_true_3d():
     assert result is True
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_is_packed_c_strides_false_fortran_layout():
     """Test array with Fortran strides returns False"""
     _, array = create_array((10, 20, 30), (1, 10, 200))
@@ -135,6 +151,7 @@ def test_is_packed_c_strides_false_fortran_layout():
     assert result is False
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_is_packed_c_strides_false_custom_strides():
     """Test array with custom strides returns False"""
     _, array = create_array((10, 20, 30), (1200, 60, 2))
@@ -142,6 +159,7 @@ def test_is_packed_c_strides_false_custom_strides():
     assert result is False
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_is_packed_c_strides_false_wrong_order():
     """Test array with incorrect stride ordering"""
     _, array = create_array((10, 20, 30), (1, 30, 600))
@@ -149,6 +167,7 @@ def test_is_packed_c_strides_false_wrong_order():
     assert result is False
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_fortran_and_c_equivalent_for_1d():
     """Test that 1D arrays have same strides for both layouts"""
     _, array = create_array((100,), (1,))
@@ -156,6 +175,7 @@ def test_fortran_and_c_equivalent_for_1d():
     assert array.is_packed_c_strides() is True
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_c_strides_calculation_accumulation():
     """Test stride accumulation for C layout"""
     _, array = create_array((2, 3, 4), None)
@@ -163,6 +183,7 @@ def test_c_strides_calculation_accumulation():
     assert result == (12, 4, 1)
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_explicit_fortran_strides():
     """Test explicitly set Fortran strides"""
     _, array = create_array((5, 7, 9), (1, 5, 35))
@@ -170,6 +191,7 @@ def test_explicit_fortran_strides():
     assert array.is_packed_c_strides() is False
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_explicit_fortran_strides_not_packed():
     """Test explicitly set Fortran strides"""
     _, array = create_array((5, 7, 9), (10, 5 * 10, 35 * 10))
@@ -177,6 +199,7 @@ def test_explicit_fortran_strides_not_packed():
     assert array.is_packed_c_strides() is False
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_explicit_c_strides():
     """Test explicitly set C strides"""
     _, array = create_array((5, 7, 9), (63, 9, 1))
@@ -184,6 +207,7 @@ def test_explicit_c_strides():
     assert array.is_packed_fortran_strides() is False
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_explicit_c_strides_not_packed():
     """Test explicitly set C strides"""
     _, array = create_array((5, 7, 9), (63 * 5, 9 * 5, 1))
@@ -191,6 +215,7 @@ def test_explicit_c_strides_not_packed():
     assert array.is_packed_fortran_strides() is False
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_set_shape_reshape_1d_to_2d():
     """Reshape 1D array to 2D and verify packed Fortran/C strides."""
     _, array = create_array((12,), None)
@@ -207,6 +232,7 @@ def test_set_shape_reshape_1d_to_2d():
     assert after_c == (4, 1)
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_set_shape_reshape_2d_to_3d():
     """Reshape 2D array to 3D and verify packed Fortran/C strides."""
     _, array = create_array((5, 10), None)
@@ -223,6 +249,7 @@ def test_set_shape_reshape_2d_to_3d():
     assert after_c == (25, 5, 1)
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_set_shape_reshape_square_to_rectangular():
     """Reshape square 2D array to rectangular 2D and check strides."""
     _, array = create_array((4, 4), None)
@@ -239,6 +266,7 @@ def test_set_shape_reshape_square_to_rectangular():
     assert after_c == (2, 1)
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_set_shape_reshape_3d_to_1d():
     """Reshape 3D array to 1D and check strides."""
     _, array = create_array((2, 3, 4), None)
@@ -255,6 +283,7 @@ def test_set_shape_reshape_3d_to_1d():
     assert after_c == (1,)
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_sdfg_save_and_reload_strides_tempfile():
     """Ensure packed strides remain consistent after SDFG save/load using tempfile."""
     sdfg, array = create_array((3, 4, 5), None)
@@ -282,6 +311,7 @@ def test_sdfg_save_and_reload_strides_tempfile():
         os.remove(sdfg_path)
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_get_packed_fortran_strides_2d_symbolic_N():
     """Test Fortran strides for 2D array with symbolic N"""
     _, array = create_array((10, N), None)  # N added to the second dimension
@@ -290,6 +320,7 @@ def test_get_packed_fortran_strides_2d_symbolic_N():
     assert result == expected
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_get_packed_c_strides_3d_symbolic_N():
     """Test C strides for 3D array with symbolic N"""
     _, array = create_array((10, N, 30), None)  # N added to the second dimension
@@ -298,6 +329,7 @@ def test_get_packed_c_strides_3d_symbolic_N():
     assert result == expected
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_is_packed_fortran_strides_true_3d_symbolic_N():
     """Test 3D array with Fortran strides and symbolic N"""
     _, array = create_array((10, N, 30), (1, 10, 10 * N))  # Adjust stride for N
@@ -305,6 +337,7 @@ def test_is_packed_fortran_strides_true_3d_symbolic_N():
     assert result is True
 
 
+# Reproducer: Fixes (c27c1215e4)
 def test_fortran_and_c_equivalent_for_1d_symbolic_N():
     """Test that 1D arrays have same strides for both layouts with symbolic N"""
     _, array = create_array((N,), (1,))

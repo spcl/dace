@@ -269,6 +269,7 @@ def test_refuses_an_integer_modulo_the_guard_keeps_off_zero():
     assert out[0] == float(sum(x % y for x, y in zip(n, d) if y > 0))
 
 
+# Reproducer: Fix #2706 port regressions: integer CMod prints %, floored tests spell PyMod, LoopToCondit... (f1747c3027)
 def test_a_python_integer_modulo_keeps_the_symbols_its_reads_are_promoted_to():
     """Python's ``n[i] % d[i]`` is ``PyMod``, which does not trap; simplify promotes the integer reads to symbols the
     loop body assigns on interstate edges (``d_index_0 = d[i]``). Rebuilding the body without those edges left them

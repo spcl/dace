@@ -44,6 +44,7 @@ def test_dependent_assignment_blocks_merge():
     assert empty in sdfg.nodes()
 
 
+# Reproducer: Stop losing ordering edges and stale destinations across fusion, arglist and hoisting (d4f5cd7e28)
 def test_first_reads_what_second_writes_blocks_merge():
     """``k := k + 7`` overwrites what the first edge's ``m := k + 1`` reads.
 
@@ -56,6 +57,7 @@ def test_first_reads_what_second_writes_blocks_merge():
     sdfg.validate()
 
 
+# Reproducer: Stop losing ordering edges and stale destinations across fusion, arglist and hoisting (d4f5cd7e28)
 def test_indirect_read_of_second_write_blocks_merge():
     """TSVC s353 shape: ``ip_index := A[k]`` next to the loop's own ``k := k + 1``."""
     sdfg, empty = _chain({"ip_index": "A[k]"}, {"k": "k + 1"})

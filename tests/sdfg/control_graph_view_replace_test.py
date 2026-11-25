@@ -75,6 +75,7 @@ def _references(cond: ConditionalBlock, inner: LoopRegion):
     }
 
 
+# Reproducer: Fix four silent miscompiles in ControlGraphView.replace and LoopOverwriteElimination (2ef8bdd6a1)
 def test_replace_reaches_conditional_branches_and_nested_loop_headers():
     """The core regression: all four hidden references must be substituted.
 
@@ -89,6 +90,7 @@ def test_replace_reaches_conditional_branches_and_nested_loop_headers():
     assert not stale, f"ControlGraphView.replace left references naming the old symbol: {stale}"
 
 
+# Reproducer: Fix four silent miscompiles in ControlGraphView.replace and LoopOverwriteElimination (2ef8bdd6a1)
 def test_replace_renames_interstate_edge_assignment_keys():
     """``replace`` is a RENAME: an assignment ``i = ...`` must become ``new_name = ...``.
 
@@ -117,6 +119,7 @@ def test_replace_renames_interstate_edge_assignment_keys():
     assert "RENAMED" in assignments["q"], f"assignment value was not renamed: {assignments}"
 
 
+# Reproducer: Fix four silent miscompiles in ControlGraphView.replace and LoopOverwriteElimination (2ef8bdd6a1)
 def test_replace_renames_a_loops_own_loop_variable():
     """A rename reaches ``loop_variable`` too -- it is the symbol's defining occurrence.
 
@@ -139,6 +142,7 @@ def test_replace_renames_a_loops_own_loop_variable():
     assert "RENAMED" in loop.loop_condition.as_string
 
 
+# Reproducer: Fix four silent miscompiles in ControlGraphView.replace and LoopOverwriteElimination (2ef8bdd6a1)
 def test_replace_is_a_noop_when_name_is_unused():
     """Over-reach guard: a symbol the region never names must leave every reference untouched."""
     _, region, cond, inner = _region_with_hidden_references()

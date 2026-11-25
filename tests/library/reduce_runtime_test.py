@@ -401,6 +401,7 @@ def test_reduce_inside_parallel_map_never_emits_the_parallel_entry(schedule):
     assert np.allclose(b, a.sum(axis=1), rtol=_TOL, atol=_TOL)
 
 
+# Reproducer: fix: library node names safe after inlining (ef00d17437)
 def test_sequential_expansion_connectors_survive_inlining_beside_same_named_arrays():
     """The sequential expansion returns a nested SDFG, and codegen inlines it -- its tasklets then
     live in the PARENT SDFG, where a connector sharing a name with an array is invalid. So the

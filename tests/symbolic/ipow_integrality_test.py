@@ -12,6 +12,7 @@ import dace
 from dace import symbolic
 
 
+# Reproducer: Registry on extended: fix the #2475 CI failures (04dbb5035f)
 def test_an_ipow_extent_is_integral():
     N = symbolic.symbol("N")
     assert symbolic.integral_index_expression(symbolic.ipow(N, 2))
@@ -21,12 +22,14 @@ def test_an_ipow_extent_is_integral():
     sdfg.arrays["A"].validate()
 
 
+# Reproducer: Registry on extended: fix the #2475 CI failures (04dbb5035f)
 def test_the_ceiling_of_an_ipow_prints_the_integer_itself():
     R, K = symbolic.symbol("R"), symbolic.symbol("K")
     printed = symbolic.symstr(sympy.ceiling(symbolic.ipow(R, K)), cpp_mode=True)
     assert "ceil" not in printed, printed
 
 
+# Reproducer: Registry on extended: fix the #2475 CI failures (04dbb5035f)
 def test_the_ceiling_of_a_symbolic_pow_still_rounds():
     # ``R**(K - 1)`` is a fraction for K = 0, so its ceiling is no identity
     R, K = symbolic.symbol("R"), symbolic.symbol("K")

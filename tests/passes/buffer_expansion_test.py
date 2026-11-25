@@ -110,6 +110,7 @@ def _scratch_sdfg(buf_transient: bool, ndim: int = 1, base: int = 0):
 
 # _loop_index -- the off-by-one guard
 @pytest.mark.parametrize("lo,hi,count", [(0, 8, 8), (3, 11, 8), (0, 1, 1)])
+# Reproducer: buffer_expansion: fix off-by-one OOB + probe mappability before scanning buffers (93540823cf)
 def test_loop_index_reports_one_slot_per_iteration(lo, hi, count):
     """The private dimension must hold exactly one slot per iteration. ``get_loop_end`` returns the
     INCLUSIVE last value, so ``size`` is ``end - start + 1`` -- dropping the ``+1`` under-sizes the
@@ -128,6 +129,7 @@ def test_loop_index_reports_one_slot_per_iteration(lo, hi, count):
     assert (index.subs(dace.symbol("i"), hi - 1) if hasattr(index, "subs") else index) == count - 1
 
 
+# Reproducer: buffer_expansion: fix off-by-one OOB + probe mappability before scanning buffers (93540823cf)
 def test_loop_index_symbolic_bound_full_count():
     """``for i in range(N)`` needs ``N`` slots (indices 0..N-1), not ``N-1``."""
 
@@ -141,6 +143,7 @@ def test_loop_index_symbolic_bound_full_count():
     assert (size - N).simplify() == 0, f"symbolic size {size} should equal N"
 
 
+# Reproducer: buffer_expansion: fix off-by-one OOB + probe mappability before scanning buffers (93540823cf)
 def test_loop_index_refuses_non_unit_step():
     """Only unit-step loops qualify (the private dimension is indexed by ``i - start``)."""
 
@@ -154,6 +157,7 @@ def test_loop_index_refuses_non_unit_step():
 
 
 # _expand -- expansion is bit-exact, correctly sized, and unblocks LoopToMap
+# Reproducer: buffer_expansion: fix off-by-one OOB + probe mappability before scanning buffers (93540823cf)
 def test_expand_1d_scratch_unblocks_loop_to_map_bit_exact():
     """A 1-D scratch buffer that ``LoopToMap`` refuses (non-iter-indexed write) becomes a validated
     ``Map`` after expansion, and the run matches the sequential baseline at full precision."""
@@ -182,6 +186,7 @@ def test_expand_1d_scratch_unblocks_loop_to_map_bit_exact():
     assert np.allclose(out_map, expected), f"expanded map result diverged: {out_map} vs {expected}"
 
 
+# Reproducer: buffer_expansion: fix off-by-one OOB + probe mappability before scanning buffers (93540823cf)
 def test_expand_places_axis_and_sizes_to_iteration_count():
     """C-order expansion prepends the new (slowest) axis, sized to the iteration count -- so the
     final iteration's slice is in bounds (the off-by-one regression)."""
@@ -194,6 +199,7 @@ def test_expand_places_axis_and_sizes_to_iteration_count():
     assert shape[1] == M
 
 
+# Reproducer: buffer_expansion: fix off-by-one OOB + probe mappability before scanning buffers (93540823cf)
 def test_expand_multidim_scratch_bit_exact():
     """A 2-D scratch buffer expands to 3-D and stays bit-exact through LoopToMap."""
     n, m = 4, 3
@@ -219,6 +225,7 @@ def test_expand_multidim_scratch_bit_exact():
     assert np.allclose(out_map, expected)
 
 
+# Reproducer: buffer_expansion: fix off-by-one OOB + probe mappability before scanning buffers (93540823cf)
 def test_expand_offset_base_subset_bit_exact():
     """A buffer whose live slice is offset off zero (``buf[2:2+M]``) expands and stays bit-exact --
     the new dimension is orthogonal to the existing (non-zero-based) access."""
@@ -284,6 +291,7 @@ def _fill_read_loop(fills, read_hi):
     return sdfg, loop
 
 
+# Reproducer: buffer_expansion: fix off-by-one OOB + probe mappability before scanning buffers (93540823cf)
 def test_guard_accepts_multi_statement_union_fill():
     """``buf[0:M] = ...; buf[M:2*M] = ...`` read back as ``buf[0:2*M]``: the two writes TOGETHER
     cover the read, so the buffer is defined-before-read and privatisable. This is the pass's
@@ -300,6 +308,7 @@ def test_guard_accepts_multi_statement_union_fill():
     assert list(sdfg.arrays["buf"].shape) == shape_before
 
 
+# Reproducer: buffer_expansion: fix off-by-one OOB + probe mappability before scanning buffers (93540823cf)
 def test_guard_refuses_partial_fill_uninitialized_read():
     """Only ``buf[0:M]`` is written but ``buf[0:2*M]`` is read -- the upper half is uninitialised
     (carried across iterations). The guard must refuse."""
@@ -308,6 +317,7 @@ def test_guard_refuses_partial_fill_uninitialized_read():
     assert "buf" not in BufferExpansion()._privatizable_buffers(sdfg, loop)
 
 
+# Reproducer: buffer_expansion: fix off-by-one OOB + probe mappability before scanning buffers (93540823cf)
 def test_guard_refuses_gap_tiling():
     """``buf[0:M]`` and ``buf[M+1:2*M]`` leave a hole at index ``M``; the union does not cover
     ``buf[0:2*M]`` so the guard refuses (no inequality is allowed to paper over the gap)."""
@@ -343,6 +353,7 @@ def _rmw_accumulator_sdfg():
     return sdfg, loop
 
 
+# Reproducer: buffer_expansion: fix off-by-one OOB + probe mappability before scanning buffers (93540823cf)
 def test_guard_refuses_read_before_write_accumulator():
     """The canonical accumulator (``s`` read at the top of the iteration, before it is written)
     carries a value across iterations. The guard must refuse ``s`` -- privatising it would drop the
@@ -359,6 +370,7 @@ def test_guard_refuses_read_before_write_accumulator():
     assert list(sdfg.arrays["t"].shape) == [1], "reverted expansion must restore the buffer shape"
 
 
+# Reproducer: buffer_expansion: fix off-by-one OOB + probe mappability before scanning buffers (93540823cf)
 def test_guard_refuses_wcr_reduction_edge():
     """A write-conflict (WCR/reduction) edge on the buffer is a genuine accumulation, not a scratch
     fill; the guard refuses immediately."""
@@ -382,6 +394,7 @@ def test_guard_refuses_wcr_reduction_edge():
     assert BufferExpansion.defined_before_read(loop, "acc") is False
 
 
+# Reproducer: buffer_expansion: fix off-by-one OOB + probe mappability before scanning buffers (93540823cf)
 def test_recurrence_a_i_from_a_i_minus_one_not_expanded_and_preserved():
     """A first-order recurrence ``a[i] = a[i-1] + b[i]`` carries a value across iterations through
     ``a``. The pass must not expand it, and the loop must stay sequential + value-preserving."""
@@ -409,6 +422,7 @@ def test_recurrence_a_i_from_a_i_minus_one_not_expanded_and_preserved():
 
 
 # pass-level behaviour -- no needless growth, value-preserving
+# Reproducer: buffer_expansion: fix off-by-one OOB + probe mappability before scanning buffers (93540823cf)
 def test_no_growth_when_loop_to_map_already_accepts():
     """A loop-local *transient* scratch buffer is one ``LoopToMap`` already privatises on its own,
     so expanding it would only grow the SDFG. The pass must leave it untouched (return ``None`` and
@@ -419,6 +433,7 @@ def test_no_growth_when_loop_to_map_already_accepts():
     assert list(sdfg.arrays["buf"].shape) == shape_before, "buffer must not grow when it does not help"
 
 
+# Reproducer: buffer_expansion: fix off-by-one OOB + probe mappability before scanning buffers (93540823cf)
 def test_pass_is_value_preserving_end_to_end():
     """Running the pass (a no-op here, since ``LoopToMap`` accepts the transient scratch loop) then
     ``LoopToMap`` compiles to a map whose result matches the sequential baseline."""
@@ -449,6 +464,7 @@ def test_pass_is_value_preserving_end_to_end():
     assert np.allclose(out, expected)
 
 
+# Reproducer: buffer_expansion: fix off-by-one OOB + probe mappability before scanning buffers (93540823cf)
 def test_view_operand_is_not_expanded():
     """A ``data.View`` (a reshape/alias of another array) must never be expanded -- widening the
     dimension it presents to its consumer corrupts the aliased shape."""

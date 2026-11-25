@@ -35,6 +35,7 @@ def outer_loop(sdfg: dace.SDFG) -> LoopRegion:
     return next(r for r in sdfg.nodes() if isinstance(r, LoopRegion))
 
 
+# Reproducer: LoopToMap: a break or continue of a nested loop leaves only that loop, so it no longer kee... (442906c354)
 def test_an_inner_break_leaves_the_outer_loop_mappable():
     sdfg = prefix_until_negative.to_sdfg(simplify=True)
     xform = LoopToMap()
@@ -50,6 +51,7 @@ def test_an_inner_break_leaves_the_outer_loop_mappable():
     assert np.allclose(out, want)
 
 
+# Reproducer: LoopToMap: a break or continue of a nested loop leaves only that loop, so it no longer kee... (442906c354)
 def test_a_break_of_the_loop_itself_is_refused():
     sdfg = stops_at_first_negative.to_sdfg(simplify=True)
     xform = LoopToMap()

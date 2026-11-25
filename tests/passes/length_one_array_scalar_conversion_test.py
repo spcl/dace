@@ -780,6 +780,7 @@ def test_a_heap_length_one_array_becomes_a_stack_scalar():
     assert _run(sdfg, 3.0) == 7.0
 
 
+# Reproducer: Length-one staging: a written signature array is copied in too; the copy-out stores the st... (abbd5b9325)
 def test_a_conditionally_written_output_keeps_its_value_when_the_branch_is_skipped():
     """``if (x != x) y(1) = 0`` (dace-fortran's ieee_is_nan guard): the copy-out writes the staged scalar back on
     every path, so a write-only output needs the copy-in too, or a skipped branch stores an uninitialized value."""

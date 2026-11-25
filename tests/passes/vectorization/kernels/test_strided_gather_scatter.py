@@ -801,6 +801,7 @@ def gather_fp32_data(src: dace.float32[N], idx: dace.int64[N], dst: dace.float32
         dst[i] = src[idx[i]] + 1.0
 
 
+# Reproducer: Make the vectorization tests fail when the vectorizer does nothing (336e09f74c)
 def test_gather_fp32_data_lowers_the_indirection_to_a_tile_load(vectorize_config):
     """fp32 data + int64 idx: ``src[idx[i]]`` becomes a ``TileGather``, not a per-lane fan."""
     N_val = 64

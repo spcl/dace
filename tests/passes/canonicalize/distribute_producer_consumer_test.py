@@ -260,6 +260,7 @@ def test_mask_read_through_an_interstate_edge_refuses():
     assert np.allclose(z, ref_z)
 
 
+# Reproducer: Passes that move blocks through add_node no longer run set_nested_sdfg_parent_references (bdf3ecd50e)
 def test_distribution_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     """The split clones the coupled loop per group; the clones are listed where a reset would list them."""
     sdfg = _to_loops(atax_loops)
@@ -387,6 +388,7 @@ def producer_between_coupled_statements(a: dace.float64[M, N], c: dace.float64[M
             c[i, j] = c[i, j] + t[i, j]
 
 
+# Reproducer: Fix the extended canon/vectorize corpus failures: dominators, distribution order, renamed... (a4cd2cc99f)
 def test_a_producer_split_from_the_middle_of_a_body_runs_before_its_consumer():
     sdfg = _to_loops(producer_between_coupled_statements)
     assert DistributeProducerConsumerLoop().apply_pass(sdfg, {}) == 1

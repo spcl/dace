@@ -56,6 +56,7 @@ def code_lines(code: str) -> str:
     return "\n".join(line for line in code.splitlines() if not line.strip().startswith("//"))
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_tiled_wavefront_names_only_counters_the_rendering_declares():
     """needleman_wunsch, wf_triangular: the tile labels named ``_loop_it_0`` and the placeholder ``w``."""
     code = named(skewed_sdfg("cpf_audit_wavefront_tiles", tile=4))
@@ -69,6 +70,7 @@ def test_a_tiled_wavefront_names_only_counters_the_rendering_declares():
     assert not any("_loop_it_" in line or "+ w)" in line for line in labels), labels
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_one_trip_map_in_a_team_is_labelled_thread_zeros_block():
     """tsvc s118, bfs, gmres: ``if (omp_get_thread_num() == 0)`` carried ``parallel -- independent``."""
     sdfg = team_one_trip.to_sdfg(simplify=True)
@@ -85,6 +87,7 @@ def row_sums(a: dace.float64[N, M], out: dace.float64[N]):
         out[i] += a[i, j]
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_each_map_of_an_expanded_nest_says_what_it_is():
     """conv_2d, lavamd, nbody: the vector pass split a map in two after the labels, and the inner map, which
     accumulates into ``out[i]``, fell back to ``parallel -- independent``."""
@@ -123,6 +126,7 @@ def nested_scatter_sdfg() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_map_accumulating_inside_a_nested_body_is_a_reduction():
     """ilu0, cloudsc_subsidence_forcing: the accumulation sat in a nested SDFG, and the map was labelled
     independent."""
@@ -161,6 +165,7 @@ def shared_scratch_sdfg() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_map_sharing_one_buffer_across_iterations_names_it():
     """cloudsc_subsidence_forcing: every iteration wrote ``zevap[0:KLON]``, and the map read plain independent."""
     sdfg = shared_scratch_sdfg()
@@ -201,6 +206,7 @@ def row_through_two_bodies_sdfg() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_buffer_a_deeper_body_writes_per_iteration_is_not_private():
     """mandelbrot: ``private per iteration: Z`` on a loop whose iterations write different rows of ``Z``."""
     sdfg = row_through_two_bodies_sdfg()
@@ -217,6 +223,7 @@ def masked_rows(a: dace.float64[N, 4], mask: dace.bool_[N, 4], out: dace.float64
         out[mask[i]] = a[i]
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_write_that_may_not_happen_proves_no_dependence():
     """Review F15: a masked store fires only where the mask holds, so two iterations need not write the same
     element; the solver's pair of iterations was printed as a proof."""
@@ -230,6 +237,7 @@ def strided_store(a: dace.float64[M * LDA], b: dace.float64[M]):
         a[i * LDA] = b[i]
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_dependence_that_needs_a_size_of_zero_is_not_proven():
     """Review F17: ``a[i * lda]`` collides only for ``lda = 0``, where ``a`` has no element at all."""
     hint = loop_hint(annotated(strided_store, "cpf_audit_degenerate"))
@@ -250,6 +258,7 @@ def strided_copy_sdfg() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_copy_dependence_names_the_range_not_an_internal_iterator():
     """Review F31: the copy's iterator ``__copy<id>`` leaked into the label."""
     sdfg = strided_copy_sdfg()
@@ -266,6 +275,7 @@ def seidel_steps(a: dace.float64[N, N]):
                 a[i, j] = (a[i - 1, j] + a[i, j - 1] + a[i, j] + a[i + 1, j] + a[i, j + 1]) * 0.2
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_time_loop_around_a_skewed_nest_keeps_its_proven_recurrence():
     """seidel_2d: after the skew the accesses sit under tile guards, and the time loop read ``unknown`` with a dump of
     a subset; its body proved the recurrence before the skew."""
@@ -279,6 +289,7 @@ def test_a_time_loop_around_a_skewed_nest_keeps_its_proven_recurrence():
     assert "subset" not in hint and len(hint) < 200, hint
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_skewed_seidel_renders_unique_counters_and_a_proven_header():
     """seidel_2d: the time loop in ``body`` and the tile interior in ``loop_body`` both rendered as ``i``, so the
     header's ``open: i`` named two loops; the time loop read ``unknown``."""
@@ -296,6 +307,7 @@ def test_a_skewed_seidel_renders_unique_counters_and_a_proven_header():
     assert label.startswith("// sequential -- proven dependence on a: "), label
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_every_unknown_reason_says_what_failed_when_it_is_parallel_and_what_goes_wrong_otherwise():
     """seidel_2d (review #8): a refusal the labels had no sentence for printed its message, a 300-token subset. Every
     kind now reads ``<what was not shown>; parallel if (only if, or only as) <condition>; otherwise <what goes wrong>``."""

@@ -185,6 +185,7 @@ def _scalar_constant_subscript_sdfg(name):
     return sdfg
 
 
+# Reproducer: Readable codegen: fix BLAS/reduction-lowered corpus kernels (5db4d6d792)
 def test_scalar_constant_subscript_lowered_to_bare_name():
     # Before the fix, generate_code raises SyntaxError('Missing dimensions ... got 0'). The fix lowers
     # the `C[0]` subscript on the 0-d scalar constant to the bare name; assert that behavior (the exact

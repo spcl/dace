@@ -84,6 +84,7 @@ def check(sdfg: dace.SDFG, code: str, language: str, shape: tuple[int, ...], dis
 
 
 @pytest.mark.parametrize("language", ["c", "c++"])
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_symbolic_distance_is_dispatched_once_per_scan(language: str) -> None:
     sdfg, code = rendered(strided_scan_symbolic, f"scan_distance_symbolic_{language.replace('+', 'p')}", language)
     for arm in SYMBOLIC_ARMS:
@@ -98,6 +99,7 @@ def test_a_symbolic_distance_is_dispatched_once_per_scan(language: str) -> None:
 
 
 @pytest.mark.parametrize("distance", [2, 3, 8, 9])
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_constant_distance_takes_its_one_arm(distance: int) -> None:
     sdfg, code = rendered(constant_distance_program(distance), f"scan_distance_constant_{distance}", "c")
     assert f"parallel -- scan, the carry distance is {distance}: {CONSTANT_ARMS[distance]}" in code, code
@@ -107,6 +109,7 @@ def test_a_constant_distance_takes_its_one_arm(distance: int) -> None:
 
 
 @pytest.mark.parametrize("language", ["c", "c++"])
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_scan_in_a_parallel_map_is_dispatched_once_per_row(language: str) -> None:
     sdfg, code = rendered(strided_scan_rows, f"scan_distance_rows_{language.replace('+', 'p')}", language)
     for arm in SYMBOLIC_ARMS:

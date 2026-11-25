@@ -31,6 +31,7 @@ import numpy as np
 import dace
 
 
+# Reproducer: fix(canonicalize): REVERT 3 numerically-unsound fixes (silent miscompiles); keep verified... (b81ad9d538)
 def test_bare_name_dtype_cast_parses():
     """A dtype typeclass bound to a plain name and used as a cast (``f32(0)``)
     must parse like the attribute form ``dace.float32(0)`` (regression: npbench
@@ -92,6 +93,7 @@ def test_finalize_does_not_persist_reduction_scalar():
     assert np.allclose(csdfg(a=a, N=n), a + a.sum())
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_finalize_selects_openmp_for_reduce():
     """``finalize_for_target`` must select the ``OpenMP`` implementation for a lifted ``Reduce``
     library node on CPU -- never the default ``pure`` (which builds a single-scalar WCR map that
@@ -160,6 +162,7 @@ def test_finalize_selects_openmp_for_reduce():
         assert np.allclose(got, npfn(a)), f"{op}: reduction not bit-exact vs numpy"
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_finalize_selects_openmp_scan_for_prefix_scan():
     """``finalize_for_target`` must lower a lifted prefix ``Scan`` to the parallel ``CPU``
     expansion (OpenMP 5.0 ``reduction(inscan, ...)`` + ``#pragma omp scan``), never the serial
@@ -202,6 +205,7 @@ def test_finalize_selects_openmp_scan_for_prefix_scan():
     assert np.allclose(out, np.cumsum(a)), "prefix scan not bit-exact vs np.cumsum"
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_finalize_nested_reduction_stays_sequential():
     """A reduction NESTED inside a parallel map (per-row sum) must lower to the sequential ``pure``
     accumulate -- adhering to its ``Sequential`` schedule -- NOT ``OpenMP``. An ``OpenMP`` reduction
@@ -264,6 +268,7 @@ REDUCTION_BREAK_EVEN = 512
 REDUCTION_EXTENT = 32
 
 
+# Reproducer: canon: pin nested-in-sequential-loop reductions sequential (fix nussinov 344x regression) (086c089fc3)
 def test_reduction_in_sequential_loop_is_not_parallelized():
     """The k-reduction re-entered once per ``(i, j)`` must not open an OpenMP region of its own.
 
@@ -366,6 +371,7 @@ def test_reduction_in_sequential_loop_is_not_parallelized():
     assert np.array_equal(got, ref), "nested sequential reduction not bit-exact"
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_finalize_never_selects_mkl_prefers_openblas():
     """The canonicalize perf tail must never pick ``MKL`` -- it prefers OpenBLAS (and OpenMP /
     HPTT / cuBLAS). A large matmul lowers to OpenBLAS, and no library node is left on ``MKL``."""
@@ -387,6 +393,7 @@ def test_finalize_never_selects_mkl_prefers_openblas():
     assert "Planned" in lib_impls, f"large matmul should lower to OpenBLAS (its shape-planned call), got {lib_impls}"
 
 
+# Reproducer: Split the index set at a range guard, and retarget four stale canonicalize tests (12a26a39fe)
 def test_offload_to_gpu_sets_domain_matched_block_and_finalize_generates_cuda():
     """``offload_to_gpu`` must move the nest onto the device and choose a thread-block matching the
     iteration domain (an ``N x N`` map -> one warp wide and several warps deep, not the ``32,1,1``
@@ -493,6 +500,7 @@ def test_a_persistent_accumulator_of_a_parallel_map_is_reduced_through_a_local_a
     assert np.allclose(out, A.sum(axis=0) * 2.0 + A[:, 0].sum())
 
 
+# Reproducer: canon+vectorizer: masked-reduce/s212/s279 fixes, fast-canon removal, finalize_transient_st... (a5f9a5a828)
 def test_finalize_transient_storage_converts_len1_transient_array_to_scalar():
     """``finalize_transient_storage`` converts every length-1 *transient* array to a Scalar
     (a single internal value belongs in a scalar, not a heap array), while leaving a

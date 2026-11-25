@@ -87,6 +87,7 @@ def _wcr_memlets(sdfg: dace.SDFG):
     return [e.data for state in sdfg.states() for e in state.edges() if e.data is not None and e.data.wcr]
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_loop_to_map_refuses_a_wcr_carried_scan_end_to_end():
     """The reachable path: ``@dace.program`` -> ``AugAssignToWCR`` -> ``LoopToMap``."""
     sdfg = prefix_scan.to_sdfg(simplify=True)
@@ -101,6 +102,7 @@ def test_loop_to_map_refuses_a_wcr_carried_scan_end_to_end():
 
 
 @pytest.mark.parametrize("use_wcr", [False, True])
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_loop_to_map_refuses_a_hand_built_wcr_carried_scan(use_wcr):
     sdfg = build_prefix_scan(use_wcr)
     before = sdfg.to_json()
@@ -113,6 +115,7 @@ def test_loop_to_map_refuses_a_hand_built_wcr_carried_scan(use_wcr):
     assert sdfg.to_json() == before, "a transformation that does not apply must not mutate the SDFG"
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_loop_to_map_still_lifts_a_plain_wcr_reduction():
     """Positive control: a whole-loop reduction nobody reads back must still become a map."""
     sdfg = reduction.to_sdfg(simplify=True)
@@ -125,6 +128,7 @@ def test_loop_to_map_still_lifts_a_plain_wcr_reduction():
     assert _maps_over(sdfg, "i"), "a map over i must have replaced it"
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_wcr_prefix_scan_computes_the_sequential_result():
     n = 512
     sdfg = prefix_scan.to_sdfg(simplify=True)

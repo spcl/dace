@@ -501,6 +501,7 @@ def _beta_libnode_sdfg(beta):
     return sdfg
 
 
+# Reproducer: fix: refuse ArrayFission on a transient a beta!=0 LibraryNode write folds onto, explanatio... (958bc276f7)
 def test_beta_accumulate_libnode_is_refused():
     """Negative: a ``LibraryNode`` that folds onto its output's PRIOR value through a non-zero
     ``beta`` property (the whole BLAS accumulate family -- Gemm/Gemv/Symm/Syrk/Einsum) is a
@@ -516,6 +517,7 @@ def test_beta_accumulate_libnode_is_refused():
     assert sdfg.to_json() == before
 
 
+# Reproducer: fix: refuse ArrayFission on a transient a beta!=0 LibraryNode write folds onto, explanatio... (958bc276f7)
 def test_zero_beta_libnode_is_still_a_full_overwrite():
     """Positive control: ``beta=0`` (the overwrite case, e.g. ``gemm_ovr``/``gemv``) is a genuine
     full write with no implicit read, so the fix above must not over-refuse it."""

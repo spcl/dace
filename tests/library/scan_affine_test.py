@@ -382,6 +382,7 @@ def test_the_cuda_affine_scan_computes_the_recurrence(seed_on_device, n):
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("n", [3, 17, 100003])
+# Reproducer: CPF fixes from the llr40 and scicomp prerender (f91e1cfe51)
 def test_the_cuda_affine_scan_computes_a_strided_recurrence(n):
     """``out[k] = c[k]*out[k-5] + d[k]`` is five chains, each entered at its own seed; the unit-stride
     scan read every class as one chain (versioned_distance_update at K = 5)."""

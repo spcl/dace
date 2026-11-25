@@ -63,6 +63,7 @@ def test_an_unproven_loop_over_a_few_iterations_is_unknown_not_sequential():
     assert "// cpf: proven: partial; open: s" in code, code
 
 
+# Reproducer: CPF loop comments: name a write that does not move with the loop and a read of earlier ite... (63eed8dd1f)
 def test_a_conditional_write_to_a_fixed_element_says_every_iteration_writes_it():
     """The write ``a[0]`` does not move with ``i``: an index array without repeats is no way out of it."""
 
@@ -78,6 +79,7 @@ def test_a_conditional_write_to_a_fixed_element_says_every_iteration_writes_it()
     assert "index array" not in first, first
 
 
+# Reproducer: CPF loop comments: only a write made of values fixed before the loop is 'the same elements... (a100c376c2)
 def test_a_scatter_through_an_index_array_still_asks_for_no_repeated_values():
     """``b[idx[i]]`` moves with ``i`` through the index array: the same-elements reason is for a fixed write only."""
 
@@ -91,6 +93,7 @@ def test_a_scatter_through_an_index_array_still_asks_for_no_repeated_values():
     assert "same elements" not in first, first
 
 
+# Reproducer: CPF loop comments: name a write that does not move with the loop and a read of earlier ite... (63eed8dd1f)
 def test_a_read_of_what_earlier_iterations_write_is_named_as_such():
     """cholesky's ``i`` loop: row ``i`` reads ``A[j, j]``, which an earlier iteration wrote."""
 
@@ -122,6 +125,7 @@ def any_per_row_code() -> str:
     return named(sdfg)
 
 
+# Reproducer: CPF loop comments: a loop is a reduction only where the accumulator does not move with its... (f71abf6b92)
 def test_only_the_loop_that_shares_the_accumulator_is_a_reduction():
     """logical_any_per_row: the ``i`` loop writes ``flag[i]`` and ``unset[i]``, one element per iteration; only the
     inner ``j`` loop reduces into them."""
@@ -132,6 +136,7 @@ def test_only_the_loop_that_shares_the_accumulator_is_a_reduction():
     ), inner
 
 
+# Reproducer: CPF loop comments: a loop is a reduction only where the accumulator does not move with its... (f71abf6b92)
 def test_the_header_lists_every_reduction_of_a_loop():
     header = [line for line in any_per_row_code().splitlines() if line.startswith("//     reductions into")]
     assert header == ["//     reductions into unset (&&), flag (||)"], header

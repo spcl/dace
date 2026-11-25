@@ -287,6 +287,7 @@ def test_a_fill_node_writes_its_constant_everywhere():
 
 
 @pytest.mark.gpu
+# Reproducer: Fix the code review findings in the Python, tile and Tile C++ backends (226a77aeb6)
 def test_a_gpu_return_value_comes_back_as_a_cupy_array():
     import cupy
 
@@ -304,6 +305,7 @@ def test_a_gpu_return_value_comes_back_as_a_cupy_array():
 
 
 @pytest.mark.gpu
+# Reproducer: Fix three Python and tile backend bugs and add two CuPy expansions (1aee258e3f)
 def test_a_dot_product_of_gpu_vectors_lands_in_a_one_element_gpu_array():
     import cupy
 
@@ -324,6 +326,7 @@ def test_a_dot_product_of_gpu_vectors_lands_in_a_one_element_gpu_array():
     assert np.isclose(r.get()[0], np.dot(x, y))
 
 
+# Reproducer: Fix three Python and tile backend bugs and add two CuPy expansions (1aee258e3f)
 def test_a_tensor_transpose_permutes_and_scales_like_numpy():
     node = TensorTranspose("transpose", axes=[2, 0, 1], alpha=2.0)
     sdfg = single_node_sdfg(node, {"_inp_tensor": ("A", [2, 3, 4])}, {"_out_tensor": ("B", [4, 2, 3])})
@@ -349,6 +352,7 @@ def conflict_check_sdfg(storage: dace.StorageType) -> dace.SDFG:
 
 
 @pytest.mark.parametrize("indices, expected", [([3, 1, 4, 0, 5, 2], 0), ([3, 1, 4, 1, 5, 2], 1)])
+# Reproducer: Fix three Python and tile backend bugs and add two CuPy expansions (1aee258e3f)
 def test_a_conflict_check_flags_exactly_the_index_arrays_that_repeat_a_value(indices: list[int], expected: int):
     flag = np.full(1, -1, dtype=np.int64)
 
@@ -359,6 +363,7 @@ def test_a_conflict_check_flags_exactly_the_index_arrays_that_repeat_a_value(ind
 
 
 @pytest.mark.gpu
+# Reproducer: Fix three Python and tile backend bugs and add two CuPy expansions (1aee258e3f)
 def test_a_conflict_check_of_gpu_indices_leaves_its_flag_on_the_host():
     import cupy
 
@@ -686,6 +691,7 @@ def emitted(sdfg: dace.SDFG) -> dict:
     return namespace
 
 
+# Reproducer: Tile op backends: fix index tiles with a ONE dim, modulo spellings, nested bindings and Cu... (b0d5a9e595)
 def test_a_reduction_without_identity_reads_what_its_output_holds_through_a_connector():
     node = Reduce("reduce", wcr="lambda a, b: max(a, b)", axes=None, identity=None)
     sdfg = single_node_sdfg(node, {node.INPUT_CONNECTOR_NAME: ("A", [3, 4])}, {})
@@ -711,6 +717,7 @@ def single_search_sdfg(predicate: str, size: int) -> dace.SDFG:
     [("_a[__i]", [0, 1, 5], 1), ("not _a[__i]", [-1, 0, 4], 1)],
     ids=["truthy", "negated"],
 )
+# Reproducer: Tile op backends: fix index tiles with a ONE dim, modulo spellings, nested bindings and Cu... (b0d5a9e595)
 def test_a_search_takes_the_truth_of_a_non_boolean_predicate(predicate: str, values: list[int], expected: int):
     i = np.zeros(1, dtype=np.int64)
 
@@ -720,6 +727,7 @@ def test_a_search_takes_the_truth_of_a_non_boolean_predicate(predicate: str, val
     assert i[0] == expected
 
 
+# Reproducer: Tile op backends: fix index tiles with a ONE dim, modulo spellings, nested bindings and Cu... (b0d5a9e595)
 def test_a_guard_in_a_search_predicate_still_protects_the_read_it_guards():
     """At the last index ``_a[__i + 1]`` is past the end; the sequential search never reads it."""
     i = np.zeros(1, dtype=np.int64)
@@ -748,6 +756,7 @@ def refuse(o) -> str:
 register(InPlaceProbe, refuse, Operands)
 
 
+# Reproducer: Tile op backends: fix index tiles with a ONE dim, modulo spellings, nested bindings and Cu... (b0d5a9e595)
 def test_a_refused_expansion_leaves_the_node_wired_as_it_was():
     node = InPlaceProbe("probe")
     sdfg = wired_sdfg(node, {"b": ([4], dace.float64)}, {"_buf": "b[0:4]"}, {"_buf": "b[0:4]"})
@@ -760,6 +769,7 @@ def test_a_refused_expansion_leaves_the_node_wired_as_it_was():
     assert [e.dst_conn for e in state.in_edges(node)] == ["_buf"]
 
 
+# Reproducer: Tile op backends: fix index tiles with a ONE dim, modulo spellings, nested bindings and Cu... (b0d5a9e595)
 def test_a_transpose_of_an_operand_with_an_extent_one_dim_permutes_every_named_axis():
     node = TensorTranspose("transpose", axes=[0, 2, 1])
     arrays = {"a": ([2, 3, 4], dace.float64), "b": ([1, 4, 3], dace.float64)}
@@ -777,6 +787,7 @@ def test_a_transpose_of_an_operand_with_an_extent_one_dim_permutes_every_named_a
     [(ScanOp.MIN, float("inf"), [np.inf, 3.0, 1.0, 1.0]), (ScanOp.AFFINE, 5.0, [3.0, 7.0, 15.0, 31.0])],
     ids=["exclusive_min_from_infinity", "affine_ignores_the_identity"],
 )
+# Reproducer: Tile op backends: fix index tiles with a ONE dim, modulo spellings, nested bindings and Cu... (b0d5a9e595)
 def test_a_scan_starts_from_the_value_the_cpp_expansions_start_from(op: ScanOp, identity: float, expected: list):
     """An exclusive scan starts from its identity, ``inf`` included; an affine one from zero whatever it holds."""
     node = Scan("scan", op=op, exclusive=op is ScanOp.MIN, identity=identity)
@@ -791,6 +802,7 @@ def test_a_scan_starts_from_the_value_the_cpp_expansions_start_from(op: ScanOp, 
     assert y.tolist() == expected
 
 
+# Reproducer: Tile op backends: fix index tiles with a ONE dim, modulo spellings, nested bindings and Cu... (b0d5a9e595)
 def test_a_scan_of_one_element_is_that_element():
     node = Scan("scan", op=ScanOp.MAX)
     sdfg = wired_sdfg(

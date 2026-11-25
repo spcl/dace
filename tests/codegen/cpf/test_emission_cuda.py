@@ -250,6 +250,7 @@ def test_an_offloaded_kernel_renders_as_cuda_units_with_the_host_entry_prototype
     assert entry_prototypes(rendering.code, name) == entry_prototypes(host_code, name) != [], "the c++ entry prototype"
 
 
+# Reproducer: Standalone GPU nests no longer declare inline twice (#2665) (188a483daa)
 def test_a_nested_body_function_is_not_declared_inline_twice_in_a_cuda_unit():
     """``DACE_DFI`` already spells ``__forceinline__``, which nvcc reads as ``inline``.
 

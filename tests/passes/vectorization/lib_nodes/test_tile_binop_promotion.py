@@ -61,6 +61,7 @@ WIDENING = [
 
 @pytest.mark.parametrize("impl", ["pure", "scalar"])
 @pytest.mark.parametrize("a_dt,b_dt,c_dt,na,nb,nc", WIDENING)
+# Reproducer: feat(tileops): TileUnop + max/min + full prep prefix; fix RRA wcr/map-body guard (2ef9b8f3eb)
 def test_tile_binop_widening_promotes(impl, a_dt, b_dt, c_dt, na, nb, nc):
     """A widening Tile operand is promoted to the output dtype; result matches numpy."""
     tag = f"{impl}_{a_dt.to_string()}_{b_dt.to_string()}"
@@ -75,12 +76,14 @@ def test_tile_binop_widening_promotes(impl, a_dt, b_dt, c_dt, na, nb, nc):
 
 
 @pytest.mark.parametrize("c_dt", [dace.int32, dace.int64])
+# Reproducer: feat(tileops): TileUnop + max/min + full prep prefix; fix RRA wcr/map-body guard (2ef9b8f3eb)
 def test_tile_binop_rejects_float_to_int_narrowing(c_dt):
     """A fp64 Tile operand into an integer output is narrowing -> raises."""
     with pytest.raises(NotImplementedError, match="narrowing"):
         _build(dace.float64, dace.float64, c_dt, "pure", f"narrow_{c_dt.to_string()}")
 
 
+# Reproducer: feat(tileops): TileUnop + max/min + full prep prefix; fix RRA wcr/map-body guard (2ef9b8f3eb)
 def test_tile_binop_rejects_double_to_float_narrowing():
     """fp64 operand into an fp32 output is narrowing -> raises."""
     with pytest.raises(NotImplementedError, match="narrowing"):

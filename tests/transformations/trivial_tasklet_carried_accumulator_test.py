@@ -49,6 +49,7 @@ def _carried_accumulator_sdfg():
     return sdfg
 
 
+# Reproducer: Fix adi/gemver/ludcmp miscompiles; canonicalization stage-order (a47792b2a1)
 def test_classifier_flags_the_accumulator():
     """The helper recognises ``w`` (cross-state, WCR target) but not a plain array."""
     sdfg = _carried_accumulator_sdfg()
@@ -57,6 +58,7 @@ def test_classifier_flags_the_accumulator():
     assert _is_carried_reduction_accumulator(sdfg, "B") is False
 
 
+# Reproducer: Fix adi/gemver/ludcmp miscompiles; canonicalization stage-order (a47792b2a1)
 def test_staging_and_writeback_copies_survive():
     """Neither the staging nor the write-back copy may be eliminated."""
     sdfg = _carried_accumulator_sdfg()
@@ -64,6 +66,7 @@ def test_staging_and_writeback_copies_survive():
     assert applied == 0, "the carried-accumulator copies must not be eliminated"
 
 
+# Reproducer: Fix adi/gemver/ludcmp miscompiles; canonicalization stage-order (a47792b2a1)
 def test_plain_cross_state_relay_is_still_eliminated():
     """A cross-state scalar WITHOUT a WCR is an ordinary relay -- still eliminable,
     so the guard is narrow and does not needlessly block optimization."""

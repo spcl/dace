@@ -223,6 +223,7 @@ def folded_row(body: dace.SDFG, folds: int | None) -> np.ndarray:
     return got
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_folding_restates_a_copy_that_names_the_other_container():
     """``loc -> t`` stored as ``loc[0] -> t[i]`` indexes the connector through ``other_subset``."""
     body = dace.SDFG("other_subset_body")
@@ -239,6 +240,7 @@ def test_folding_restates_a_copy_that_names_the_other_container():
     assert np.array_equal(folded_row(body, 1), expected)
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_writer_feeding_a_deeper_nested_sdfg_keeps_the_copy_back():
     """Restating ``t`` as ``A`` one level down would leave the deeper ``t[4]`` connector unmatched: no fold."""
     deepest = dace.SDFG("deepest")

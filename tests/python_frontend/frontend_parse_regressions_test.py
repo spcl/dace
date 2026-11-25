@@ -34,6 +34,7 @@ def symbolic_ifexp(x: dace.float64[10]):
         x[:] = 2.0
 
 
+# Reproducer: Python frontend: four parse-time fixes and a nested-call state-target fix (aa9da0e7f6)
 def test_symbolic_equality_in_boolop():
     """A boolean operation over symbolic equalities used to raise ``TypeError: 'Equality' object is not
     iterable`` while preprocessing, because the equality rewriter returned a sympy object where the AST
@@ -93,6 +94,7 @@ def symbolic_index_list(x: dace.float64[10], out: dace.float64[2]):
     out[:] = x[[0, N]]
 
 
+# Reproducer: Python frontend: four parse-time fixes and a nested-call state-target fix (aa9da0e7f6)
 def test_computed_index():
     """Indexing with a computed index used to raise ``AttributeError: 'str' object has no attribute
     '_fields'``: the name returned by the replacement was mistaken for a list literal, i.e., for
@@ -106,6 +108,7 @@ def test_computed_index():
     assert np.allclose(out, p[cols])
 
 
+# Reproducer: Python frontend: four parse-time fixes and a nested-call state-target fix (aa9da0e7f6)
 def test_literal_index_list():
     """A list literal index with plain numbers keeps working as advanced indexing."""
     x = np.arange(10, dtype=np.float64)
@@ -116,6 +119,7 @@ def test_literal_index_list():
     assert np.allclose(out, x[[0, 2, 4]])
 
 
+# Reproducer: Python frontend: four parse-time fixes and a nested-call state-target fix (aa9da0e7f6)
 def test_symbolic_index_list():
     """A list literal index with a symbolic element cannot be turned into a constant index array. It used
     to raise ``AttributeError: 'symbol' object has no attribute '_fields'`` from CPython's ast module,

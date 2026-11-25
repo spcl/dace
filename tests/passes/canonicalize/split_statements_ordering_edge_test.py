@@ -61,6 +61,7 @@ def _run(sdfg: dace.SDFG) -> dict:
     return args
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_the_ordering_edge_survives_the_split():
     sdfg = _build()
     oracle = _run(copy.deepcopy(sdfg))
@@ -80,6 +81,7 @@ def test_the_ordering_edge_survives_the_split():
     assert got["B"][0] == oracle["B"][0] and got["C"][0] == oracle["C"][0], (got, oracle)
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_a_body_that_goes_through_a_view_is_not_split():
     """A View has no storage of its own; the split refuses rather than separate it from its binding."""
     inner = dace.SDFG("view_body")

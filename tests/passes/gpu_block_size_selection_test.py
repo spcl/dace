@@ -41,28 +41,33 @@ def make_device_map(params, ranges):
     return nodes.Map("kernel", list(params), subsets.Range(list(ranges)), schedule=dtypes.ScheduleType.GPU_Device)
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_pick_block_size_1d():
     m = make_device_map(["i"], [(0, N - 1, 1)])
     assert pick_gpu_block_size(m) == BLOCK_1D
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_pick_block_size_2d_square_symbolic():
     # Symbolic extents are assumed large and roughly equal -> square block.
     m = make_device_map(["i", "j"], [(0, N - 1, 1), (0, M - 1, 1)])
     assert pick_gpu_block_size(m, min_lanes=1) == BLOCK_2D_SQUARE
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_pick_block_size_2d_square_constant():
     m = make_device_map(["i", "j"], [(0, 1023, 1), (0, 1023, 1)])
     assert pick_gpu_block_size(m, min_lanes=1) == BLOCK_2D_SQUARE
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_pick_block_size_2d_skewed_last_dim_wide():
     # Last (contiguous, threadIdx.x) dimension is 4x larger -> 32 on x.
     m = make_device_map(["i", "j"], [(0, 255, 1), (0, 1023, 1)])
     assert pick_gpu_block_size(m, min_lanes=1) == BLOCK_2D_WIDE_X
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_pick_block_size_2d_skewed_outer_dim_wide():
     # Outer (threadIdx.y) dimension is 4x larger -> 32 on y.
     m = make_device_map(["i", "j"], [(0, 1023, 1), (0, 255, 1)])
@@ -146,6 +151,7 @@ def test_a_column_reduction_keeps_the_domain_block():
     assert m.gpu_block_size != [512, 1, 1]
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_pick_block_size_2d_mild_ratio_leans_toward_the_wider_axis():
     m = make_device_map(["i", "j"], [(0, 599, 1), (0, 1023, 1)])
     assert pick_gpu_block_size(m, min_lanes=1) == [16, 16, 1]
@@ -153,6 +159,7 @@ def test_pick_block_size_2d_mild_ratio_leans_toward_the_wider_axis():
     assert pick_gpu_block_size(m, min_lanes=1) == [32, 8, 1]
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_pick_block_size_3d_is_a_cube():
     m = make_device_map(["i", "j", "k"], [(0, N - 1, 1), (0, N - 1, 1), (0, N - 1, 1)])
     assert pick_gpu_block_size(m, min_lanes=1) == [8, 8, 8]
@@ -182,11 +189,13 @@ def test_the_coalesced_axis_starts_at_half_a_warp(backend: str, lanes: int):
             assert domain_matched_block([N, N]) == [lanes, 256 // lanes, 1]
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_pick_block_size_4d_leaves_default():
     m = make_device_map(["i", "j", "k", "l"], [(0, N - 1, 1)] * 4)
     assert pick_gpu_block_size(m) is None
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_small_axis_hands_its_threads_to_the_unit_stride_axis():
     """An axis of four takes no thread past a symbolic one; of the two symbolic axes the one indexed at unit stride
     more often takes the extra doubling."""
@@ -194,11 +203,13 @@ def test_a_small_axis_hands_its_threads_to_the_unit_stride_axis():
     assert domain_matched_block([N, 4, N], [1, 0, 2], min_lanes=1) == [16, 1, 32]
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_domain_smaller_than_the_block_keeps_only_the_threads_it_uses():
     assert domain_matched_block([100]) == [128, 1, 1]
     assert domain_matched_block([3, 5]) == [4, 8, 1]
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_every_block_stays_in_the_thread_band():
     """256 to 512 threads wherever the domain can fill them, at most three axes."""
     for params, ranges in (
@@ -237,6 +248,7 @@ def device_maps(sdfg):
     ]
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_pass_assigns_2d_square():
     sdfg, _ = build_2d_map_sdfg(dtypes.ScheduleType.GPU_Device)
     assigned = select_gpu_device_block_size(sdfg)
@@ -244,6 +256,7 @@ def test_pass_assigns_2d_square():
     assert device_maps(sdfg)[0].gpu_block_size == block_2d()
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_pass_does_not_override_user_block_size():
     sdfg, me = build_2d_map_sdfg(dtypes.ScheduleType.GPU_Device)
     me.map.gpu_block_size = [8, 8, 1]
@@ -251,11 +264,13 @@ def test_pass_does_not_override_user_block_size():
     assert device_maps(sdfg)[0].gpu_block_size == [8, 8, 1]
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_pass_ignores_cpu_map():
     sdfg, _ = build_2d_map_sdfg(dtypes.ScheduleType.CPU_Multicore)
     assert select_gpu_device_block_size(sdfg) == {}
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_gpu_transform_end_to_end():
     # Build a plain 2-D map, GPU-transform the SDFG, then select block sizes.
     @dace.program
@@ -272,6 +287,7 @@ def test_gpu_transform_end_to_end():
     assert dmaps[0].gpu_block_size == block_2d()
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_gpu_transform_1d_end_to_end():
 
     @dace.program
@@ -287,6 +303,7 @@ def test_gpu_transform_1d_end_to_end():
     assert dmaps[0].gpu_block_size == BLOCK_1D
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_config_default_block_size_is_128():
     assert dace.Config.get("compiler", "cuda", "default_block_size") == "128,1,1"
 
@@ -366,6 +383,7 @@ def test_the_z_axis_stays_within_the_last_dimension_limit():
     assert domain_matched_block([1, 1, dace.symbol("N")]) == [1, 1, limit]
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_pass_is_idempotent():
     sdfg, _ = build_2d_map_sdfg(dtypes.ScheduleType.GPU_Device)
     select_gpu_device_block_size(sdfg)

@@ -318,6 +318,7 @@ def dfa_into_out(trans: dace.int64[NS, NA], symbols: dace.int64[N], out: dace.in
         out[state] += 1
 
 
+# Reproducer: LoopToStateScan: the seed tasklet's connector takes a name the SDFG does not use, so a pro... (c5b3712df8)
 def test_a_program_with_an_array_named_out_lifts_and_counts_the_same():
     """The seed tasklet's connector must not take the name of an array of the program (max_pooling_2d's ``out``)."""
     rng = np.random.default_rng(5)

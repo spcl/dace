@@ -81,6 +81,7 @@ def _unique_build(sdfg: dace.SDFG, tag: str) -> None:
 # Detection unit tests
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_scatter_wcr_op_recognizes_reducible_ops():
     assert scatter_wcr_op("lambda x, y: (x + y)") == "+"
     assert scatter_wcr_op("lambda x, y: (x * y)") == "*"
@@ -93,6 +94,7 @@ def test_scatter_wcr_op_recognizes_reducible_ops():
     assert set(SCATTER_REDUCIBLE_OPS) == {"+", "*", "min", "max"}
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_pass_fires_on_weighted_histogram():
     """On the raw frontend histogram the pass surfaces exactly one scatter reduction,
     and the surfaced ``NestedSDFG -> MapExit -> accumulator`` edge chain now carries the
@@ -184,6 +186,7 @@ def test_cpu_specialization_surfaces_the_scatter_reduction():
         assert any(e.data.wcr is not None for e in exits) == surfaced, wcr
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_refuse_non_reducible_op():
     """A data-dependent scatter with a non-associative reducer (``-``) is left alone."""
     sdfg = _build_scatter_nsdfg("lambda x, y: (x - y)")
@@ -193,6 +196,7 @@ def test_refuse_non_reducible_op():
     assert all(e.data is None or e.data.wcr is None for e in st.edges() if isinstance(e.dst, nodes.MapExit))
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_refuse_self_referential_accumulator():
     """A scatter whose map also READS the accumulator array is refused (a whole-buffer
     privatization would make those reads see the private identity copy)."""
@@ -207,6 +211,7 @@ def test_refuse_accumulator_sized_by_the_map():
     assert PrivatizeScatterReduction().apply_pass(sdfg, {}) is None
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_refuse_scalar_reduction():
     """A plain scalar accumulator (``s += a[i]``, not a scatter into a bounded array)
     is NormalizeWCR's job, not this pass's."""
@@ -225,6 +230,7 @@ def test_refuse_scalar_reduction():
 # End-to-end: codegen shape + numerical correctness
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_weighted_histogram_codegen_and_values():
     """Float histogram: codegen privatizes via ``reduction(+:...)`` with no per-iteration
     whole-array buffer / ``Accumulate_atomic``; result matches ``np.add.at``."""
@@ -249,6 +255,7 @@ def test_weighted_histogram_codegen_and_values():
     assert np.allclose(res, ref), f"maxerr={np.max(np.abs(res - ref))}"
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_count_histogram_bit_exact():
     """Integer count histogram: integer ``+`` is associative, so the privatized reduction
     is bit-exact vs ``np.add.at``."""
@@ -318,6 +325,7 @@ def azimint_hist(data: dace.float64[N], radius: dace.float64[N]):
     return histw / histu
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_azimint_hist_end_to_end():
     """azimint_hist through ``canonicalize``: both scatter histograms are
     privatized (array-section reductions, no per-iteration buffers) and the result is

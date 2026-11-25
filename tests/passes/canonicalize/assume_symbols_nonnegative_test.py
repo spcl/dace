@@ -157,6 +157,7 @@ def test_survives_full_canonicalize_and_runs():
     assert np.allclose(y, ref)
 
 
+# Reproducer: fix: canonicalize's assumption guard is stable across a re-canonicalize (f6c1bd4fe1)
 def test_second_canonicalize_keeps_the_guard_its_own_block():
     """The trap has to run BEFORE the computation it guards, and only its own block keeps it
     there. A re-canonicalize (the vectorizer canonicalizes at its own entry) must therefore not
@@ -186,6 +187,7 @@ def _plain_map_bound_symbols(sdfg):
     }
 
 
+# Reproducer: fix: canonicalize's assumption guard is stable across a re-canonicalize (f6c1bd4fe1)
 def test_map_bounds_keep_the_assumption_across_a_second_canonicalize():
     """The assumption is a fact of the SDFG, so a second canonicalize keeps it on every map bound."""
     sdfg = _axpy_sdfg()
@@ -244,6 +246,7 @@ def test_a_symbol_declared_positive_is_trapped_at_zero():
     assert "P <= 0" in trap.code.as_string, trap.code.as_string
 
 
+# Reproducer: fix: canonicalize's assumption guard is stable across a re-canonicalize (f6c1bd4fe1)
 def test_guard_leads_the_block_list_on_every_canonicalize():
     """The guard is the start block, and it must also be block 0 of the list ``nodes()``
     reports. That list is insertion order, so the guard -- emitted by the terminal stage --
@@ -261,6 +264,7 @@ def test_guard_leads_the_block_list_on_every_canonicalize():
     sdfg.validate()
 
 
+# Reproducer: fix: canonicalize's assumption guard is stable across a re-canonicalize (f6c1bd4fe1)
 def test_repositioning_alone_is_reported_as_a_change():
     """Moving the guard IS a rewrite, so the pass must report it -- a pass that mutates while
     returning ``None`` stalls a fixed-point pipeline. Re-applied with the guard already at the
@@ -327,6 +331,7 @@ def _kn_sdfg():
     return sdfg
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_tracked_assumption_emitted_as_own_tasklet():
     """A recorded relation becomes its own trap tasklet (guarded on its negation),
     in the single guard state alongside the one-per-symbol nonnegativity tasklets."""
@@ -345,6 +350,7 @@ def test_tracked_assumption_emitted_as_own_tasklet():
     sdfg.validate()
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_tracked_assumption_deduped_and_true_dropped():
     sdfg = _kn_sdfg()
     record_assumption(sdfg, K < N)
@@ -353,6 +359,7 @@ def test_tracked_assumption_deduped_and_true_dropped():
     assert [str(r) for r in tracked_assumptions(sdfg)] == ["K < N"]
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_tracked_assumption_out_of_scope_skipped():
     """A relation over a symbol that is not an SDFG free symbol cannot be checked
     at the entry state, so it is skipped (only the nonneg tasklets remain). ``K`` is only a
@@ -365,6 +372,7 @@ def test_tracked_assumption_out_of_scope_skipped():
     assert conds == ["if (N < 0):\n    abort()"], conds
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_back_compat_aliases():
     assert AssumeSymbolsNonnegative is AssumeSymbolConstraints
     assert insert_symbol_nonnegative_guard is insert_assumption_guards

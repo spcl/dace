@@ -58,12 +58,14 @@ def _empty_edges(sdfg: dace.SDFG):
     ]
 
 
+# Reproducer: Fix four empty-happens-before-memlet defects in vectorization and LoopToMap (9785608b08)
 def test_state_fusion_records_the_war_ordering():
     """Guards the premise: the fusion really does add happens-before edges here."""
     sdfg = _fused("war_two_arrays_struct")
     assert _empty_edges(sdfg), "StateFusionExtended added no happens-before edge -- test no longer covers the shape"
 
 
+# Reproducer: Fix four empty-happens-before-memlet defects in vectorization and LoopToMap (9785608b08)
 def test_still_parallelizes_after_state_fusion():
     sdfg = _fused("war_two_arrays_l2m")
     applied = sdfg.apply_transformations_repeated(LoopToMap, validate=False)
@@ -106,6 +108,7 @@ def test_parallelizes_with_the_ordering_edge_inside_a_nested_body():
     assert applied == 1, "LoopToMap refused: the nested ordering edge was read as an unindexed write"
 
 
+# Reproducer: Fix four empty-happens-before-memlet defects in vectorization and LoopToMap (9785608b08)
 def test_value_preserving():
     n = 64
     rng = np.random.default_rng(11)

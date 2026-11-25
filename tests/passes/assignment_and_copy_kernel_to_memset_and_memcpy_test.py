@@ -1051,6 +1051,7 @@ def _sdfg_with_shared_input_connector() -> dace.SDFG:
 
 
 @temporarily_disable_autoopt_and_serialization
+# Reproducer: fix: measure passthrough sharing on the side that fans out (5d14c1d8f7)
 def test_lifting_a_copy_keeps_a_connector_its_other_edge_still_uses():
     """Regression: a shared entry passthrough must block the lift, not be torn out from under it.
 
@@ -1163,6 +1164,7 @@ def _sdfg_with_a_sibling_ordering_edge(ordered: bool) -> dace.SDFG:
 
 
 @temporarily_disable_autoopt_and_serialization
+# Reproducer: fix: memset/memcpy lift refuses a body node's ordering edge (173eb30ee4)
 def test_a_body_ordering_edge_blocks_the_lift():
     """Regression: a body node's happens-before must block the lift, not be torn out with it.
 
@@ -1194,6 +1196,7 @@ def test_a_body_ordering_edge_blocks_the_lift():
 
 
 @temporarily_disable_autoopt_and_serialization
+# Reproducer: fix: memset/memcpy lift refuses a body node's ordering edge (173eb30ee4)
 def test_the_same_body_without_the_ordering_edge_still_lifts():
     """Over-refusal control for :func:`test_a_body_ordering_edge_blocks_the_lift`."""
     sdfg = _sdfg_with_a_sibling_ordering_edge(ordered=False)

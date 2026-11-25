@@ -387,6 +387,7 @@ def test_a_read_its_own_iteration_rewrites_is_no_raw():
     assert found is not None and not found.startswith("RAW") and "t[0]" in found, found
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_multi_dimensional_map_names_every_loop_it_renders_as():
     """One map becomes one nested ``for`` per dimension, with the comment above the outermost only (addusxx_g's
     reduction nest); the comment names the inner ones too, or they read as loops nobody classified."""
@@ -408,6 +409,7 @@ def test_a_proven_carried_dependence_is_rendered_as_a_proof_and_names_it():
     assert not [line for line in rendered if line.startswith("// unknown")]
 
 
+# Reproducer: CPF loop hints: every class with its reason in plain words; unknown names the failed check... (5ed26ff46e)
 def test_an_early_exit_is_sequential_with_its_cause_and_never_a_proven_dependence():
     """``LoopToMap`` refuses a loop with a ``break`` at the control-flow check, long before it asks anything about
     data. The order is still required -- no iteration after the exit may run -- so the loop is ``sequential`` and the
@@ -526,6 +528,7 @@ def test_a_counter_is_a_proven_carry_never_unknown(guarded: bool):
     assert not [line for line in rendered if line.startswith("// unknown")], rendered
 
 
+# Reproducer: CPF loop hints: every class with its reason in plain words; unknown names the failed check... (5ed26ff46e)
 def test_a_while_loop_is_sequential_and_says_why():
     """A while loop has no iteration variable to split the work by, and each test of its condition reads what the
     previous iteration computed, so it is ``sequential`` with that reason, never an open ``unknown``."""
@@ -580,6 +583,7 @@ def test_naming_the_loops_does_not_move_a_line_of_code():
         assert any(" -- " in line for line in comment_lines(after)), build.__name__
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_recorded_note_keeps_its_place_below_the_verdict():
     """A pass's note says what it did (an alternative it declined), not what the loop is: the classifier keeps it
     and puts the class first, so the reader still learns the verdict of every loop. A hint that already opens with
@@ -989,6 +993,7 @@ def accumulating_loop_sdfg(name: str) -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: CPF: race-free forms, TaskletFusion and guard fixes, loop-kind annotations (8fbddbc0a7)
 def test_a_loop_whose_iterations_accumulate_into_one_element_is_a_reduction_with_its_private_scalar():
     """vexx_k: every ``i`` adds into the same ``tmp[j]`` and writes the function-scope scalar ``s``. "independent"
     tells an agent a plain ``omp parallel for`` is safe; it races on both."""
@@ -998,6 +1003,7 @@ def test_a_loop_whose_iterations_accumulate_into_one_element_is_a_reduction_with
     assert loop.specialization_hint == REDUCTION.format(reductions="+ into tmp") + PRIVATE.format(names="s")
 
 
+# Reproducer: CPF: race-free forms, TaskletFusion and guard fixes, loop-kind annotations (8fbddbc0a7)
 def test_a_map_whose_wcr_writes_distinct_elements_is_independent():
     """vexx_k's inner map writes ``tmp[j]``, one element per ``j``: the WCR is for the enclosing loop, the map's own
     iterations do not reduce."""
@@ -1007,6 +1013,7 @@ def test_a_map_whose_wcr_writes_distinct_elements_is_independent():
     assert entry.specialization_hint == PARALLEL
 
 
+# Reproducer: CPF: race-free forms, TaskletFusion and guard fixes, loop-kind annotations (8fbddbc0a7)
 def test_a_map_whose_wcr_index_mixes_two_parameters_stays_a_reduction():
     """vexx_k's ``hpsi[j, i*npwx + k]``: ``i`` and ``k`` share one index, so two iterations can meet when ``k``
     runs past ``npwx``; only an index of its own per parameter proves the elements distinct."""
@@ -1064,6 +1071,7 @@ def lifted_buffer_sdfg(name: str) -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: CPF: race-free forms, TaskletFusion and guard fixes, loop-kind annotations (8fbddbc0a7)
 def test_a_loop_whose_buffer_the_rendering_lifts_names_it_private():
     """The rendering lifts a nested function's persistent buffer before the loop, where every iteration shares it:
     the loop is labelled after the lift, and says the buffer needs a copy per iteration."""
@@ -1099,6 +1107,7 @@ def trapped_sdfg(name: str, inner_symbol: str, outer_value: str) -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: CPF: race-free forms, TaskletFusion and guard fixes, loop-kind annotations (8fbddbc0a7)
 def test_an_entry_trap_reaches_a_nested_function_in_its_own_names():
     """vexx_k: "independent only if nkb > 0" inside a function that has no ``nkb``. A trap enters a nested SDFG
     through its symbol mapping, renamed, and is dropped where the inner name means something else. A function that
@@ -1113,6 +1122,7 @@ def test_an_entry_trap_reaches_a_nested_function_in_its_own_names():
             assert hint.endswith(f"; independent only if {expected} (the program aborts at entry otherwise)"), hint
 
 
+# Reproducer: CPF: race-free forms, TaskletFusion and guard fixes, loop-kind annotations (8fbddbc0a7)
 def test_a_solver_example_writes_an_inner_iterator_as_its_range():
     """fdtd: the example named ``ey[j, __i1]``, an inner map's parameter the rendering renamed; the range it covers
     does not depend on the name."""
@@ -1130,6 +1140,7 @@ def test_a_solver_example_writes_an_inner_iterator_as_its_range():
     assert found is not None and re.match(r"(RAW|WAR|WAW) on [ab]\[\d+:N( - 1)?\] ", found), found
 
 
+# Reproducer: CPF: race-free forms, TaskletFusion and guard fixes, loop-kind annotations (8fbddbc0a7)
 def test_a_wavefront_names_its_skew_on_the_diagonal_and_the_front():
     """wf_north_west: the skew labels named ``_loop_it_0`` and a placeholder ``w`` the rendering never declares; each
     counter a wavefront label names is a loop counter of the rendered code."""
@@ -1145,6 +1156,7 @@ def test_a_wavefront_names_its_skew_on_the_diagonal_and_the_front():
     assert all(re.search(rf"\bfor \([^;]*\b{name}\b", code) for name in counters), (counters, rendered_code)
 
 
+# Reproducer: CPF: race-free forms, TaskletFusion and guard fixes, loop-kind annotations (8fbddbc0a7)
 def test_a_thread_team_is_not_labelled_a_loop_of_independent_iterations():
     """A ``CPU_Persistent`` map is one ``#pragma omp parallel`` around a sequential time loop, not a loop."""
     state = dace.SDFG("cpf_kind_team").add_state()
@@ -1183,6 +1195,7 @@ def comment_blocks(code: str) -> list[list[str]]:
     return [block for block in blocks if block]
 
 
+# Reproducer: CPF loop hints: every class with its reason in plain words; unknown names the failed check... (5ed26ff46e)
 def test_the_kinds_rendering_says_its_class_words_and_nothing_else():
     """The light variant: per loop and map its class -- a ``sequential`` or ``unknown`` loop with its reason, a
     ``parallel`` one with the word alone -- and no witness, no alternative, no header contract, no library-node

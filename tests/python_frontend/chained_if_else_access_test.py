@@ -115,6 +115,7 @@ def _arm_add_tasklets(sdfg: dace.SDFG):
     return out
 
 
+# Reproducer: Fix elif/else arm reads picking up sibling-arm writes (869afb3bdf)
 def test_chained_if_else_read_edges_route_to_read_side_access_nodes():
     """For each arm's ``_Add_`` tasklet, the ``__in1`` edge that carries
     the read of ``a[i]`` must source from a read-side access node (``_r``
@@ -134,11 +135,13 @@ def test_chained_if_else_read_edges_route_to_read_side_access_nodes():
     assert not misrouted, f"elif/else arms read a[i] from a write-side access node (should be read-side): {misrouted}"
 
 
+# Reproducer: Fix elif/else arm reads picking up sibling-arm writes (869afb3bdf)
 def test_chained_if_else_connector_topology_correct():
     sdfg = chained_if_kernel.to_sdfg(simplify=False)
     _assert_connector_role_matches_edges(sdfg)
 
 
+# Reproducer: Fix elif/else arm reads picking up sibling-arm writes (869afb3bdf)
 def test_chained_if_else_numerical_matches_python_reference():
     sdfg = chained_if_kernel.to_sdfg(simplify=True)
     rng = np.random.default_rng(seed=0)
@@ -178,6 +181,7 @@ def division_by_zero_kernel(A: dace.float64[N], B: dace.float64[N], c: dace.floa
             B[i] = 0.0
 
 
+# Reproducer: Fix elif/else arm reads picking up sibling-arm writes (869afb3bdf)
 def test_division_by_zero_single_output_connector_per_element():
     """The NestedSDFG that wraps the conditional must have exactly one
     output connector for ``B``, not one per arm."""
@@ -197,11 +201,13 @@ def test_division_by_zero_single_output_connector_per_element():
     _assert_connector_role_matches_edges(sdfg)
 
 
+# Reproducer: Fix elif/else arm reads picking up sibling-arm writes (869afb3bdf)
 def test_division_by_zero_connector_topology_correct():
     sdfg = division_by_zero_kernel.to_sdfg(simplify=False)
     _assert_connector_role_matches_edges(sdfg)
 
 
+# Reproducer: Fix elif/else arm reads picking up sibling-arm writes (869afb3bdf)
 def test_division_by_zero_numerical_matches_python_reference():
     sdfg = division_by_zero_kernel.to_sdfg(simplify=True)
     rng = np.random.default_rng(seed=1)

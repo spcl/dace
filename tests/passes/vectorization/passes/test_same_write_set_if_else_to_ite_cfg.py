@@ -551,6 +551,7 @@ def test_symbol_has_external_consumer_when_interstate_condition_reads_it():
     assert _symbol_has_external_consumer(sdfg, "flag", skip_cb=cb) is True
 
 
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_promote_gather_indices_rewrites_nested_subscript():
     """A gather cond value ``w[idx[i], k]`` (nested subscript no plain memlet can express)
     is rewritten to ``w[_gidx_0, k]`` by promoting the inner index read ``idx[i]`` to a
@@ -576,6 +577,7 @@ def test_promote_gather_indices_rewrites_nested_subscript():
     assert p._promote_gather_indices(sdfg, [edge], "w[i, k]") == "w[i, k]"
 
 
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_promote_gather_indices_noop_without_edge():
     """No defining edge (dominance target) -> the rewrite is a safe no-op."""
     sdfg = dace.SDFG("no_edge")

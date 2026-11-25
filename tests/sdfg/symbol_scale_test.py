@@ -122,6 +122,7 @@ def test_init_refuses_values_that_break_an_assumed_order():
     assert init(ctypes.c_longlong(10), ctypes.c_longlong(8), ctypes.c_longlong(8)) is None
 
 
+# Reproducer: Fix ten symbol-registry review findings (648819b75d)
 def test_a_cached_proof_records_its_assumption_in_every_sdfg():
     """Equal facts share cached proofs, but each SDFG still records the order its result relies on."""
     first, second = scaled_sdfg("scale_cache_first"), scaled_sdfg("scale_cache_second")

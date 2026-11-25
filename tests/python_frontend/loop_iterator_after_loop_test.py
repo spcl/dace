@@ -35,6 +35,7 @@ def test_iterator_after_break_holds_break_value():
     assert A[0] == 4
 
 
+# Reproducer: Fix the second round of symbol-registry review findings (88205a5616)
 def test_iterator_after_loop_that_may_not_run_holds_last_value():
 
     @dace.program
@@ -48,6 +49,7 @@ def test_iterator_after_loop_that_may_not_run_holds_last_value():
     assert A[0] == 4
 
 
+# Reproducer: Fix the second round of symbol-registry review findings (88205a5616)
 def test_iterator_after_loop_that_never_runs_raises():
 
     @dace.program

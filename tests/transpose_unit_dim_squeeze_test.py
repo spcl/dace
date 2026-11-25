@@ -16,6 +16,7 @@ def col_transpose_matmul(x: dace.float64[N, 1], a: dace.float64[N, M]):
     return x.T @ a  # (1, N) @ (N, M) -> (1, M)
 
 
+# Reproducer: Fix symbol promotion and squeezing in the frontend (992d8f0ad5)
 def test_column_vector_transpose_matmul():
     n, m = 5, 4
     rng = np.random.default_rng(0)
@@ -31,6 +32,7 @@ def col_outer_product(x: dace.float64[N, 1]):
     return x @ x.T  # (N, 1) @ (1, N) -> (N, N) outer product
 
 
+# Reproducer: Fix symbol promotion and squeezing in the frontend (992d8f0ad5)
 def test_column_vector_outer_product():
     n = 6
     rng = np.random.default_rng(1)
@@ -46,6 +48,7 @@ def row_vector_transpose(x: dace.float64[1, N]):
     return x.T  # (1, N) -> (N, 1)
 
 
+# Reproducer: Fix symbol promotion and squeezing in the frontend (992d8f0ad5)
 def test_row_vector_transpose():
     n = 7
     rng = np.random.default_rng(2)
@@ -61,6 +64,7 @@ def index_squeezes_axis(x: dace.float64[N, 3]):
     return np.sum(col)
 
 
+# Reproducer: Fix symbol promotion and squeezing in the frontend (992d8f0ad5)
 def test_integer_index_squeezes_axis():
     n = 6
     rng = np.random.default_rng(3)

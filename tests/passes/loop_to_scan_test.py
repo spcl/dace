@@ -286,6 +286,7 @@ def test_subtraction_lifts_through_the_affine_monoid_not_a_scalar_op():
     assert np.allclose(got, want, rtol=0, atol=1e-13)
 
 
+# Reproducer: fix(loop_to_scan): refuse when the delta reads the carry array (0614cc245c)
 def test_refuses_delta_reads_carry_array():
     """TSVC s2111 ``aa[j, i] = (aa[j, i-1] + aa[j-1, i]) / 1.9``. The inner i-loop's
     scan-update tasklet reads ``aa`` twice: ``aa[j, i-1]`` matches the carry slice,
@@ -341,6 +342,7 @@ def test_extra_non_transient_write_survives_the_lift():
     assert np.array_equal(aux, delta * 2.0), "the unrelated per-iteration output was dropped"
 
 
+# Reproducer: fix(canonicalize): data-dep + arithmetic array-index lowering hardening (8ed33033c9)
 def test_refuses_double_buffer_ring_carry():
     """The CloudSC k-caching double-buffer: a 2-slot ring whose carry is read and written at slots
     toggled per level (``ZP[(i+1)%2] = ZP[i%2] + A[i]``). A ring's modular slot is not the linear
@@ -1100,6 +1102,7 @@ def test_cloudsc_for_1133_shape_after_inner_l2m():
     assert _num_scan_nodes(sdfg) == 0
 
 
+# Reproducer: Fix stale symbol_mapping entry in LoopToScan carry/map interchange (f9e337cfc9)
 def test_cloudsc_for_1133_interchange_survives_symbol_mapping_alias():
     """``nsdfg.symbol_mapping`` binds the carry axis by whatever inner key's VALUE names
     the outer loop variable -- the key itself need not equal the outer name. Alias the
@@ -1726,6 +1729,7 @@ def _scan_libnodes(sdfg: dace.SDFG) -> int:
     return n
 
 
+# Reproducer: fix(loop_to_scan): refuse when carrier has sibling seed write or multi-step read (d896e2c9b4)
 def test_refuses_when_carrier_has_sibling_seed_write_forward():
     """``LoopToScan`` must refuse a recurrence whose carrier is also written in a SIBLING
     block (the seed init ``flux[0] = fall[0]`` just before the inner ``for k``
@@ -1758,6 +1762,7 @@ def test_refuses_when_carrier_has_sibling_seed_write_forward():
     assert np.allclose(flux, expected), f"value mismatch: max diff {np.abs(flux - expected).max():.2e}"
 
 
+# Reproducer: fix(loop_to_scan): refuse when carrier has sibling seed write or multi-step read (d896e2c9b4)
 def test_refuses_when_carrier_has_sibling_seed_write_backward():
     """Forward-case contract on a backward recurrence (Thomas back-substitution).
     ``NormalizeNegativeStride`` rewrites to forward iteration; the matcher sees a coef=-1
@@ -1813,6 +1818,7 @@ def _stride2_prefix_scan_with_in_kernel_1d_seed(a: dace.float64[N], x: dace.floa
 @pytest.mark.parametrize(
     "prog,seed_len", [(_prefix_scan_with_in_kernel_1d_seed, 1), (_stride2_prefix_scan_with_in_kernel_1d_seed, 2)]
 )
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_lifts_forward_flat_1d_scan_with_in_kernel_seed(prog, seed_len):
     """A forward FLAT 1-D scan whose seed is written in a sibling block DOES lift
     (contrast the refused per-row 2-D seed shapes): the flat seed-add reads the
@@ -1851,6 +1857,7 @@ def _two_step_descending_recurrence(a: dace.float64[_LS_N], b: dace.float64[_LS_
         b[i] = 0.5 * b[i + 1] + 0.25 * b[i + 2] + a[i]
 
 
+# Reproducer: fix(loop_to_scan): refuse when carrier has sibling seed write or multi-step read (d896e2c9b4)
 def test_refuses_multi_step_recurrence_with_multiple_carrier_reads():
     """``LoopToScan`` must refuse a recurrence where the carrier is read at
     more than one offset (multi-step dependency). The scan rewrite emits a
@@ -1882,6 +1889,7 @@ def test_refuses_multi_step_recurrence_with_multiple_carrier_reads():
     assert np.allclose(b, expected), f"value mismatch: max diff {np.abs(b - expected).max():.2e}"
 
 
+# Reproducer: fix(canonicalize): slices 2.4b-B + 2.4b-C for s252/s254/s255/s1251.b (80dcd5d093)
 def test_fuse_body_states_refuses_carry_through_state_boundary():
     """``_fuse_body_states`` must NOT merge two adjacent body states when the first reads
     a scalar the second writes (TSVC s252: ``a[i] = s + t`` in state 1 then ``t = s`` in
@@ -1972,6 +1980,7 @@ def _symbolic_stride_scan(a: dace.float64[N_SS], x: dace.float64[N_SS]):
         a[i] = a[i - K_SS] + x[i]
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_symbolic_stride_scan_specializes_if_scan_else_seq():
     """Recurrence with SYMBOLIC stride ``K`` (compile-time unknown sign) lifts to a
     residue-class ``Scan`` under an ``if K >= 1: scan else: sequential`` specialization.
@@ -2003,6 +2012,7 @@ def test_symbolic_stride_scan_specializes_if_scan_else_seq():
 
 
 @pytest.mark.parametrize("k", [0, 1, 2, 3, 5])
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_symbolic_stride_scan_value_exact(k):
     """Bit-exact vs the sequential recurrence for several strides -- including the
     degenerate ``K = 0`` that must take the sequential else-branch (a residue-class
@@ -2068,6 +2078,7 @@ def _forward_shift_half_scan(a: dace.float64[N], b: dace.float64[N]):
         a[i + (N // 2)] = a[i] + b[i]
 
 
+# Reproducer: Fix five canonicalization miscompiles and close guarded-parallel fallbacks (ce6403bce4)
 def test_forward_shift_half_scan_drops_provable_stride_guard():
     """The s173 forward-shift-by-half shape has a SYMBOLIC apparent stride ``N//2`` whose
     sign is not provably positive, yet the iteration span never exceeds that stride, so the
@@ -2099,6 +2110,7 @@ def test_forward_shift_half_scan_drops_provable_stride_guard():
 
 
 @pytest.mark.parametrize("n", [0, 1, 2, 3, 8, 15, 64])
+# Reproducer: Fix five canonicalization miscompiles and close guarded-parallel fallbacks (ce6403bce4)
 def test_forward_shift_half_scan_value_exact(n):
     """Bit-exact vs the sequential loop across sizes, including the empty ``N=0/1`` cases
     where the discharged stride (``N//2 == 0``) would have failed the ``>= 1`` guard. The
@@ -2134,6 +2146,7 @@ def _carried_writes_in_loops(sdfg, name):
     return total
 
 
+# Reproducer: canon: fix UntileLoops tile-union bound + lift masked / multi-slot scans (9059447368)
 def test_masked_conditional_scan_lifts_and_neutralizes_else_branch():
     """Masked prefix scan (TSVC-2.5 ``scan_conditional``): ``if mask[i]>0: out[i] =
     out[i-1] + delta[i] else: out[i] = out[i-1]``. The rewrite folds the masked
@@ -2275,6 +2288,7 @@ def test_masked_scan_with_a_non_hold_sibling_is_refused():
     assert np.allclose(out, exp), f"refused masked scan diverged: max diff {np.abs(out - exp).max():.2e}"
 
 
+# Reproducer: canon: fix UntileLoops tile-union bound + lift masked / multi-slot scans (9059447368)
 def test_multi_slot_same_array_five_carries():
     """Five INDEPENDENT prefix sums carried in one loop body writing distinct
     constant slots of ONE array (TSVC-2.5 ``scan_multi_5carry`` / cloudsc
@@ -2460,6 +2474,7 @@ def carry_on_a_body_slot(a: dace.float64[3, N], idx: dace.int64[N], d: dace.floa
         a[j, i] = a[j, i - 1] + d[i]
 
 
+# Reproducer: LoopToScan: an index bound in the body is no fixed slot (66809c88fa)
 def test_a_slot_chosen_per_iteration_is_no_scan():
     idx = np.array([0, 1, 0, 2, 1, 0, 2, 1], dtype=np.int64)
     args = dict(a=np.ones((3, 8)), idx=idx, d=np.arange(1.0, 9.0))
@@ -2715,6 +2730,7 @@ def test_scan_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays():
     assert np.allclose(out, expected), "second canonicalize diverged from the sequential oracle"
 
 
+# Reproducer: fix: LoopToScan counts a carrier's reads on the CARRIER's side (153c46ae9f)
 def test_refuses_second_order_recurrence_behind_two_sided_copy_memlets():
     """TSVC s322 ``a[i] = a[i] + a[i-1]*b[i] + a[i-2]*c[i]``: a TWO-step recurrence.
 

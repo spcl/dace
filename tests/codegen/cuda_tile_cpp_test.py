@@ -156,6 +156,7 @@ def test_a_build_without_tile_kernels_takes_no_tile_flags():
     assert "__tile_global__" not in device_source(sdfg) and not builds_with_tile_flags(sdfg)
 
 
+# Reproducer: Fix three Python and tile backend bugs and add two CuPy expansions (1aee258e3f)
 def test_a_cpp_tasklet_in_a_tile_kernel_is_refused():
     sdfg = scale_add.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)

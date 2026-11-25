@@ -54,6 +54,7 @@ def _outer_with_body_nsdfg():
 # WCRToAugAssign expr-2: AccessNode -[wcr]-> AccessNode copy.
 
 
+# Reproducer: test(vectorization): WCR preconditions + AN->AN subset-aliasing fix (c2689967c8)
 def test_wcr_to_augassign_an_to_an_copy():
     """An ``AccessNode(P) -[+=]-> AccessNode(A)`` copy (what canonicalisation
     lowers an in-place ``a += b`` to) converts to an explicit ``A = P + A``
@@ -85,6 +86,7 @@ def test_wcr_to_augassign_an_to_an_copy():
 # BypassTrivialAssignTasklets carries the WCR across the bypass.
 
 
+# Reproducer: test(vectorization): WCR preconditions + AN->AN subset-aliasing fix (c2689967c8)
 def test_bypass_carries_wcr_across_trivial_assign():
     """``B -> [_out=_in] -> WP -(+=)-> A`` (the trivial-copy + WCR shape an
     in-place RMW canonicalises to) -- bypassing the trivial copy must CARRY the
@@ -157,12 +159,14 @@ def _map_with_optional_body_wcr(body_wcr: bool):
     return sdfg
 
 
+# Reproducer: test(vectorization): WCR preconditions + AN->AN subset-aliasing fix (c2689967c8)
 def test_no_wcr_in_map_body_detects_body_wcr():
     """A WCR on an in-body edge is flagged."""
     sdfg = _map_with_optional_body_wcr(body_wcr=True)
     assert no_wcr_in_map_body(sdfg) is not None
 
 
+# Reproducer: test(vectorization): WCR preconditions + AN->AN subset-aliasing fix (c2689967c8)
 def test_no_wcr_in_map_body_allows_boundary_reduction():
     """A WCR only on the ``MapExit -> AccessNode`` boundary edge is allowed --
     that is where a reduction's WCR lives once lifted out of the body."""
@@ -173,6 +177,7 @@ def test_no_wcr_in_map_body_allows_boundary_reduction():
 # Precondition checker: no_wcr_inside_nested_sdfgs (multi-dim).
 
 
+# Reproducer: test(vectorization): WCR preconditions + AN->AN subset-aliasing fix (c2689967c8)
 def test_no_wcr_inside_nested_sdfgs_detects_inner_wcr():
     """A WCR on an edge INSIDE a body NSDFG is flagged (the tile emitters would
     silently drop it)."""
@@ -187,6 +192,7 @@ def test_no_wcr_inside_nested_sdfgs_detects_inner_wcr():
     assert no_wcr_inside_nested_sdfgs(outer) is not None
 
 
+# Reproducer: test(vectorization): WCR preconditions + AN->AN subset-aliasing fix (c2689967c8)
 def test_no_wcr_inside_nested_sdfgs_allows_scalar_reduction_out():
     """The allowed multi-dim form: the body NSDFG writes a scalar that exits via
     a WCR reduction on the ``NestedSDFG -> MapExit`` edge in the PARENT state.
@@ -252,6 +258,7 @@ def _run_inplace_rmw(config: str):
     )
 
 
+# Reproducer: test(vectorization): WCR preconditions + AN->AN subset-aliasing fix (c2689967c8)
 def test_inplace_rmw_e2e_tile_nodes():
     _run_inplace_rmw("tile_nodes")
 

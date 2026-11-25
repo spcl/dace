@@ -51,18 +51,21 @@ def _nested_reduction(inner_lower: str):
     return ist, me
 
 
+# Reproducer: Fix vectorizer refusal paths; make IT a first-class conditional write (64577de55c)
 def test_trip_sized_by_an_outer_map_param_is_refused():
     """``k in [i + 1, M)``: the trip ``M - i - 1`` carries the outer map's ``i``."""
     state, map_entry = _nested_reduction("i + 1")
     assert _trip_depends_on_enclosing_map(state, map_entry, dace.symbolic.pystr_to_symbolic("M - i - 1")) is True
 
 
+# Reproducer: Fix vectorizer refusal paths; make IT a first-class conditional write (64577de55c)
 def test_globally_sized_trip_is_allowed():
     """``k in [0, M)``: the trip is a program symbol, so the buffer is legally sized."""
     state, map_entry = _nested_reduction("0")
     assert _trip_depends_on_enclosing_map(state, map_entry, dace.symbolic.pystr_to_symbolic("M")) is False
 
 
+# Reproducer: Fix vectorizer refusal paths; make IT a first-class conditional write (64577de55c)
 def test_trmm_has_no_map_param_in_its_signature():
     """End-to-end: trmm compiles and is correct under both vectorizing pipelines.
 

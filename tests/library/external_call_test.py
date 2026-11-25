@@ -544,6 +544,7 @@ def fixed_prefix(a: dace.float64[N]):
         a[i] = 1.0
 
 
+# Reproducer: ExternalCall: a call's ABI keeps the symbols its argument shapes name, which CPF's entry t... (126e3e0521)
 def test_a_call_keeps_a_symbol_only_its_array_shapes_use():
     sdfg, (call,) = outlined(fixed_prefix, "extcall_shape_symbol")
 

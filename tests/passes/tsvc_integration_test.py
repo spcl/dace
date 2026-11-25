@@ -34,6 +34,7 @@ def _allclose(a, b) -> bool:
 
 @pytest.mark.parametrize("simplify", [False, True], ids=["nosimplify", "simplify"])
 @pytest.mark.parametrize("kernel", _CORPUS, ids=[k.name for k in _CORPUS])
+# Reproducer: test(tsvc): full 151-kernel corpus + numpy oracle; canonicalize/l2map fixes (a2ce24f4af)
 def test_tsvc_baseline_matches_numpy(kernel, simplify, request):
     """The un-transformed SDFG (at this simplify level) matches the numpy reference."""
     l1, l2 = tsvc.lengths(kernel)

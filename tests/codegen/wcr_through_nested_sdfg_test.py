@@ -174,6 +174,7 @@ def _wcr_edge_sources(sdfg: dace.SDFG):
     return out
 
 
+# Reproducer: fix(helpers): place WCR on the AccessNode->MapExit edge after subgraph nesting (1ab7b0e3c9)
 def test_wcr_via_private_scalar_numerically_correct():
     """The private-scalar shape sums correctly: ``acc[0] += sum(src)``."""
     n = 64
@@ -186,6 +187,7 @@ def test_wcr_via_private_scalar_numerically_correct():
     assert np.isclose(acc[0], src.sum()), f"got {acc[0]}, expected {src.sum()}"
 
 
+# Reproducer: fix(helpers): place WCR on the AccessNode->MapExit edge after subgraph nesting (1ab7b0e3c9)
 def test_wcr_via_private_scalar_preserves_initial_value():
     """The pre-Map ``acc[0]`` value is preserved (WCR accumulates into it)."""
     n = 32
@@ -198,6 +200,7 @@ def test_wcr_via_private_scalar_preserves_initial_value():
     assert np.isclose(acc[0], 10.0 + src.sum())
 
 
+# Reproducer: fix(helpers): place WCR on the AccessNode->MapExit edge after subgraph nesting (1ab7b0e3c9)
 def test_wcr_via_private_scalar_edge_sourced_from_access_node():
     """Structural: every WCR-carrying edge originates at an AccessNode (or a MapExit
     propagating it outward), never at the NSDFG. This is the property that lets the
@@ -284,6 +287,7 @@ def test_nest_state_subgraph_emits_detectable_wcr_shape(wcr_str, binop):
     )
 
 
+# Reproducer: fix(helpers): place WCR on the AccessNode->MapExit edge after subgraph nesting (1ab7b0e3c9)
 def test_nest_state_subgraph_wcr_placement():
     """``nest_state_subgraph`` (the helper underlying ``NestInnermostMapBodyIntoNSDFG``)
     wraps a Map body in a NestedSDFG. When the wrapped body has a WCR output, the

@@ -18,6 +18,7 @@ from dace import symbolic
         ("i ** 2", False, lambda i, k: i * i <= k),
     ],
 )
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_the_crossing_is_exactly_where_the_guard_flips(guard, strict, holds):
     """For every bound and every nonnegative ``i``: ``g(i) < k`` iff ``i < x``. A perfect square, its neighbours and a
     bound below the first value are where a floating ``ceil(sqrt(k))`` or a C-truncating division goes wrong."""
@@ -31,6 +32,7 @@ def test_the_crossing_is_exactly_where_the_guard_flips(guard, strict, holds):
 
 
 @pytest.mark.parametrize("guard", ["-2 * i", "i ** 3", "2 * i ** 2", "i * j"])
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_guard_of_another_shape_has_no_crossing(guard):
     facts = symbolic.contract_facts(symbolic.pystr_to_symbolic("k"))
     assert symbolic.guard_crossing(guard, "i", "k", strict=True, facts=facts) is None
@@ -51,10 +53,12 @@ def test_a_numerator_nonnegative_only_by_a_relation_has_a_crossing():
             assert all((8 * i < nv - kv) == (i < x) for i in range(0, 20)), (nv, kv, x)
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_int_sqrt_is_the_exact_integer_root():
     assert [symbolic.int_sqrt(n) for n in range(-3, 2000)] == [-1] * 3 + [math.isqrt(n) for n in range(2000)]
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_int_sqrt_plus_one_is_provably_nonnegative():
     """``int_sqrt`` is never below -1, which is what lets a split's tail ``int_sqrt(N - 1) + 1`` start a range."""
     n = symbolic.pystr_to_symbolic("N")

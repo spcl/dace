@@ -208,6 +208,7 @@ def test_use_site_substitution_pre_update_read():
     assert np.array_equal(a, a_ref), f"pre-update read got the wrong step:\nref={a_ref}\ngot={a}"
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_an_ordering_edge_does_not_make_a_statement_part_of_the_iv_component():
     """An empty memlet decides ORDER, never membership: the copy statement is not the IV's."""
     import dace as _dace

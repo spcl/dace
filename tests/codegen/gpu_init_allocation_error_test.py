@@ -39,6 +39,7 @@ def persistent_device_buffer() -> dace.SDFG:
 
 
 @pytest.mark.gpu
+# Reproducer: Fail the call when the initializer's device allocation fails (0facb40f23)
 def test_an_initializer_whose_device_allocation_fails_raises():
     """2**50 doubles cannot be allocated: the call raises, naming the failed initialization."""
     import cupy

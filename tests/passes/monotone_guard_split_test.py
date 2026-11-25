@@ -33,6 +33,7 @@ def square_guard(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
 @pytest.mark.parametrize(
     "program, flips", [(affine_guard, lambda i, n: i * 4 < n), (square_guard, lambda i, n: i * i < n)]
 )
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_loop_is_split_where_its_increasing_guard_flips(program, flips):
     sdfg = program.to_sdfg(simplify=True)
     canonicalize(sdfg, target="cpu")

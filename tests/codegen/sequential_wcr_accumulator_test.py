@@ -264,6 +264,7 @@ def test_a_row_target_under_a_parallel_map_is_hoisted():
     assert np.allclose(out, x.sum(axis=1))
 
 
+# Reproducer: Fix the canon-perf regressions extended CI caught (06303cc353)
 def test_nested_sequential_maps_accumulate_into_one_register():
     """``out[0] += x[i, j]`` over a sequential map in a sequential map: one register, held by the outer map; a second
     one in the inner map would be stored over by the outer's untouched copy (np.tensordot's pure expansion)."""
@@ -307,6 +308,7 @@ def two_writes_of_one_array(name: str, first: str, second: str) -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_held_element_keeps_a_moving_write_of_the_same_array():
     """``out[K] += p[j]; out[j] += q[j]``: a register for ``out[K]`` stored at the loop's exit would overwrite what
     ``out[j]`` added to it at ``j == K``."""
@@ -321,6 +323,7 @@ def test_a_held_element_keeps_a_moving_write_of_the_same_array():
     np.testing.assert_allclose(out, want)
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_two_held_elements_that_meet_at_run_time_keep_both_sums():
     """``out[A] += p[j]; out[B] += q[j]`` with ``A == B``: two registers would each start from the old value, and the
     later store would drop the other one's sum."""

@@ -784,6 +784,7 @@ def test_array_wcr_section_covers_only_the_written_element():
     assert np.allclose(_run_arr(sd, X, A0), ref)
 
 
+# Reproducer: CPF fixes from the llr40 and scicomp prerender (f91e1cfe51)
 def test_view_wcr_target_emits_section_clause():
     """s311's ``pure`` Reduce accumulates through a View of ``sum_out[0]``; a contiguous view reduces as a
     section like the array it views instead of one contended atomic per element."""
@@ -883,6 +884,7 @@ def build_one_element_gather_sum() -> dace.SDFG:
     return sd
 
 
+# Reproducer: A one-element reduction section reduces in a local scalar: GCC does not vectorize a gather... (d00fe32b50)
 def test_one_element_array_wcr_reduces_into_a_local_scalar():
     """A one-element section reduction ``reduction(+:acc[0:1])`` keeps GCC from vectorizing the gather (s4115);
     the map reduces into a local scalar loaded from and stored back to ``acc[0]`` instead."""

@@ -64,6 +64,7 @@ def run(sdfg: dace.SDFG, n: int) -> float:
     return out[0]
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_chained_accumulations_fold():
     sdfg = s319.to_sdfg(simplify=True)
     assert chain_state(sdfg) is not None, "fixture must produce the chained-accumulator shape"
@@ -143,6 +144,7 @@ def test_fold_inside_nested_sdfg_scopes_descriptor_to_the_inner_sdfg():
     run(outer_sdfg, 24)
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_ordering_memlet_on_a_chain_node_refuses_the_fold():
     """The fold deletes the downstream chain nodes; an ordering memlet on one of them would go
     with it, so the fold must decline."""

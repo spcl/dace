@@ -256,6 +256,7 @@ def two_row_kernels(A: dace.float64[L, 64], B: dace.float64[L, 64]):
 
 
 @pytest.mark.parametrize("dialect", DIALECTS)
+# Reproducer: Fix the code review findings in the Python, tile and Tile C++ backends (226a77aeb6)
 def test_two_kernels_of_one_label_stay_two_kernels(dialect: str):
     sdfg = two_row_kernels.to_sdfg()
     sdfg.apply_gpu_transformations()
@@ -285,6 +286,7 @@ def rows_gathered(x: dace.float64[8, 12], idx: dace.int64[8], y: dace.float64[8,
 
 
 @pytest.mark.parametrize("dialect", DIALECTS)
+# Reproducer: Tile op backends: fix index tiles with a ONE dim, modulo spellings, nested bindings and Cu... (b0d5a9e595)
 def test_a_row_gather_over_a_two_dim_tile_reads_every_indexed_row(dialect: str):
     """The index tile varies over the row dim only: its shape is ``(4, ONE)``, the marker one lane wide."""
     import cupy

@@ -16,11 +16,13 @@ import dace
 from dace.codegen.targets.cuda import nvcc_host_flags
 
 
+# Reproducer: nvcc gets a forced include (-include FILE in the host flags) as --pre-include: wrapped in... (0454cf3a3b)
 def test_forced_include_becomes_pre_include():
     flags = nvcc_host_flags(["-O3", "-include", "/opt/h/vecmath.h", "-fopenmp"])
     assert flags == ["-Xcompiler=-O3", "--pre-include=/opt/h/vecmath.h", "-Xcompiler=-fopenmp"]
 
 
+# Reproducer: nvcc gets a forced include (-include FILE in the host flags) as --pre-include: wrapped in... (0454cf3a3b)
 def test_other_host_flags_stay_wrapped():
     assert nvcc_host_flags(["-march=native", "-ffp-contract=fast"]) == [
         "-Xcompiler=-march=native",
@@ -29,6 +31,7 @@ def test_other_host_flags_stay_wrapped():
 
 
 @pytest.mark.gpu
+# Reproducer: nvcc gets a forced include (-include FILE in the host flags) as --pre-include: wrapped in... (0454cf3a3b)
 def test_gpu_build_with_a_forced_include_header():
     with tempfile.TemporaryDirectory() as folder:
         header = os.path.join(folder, "forced.h")

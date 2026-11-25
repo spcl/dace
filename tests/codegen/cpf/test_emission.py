@@ -391,6 +391,7 @@ def test_scan_is_inlined_rather_than_called():
 
 
 @pytest.mark.parametrize("language", ("c++", "c"))
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_multi_chain_scan_renders_each_chain_as_its_own_parallel_scan(language):
     """``chains > 1`` fuses K scans into one loop through the ``dace/scan.hpp`` team helpers and a C++
     lambda; neither exists in a standalone unit, so each chain renders as its own blocked scan."""

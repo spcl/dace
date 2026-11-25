@@ -90,6 +90,7 @@ def test_an_iterator_read_after_its_loop_keeps_one_name():
     assert export.code.as_string.strip() == f"out = {loop.loop_variable}"
 
 
+# Reproducer: CPF: race-free forms, TaskletFusion and guard fixes, loop-kind annotations (8fbddbc0a7)
 def test_a_map_parameter_named_like_its_enclosing_loop_counter_is_renamed():
     """vexx_k: a map over ``i`` inside the ``for i`` loop rendered as ``for (int64_t i ...)`` inside ``for (i ...)``,
     shadowing the counter the rest of the loop body reads."""

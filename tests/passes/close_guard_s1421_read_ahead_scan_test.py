@@ -52,6 +52,7 @@ def _counts(sdfg):
     return loops, maps, conds
 
 
+# Reproducer: Fix five canonicalization miscompiles and close guarded-parallel fallbacks (ce6403bce4)
 def test_int_floor_stride_is_proven_nonpositive():
     """The ``s1421`` stride is PROVEN ``<= 0``, so it is not an admissible scan stride."""
     n = symbolic.symbol("LEN_1D")
@@ -63,6 +64,7 @@ def test_int_floor_stride_is_proven_nonpositive():
     assert admissible_scan_stride(stride, facts) is None
 
 
+# Reproducer: Fix five canonicalization miscompiles and close guarded-parallel fallbacks (ce6403bce4)
 def test_unknown_sign_stride_still_admitted():
     """A genuine symbolic stride (``a[i] = a[i - K] + x[i]``) keeps its ``K >= 1`` guard.
 
@@ -79,6 +81,7 @@ def test_unknown_sign_stride_still_admitted():
     assert not provably_nonpositive_stride(symbolic.int_floor(n, 2), symbolic.contract_facts(n))
 
 
+# Reproducer: Fix five canonicalization miscompiles and close guarded-parallel fallbacks (ce6403bce4)
 def test_s1421_read_ahead_closes_to_unconditional_map():
     """End-to-end: no guard, no pinned fallback, one bare Map -- and bit-exact."""
 

@@ -5,6 +5,7 @@ from dace.codegen.targets.cpu import atomic_hint
 from dace.memlet import Memlet
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_an_atomic_names_its_operator_and_why_iterations_collide():
     """Review F27: a max fold said ``add to`` and named the whole scattered range."""
     scatter = Memlet("hist[0:256]")

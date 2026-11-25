@@ -14,6 +14,7 @@ import pytest
 from dace.codegen import compiler
 
 
+# Reproducer: Fix DaCe compile hangs + OpenMP/OpenBLAS discovery under srun on daint (26cff007fe)
 def test_sigmask_unblocks_sigchld_when_blocked_and_restores():
     original = signal.pthread_sigmask(signal.SIG_BLOCK, [])
     try:
@@ -31,6 +32,7 @@ def test_sigmask_unblocks_sigchld_when_blocked_and_restores():
         signal.pthread_sigmask(signal.SIG_SETMASK, original)
 
 
+# Reproducer: Fix DaCe compile hangs + OpenMP/OpenBLAS discovery under srun on daint (26cff007fe)
 def test_sigmask_is_noop_when_sigchld_already_deliverable():
     original = signal.pthread_sigmask(signal.SIG_BLOCK, [])
     try:

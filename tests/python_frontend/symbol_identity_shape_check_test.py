@@ -40,6 +40,7 @@ class _FakeVisitor:
         return self.sdfg.add_transient(self.get_target_name(), *args, **kwargs)
 
 
+# Reproducer: fix(frontend): shape checks compare by symbol name, not sympy identity (fa8f63814b)
 def test_dot_shape_check_equalizes_symbols():
     wide = dace.symbol("N", dace.int32)
     narrow = dace.symbol("N", dace.int64)
@@ -64,6 +65,7 @@ def test_dot_shape_check_equalizes_symbols():
     assert np.allclose(out, np.dot(a, b))
 
 
+# Reproducer: fix(frontend): shape checks compare by symbol name, not sympy identity (fa8f63814b)
 def test_stack_shape_check_equalizes_symbols():
     wide = dace.symbol("N", dace.int32)
     narrow = dace.symbol("N", dace.int64)
@@ -78,6 +80,7 @@ def test_stack_shape_check_equalizes_symbols():
     assert symbolic.shapes_equal(sdfg.arrays[name].shape, (2, wide))
 
 
+# Reproducer: fix(frontend): shape checks compare by symbol name, not sympy identity (fa8f63814b)
 def test_concatenate_shape_check_equalizes_symbols():
     wide = dace.symbol("N", dace.int32)
     narrow = dace.symbol("N", dace.int64)
@@ -100,6 +103,7 @@ def test_concatenate_shape_check_equalizes_symbols():
     assert np.allclose(out, np.concatenate([a, b], axis=0))
 
 
+# Reproducer: fix(frontend): shape checks compare by symbol name, not sympy identity (fa8f63814b)
 def test_tensordot_contracting_modes_equalize_symbols():
     wide = dace.symbol("N", dace.int32)
     narrow = dace.symbol("N", dace.int64)
@@ -114,6 +118,7 @@ def test_tensordot_contracting_modes_equalize_symbols():
     assert symbolic.shapes_equal(sdfg.arrays[name].shape, (4, 5))
 
 
+# Reproducer: fix(frontend): shape checks compare by symbol name, not sympy identity (fa8f63814b)
 def test_matmul_vector_forms_equalize_symbols():
     wide = dace.symbol("N", dace.int32)
     narrow = dace.symbol("N", dace.int64)
@@ -137,6 +142,7 @@ def test_matmul_vector_forms_equalize_symbols():
         assert not any("may not match" in str(w.message) for w in caught), (label, caught)
 
 
+# Reproducer: fix(frontend): shape checks compare by symbol name, not sympy identity (fa8f63814b)
 def test_boolean_array_index_shape_equalizes_symbols():
     wide = dace.symbol("N", dace.int32)
     narrow = dace.symbol("N", dace.int64)

@@ -29,6 +29,7 @@ def scan_reference(excl: np.ndarray, start: int, end: int) -> int:
     return k
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_the_right_operand_of_and_is_read_only_when_the_left_holds():
     sdfg = scan_to_mask.to_sdfg(simplify=False)
     reads = [state for state in sdfg.states() if any(node.data == "excl" for node in state.data_nodes())]

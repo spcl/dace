@@ -69,6 +69,7 @@ def in_place_doubler() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_two_reads_of_one_array_become_one_connector():
     sdfg = reader_of_two_views()
     assert sdfg.apply_transformations_repeated(FuseIdenticalConnectors) == 1
@@ -82,6 +83,7 @@ def test_two_reads_of_one_array_become_one_connector():
     assert np.allclose(b, 2 * a)
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_read_and_a_write_of_one_array_become_one_in_out_connector():
     sdfg = in_place_doubler()
     assert sdfg.apply_transformations_repeated(FuseIdenticalConnectors) == 1
@@ -95,6 +97,7 @@ def test_a_read_and_a_write_of_one_array_become_one_in_out_connector():
     assert np.allclose(a, expected)
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_two_reads_of_different_parts_of_the_whole_array_join_their_subsets():
     sdfg = reader_of_two_views(("0:32", "32:64"))
     assert sdfg.apply_transformations_repeated(FuseIdenticalConnectors) == 1
@@ -113,12 +116,14 @@ def test_two_reads_of_different_parts_of_the_whole_array_join_their_subsets():
     [{"dtype": dace.float32}, {"strides": (2,)}, {"second": "C"}],
     ids=["other-dtype", "other-strides", "other-container"],
 )
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_connectors_that_do_not_describe_the_same_array_stay_apart(variant):
     sdfg = reader_of_two_views(**variant)
     assert sdfg.apply_transformations_repeated(FuseIdenticalConnectors) == 0
     assert list(nested_sdfg(sdfg).in_connectors) == ["x", "y"]
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_windows_of_one_array_stay_apart():
     sdfg = reader_of_two_views(("0:N/2", "N/2:N"))
     inner = nested_sdfg(sdfg).sdfg

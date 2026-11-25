@@ -174,6 +174,7 @@ def guard_cuts(sdfg: dace.SDFG) -> list[int]:
 
 
 @pytest.mark.parametrize("k", [0, 2])
+# Reproducer: MapFission keeps a conditional whole when its condition does not depend on the fissioned maps (e4ba732364)
 def test_a_cut_may_leave_a_top_level_guard_whole_in_one_half(k):
     """The guard reads only ``K``: a cut before or after it leaves it, with all its branches, in one map."""
     base = guarded_body.to_sdfg(simplify=True)
@@ -197,6 +198,7 @@ def test_a_cut_may_leave_a_top_level_guard_whole_in_one_half(k):
             assert np.allclose(got[name], want[name], rtol=1e-14, atol=0), (index, name)
 
 
+# Reproducer: MapFission keeps a conditional whole when its condition does not depend on the fissioned maps (e4ba732364)
 def test_a_cut_around_a_guard_that_reads_the_map_parameter_is_refused():
     """The guard reads ``i``: replicating it into another map is the case fission still does not support."""
     sdfg = parameter_guarded_body.to_sdfg(simplify=True)

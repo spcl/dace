@@ -47,6 +47,7 @@ def forced_gather_scatter_2d(
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 @pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_forced_scatter_store(branch_mode, remainder_strategy):
     """Pure scatter through an injective (permutation) index -> scatter TileScatter."""
     n = 60  # not a multiple of 8 -> exercises the remainder tile
@@ -71,6 +72,7 @@ def test_forced_scatter_store(branch_mode, remainder_strategy):
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 @pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_forced_gather_scatter(branch_mode, remainder_strategy):
     """Gather-scatter ``a[idx[i]] = b[idx[i]] + c[i]`` -> gather TileGather + scatter TileScatter."""
     n = 60  # not a multiple of 8 -> exercises the remainder tile
@@ -96,6 +98,7 @@ def test_forced_gather_scatter(branch_mode, remainder_strategy):
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 @pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_forced_gather_scatter_2d(branch_mode, remainder_strategy):
     """Multi-dim (2-D parallel map) per-row gather-scatter; both remainder strategies."""
     yv, xv = 8, 60  # xv not a multiple of 8 -> exercises the remainder tile

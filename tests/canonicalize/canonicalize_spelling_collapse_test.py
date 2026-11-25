@@ -100,6 +100,7 @@ def sum_11_accs_while_tail(a: dace.float64[N], out: dace.float64[1]):
     out[0] = s0 + s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9 + s10 + tail
 
 
+# Reproducer: CPF canonicalize: collapse prime-unrolled and split-accumulator spellings (E5) with regres... (74a4d75479)
 def test_sum_spellings_collapse_to_single_reduce():
     """Plain loop, 4x carried counter, and 11-accumulator while+tail all lift to ONE Reduce over [0, N)."""
     rng = np.random.default_rng(101)
@@ -164,6 +165,7 @@ def add_one_prime17_while(a: dace.float64[N], b: dace.float64[N]):
         i += 1
 
 
+# Reproducer: CPF canonicalize: collapse prime-unrolled and split-accumulator spellings (E5) with regres... (74a4d75479)
 def test_add_one_spellings_collapse_to_single_unit_map():
     """Forward, reverse, and prime-17 while+remainder all collapse to ONE Map over 0:N."""
     rng = np.random.default_rng(102)
@@ -197,6 +199,7 @@ def saxpy_unrolled_7(a: dace.float64[7 * NBLK], b: dace.float64[7 * NBLK]):
         a[i + 6] = a[i + 6] + b[i + 6] * 2.0
 
 
+# Reproducer: CPF canonicalize: collapse prime-unrolled and split-accumulator spellings (E5) with regres... (74a4d75479)
 def test_saxpy_reroll_simplifies_exact_multiple_bound():
     """Exact-multiple unrolled loops simplify ``7 * int_floor(7*NBLK - 1, 7) + 7`` to ``7*NBLK``."""
     sdfg = saxpy_unrolled_7.to_sdfg(simplify=False)
@@ -255,6 +258,7 @@ def multi_acc_split_outputs_must_not_reroll(a: dace.float64[N], out: dace.float6
         (multi_acc_split_outputs_must_not_reroll, lambda a: np.array([np.sum(a[0::2]) + 1.0, np.sum(a[1::2]) + 1.0])),
     ],
 )
+# Reproducer: CPF canonicalize: collapse prime-unrolled and split-accumulator spellings (E5) with regres... (74a4d75479)
 def test_unsound_accumulator_merges_refused(prog, check_fn):
     sdfg = prog.to_sdfg(simplify=False)
     declare_nonnegative_symbols(sdfg, ["N"])

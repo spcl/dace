@@ -55,12 +55,14 @@ def _nested_maps_sdfg(outer_sched, inner_sched):
     return sdfg, state, oe, ie
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_gpu_device_map_is_resident():
     """A GPU_Device-scheduled map is itself the kernel -> resident."""
     _, state, me = _single_map_sdfg(ScheduleType.GPU_Device)
     assert is_gpu_resident_map(state, me)
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_host_map_is_not_resident():
     """A top-level host map (no GPU parent) is not resident."""
     for sched in (ScheduleType.Sequential, ScheduleType.CPU_Multicore):
@@ -68,6 +70,7 @@ def test_host_map_is_not_resident():
         assert not is_gpu_resident_map(state, me), sched
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_sequential_inner_with_gpu_parent_is_resident():
     """A Sequential inner map under a GPU_Device parent map runs on the device."""
     _, state, oe, ie = _nested_maps_sdfg(ScheduleType.GPU_Device, ScheduleType.Sequential)
@@ -76,12 +79,14 @@ def test_sequential_inner_with_gpu_parent_is_resident():
     assert is_gpu_resident_map(state, oe)  # the parent kernel itself
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_sequential_inner_without_gpu_parent_is_not_resident():
     """The same nest with a host parent map stays host-side."""
     sdfg, state, oe, ie = _nested_maps_sdfg(ScheduleType.CPU_Multicore, ScheduleType.Sequential)
     assert not is_gpu_resident_map(state, ie)
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_mark_tile_dims_skips_host_map_under_gpu_gate():
     """With ``require_gpu_resident``, a host innermost map produces no tile spec;
     without the gate, the same map tiles normally."""
@@ -91,6 +96,7 @@ def test_mark_tile_dims_skips_host_map_under_gpu_gate():
     assert specs is not None and me in specs
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_mark_tile_dims_tiles_gpu_resident_maps():
     """The gate keeps a GPU_Device map and a Sequential-under-GPU inner map."""
     sdfg, state, me = _single_map_sdfg(ScheduleType.GPU_Device)

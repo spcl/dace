@@ -216,6 +216,7 @@ def test_a_copy_whose_extent_is_spelled_floor_is_forwarded():
     assert np.allclose(out, 2.0 * q[1:])
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_an_offset_symbol_rebound_inside_a_branch_keeps_the_copy():
     """``t = q[k:k + N]``, then a branch whose arm sets ``k = k + 1`` before it reads ``t``: ``q`` at ``k`` there is the
     next window."""
@@ -280,6 +281,7 @@ def snapshot_shaped_copy_sdfg(name: str, rebind: bool) -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_copy_into_a_buffer_sized_by_a_symbol_copy_feeds_the_gemm_from_its_source():
     sdfg = snapshot_shaped_copy_sdfg("snapshot_shaped_copy", rebind=False)
     assert ForwardOffsetCopies().apply_pass(sdfg, {}) == 1
@@ -293,6 +295,7 @@ def test_a_copy_into_a_buffer_sized_by_a_symbol_copy_feeds_the_gemm_from_its_sou
     assert np.allclose(c, a[:6, :3] @ b)
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_symbol_rebound_after_its_copy_keeps_the_copy():
     sdfg = snapshot_shaped_copy_sdfg("snapshot_shaped_copy_rebound", rebind=True)
     assert ForwardOffsetCopies().apply_pass(sdfg, {}) is None

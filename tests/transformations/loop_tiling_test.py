@@ -40,6 +40,7 @@ def expected_prefix_sum(n: int) -> np.ndarray:
     return a
 
 
+# Reproducer: LoopTiling: strip-mine a unit-stride loop into a tile loop holding a clamped point loop (s... (3dc9b980ed)
 def test_a_tiled_loop_is_a_tile_loop_holding_a_point_loop_that_computes_the_same():
     sdfg = prefix_sum.to_sdfg(simplify=True)
     (loop,) = loops(sdfg)
@@ -54,6 +55,7 @@ def test_a_tiled_loop_is_a_tile_loop_holding_a_point_loop_that_computes_the_same
         assert np.array_equal(run_prefix_sum(sdfg, n), expected_prefix_sum(n))
 
 
+# Reproducer: LoopTiling: strip-mine a unit-stride loop into a tile loop holding a clamped point loop (s... (3dc9b980ed)
 def test_untiling_a_tiled_loop_gives_one_loop_back():
     sdfg = prefix_sum.to_sdfg(simplify=True)
     (loop,) = loops(sdfg)
@@ -66,6 +68,7 @@ def test_untiling_a_tiled_loop_gives_one_loop_back():
     assert np.array_equal(run_prefix_sum(sdfg, 20), expected_prefix_sum(20))
 
 
+# Reproducer: LoopTiling: strip-mine a unit-stride loop into a tile loop holding a clamped point loop (s... (3dc9b980ed)
 def test_a_loop_with_a_stride_is_not_tiled():
     sdfg = every_other.to_sdfg(simplify=True)
     (loop,) = loops(sdfg)

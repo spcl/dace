@@ -209,6 +209,7 @@ def trip_guarded_copy(name: str, trips: str) -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_a_loop_over_the_transients_own_extent_bounds_it():
     """``n = 0`` leaves ``vals`` empty, and otherwise the loop runs the copy, which shows ``n <= m``."""
     sdfg = trip_guarded_copy("trip_guarded_own_extent", "n")
@@ -216,6 +217,7 @@ def test_a_loop_over_the_transients_own_extent_bounds_it():
     assert [str(extent) for extent in sdfg.arrays["vals"].shape] == ["m"]
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_a_loop_over_another_transients_extent_bounds_nothing():
     """With ``c = 0`` the copy never runs, so ``n`` may exceed ``m`` while ``vals`` still holds ``n``."""
     sdfg = trip_guarded_copy("trip_guarded_other_extent", "c")
@@ -223,12 +225,14 @@ def test_a_loop_over_another_transients_extent_bounds_nothing():
     assert [str(extent) for extent in sdfg.arrays["vals"].shape] == ["n"]
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_a_loop_of_no_trips_bounds_nothing():
     sdfg = trip_guarded_copy("trip_guarded_no_trips", "0")
     assert BoundDataDependentExtents().apply_pass(sdfg, {}) is None
     assert [str(extent) for extent in sdfg.arrays["vals"].shape] == ["n"]
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_a_symbol_assigned_twice_in_one_arm_bounds_nothing():
     """Both arms copy ``A[0:n]`` with ``n = sizes[0]``, but one arm then sets ``n = sizes[1]`` and writes ``vals``:
     that value of ``n`` no access bounds."""

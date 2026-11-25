@@ -133,6 +133,7 @@ def _ref_shift(a, b):
     return out
 
 
+# Reproducer: Make the in-chunk sweep a loop, since a map claims a parallelism it does not have (1a0b5661f1)
 def test_the_in_chunk_sweep_is_a_loop_and_not_a_map():
     """A Map asserts that its iterations carry NO dependence. The in-chunk sweep carries one.
 
@@ -202,6 +203,7 @@ def test_chunk_rewrite_is_bit_exact_when_the_chunk_size_does_not_divide():
     assert np.array_equal(got, _ref_shift(a, b))
 
 
+# Reproducer: Size the anti-dependence seam by the thread count instead of a fixed chunk (e6f2d46d2b)
 def test_chunk_rewrite_copies_one_element_per_thread_plus_one():
     """The whole-window copy becomes a strided gather of one element per chunk, plus the trailing
     read. The point of the pass is the SIZE of that copy, so bind both symbols and count it."""
@@ -258,6 +260,7 @@ def test_seam_reads_are_chunk_indexed():
     assert "i" not in free, "a seam slot must not be recomputed from the array index"
 
 
+# Reproducer: Size the anti-dependence seam by the thread count instead of a fixed chunk (e6f2d46d2b)
 def test_the_chunk_count_follows_the_thread_count():
     """The chunk stride is an even split of the extent over the threads, not a fixed size.
 
@@ -277,6 +280,7 @@ def test_the_chunk_count_follows_the_thread_count():
         assert "ceil(" not in stride.replace("int_ceil(", ""), f"a raw ceiling truncates in C++: {stride}"
 
 
+# Reproducer: Size the anti-dependence seam by the thread count instead of a fixed chunk (e6f2d46d2b)
 def test_the_seam_holds_exactly_one_slot_per_thread_plus_one():
     """``__dace_num_threads + 1``: one boundary element per thread, plus the trailing read.
 
@@ -410,6 +414,7 @@ def test_a_symbolic_stride_is_chunked_under_unit_stride_and_snapshotted_otherwis
     assert sdfg.hash_sdfg() == before
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_second_map_beside_the_snapshot_map_runs_once():
     """The rewrite runs the snapshot map's state three times; ``c += d`` beside it must still run once."""
     sdfg = _canonical(_shift)

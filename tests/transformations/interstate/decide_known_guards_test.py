@@ -77,6 +77,7 @@ def scalar_guard_with_elif(a: dace.int64[1], b: dace.float64[16], n: dace.int64)
             b[1] = 7.0
 
 
+# Reproducer: CPF: race-free forms, TaskletFusion and guard fixes, loop-kind annotations (8fbddbc0a7)
 def test_a_scalar_guard_with_elif_is_decided_in_both_arms():
     """qe_cegterg retested a one-element container (``if (arr19 == 0) { ... if (arr19 == 0) break; else if (i == 40)
     break; }``): the retest is decided by its first branch, and a false one leaves the ``elif`` (render review 11-23)."""
@@ -101,6 +102,7 @@ def written_scalar_guard(a: dace.int64[1], b: dace.float64[16]):
             b[0] = 5.0
 
 
+# Reproducer: CPF: race-free forms, TaskletFusion and guard fixes, loop-kind annotations (8fbddbc0a7)
 def test_a_scalar_guard_the_arm_writes_stays():
     sdfg = written_scalar_guard.to_sdfg(simplify=False)
     assert decide_known_guards(sdfg) == 0

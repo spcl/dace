@@ -352,6 +352,7 @@ def test_top_level_sequential_map_in_the_loop_is_shared_out():
     assert np.allclose(a, 1.0) and np.allclose(b, 2.0)
 
 
+# Reproducer: CPF: race-free forms, TaskletFusion and guard fixes, loop-kind annotations (8fbddbc0a7)
 def test_a_map_the_team_shares_out_drops_its_no_thread_pragma_note():
     """cloudsc_sedimentation: a map the cost model left without a thread pragma became an ``omp for`` in the team,
     and its comment still said no pragma."""
@@ -504,6 +505,7 @@ def test_top_level_fill_in_the_loop_is_expanded_and_shared_out():
     assert np.allclose(a, 1.0) and np.allclose(b, 3.0)
 
 
+# Reproducer: HoistParallelRegion shares out only the outermost map of an elementwise expansion: the inn... (04f74f2ad4)
 def test_a_fill_expanding_to_a_map_nest_shares_out_only_its_outer_map():
     """fv3_dycore: a fill over ``[N, N, K]`` with ``K`` small expands to an ``(i0, i1)`` map around a ``K`` map. Both
     became ``omp for``, and GCC refused the work-sharing loop nested in another."""
@@ -594,6 +596,7 @@ def fill_read_by_control_flow_sdfg(name):
     return sdfg, fill_state.out_edges(fill)[0]
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_fill_read_by_an_interstate_edge_keeps_the_cell_it_reads():
     """The hull of the dataflow reads is ``t[1:N]``, but ``c = t[0]`` reads ``t[0]``: the fill must still write it."""
     sdfg, written = fill_read_by_control_flow_sdfg("fill_read_by_interstate_edge")
@@ -606,6 +609,7 @@ def test_a_fill_read_by_an_interstate_edge_keeps_the_cell_it_reads():
     assert np.array_equal(b[1:], np.full(15, 3.0))
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_narrowed_fill_alone_reports_the_pass_applied():
     """No loop is hoisted, but the fill is narrowed: ``None`` would tell the caller the SDFG is unchanged."""
     from dace.libraries.standard.nodes.fill import FillLibraryNode
@@ -653,6 +657,7 @@ def converge_loop_sdfg(name):
     return sdfg
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_loop_whose_condition_reads_what_it_writes_gets_no_team():
     sdfg = converge_loop_sdfg("converge_condition_race")
     assert_declined(sdfg, "the loop condition reads err, which the body writes with no barrier ahead")
@@ -1361,6 +1366,7 @@ def test_strip_mine_interchanges_an_outer_axis_whole():
     matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
 
 
+# Reproducer: StripMineInterchange: a SMALL axis is never the cut and does not hide the axis above it fr... (7e1d793014)
 def test_strip_mine_cuts_the_columns_above_an_inner_small_axis():
     """``a[it + 1, b, i]`` as ``DecideCpuParallelAxes`` leaves it: a parallel map over the columns ``i`` around a
     sequential one over the ``SMALL`` blocks ``b``. The columns are the contiguous axis, so they are strip-mined

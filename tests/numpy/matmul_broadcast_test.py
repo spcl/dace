@@ -23,6 +23,7 @@ def run(prog, expected, **arrays):
     assert np.allclose(res, expected), f"max|diff| = {np.max(np.abs(res - expected))}"
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_broadcast_both_sides():
     """``(B,1,M,K) @ (1,C,K,N) -> (B,C,M,N)``: each side stretches a different axis."""
 
@@ -39,6 +40,7 @@ def test_broadcast_both_sides():
     run(kernel_broadcast_both_sides, a @ b, a=a, b=b)
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_broadcast_leading_one():
     """``(1,M,K) @ (B,K,N)``: the single matrix is reused for every batch element."""
 
@@ -53,6 +55,7 @@ def test_broadcast_leading_one():
     run(kernel_broadcast_leading_one, a @ b, a=a, b=b)
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_broadcast_rank_mismatch():
     """``(B,C,M,K) @ (C,K,N)``: right-alignment makes the shorter batch line up with C, not B.
 
@@ -73,6 +76,7 @@ def test_broadcast_rank_mismatch():
     run(kernel_broadcast_rank_mismatch, a @ b, a=a, b=b)
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_equal_batches_still_work():
     """The already-supported path must be unchanged by broadcast handling."""
 
@@ -87,6 +91,7 @@ def test_equal_batches_still_work():
     run(kernel_equal_batches_still_work, a @ b, a=a, b=b)
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_incompatible_batches_refused():
     """Dimensions that neither match nor are 1 have no broadcast, so they must be refused."""
     from dace.frontend.python.common import DaceSyntaxError
@@ -117,6 +122,7 @@ def _batch_check(prog):
     raise AssertionError("the parsed SDFG carries no matmul node to check")
 
 
+# Reproducer: fix: two batch dimensions that are merely unprovably equal are not a broadcast, explanatio... (02372a4922)
 def test_strided_lowering_refuses_a_stretched_batch():
     """Extent 1 against extent 3 is a real broadcast: one fixed stride cannot express it."""
 
@@ -130,6 +136,7 @@ def test_strided_lowering_refuses_a_stretched_batch():
         _batch_check(kernel_strided_lowering_refuses_a_stretched_batch)()
 
 
+# Reproducer: fix: two batch dimensions that are merely unprovably equal are not a broadcast, explanatio... (02372a4922)
 def test_strided_lowering_accepts_distinct_batch_symbols():
     """``[B,M,K] @ [L,K,N]`` is not a broadcast -- numpy pairs the two only when they are equal at
     run time, which is what the result's batch shape already assumes. Refusing it sends every

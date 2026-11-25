@@ -265,6 +265,7 @@ def two_updates_and_a_reader(name: str, shift: int) -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_third_map_fuses_into_two_updates_fused_in_place():
     """The first fusion leaves a node of argument ``a`` inside the body; the third Map still fuses."""
     sdfg = two_updates_and_a_reader("three_updates", 0)
@@ -278,6 +279,7 @@ def test_a_third_map_fuses_into_two_updates_fused_in_place():
     assert np.array_equal(array, expected)
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_third_map_reading_another_iteration_stays_apart():
     sdfg = two_updates_and_a_reader("three_shifted_updates", 1)
     assert sdfg.apply_transformations_repeated(relaxed_fusion(), validate_all=True) == 1
@@ -290,6 +292,7 @@ def test_a_third_map_reading_another_iteration_stays_apart():
     assert np.array_equal(array, expected)
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_pieces_that_tile_no_box_fuse_in_place():
     """The first Map updates rows 0 and 2 of argument ``a`` (no box without row 1), the second writes row 1 from them:
     cloudsc's ``zsolqa[4, 0, i]`` and ``zsolqa[0, 4, i]``."""

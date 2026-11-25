@@ -45,6 +45,7 @@ def _make_seeded_reduction_body() -> "tuple[dace.SDFG, dace.SDFGState, nodes.Nes
     return outer, state, nsdfg, inner
 
 
+# Reproducer: canon+vectorizer: masked-reduce/s212/s279 fixes, fast-canon removal, finalize_transient_st... (a5f9a5a828)
 def test_reduction_copyback_lowered_to_fold():
     """The plain ``priv -> oc`` copyback becomes a ``reduce_accum`` tasklet ``oc = oc + priv``."""
     outer, state, nsdfg, inner = _make_seeded_reduction_body()
@@ -64,6 +65,7 @@ def test_reduction_copyback_lowered_to_fold():
     )
 
 
+# Reproducer: canon+vectorizer: masked-reduce/s212/s279 fixes, fast-canon removal, finalize_transient_st... (a5f9a5a828)
 def test_no_boundary_wcr_leaves_copyback_untouched():
     """Without a boundary reduction WCR the copyback is NOT a reduction fold -- leave it alone."""
     outer, state, nsdfg, inner = _make_seeded_reduction_body()
@@ -75,6 +77,7 @@ def test_no_boundary_wcr_leaves_copyback_untouched():
     assert n == 0, "a non-reduction copyback must not be rewritten"
 
 
+# Reproducer: canon+vectorizer: masked-reduce/s212/s279 fixes, fast-canon removal, finalize_transient_st... (a5f9a5a828)
 def test_other_endpoint_widens_guard():
     """``_other_endpoint_widens`` keeps a single-element scalar sink un-widened but widens a
     tile-bound endpoint."""

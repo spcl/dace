@@ -101,6 +101,7 @@ def guard_cleared_by_the_nest(
         flag[ia + 1] = 0
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_guard_the_nest_writes_is_not_batched():
     """The nest clears ``flag[ia + 1]``, so the count and fill copies, which read ``flag`` before any of those
     writes, would select iterations the nest skips."""

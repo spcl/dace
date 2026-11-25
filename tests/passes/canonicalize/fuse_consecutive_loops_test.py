@@ -177,6 +177,7 @@ def test_view_and_plain_copy_edge_tie_does_not_raise_typeerror():
     sdfg.validate()
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_bodies_differing_only_in_a_copy_memlets_destination_are_not_fused():
     """`other_subset` is the destination side of a copy memlet: two bodies differing only there are
     two different statements, and fusing deletes one of them."""
@@ -317,6 +318,7 @@ def damped_split_sum(x: dace.float64[N], out: dace.float64[1]):
     out[0] = acc + tail
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_damped_accumulator_is_no_split_reduction():
     """``acc = 0.5 * (acc + x[i])`` is not ``acc + x[i]``: redirecting ``tail`` into ``acc`` changes the sum."""
     sdfg = _prep(damped_split_sum)

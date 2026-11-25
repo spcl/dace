@@ -42,6 +42,7 @@ def test_a_low_precision_array_times_an_integer_array_promotes_as_float16_does(d
 
 
 @pytest.mark.parametrize("dtype", [dace.float16, dace.bfloat16, dace.float32])
+# Reproducer: Frontend np_result_type: a Python scalar does not widen bfloat16 (NEP 50 weak scalar, as f... (f9320d6009)
 def test_a_python_float_does_not_widen_a_low_precision_array(dtype):
     """``1.0 / (1.0 + np.exp(-x))`` on a bf16 array came out ``float64``: numpy widens ml_dtypes' bfloat16 against a
     weak Python float, and HB's dist_mlp_tp then passed a double into a helper declared bf16. A Python scalar keeps

@@ -30,6 +30,7 @@ def test_argminmax_builds_no_struct():
     assert not structs, f"np.argmax built struct-typed containers: {structs}"
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_struct_pointer_vector_stringify():
     assert dtypes.struct("_val_and_idx", idx=dace.int32, val=dace.float64).to_string() == "_val_and_idx"
     # Both wrap another typeclass without going through ``typeclass.__init__``.
@@ -37,6 +38,7 @@ def test_struct_pointer_vector_stringify():
     assert dtypes.vector(dace.float32, 4).to_string()
 
 
+# Reproducer: Frontend matmul, ufunc casting and where/arange fixes (8d749ff2cf)
 def test_argmax_matches_numpy():
     rng = np.random.default_rng(42)
     a = rng.random(64)

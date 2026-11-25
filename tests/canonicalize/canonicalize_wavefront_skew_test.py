@@ -45,6 +45,7 @@ def wavefront_2d(aa: dace.float64[N, N]):
             aa[i, j] = (aa[i, j - 1] + aa[i - 1, j]) / 1.9
 
 
+# Reproducer: fix(scatter,wavefront): scope LoopToMap to proven-safe loops via direct apply (2fada3d0d8)
 def test_wavefront_skew_rewrites_to_skewed_iterators_modified_inner_lifted_to_map():
     """**Contract changed.** :class:`WavefrontSkew` now lifts the inner
     ``p``-loop to a Map directly inside the pass (via the ``LoopToMap.apply``
@@ -195,6 +196,7 @@ def test_wavefront_skew_emits_runtime_guard_for_unannotated_symbol():
     assert np.allclose(out, expected)
 
 
+# Reproducer: fix(wavefront_skew): refuse when the inner axis is already parallel (c71cf6f81c)
 def test_wavefront_skew_refuses_when_inner_already_parallel():
     """TSVC ``s1119``: ``aa[i, j] = aa[i-1, j] + bb[i, j]``. The dep ``(1, 0)``
     is only on the outer ``i`` axis; the inner ``j`` is already parallel.

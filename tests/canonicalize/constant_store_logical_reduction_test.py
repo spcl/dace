@@ -30,6 +30,7 @@ def any_per_row(g: dace.bool_[KL, NC], flag: dace.bool_[KL], unset: dace.bool_[K
                 unset[k] = False
 
 
+# Reproducer: Canon: a guarded store of a truth value the loop counter does not index is a logical reduc... (84da7dacc5)
 def test_a_guarded_truth_store_into_one_element_is_a_logical_reduction():
     sdfg = any_per_row.to_sdfg(simplify=True)
     sdfg.name = "logical_any_per_row"
@@ -51,6 +52,7 @@ def test_a_guarded_truth_store_into_one_element_is_a_logical_reduction():
         assert_matches({"flag": g.any(axis=1), "unset": ~g.any(axis=1)}, got, f"{threads} threads")
 
 
+# Reproducer: Canon: a guarded store of a truth value the loop counter does not index is a logical reduc... (84da7dacc5)
 def test_a_store_of_another_value_or_a_varying_element_stays_a_plain_store():
     @dace.program
     def not_logical(g: dace.bool_[NC], count: dace.int32[2], flag: dace.bool_[NC]):

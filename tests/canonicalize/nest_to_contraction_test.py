@@ -264,6 +264,7 @@ def test_non_accumulating_loop_whose_variable_is_not_in_the_output_is_not_lifted
     assert np.allclose(C, A[4] @ B)
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_map_lift_stays_ordered_after_the_store_of_the_prior_value():
     """``X[:] = b`` then ``X[i] = X[i] + A[i, :] @ x`` in one state: the einsum (beta=1) reads ``X`` in place, so it
     has to stay ordered after the copy that fed the map's read of ``X``."""

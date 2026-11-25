@@ -320,6 +320,7 @@ def test_rank_is_int32_when_the_nest_provably_fits_it():
     assert np.array_equal(got, want) and int(got_k[0]) == want_k
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_rank_is_int64_in_one_nest_when_the_extent_is_symbolic():
     """``N`` may be anything: no proof bounds it, so one nest takes a 64-bit rank, and no runtime test clones it."""
     sdfg = build(s341_kernel)
@@ -599,6 +600,7 @@ def inplace_via_noop_cast(Z: dace.float64[N], I: dace.int64[N]):
             c = c + 1
 
 
+# Reproducer: LoopToStreamCompaction's in-place alias check reads a copy between two access nodes on bot... (53601cf943)
 def test_refuse_in_place_compaction_through_an_array_to_array_copy():
     """The no-op cast leaves ``Z[i] -> Z[c]``, one copy edge whose memlet names only the read side."""
     assert not lifted(build(inplace_via_noop_cast))
@@ -963,6 +965,7 @@ def source_named_cursor_copy() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_source_named_copy_mixing_cursor_and_iterator_is_not_lifted():
     """The cursor check read only memlets named after the written array, so this copy's ``b[2*j - i + N_MIX]``
     passed as a plain cursor write and the scatter raced on ``b[7]`` (iterations 3 and 5)."""
@@ -1051,6 +1054,7 @@ def test_a_guard_on_the_compacted_iterator_names_the_renamed_iterator_in_its_mas
         assert np.array_equal(got[: want.size], want)
 
 
+# Reproducer: LoopToStreamCompaction: a range past its end does not size the mask negative (48a8da8cb6)
 def test_a_range_past_its_end_compacts_nothing():
     """``range(LO, HI)`` with ``LO > HI``: the mask and rank arrays are not sized by the negative count."""
     LO, HI = dace.symbol("LO"), dace.symbol("HI")

@@ -169,6 +169,7 @@ def test_tile_binop_kind_b_symbol_with_free_symbol():
 
 
 @pytest.mark.parametrize("widths", [(8,), (4, 8)])
+# Reproducer: feat(tileops): TileUnop + max/min + full prep prefix; fix RRA wcr/map-body guard (2ef9b8f3eb)
 def test_tile_binop_symbol_symbol_broadcasts(widths):
     """Both-sides Symbol: each operand broadcasts to every lane (a
     loop-invariant ``N + M`` constant fill)."""
@@ -230,6 +231,7 @@ def test_tile_binop_kind_b_scalar_broadcasts(widths):
     np.testing.assert_allclose(C, A * 2.5, rtol=0, atol=0)
 
 
+# Reproducer: feat(tileops): TileUnop + max/min + full prep prefix; fix RRA wcr/map-body guard (2ef9b8f3eb)
 def test_tile_binop_scalar_symbol_broadcasts():
     """A Scalar + Symbol pair (no Tile operand): both broadcast to every lane."""
     widths = (8,)

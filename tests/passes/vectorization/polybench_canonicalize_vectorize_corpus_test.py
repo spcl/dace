@@ -93,6 +93,7 @@ def _base(name):
 
 
 @pytest.mark.parametrize("name,phase", _cases())
+# Reproducer: fix(canonicalize): 6 root-cause fixes (+12 corpus kernels) + structured npbench/polybench... (0f2f9d30f4)
 def test_polybench_corpus(name, phase):
     canon, call_arrays, psize, ref = _base(name)
     sdfg = copy.deepcopy(canon)

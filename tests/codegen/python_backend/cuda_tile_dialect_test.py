@@ -10,11 +10,13 @@ from dace.codegen.python.dialects.cuda_tile_cpp import CudaTileCpp, check_tile_t
 
 
 @pytest.mark.parametrize("architecture", ["80", "89", "100", "120"])
+# Reproducer: Fix the code review findings in the Python, tile and Tile C++ backends (226a77aeb6)
 def test_an_ampere_or_newer_target_builds_tile_code(architecture: str):
     with dace.config.set_temporary("compiler", "cuda", "cuda_arch", value=architecture):
         check_tile_toolchain(True)
 
 
+# Reproducer: Fix the code review findings in the Python, tile and Tile C++ backends (226a77aeb6)
 def test_a_pre_ampere_target_is_refused():
     with (
         dace.config.set_temporary("compiler", "cuda", "cuda_arch", value="75"),
@@ -23,11 +25,13 @@ def test_a_pre_ampere_target_is_refused():
         check_tile_toolchain(True)
 
 
+# Reproducer: Fix the code review findings in the Python, tile and Tile C++ backends (226a77aeb6)
 def test_a_full_reduction_of_a_two_dim_tile_folds_both_dims():
     assert cpp(CudaTileCpp().reduce("+", "x", None, 2)) == "ct::sum<0>(ct::sum<1>(x))"
 
 
 @pytest.mark.parametrize("op", ["min", "max"])
+# Reproducer: Fix the code review findings in the Python, tile and Tile C++ backends (226a77aeb6)
 def test_a_masked_lane_of_a_min_or_max_reads_a_cpp_infinity(op: str):
     dialect = CudaTileCpp()
 

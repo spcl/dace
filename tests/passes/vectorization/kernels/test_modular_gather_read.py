@@ -46,6 +46,7 @@ def square_gather_read_1d(out: dace.float64[X], a: dace.float64[S]):
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 @pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_modular_gather_read_1d(branch_mode, remainder_strategy):
     """``out[i] = a[i % S]`` -> per-lane gather ``a[(i+l) mod S]``; S=3 < 8 exercises the wrap."""
     xv, sv = 60, 3  # xv not a multiple of 8 -> remainder tile; sv < W -> cyclic wrap within a tile
@@ -62,6 +63,7 @@ def test_modular_gather_read_1d(branch_mode, remainder_strategy):
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 @pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_modular_gather_read_2d(branch_mode, remainder_strategy):
     """2-D ``out[i, j] = a[i, j % S]`` -- linear ``i`` tile dim + modular ``j`` gather dim."""
     yv, xv, sv = 8, 60, 3
@@ -78,6 +80,7 @@ def test_modular_gather_read_2d(branch_mode, remainder_strategy):
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 @pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
+# Reproducer: vectorize: multi-dim tile refactor + cleanup + xfail/robustness fixes (snapshot) (8342237c8d)
 def test_square_gather_read_1d(branch_mode, remainder_strategy):
     """``out[i] = a[(i * i) % S]`` -- a non-affine (no integer stride) index -> per-lane
     ``((i+l)**2) mod S``."""

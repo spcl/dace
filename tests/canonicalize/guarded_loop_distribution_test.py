@@ -97,6 +97,7 @@ def cfl_reference(z: np.ndarray, dd: np.ndarray, dtime: float, wlim: float) -> d
     }
 
 
+# Reproducer: Canon: a guarded store of a truth value the loop counter does not index is a logical reduc... (84da7dacc5)
 def test_the_cfl_clipping_loop_distributes_into_maps_and_reductions():
     sdfg = cfl_clipping.to_sdfg(simplify=True)
     sdfg.name = "guarded_cfl_clipping"

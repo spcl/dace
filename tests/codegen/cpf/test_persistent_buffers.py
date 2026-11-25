@@ -170,6 +170,7 @@ def loop_sized_nest(name: str) -> dace.SDFG:
 
 
 @pytest.mark.parametrize("language", ["c++", "c"])
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_buffer_sized_by_a_loop_iterator_stays_in_the_nest(language):
     """At the entry ``i`` has no value yet: a lifted ``t[i + 1]`` would be sized before the loop sets ``i``."""
     name = f"cpf_persistent_loop_sized_{'cpp' if language == 'c++' else 'c'}"
@@ -184,6 +185,7 @@ def test_a_buffer_sized_by_a_loop_iterator_stays_in_the_nest(language):
 
 
 @pytest.mark.parametrize("language", ["c++", "c"])
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_the_unit_states_that_calls_share_its_static_buffer(language):
     """Calls share ``__cpf_persistent_buf`` with no lock, so the unit has to tell its caller not to run two at once."""
     name = f"cpf_persistent_contract_{'cpp' if language == 'c++' else 'c'}"

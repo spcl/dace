@@ -350,6 +350,7 @@ def argmax_with_index_s315(a: dace.float64[LEN], out_value: dace.float64[1], out
     out_index[0] = idx
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_kernel_never_reads_a_host_pinned_result():
     """TSVC ``s315`` on the GPU: the ``ArgReduce`` writes its (value, index) on the HOST, and the scalar carriers
     copy them into the device outputs. The copy into a scalar is host work -- pulled into the size-1 kernel that
@@ -384,6 +385,7 @@ def argmax_plus_index_s315(a: dace.float64[LEN], result: dace.float64[1]):
     result[0] = a[0]
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_kernel_never_reads_a_host_pinned_result_through_arithmetic():
     """TSVC ``s315`` itself: ``a[0] = x + float(idx)``. Once ``AccumulatorCopyChainToWCR`` forwards the copy
     ``x = argmax_val[0]`` into the addition, the tasklet that reads the host-pinned ``ArgReduce`` value also writes
@@ -407,6 +409,7 @@ def test_a_kernel_never_reads_a_host_pinned_result_through_arithmetic():
 
 
 @pytest.mark.gpu
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_kernel_never_reads_a_host_pinned_result_through_arithmetic_and_computes():
     """The same program, run on the device against numpy."""
     sdfg = argmax_plus_index_s315.to_sdfg(simplify=False)
@@ -436,6 +439,7 @@ def signed_diagonal_prefix(A: dace.float64[LEN, LEN], out: dace.float64[LEN]):
         out[k] = normx
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_scalar_a_kernel_writes_and_the_host_reads_lives_on_the_device():
     """householder_qr's ``A_index = A[k, k]``: the read of device ``A`` runs in a size-1 kernel, and the host's
     branch reads the result. A demoted symbol arrives as a ``Register`` scalar; promoted to a length-1 array for

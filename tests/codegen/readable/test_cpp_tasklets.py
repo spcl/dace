@@ -479,6 +479,7 @@ def test_gemm_cublas_gpu():
 
 
 @restores_implementation
+# Reproducer: Readable codegen: decltype of an inlined connector decays; decltype(a[i]) names a referenc... (2514e17f17)
 def test_decltype_of_an_inlined_connector_stays_a_value_type():
     """dace-fortran's zgemv with a literal complex ``alpha``: ``decltype(_in)(0.5, 2.0)`` builds a complex of
     ``_in``'s type; inlined to ``a[...]``, ``decltype`` names a reference and the cast does not compile."""

@@ -232,6 +232,7 @@ def _strided_and_offset_maps(A: dace.float64[64], B: dace.float64[64], C: dace.f
         C[i] = A[i] + 1.0
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_normalize_strided_maps_only_touches_strided_maps():
     """``NormalizeStridedMaps`` folds a non-unit map step into the index and
     leaves unit-step maps -- even with a non-zero base -- untouched (unlike the
@@ -258,6 +259,7 @@ def test_normalize_strided_maps_only_touches_strided_maps():
     assert np.allclose(post["B"], pre["B"]) and np.allclose(post["C"], pre["C"])
 
 
+# Reproducer: Canonicalization + vectorization: Symm BLAS lift, WCR nested-reduction fix, pow/ipow cleanup (9b80c9ac52)
 def test_normalize_strided_maps_leaves_loops_untouched():
     """``NormalizeStridedMaps`` is map-only: a strided ``LoopRegion`` counter is
     left as-is (only maps are normalized)."""
@@ -293,6 +295,7 @@ def two_offset_loops(A: dace.float64[N], B: dace.float64[N]):
         B[j] = B[j - 1] + A[j]
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_a_copy_memlets_other_subset_is_normalized_too():
     """A two-sided (copy) memlet indexes the map parameter on BOTH sides; leaving `other_subset`
     stale sends the copy to the row the unnormalized parameter named."""

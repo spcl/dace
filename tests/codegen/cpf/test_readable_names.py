@@ -231,6 +231,7 @@ def names_guarded_quotient_bounds(a: dace.float64[N], b: dace.float64[N], c: dac
 
 
 @pytest.mark.parametrize("language", ["c++", "c"])
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_repeated_bound_dividing_by_a_guarded_symbol_stays_in_its_branch(language):
     """``N // M - 1`` runs only under ``M > 0``; hoisted to the entry, ``M = 0`` divided by zero there."""
     name = f"cpf_names_guarded_bound_{suffix(language)}"

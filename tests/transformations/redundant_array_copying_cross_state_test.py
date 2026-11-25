@@ -60,6 +60,7 @@ def run(sdfg: dace.SDFG) -> np.ndarray:
     return res
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_refuses_a_chain_whose_producer_is_in_another_state():
     sdfg = build(cross_state=True)
     before = sdfg.to_json()
@@ -71,6 +72,7 @@ def test_refuses_a_chain_whose_producer_is_in_another_state():
     assert sdfg.to_json() == before, "a transformation that does not apply must not mutate the SDFG"
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_cross_state_chain_still_computes_the_right_numbers():
     sdfg = build(cross_state=True)
     sdfg.apply_transformations_repeated(RedundantArrayCopyingIn, validate=False)
@@ -79,6 +81,7 @@ def test_cross_state_chain_still_computes_the_right_numbers():
     assert np.allclose(run(sdfg), np.arange(1, N + 1, dtype=np.float64))
 
 
+# Reproducer: Fix ordering-edge, WCR and View handling across the simplify and canonicalize passes (4d46aa8edf)
 def test_still_folds_a_chain_wholly_inside_one_state():
     """Positive control: with the producer in the same state every writer is redirected."""
     sdfg = build(cross_state=False)

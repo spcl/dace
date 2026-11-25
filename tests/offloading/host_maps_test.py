@@ -342,6 +342,7 @@ def test_the_sequential_fallback_arm_of_a_guard_keeps_its_map_on_the_host():
     assert list(pinned) == [entry]
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_an_index_read_the_propagation_cannot_see_moves_at_most_its_subset():
     """ilu0's per-iteration ``col_j = A_indices[m]`` propagates to ``A_indices[0:nnz]`` with volume ``nnz * len``:
     the map can touch no more than the ``nnz`` elements, so that is what it moves."""

@@ -48,6 +48,7 @@ def _vectorized(tag):
     return sdfg
 
 
+# Reproducer: Fix four empty-happens-before-memlet defects in vectorization and LoopToMap (9785608b08)
 def test_lowers_to_a_broadcast_load_and_a_tile_store():
     sdfg = _vectorized("bcast_copy_struct")
     loads = [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileGather)]
@@ -57,6 +58,7 @@ def test_lowers_to_a_broadcast_load_and_a_tile_store():
     assert stores, "the tile is never stored back to the global array"
 
 
+# Reproducer: Fix four empty-happens-before-memlet defects in vectorization and LoopToMap (9785608b08)
 def test_the_stored_window_is_the_whole_tile():
     """The write subset must stay the per-tile window; collapsing it to a single element is the
     regression this guards (the dropped ``other_subset``)."""
@@ -71,6 +73,7 @@ def test_the_stored_window_is_the_whole_tile():
                     assert any(str(s) == "8" for s in sizes), f"{node.label} stores {edge.data.subset}, not a tile"
 
 
+# Reproducer: Fix four empty-happens-before-memlet defects in vectorization and LoopToMap (9785608b08)
 def test_value_preserving():
     n = 61  # not a multiple of the width: exercises the masked remainder body
     rng = np.random.default_rng(11)

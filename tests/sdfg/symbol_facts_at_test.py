@@ -150,6 +150,7 @@ def test_unsigned_symbol_is_nonnegative():
     assert symbolic.ask(le("0", "U"), SymbolResolver().facts_at(sdfg)) is symbolic.Truth.TRUE
 
 
+# Reproducer: Fix ten symbol-registry review findings (648819b75d)
 def test_inverted_loop_body_does_not_know_the_iterator_range():
     """The body of an inverted loop runs before its condition is checked, so the iterator may leave the range."""
     sdfg = dace.SDFG("facts_at_inverted_loop")
@@ -160,6 +161,7 @@ def test_inverted_loop_body_does_not_know_the_iterator_range():
     assert symbolic.ask(le("i", "N - 1"), SymbolResolver().facts_at(loop)) is symbolic.Truth.UNKNOWN
 
 
+# Reproducer: Fix the second round of symbol-registry review findings (88205a5616)
 def test_nothing_is_assumed_of_a_symbol_an_edge_reassigns():
     """``N`` is positive on entry, but ``N = N - 5`` may make it negative after."""
     sdfg = dace.SDFG("facts_at_reassigned")

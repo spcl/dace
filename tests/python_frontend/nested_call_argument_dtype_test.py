@@ -34,11 +34,13 @@ def fills_a_float64_buffer(out: dace.float64[N]):
     out[:] = t
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_an_array_of_another_element_type_is_refused():
     with pytest.raises(DaceSyntaxError, match="declared float64 but"):
         fills_a_float32_buffer.to_sdfg()
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_an_array_of_the_declared_element_type_is_bound():
     out = np.zeros(6)
     fills_a_float64_buffer(out=out, N=6)

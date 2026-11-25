@@ -119,6 +119,7 @@ def connector_names(code: str) -> list[str]:
     return re.findall(r"\b__(?:in|out|arr)\w*", code)
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_connector_temporaries_of_any_type_fold_and_compute_the_same():
     sdfg = gather_count.to_sdfg(simplify=True)
     sdfg.name = "clutter_gather_count"
@@ -134,6 +135,7 @@ def test_connector_temporaries_of_any_type_fold_and_compute_the_same():
     np.testing.assert_array_equal(counts, np.bincount(idx, minlength=n))
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_connector_local_of_another_type_keeps_its_conversion():
     types = {"n": "int64_t", "m": "int64_t", "x": "double"}
     divide = "    {\n        double __in2 = n;\n        alpha = (m / __in2);\n    }\n"
@@ -149,6 +151,7 @@ def test_a_connector_local_of_another_type_keeps_its_conversion():
     assert collapse_connector_blocks(unread, types) == "", "an unread pure value computes nothing"
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_accumulators_and_constants_get_short_names():
     sdfg = row_sums.to_sdfg(simplify=True)
     sdfg.name = "clutter_row_sums"
@@ -167,6 +170,7 @@ def test_accumulators_and_constants_get_short_names():
     assert "__g_" not in cpf_compact.compact(unit, constant, {"clutter_constant", "o"}).code
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_local_scalar_accumulates_in_place():
     sdfg = row_norms.to_sdfg(simplify=True)
     sdfg.name = "clutter_row_norms"
@@ -179,6 +183,7 @@ def test_a_local_scalar_accumulates_in_place():
     np.testing.assert_allclose(out, want)
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_reduction_writes_index_as_reads_do():
     sdfg = row_sums.to_sdfg(simplify=True)
     sdfg.name = "clutter_row_sums_idx"
@@ -196,6 +201,7 @@ def test_reduction_writes_index_as_reads_do():
     np.testing.assert_array_equal(counts[:, 1], np.bincount(idx, minlength=11))
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_copysign_inside_a_max_renders_in_c():
     sdfg = sign_max.to_sdfg(simplify=True)
     sdfg.name = "clutter_sign_max"
@@ -205,6 +211,7 @@ def test_copysign_inside_a_max_renders_in_c():
     np.testing.assert_array_equal(y, np.maximum(np.copysign(1.0, x), 0.5 * x))
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_pointer_writes_are_spelled_as_subscripts():
     sdfg = row_norms.to_sdfg(simplify=True)
     sdfg.name = "clutter_subscripts"
@@ -213,6 +220,7 @@ def test_pointer_writes_are_spelled_as_subscripts():
     assert re.search(r"\bout\[i\] = out\[i\] \+ s;", code), code
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_helpers_share_one_file_scope_table():
     sdfg = calling_nests("clutter_shared_table", ("y", "z"), constant_input=False)
     code = render(sdfg, language="c").code
@@ -226,6 +234,7 @@ def test_helpers_share_one_file_scope_table():
     np.testing.assert_array_equal(z, x + TABLE[idx])
 
 
+# Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_a_helper_reads_a_file_scope_constant_by_name():
     sdfg = calling_nests("clutter_shared_scalar", ("y",), constant_input=True)
     code = render(sdfg, language="c").code

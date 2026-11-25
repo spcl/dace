@@ -25,6 +25,7 @@ def counting_state_machine() -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: Fixes found porting extended onto the registry, each with a reproducer (a450786736)
 def test_a_lifted_counter_is_no_longer_declared():
     sdfg = counting_state_machine()
     assert sdfg.apply_transformations_repeated(LoopLifting) == 1

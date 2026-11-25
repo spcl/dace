@@ -507,6 +507,7 @@ def s255(a: dace.float64[N], b: dace.float64[N]):
         x = b[i]
 
 
+# Reproducer: CPF fixes from the llr40 and scicomp prerender (f91e1cfe51)
 def test_a_read_only_operand_behind_an_ordering_edge_is_const_in_both_units():
     """tsvc s255: the frontend orders ``y = x`` before ``x = b[i]`` with an empty memlet into ``b``. That
     edge writes nothing, so ``b`` stays ``const`` in the launcher the host unit declares and the device
@@ -524,6 +525,7 @@ def gramschmidt(A: dace.float64[N, N], Q: dace.float64[N, N], R: dace.float64[N,
         A[:, k + 1 :] = A[:, k + 1 :] - Q[:, k][:, None] * R[k, k + 1 :][None, :]
 
 
+# Reproducer: CPF fixes from the llr40 and scicomp prerender (f91e1cfe51)
 def test_a_nested_function_passes_the_state_to_its_launchers(monkeypatch):
     """A library node's expansion renders as a function of its own whose launches take ``__state``, so the
     function takes it too (gramschmidt's Dot: ``use of undeclared identifier '__state'``). The Dot is a hipBLAS
@@ -597,6 +599,7 @@ def test_a_contraction_reaches_hipblas_on_a_host_with_hiptensor(monkeypatch):
         (fft_round_trip, "cpf_hip_fft_build"),
     ],
 )
+# Reproducer: CPF fixes from the llr40 and scicomp prerender (f91e1cfe51)
 def test_the_units_build_with_hipcc(program, name, tmp_path):
     require_gpu_backend("hip")  # before rendering: the render sizes grids by the visible HIP device
     build_units(render_gpu(program, name), tmp_path, name)

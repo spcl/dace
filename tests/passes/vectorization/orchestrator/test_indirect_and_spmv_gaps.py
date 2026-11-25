@@ -131,6 +131,7 @@ def test_1d_indirect_stencil_emits_tilegather():
 
 
 @pytest.mark.parametrize("m,n", [(16, 16), (8, 24), (12, 17)])
+# Reproducer: feat(tileops): K-aware multidim gather/scatter + codegen __restrict__ fix (e3cfcbacdf)
 def test_vectorize_cpu_multi_dim_2d_indirect_stencil_matches_reference(m, n):
     """2D indirect stencil ``c[i, j] = a[idx[i, j], j] + 1.0`` lowers via
     the K-aware gather-descent slice (multi-dim index source: ``idx``

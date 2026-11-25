@@ -335,6 +335,7 @@ def test_a_row_scratch_read_after_the_map_keeps_its_extent():
     assert tuple(str(s) for s in sdfg.arrays["t"].shape) == ("N", "K")
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_a_column_major_row_scratch_read_through_a_view_keeps_its_extent():
     """The View of ``t[i, 0:K]`` keeps the stride ``N`` it was given; shrunk to ``(1, K)``, ``t``'s row is packed."""
     sdfg = row_scratch_sdfg("row_scratch_fortran_view", fortran=True, through_view=True)
@@ -359,11 +360,13 @@ def two_spellings_state(name: str) -> tuple[dace.SDFGState, list]:
     return state, [first, second]
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_one_box_spelled_two_ways_is_one_box():
     _, edges = two_spellings_state("uniform_subset_spelling")
     assert uniform_subset(edges) is not None
 
 
+# Reproducer: Extents compared by value at every view and transient removal site; counterexamples fixed;... (cc45541710)
 def test_a_dimension_spelled_two_ways_is_shared():
     _, edges = two_spellings_state("shared_dimensions_spelling")
     shared = shared_dimensions(edges, {})

@@ -537,6 +537,7 @@ def map_range_connectors(sdfg: dace.SDFG):
     return out
 
 
+# Reproducer: cloudsc gpu offload: fix cuda codegen, pin default stream (888e52133e)
 def test_readonly_dynamic_map_range_becomes_a_symbol():
     """A never-written bound read only as a map range is turned into a symbol, connector and all.
 
@@ -557,6 +558,7 @@ def test_readonly_dynamic_map_range_becomes_a_symbol():
     sdfg.validate()
 
 
+# Reproducer: cloudsc gpu offload: fix cuda codegen, pin default stream (888e52133e)
 def test_written_dynamic_range_scalar_is_left_alone():
     """The rewrite is only sound for a loop-invariant bound: a stored-to scalar keeps its container.
 
@@ -570,6 +572,7 @@ def test_written_dynamic_range_scalar_is_left_alone():
     assert map_range_connectors(sdfg) == {"kfdia"}
 
 
+# Reproducer: cloudsc gpu offload: fix cuda codegen, pin default stream (888e52133e)
 def test_offload_pins_the_default_stream():
     """Every launch and async copy must run on the default (null) stream.
 
@@ -583,6 +586,7 @@ def test_offload_pins_the_default_stream():
     assert int(Config.get("compiler", "cuda", "max_concurrent_streams")) == -1
 
 
+# Reproducer: cloudsc gpu offload: fix cuda codegen, pin default stream (888e52133e)
 def test_offloaded_graph_generates_default_stream_cuda():
     """The pinned setting reaches the emitted code: streams are nulled, never created."""
     sdfg = blocked_sdfg()
@@ -593,6 +597,7 @@ def test_offloaded_graph_generates_default_stream_cuda():
     assert "StreamCreateWithFlags" not in cuda, "no concurrent stream may be created"
 
 
+# Reproducer: cloudsc gpu offload: fix cuda codegen, pin default stream (888e52133e)
 def test_register_scalars_are_state_lifetime():
     """A Register scalar is a C++ local; at the default ``Scope`` lifetime it is declared inside the
     braces of the component that writes it, so a kernel launched from a LATER component of the same
@@ -605,6 +610,7 @@ def test_register_scalars_are_state_lifetime():
     assert sdfg.arrays["acc"].lifetime == dtypes.AllocationLifetime.State
 
 
+# Reproducer: cloudsc gpu offload: fix cuda codegen, pin default stream (888e52133e)
 def test_view_in_a_kernel_still_code_generates():
     """A transient View inside a kernel must survive GPU code generation.
 

@@ -124,6 +124,7 @@ def test_nested_sdfg_round_trips_its_own_repo():
     assert json.dumps(loaded.to_json()) == json.dumps(sdfg.to_json())
 
 
+# Reproducer: Fix the second round of symbol-registry review findings (88205a5616)
 def test_scopes_of_removed_owners_are_ignored():
     """A transformation that removes a scope's owner removes its names with it; nothing else has to clean up."""
     sdfg = loop_in_loop_sdfg()

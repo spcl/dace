@@ -957,6 +957,7 @@ def two_branches_sdfg(name: str, resize: bool = False) -> dace.SDFG:
     return sdfg
 
 
+# Reproducer: Allocate a transient after the branch that assigns its size (b35befeca8)
 def test_a_transient_sized_in_one_branch_and_read_in_a_later_one_is_allocated_after_its_size():
     """The allocation of ``t`` follows the assignment of ``n`` in the first branch, not the state ahead of it."""
     sdfg = two_branches_sdfg("late_size_allocation")
@@ -970,6 +971,7 @@ def test_a_transient_sized_in_one_branch_and_read_in_a_later_one_is_allocated_af
         assert A[3] == ((1 << 20) - 1 if taken else 0.0)
 
 
+# Reproducer: Allocate a transient after the branch that assigns its size (b35befeca8)
 def test_a_transient_resized_after_its_first_use_is_refused():
     """``n`` changes between the fill and the read of ``t``: that needs a reallocation, which codegen refuses."""
     with pytest.raises(NotImplementedError, match="sized at 2 places"):

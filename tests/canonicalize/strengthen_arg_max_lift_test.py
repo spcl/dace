@@ -566,6 +566,7 @@ def _min_from_first(a: dace.float64[N], result: dace.float64[1]):
     result[0] = x
 
 
+# Reproducer: Canon fixes and performance work (canon-wip WIP 1-32) (eabfcf9196)
 def test_a_scan_starting_at_the_seed_element_is_lifted():
     """``x = a[0]; for i in range(N)``: the seed is the loop's own first element rather than ``a[start - 1]``,
     which does not exist; canonicalize still lifts the scan to a Reduce over ``a[0:N]`` (azimint_hist's range)."""

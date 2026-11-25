@@ -21,6 +21,7 @@ def _num_loops(sdfg: dace.SDFG) -> int:
     return len([r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable])
 
 
+# Reproducer: feat(parallelize): single-shot parallelization pipeline + fix RedundantArrayCopyingIn (470294025c)
 def test_parallelize_independent_loop_maps_value_preserving():
     """An embarrassingly parallel loop is mapped and stays value-preserving."""
 
@@ -42,6 +43,7 @@ def test_parallelize_independent_loop_maps_value_preserving():
     assert np.allclose(B, A * 2.0)
 
 
+# Reproducer: feat(parallelize): single-shot parallelization pipeline + fix RedundantArrayCopyingIn (470294025c)
 def test_parallelize_rowsum_reduction_value_preserving():
     """A per-row accumulator reduction parallelizes (the outer row loop becomes a
     map; the accumulator is privatized/WCR'd) and matches the numpy oracle."""
@@ -64,6 +66,7 @@ def test_parallelize_rowsum_reduction_value_preserving():
     assert np.allclose(out, A.sum(axis=1))
 
 
+# Reproducer: feat(parallelize): single-shot parallelization pipeline + fix RedundantArrayCopyingIn (470294025c)
 def test_parallelize_runs_once_idempotent():
     """The pipeline is single-shot: a second run does not change a fixed SDFG's
     results, and reports the same number of stages."""

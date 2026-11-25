@@ -106,6 +106,7 @@ def _run(sdfg, impl):
 
 @pytest.mark.parametrize("op", ["sum", "max"])
 @pytest.mark.parametrize("masked", [False, True])
+# Reproducer: Readable codegen: fix BLAS/reduction-lowered corpus kernels (f06067736c)
 def test_openmp_reduction_generates_clean(op, masked):
     """A full reduction lowers to ONE ``dace::reduce`` call, correctly inlined and never atomic."""
     _require_omp_reduce()
@@ -171,6 +172,7 @@ def test_openmp_partial_reduction_generates_clean():
 
 @pytest.mark.parametrize("op", ["sum", "max"])
 @pytest.mark.parametrize("masked", [False, True])
+# Reproducer: Readable codegen: fix BLAS/reduction-lowered corpus kernels (f06067736c)
 def test_openmp_reduction_bit_exact(op, masked):
     """Experimental output is bit-exact vs legacy (single OpenMP thread -> deterministic order)."""
     _require_omp_reduce()

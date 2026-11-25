@@ -268,6 +268,7 @@ def _forward_read_big_array(a: dace.float64[N], flat: dace.float64[LEN_2D * LEN_
         flat[4 + i] = flat[8 + i] + a[i]
 
 
+# Reproducer: canon: schedule-aware finalize + perf/correctness fixes (snapshot) (9501372125)
 def test_forward_read_anti_dependence_snapshots_and_stays_bit_exact():
     """s422 shape: a forward-read anti-dependence (``flat[4 + i]`` written, ``flat[8 + i]``
     read-ahead). Anti-dependence is allowed by default -- the array is snapshotted before

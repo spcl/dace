@@ -190,6 +190,7 @@ def test_two_consumers_each_recompute_the_producer():
     assert len(top_level_maps(sdfg)) == 2
 
 
+# Reproducer: Stop three passes from silently returning the wrong numbers (ed743e2e87)
 def test_consumers_in_separate_states_stay_materialized():
     """The consumer count is a property of the SDFG, not of the state the match was found in.
 
