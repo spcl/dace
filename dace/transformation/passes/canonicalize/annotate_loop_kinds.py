@@ -3,7 +3,7 @@
 
 import copy
 import re
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -1295,10 +1295,34 @@ def proof_of_carry(loop: LoopRegion, reason: LoopRefusal, witnessed: str | None)
     # The element-level proof also names the direction: LoopToMap's "read-after-write conflict" is
     # any read meeting a write, so its access alone reads as RAW for a read-ahead WAR too.
     access = proven_carrying_access(loop)
-    if access is None and reason.kind is Refusal.CARRIED_SYMBOL and not has_branch(loop):
+    if access is not None or reason.kind is not Refusal.CARRIED_SYMBOL:
+        return access
+    recurrent = SELF_RECURRENT.search(reason.message) is not None
+    if not has_branch(loop) or (recurrent and not assigned_under_branch(loop, reason.symbols)):
         # A symbol one iteration hands to the next: the witness is two consecutive iterations.
-        access = carrying_access(reason) + pattern_witness(loop, 1)
-    return access
+        return carrying_access(reason) + pattern_witness(loop, 1)
+    if recurrent:
+        # A counter (``ijh = ijh + 1``) reads its own last value: every iteration that runs it hands it on.
+        return (
+            f"{carried_symbol_text(reason)} carries a value from each iteration that runs it to the next one that "
+            "does (a branch decides which); parallel only as a scan of its increments"
+        )
+    return None
+
+
+def assigned_under_branch(loop: LoopRegion, symbols: Iterable[str]) -> bool:
+    """Whether a branch inside ``loop`` encloses an assignment of one of ``symbols``: a branch elsewhere in the body
+    (QE vexx's ``if (arr35 >= mb)`` beside ``ijh = ijh + 1``) does not let an iteration skip it."""
+    names = set(symbols)
+    for region in loop.all_control_flow_regions():
+        if not any(names & e.data.assignments.keys() for e in region.edges()):
+            continue
+        enclosing = region
+        while enclosing is not None and enclosing is not loop:
+            if isinstance(enclosing, ConditionalBlock):
+                return True
+            enclosing = enclosing.parent_graph
+    return False
 
 
 def has_branch(loop: LoopRegion) -> bool:
