@@ -31,6 +31,8 @@ from dace import SDFG, dtypes, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.symbolic_facts import is_small_extent
+from dace.transformation.dataflow.map_dim_shuffle import MapDimShuffle
+from dace.transformation.dataflow.map_expansion import MapExpansion
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
@@ -296,22 +298,68 @@ def holds_maps(state: SDFGState, entry: nodes.MapEntry) -> bool:
     return False
 
 
+def block_params(state: SDFGState, entry: nodes.MapEntry, small: set[str]) -> dict[str, set[str]]:
+    """The parameters of ``entry`` that index an array dimension whose size names only ``small`` symbols, on an edge
+    at the map's boundary, each with those symbols: ICON's ``jb`` indexes ``p_prog_w[..., jb]``, sized by
+    ``nblks_c``, whatever the block tables bound it to."""
+    edges = [*state.out_edges(entry), *state.in_edges(state.exit_node(entry))]
+    found: dict[str, set[str]] = {}
+    for param in entry.map.params:
+        for edge in edges:
+            if edge.data.data is None or edge.data.subset is None:
+                continue
+            shape = state.sdfg.arrays[edge.data.data].shape
+            ranges = edge.data.subset.ndrange()
+            if len(ranges) != len(shape):
+                continue
+            for rng, size in zip(ranges, shape):
+                names = {str(free) for free in symbolic.pystr_to_symbolic(size).free_symbols}
+                read = {str(free) for bound in rng[:2] for free in symbolic.pystr_to_symbolic(bound).free_symbols}
+                if names and names <= small and param in read:
+                    found.setdefault(param, set()).update(names)
+    return found
+
+
+def split_out(state: SDFGState, entry: nodes.MapEntry, outer: list[str]) -> nodes.MapEntry:
+    """Split the dimensions ``outer`` of ``entry`` out as a map around the rest; return the outer map's entry."""
+    order = outer + [param for param in entry.map.params if param not in outer]
+    if order != entry.map.params:
+        MapDimShuffle.apply_to(state.sdfg, map_entry=entry, options={"parameters": order}, verify=False)
+    MapExpansion.apply_to(
+        state.sdfg,
+        map_entry=entry,
+        options={"split_at": len(outer), "inner_schedule": dtypes.ScheduleType.Default},
+        verify=False,
+    )
+    return entry
+
+
 def small_maps(sdfg: SDFG) -> list[nodes.MapEntry]:
-    """The top-level maps of ``sdfg``'s own states that hold maps and whose every extent is small
-    (:func:`~dace.symbolic_facts.is_small_extent`: a literal, or symbols declared ``SMALL``), each given the reason it
-    will run sequentially: a GPU offload keeps them on the host and launches the maps inside them, not a kernel of a
-    few threads that walks whole columns. A symbolic extent of default scale (CloudSC's ``NBLOCKS``) stays the grid,
-    and a small map with no map inside stays the kernel: its iterations are all the parallelism there is."""
+    """The top-level maps of ``sdfg``'s own states to keep on the host, each given the reason it will run
+    sequentially: a GPU offload keeps them on the host and launches the maps inside them, not a kernel of a few
+    threads that walks whole columns.
+
+    A map around maps is one when its every extent is small (:func:`~dace.symbolic_facts.is_small_extent`: a literal,
+    or symbols declared ``SMALL``), or when its every parameter is a block index (:func:`block_params`). A map whose
+    parameters are only partly block indices (ICON's ``jb`` x ``jk``) splits them out as a map around the rest. A
+    symbolic extent of default scale (CloudSC's ``NBLOCKS``) stays the grid, and a small map with no map inside stays
+    the kernel: its iterations are all the parallelism there is."""
     facts = sdfg.facts()
     found = []
     for state in sdfg.states():
-        for entry in state.scope_children()[None]:
-            if not isinstance(entry, nodes.MapEntry) or not holds_maps(state, entry):
+        for entry in list(state.scope_children()[None]):
+            if not isinstance(entry, nodes.MapEntry):
                 continue
             sizes = [symbolic.pystr_to_symbolic(size) for size in entry.map.range.size()]
-            if not all(is_small_extent(size, facts) for size in sizes):
+            blocks = block_params(state, entry, set(facts.small))
+            if 0 < len(blocks) < len(entry.map.params):
+                entry = split_out(state, entry, list(blocks))
+                sizes = [symbolic.pystr_to_symbolic(size) for size in entry.map.range.size()]
+            elif not holds_maps(state, entry) or not (blocks or all(is_small_extent(size, facts) for size in sizes)):
                 continue
-            names = sorted({str(free) for size in sizes for free in size.free_symbols})
+            names = sorted(set().union(*blocks.values())) or sorted(
+                {str(free) for size in sizes for free in size.free_symbols}
+            )
             entry.specialization_hint = (
                 SMALL_DIMENSION_HINT.format(names=", ".join(names))
                 if names

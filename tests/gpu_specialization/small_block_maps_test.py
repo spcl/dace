@@ -34,6 +34,53 @@ def blocked_columns(blocks: str) -> dace.SDFG:
     return program.to_sdfg(simplify=True)
 
 
+NB, K, lo, hi = (dace.symbol(name) for name in ("NB", "K", "lo", "hi"))
+
+
+@dace.program
+def blocked_levels(A: dace.float64[NB, K], B: dace.float64[NB, K]):
+    # ICON's jb x jk: the block range comes from bounds (lo, hi) of default scale, the arrays are sized by NB
+    for jb, jk in dace.map[lo:hi, 0:K]:
+        B[jb, jk] = 2.0 * A[jb, jk]
+
+
+def levels_offloaded(small: bool) -> dace.SDFG:
+    sdfg = blocked_levels.to_sdfg(simplify=True)
+    if small:
+        sdfg.set_symbol_scale("NB", symbolic.Scale.SMALL)
+    canonicalize(sdfg, target="gpu")
+    return offloaded(sdfg)
+
+
+def test_a_block_dimension_of_a_merged_map_is_split_out_as_a_host_map_around_the_kernel():
+    sdfg = levels_offloaded(small=True)
+    hosts = [
+        entry
+        for entry, parent in sdfg.all_nodes_recursive()
+        if isinstance(entry, dace.nodes.MapEntry) and entry.map.schedule == dtypes.ScheduleType.Sequential
+    ]
+    assert any("small dimension (NB)" in (entry.specialization_hint or "") for entry in hosts)
+    assert kernels(sdfg)
+    for entry in device_maps(sdfg):
+        assert not {"lo", "hi"} & {str(free) for free in entry.map.range.free_symbols}
+
+
+def test_a_block_dimension_of_undeclared_scale_stays_in_the_grid():
+    sdfg = levels_offloaded(small=False)
+    assert any({"lo", "hi"} & {str(free) for free in entry.map.range.free_symbols} for entry in kernels(sdfg))
+
+
+@pytest.mark.gpu
+def test_a_split_block_dimension_matches_numpy():
+    cupy = pytest.importorskip("cupy")
+    A = np.random.default_rng(8).random((4, 300))
+    B = cupy.zeros_like(cupy.asarray(A))
+    levels_offloaded(small=True)(A=cupy.asarray(A), B=B, NB=4, K=300, lo=1, hi=3)
+    expected = np.zeros_like(A)
+    expected[1:3] = 2.0 * A[1:3]
+    np.testing.assert_array_equal(B.get(), expected)
+
+
 def canonical(blocks: str, constants: dict[str, int] | None = None, small: bool = False) -> dace.SDFG:
     sdfg = blocked_columns(blocks)
     if constants:
@@ -157,6 +204,9 @@ def test_a_block_map_the_caller_made_sequential_matches_numpy():
 
 
 if __name__ == "__main__":
+    test_a_block_dimension_of_a_merged_map_is_split_out_as_a_host_map_around_the_kernel()
+    test_a_block_dimension_of_undeclared_scale_stays_in_the_grid()
+    test_a_split_block_dimension_matches_numpy()
     test_a_map_over_a_symbolic_block_count_stays_the_grid("NB")
     test_a_map_over_a_symbolic_block_count_stays_the_grid("nblks")
     test_a_map_over_blocks_declared_small_is_a_sequential_host_map_around_the_kernels()
