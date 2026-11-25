@@ -1,11 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A map around library calls no kernel can run stays on the host whole, as in the CPU form (quatrex_rgf's energy map);
-one around a call a kernel can run is that kernel (polybench doitgen's matrix-vector product per ``(r, q)``)."""
+one around a call a kernel can run is that kernel (polybench doitgen's matrix-vector product per ``(r, q)``); one
+around a call that grows with the problem issues it on the device per iteration (QE vexx's FFT per band block)."""
 
 import numpy as np
 import pytest
 
 import dace
+from dace.libraries.fft.nodes.fft import FFT
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
@@ -13,6 +15,7 @@ from dace.transformation.passes.canonicalize.pipeline import canonicalize
 N = dace.symbol("N")
 BS = 8
 NR, NQ, NP = (dace.symbol(s) for s in ("NR", "NQ", "NP"))
+NB, NX, NY = (dace.symbol(s) for s in ("NB", "NX", "NY"))
 
 
 @dace.program
@@ -25,6 +28,12 @@ def inverse_products(A: dace.float64[N, BS, BS], B: dace.float64[N, BS, BS], C: 
 def doitgen_rows(A: dace.float64[NR, NQ, NP], C4: dace.float64[NP, NP]):
     for r, q in dace.map[0:NR, 0:NQ]:
         A[r, q, :] = A[r, q, :] @ C4
+
+
+@dace.program
+def plane_ffts(X: dace.complex128[NB, NX, NY], Y: dace.complex128[NB, NX, NY]):
+    for b in dace.map[0:NB]:
+        Y[b] = np.fft.fftn(X[b])
 
 
 def gpu_final(name: str, program=inverse_products) -> dace.SDFG:
@@ -81,8 +90,34 @@ def test_a_kernel_around_a_matrix_vector_product_computes_what_numpy_computes():
     np.testing.assert_allclose(cupy.asnumpy(out), A @ C4, rtol=1e-13)
 
 
+def test_a_map_around_a_problem_sized_fft_calls_it_on_the_device():
+    sdfg = gpu_final("plane_ffts_structure", plane_ffts)
+    ffts = [(n, parent) for n, parent in sdfg.all_nodes_recursive() if isinstance(n, FFT)]
+
+    # A 2-D transform has no in-kernel lowering; its NX x NY operands make it a device-wide call per plane, not
+    # host code with host copies of X and Y
+    assert ffts
+    for node, state in ffts:
+        operands = [state.sdfg.arrays[e.data.data] for e in state.all_edges(node) if not e.data.is_empty()]
+        assert all(desc.storage == dace.StorageType.GPU_Global for desc in operands), node.label
+    assert dace.ScheduleType.CPU_Multicore not in [m.map.schedule for m in outer_maps(sdfg)]
+
+
+@pytest.mark.gpu
+def test_a_map_around_a_problem_sized_fft_computes_what_numpy_computes():
+    import cupy
+
+    rng = np.random.default_rng(0)
+    X = rng.random((3, 4, 6)) + 1j * rng.random((3, 4, 6))
+    Y = cupy.zeros((3, 4, 6), dtype=np.complex128)
+    gpu_final("plane_ffts_numerics", plane_ffts)(X=cupy.asarray(X), Y=Y, NB=3, NX=4, NY=6)
+    np.testing.assert_allclose(cupy.asnumpy(Y), np.fft.fftn(X, axes=(1, 2)), rtol=1e-12, atol=1e-12)
+
+
 if __name__ == "__main__":
     test_a_map_around_an_inverse_is_a_kernel()
     test_a_map_around_an_inverse_computes_what_numpy_computes()
     test_a_map_around_a_matrix_vector_product_is_a_kernel()
     test_a_kernel_around_a_matrix_vector_product_computes_what_numpy_computes()
+    test_a_map_around_a_problem_sized_fft_calls_it_on_the_device()
+    test_a_map_around_a_problem_sized_fft_computes_what_numpy_computes()
