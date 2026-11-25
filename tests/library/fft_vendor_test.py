@@ -492,7 +492,7 @@ def test_a_threaded_fftw_plans_for_the_team(threaded):
 
 
 @pytest.mark.fftw
-# Reproducer: planner segfault after a program unloaded libfftw3_omp, FFTW3 expansion without the pin (ault 924609)
+# Reproducer: planner segfault after a program unloaded libfftw3_omp, FFTW3 expansion without threads cleanup (ault 924609)
 def test_a_program_plans_after_a_threaded_one_was_unloaded():
     """Unloading a program unmapped ``libfftw3_omp`` while ``libfftw3`` stayed loaded with the threaded solvers its
     ``init_threads`` registered, and the next plan of any program segfaulted in the planner."""
@@ -513,6 +513,39 @@ def test_a_program_plans_after_a_threaded_one_was_unloaded():
         del sdfg
         gc.collect()
     del holder
+
+
+@pytest.mark.fftw
+def test_a_loaded_program_keeps_planning_after_a_threaded_one_was_unloaded():
+    """Unloading one program cleans up FFTW's threads; another program still loaded runs its cached plan and plans a
+    new length."""
+    if not fftw3.threaded(True):
+        pytest.skip("no threaded FFTW planner")
+    compiled = {}
+    for n in (40, 41):
+
+        @dace.program
+        def transform(x: dace.complex128[n]):
+            return np.fft.fft(x)
+
+        sdfg = compile_with(transform, "FFTW3")
+        sdfg.name = f"fft_kept_loaded_{n}"
+        compiled[n] = sdfg.compile()
+        x = rng_complex((n,))
+        np.testing.assert_allclose(compiled[n](x=x.copy()), np.fft.fft(x), rtol=1e-12, atol=1e-12)
+    del compiled[40]
+    gc.collect()
+    x = rng_complex((41,))
+    np.testing.assert_allclose(compiled[41](x=x.copy()), np.fft.fft(x), rtol=1e-12, atol=1e-12)
+
+    @dace.program
+    def other_length(x: dace.complex128[42]):
+        return np.fft.fft(x)
+
+    sdfg = compile_with(other_length, "FFTW3")
+    sdfg.name = "fft_planned_after_cleanup_42"
+    x = rng_complex((42,))
+    np.testing.assert_allclose(run_without_fallback(sdfg, x=x.copy()), np.fft.fft(x), rtol=1e-12, atol=1e-12)
 
 
 def test_an_fftw3_plan_is_cached_by_the_library():
@@ -741,6 +774,7 @@ if __name__ == "__main__":
     test_a_threaded_fftw_plans_for_the_team(True)
     test_a_threaded_fftw_plans_for_the_team(False)
     test_a_program_plans_after_a_threaded_one_was_unloaded()
+    test_a_loaded_program_keeps_planning_after_a_threaded_one_was_unloaded()
     test_hipfft_is_the_cufft_code_renamed()
     test_set_fast_implementations_lowers_fft_to_the_cpu_vendor()
     test_the_gpu_fast_library_list_names_the_vendor_fft()

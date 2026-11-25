@@ -345,17 +345,13 @@ def fftw3_call(transform: FFTTransform, threaded: bool | None = None) -> nodes.T
         else "(long long)(reinterpret_cast<uintptr_t>(__in) % 64), (long long)(reinterpret_cast<uintptr_t>(__out) % 64)"
     )
     sign = f"{'FFTW_BACKWARD' if transform.inverse else 'FFTW_FORWARD'}, " if kind == "dft" else ""
-    # Unloading a program would unmap FFTW's threads library under the solvers it registered in libfftw3 (MKL has none)
-    pin = (
-        f"static const int __threads_pinned = dace::fft::PinLibraryOf(reinterpret_cast<void *>(&{prefix}_init_threads));"
-        " (void)__threads_pinned;\n"
-        if threaded is None
-        else ""
-    )
+    # FFTW's init_threads registers solvers of its threads library in libfftw3's planner; the program's plan cache
+    # unregisters them once its plans are gone, before unloading the program may unmap that library. MKL has none.
+    cleanup = f"__state->{prefix}_plans.Finally({prefix}_cleanup_threads);\n" if threaded is None else ""
     threaded = fftw3.threaded(transform.double) if threaded is None else threaded
     # A threaded FFTW plans for the program's OpenMP team, or for one thread inside a parallel region. Only a new
     # plan, under the cache's lock, initializes the threads, which FFTW allows repeatedly.
-    team = f"{prefix}_init_threads();\n{pin}{prefix}_plan_with_nthreads(__threads);" if threaded else ""
+    team = f"{prefix}_init_threads();\n{cleanup}{prefix}_plan_with_nthreads(__threads);" if threaded else ""
     threads = "omp_in_parallel() ? 1 : omp_get_max_threads()" if threaded else "1"
     # The cache is shared by every transform of this precision, so the key names the transform kind too.
     kind_key = (
