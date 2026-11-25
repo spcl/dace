@@ -62,16 +62,14 @@ LANE_STRIDED = (
 LANE_PARTIALS = ", each lane into its own partial; a block reduction then combines the lanes' partials"
 
 
-def lane_strided_hint(state: SDFGState, entry: nodes.MapEntry) -> str:
+def lane_strided_hint(state: SDFGState, entry: nodes.MapEntry, spread: str = LANE_STRIDED) -> str:
     """``entry``'s class line (its hint's, else the one its accesses give it) and notes, with how the lanes share the
-    map out. The loop is run in parallel, so it keeps no ``not parallelized`` note."""
+    map out (``spread``). The loop is run in parallel, so it keeps no ``not parallelized`` note."""
     first, newline, notes = (entry.specialization_hint or "").partition("\n")
     if not first.startswith(LoopClass.PARALLEL.prefix):
         first, newline, notes = parallel_hint(state, entry, []), "\n", "\n".join(filter(None, (first, notes)))
     first = first.split(cpf_lowering.NOT_PARALLELIZED)[0]
-    spread = LANE_STRIDED + (
-        LANE_PARTIALS if reason_of(first[len(LoopClass.PARALLEL.prefix) :]) is Reason.REDUCTION else ""
-    )
+    spread += LANE_PARTIALS if reason_of(first[len(LoopClass.PARALLEL.prefix) :]) is Reason.REDUCTION else ""
     return f"{first}{cpf_lowering.SPREAD_OVER_THREADS}{spread}{newline}{notes}"
 
 
