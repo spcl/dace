@@ -71,10 +71,11 @@ CLOSING_WITH_FALLBACKS = CLOSING.replace(
     "either parallel or a proven recurrence",
     "parallel, a proven recurrence, or the in-order fallback arm of a guarded loop (run only when its guard fails)",
 )
-#: :data:`CLOSING` for a unit without a loop: its work is in library calls (a BLAS call), with nothing to reorder.
+#: :data:`CLOSING` for a unit without a loop: its work is in library calls (a BLAS call) or, for the host unit of a
+#: GPU rendering, in the kernels it launches, with nothing to reorder here.
 CLOSING_NO_LOOPS = (
-    "// No loop in this unit: its work is in the library calls below. Gains come from the call's own threading and "
-    "from memory traffic around it."
+    "// No loop in this unit: its work is in the calls it makes (library calls, or the kernels of the device unit it "
+    "launches). Gains come from the callee's own threading and from memory traffic around it."
 )
 
 
