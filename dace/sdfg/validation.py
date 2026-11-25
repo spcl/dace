@@ -1006,6 +1006,21 @@ def validate_state(
                     eid,
                 )
 
+        # A subset is symbolic, and a data container is not a symbol: its value may change, or not be accessible
+        if e.data.data is not None:
+            for subset in (e.data.subset, e.data.other_subset):
+                containers_read = sorted(
+                    str(s) for s in (subset.free_symbols if subset else ()) if str(s) in sdfg.arrays
+                )
+                if containers_read:
+                    raise InvalidSDFGEdgeError(
+                        f"Memlet {e.data} uses data containers {containers_read} in its subsets. Read them in an "
+                        "indirection tasklet, or assign them to symbols on an inter-state edge.",
+                        state.parent_graph,
+                        state_id,
+                        eid,
+                    )
+
         # Check memlet subset validity with respect to source/destination nodes
         if e.data.data is not None and e.data.allow_oob == False:
             subset_node = dst_node if isinstance(dst_node, nd.AccessNode) and e.data.data == dst_node.data else src_node
