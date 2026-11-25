@@ -68,6 +68,7 @@ from dace.transformation.passes.canonicalize.induction_variable_substitution imp
     LoopCarriedRotationSubstitution,
 )
 from dace.transformation.passes.canonicalize.lift_break_to_find_first import LiftBreakToFindFirst
+from dace.transformation.passes.canonicalize.lift_counter_scan import LiftCounterScan
 from dace.transformation.passes.canonicalize.lift_inv import LiftInv
 from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import LiftLoopCarriedReduction
 from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
@@ -633,6 +634,8 @@ def ingest(target: str) -> Stages:
         # After simplification: the raised guard of a break still reads its condition through a separate
         # preparation region before it, which the matcher does not see through.
         (INGEST, LiftBreakToFindFirst(chunk=FIND_FIRST_CHUNK[target])),
+        # While the counter is still a symbol the frontend bumps on an edge: later it becomes a scalar in the dataflow
+        (INGEST, LiftCounterScan()),
     ]
     return s + [(INGEST, StructuralCleanup())]
 
