@@ -1823,7 +1823,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 # then we can skip synchronization.
                 next_states = sdutil.get_next_nonempty_states(sdfg, state)
                 if next_states and len(streams_to_sync) == 1:
-                    if all(self._begin_streams(sdfg, ns) == streams_to_sync.keys() for ns in next_states):
+                    # A non-state successor (e.g. a return) starts no stream: synchronize
+                    if all(
+                        isinstance(ns, SDFGState) and self._begin_streams(sdfg, ns) == streams_to_sync.keys()
+                        for ns in next_states
+                    ):
                         # Relax synchronization
                         streams_to_sync = {}
 
@@ -2019,8 +2023,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         grid_dims, block_dims, tbmap, dtbmap, _ = self.get_kernel_dimensions(dfg_scope)
         is_persistent = dfg_scope.source_nodes()[0].map.schedule == dtypes.ScheduleType.GPU_Persistent
 
-        # Get parameters of subgraph
-        kernel_args = self._arglists[scope_entry]
+        # Get parameters of subgraph. A constant array is declared inside the kernel (see generate_constants
+        # below), so it is not an argument as well.
+        kernel_args = {name: desc for name, desc in self._arglists[scope_entry].items() if name not in sdfg.constants}
 
         # Handle dynamic map inputs
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
