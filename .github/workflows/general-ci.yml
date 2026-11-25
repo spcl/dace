@@ -106,7 +106,8 @@ jobs:
         # the general selection above: those suites have their own workflows, with their own
         # configuration. A test carrying both `sequential` and one of them would otherwise run here
         # under general CI's settings rather than under the ones its own workflow sets.
-        uv run pytest ${{ matrix.paths }} -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 ${{ matrix.ignore }} -m "sequential and not vectorization and not canonicalization and not corpus and not loop2x_libnodes and not tile and not ai"
+        # Exit code 5 (no test selected) passes: some shards hold no sequential test.
+        uv run pytest ${{ matrix.paths }} -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 ${{ matrix.ignore }} -m "sequential and not vectorization and not canonicalization and not corpus and not loop2x_libnodes and not tile and not ai" || [ $? -eq 5 ]
         ./codecov
 
     - name: Run other tests
