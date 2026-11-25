@@ -26,6 +26,7 @@ def gpu_specialize_offloaded(sdfg: SDFG) -> SDFG:
     from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
     from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated
     from dace.transformation.passes.gpu_specialization.block_tile_kernels import BlockTileKernels
+    from dace.transformation.passes.gpu_specialization.column_lane_kernels import ColumnLaneKernels
     from dace.transformation.passes.gpu_specialization.contiguous_axis_to_threads import ContiguousAxisToThreads
     from dace.transformation.passes.gpu_specialization.promote_host_maps_to_kernels import PromoteHostMapsToKernels
     from dace.transformation.passes.gpu_specialization.sequentialize_nested_device_scopes import (
@@ -46,6 +47,9 @@ def gpu_specialize_offloaded(sdfg: SDFG) -> SDFG:
     # For ``map JK { work; map JL }``, ContiguousAxisToThreads makes JL a thread dimension. It runs first
     # because SequentializeNestedDeviceScopes would otherwise pin JL sequential.
     ContiguousAxisToThreads().apply_pass(sdfg, {})
+    # A column kernel (a level loop around maps over one column axis) runs a block per outer iteration, a lane per
+    # column, before the general tiling below would stride its columns over a fixed block.
+    ColumnLaneKernels().apply_pass(sdfg, {})
     # What stays nested gets a block per outer iteration and its inner maps across the lanes, where
     # running the body once per lane is sound; the rest is pinned sequential below.
     BlockTileKernels().apply_pass(sdfg, {})

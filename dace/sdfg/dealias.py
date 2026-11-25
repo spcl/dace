@@ -9,6 +9,7 @@ from collections.abc import Callable, Collection
 
 from dace import data, dtypes, subsets, symbolic, utils
 from dace.frontend.python import astutils
+from dace.libraries.standard.nodes.reduce import Reduce
 from dace.memlet import Memlet
 from dace.sdfg import nodes as nd
 from dace.sdfg import utils as sdutil
@@ -642,6 +643,7 @@ def _restate_container(
     mover: Callable[[str, data.Data, data.Data], Callable[[Memlet], Memlet]],
     passed_symbols: set[str],
     symbol_types: dict[str, dtypes.typeclass],
+    reduce_axes: Callable[[list[int]], list[int]] | None = None,
 ) -> None:
     """
     Restates container ``name`` as ``new_desc`` and moves every access of it accordingly.
@@ -658,6 +660,8 @@ def _restate_container(
                   moves a memlet of that container.
     :param passed_symbols: The parent's symbols the moved memlets and the new descriptor are written in.
     :param symbol_types: The types of those symbols.
+    :param reduce_axes: Given the axes a ``Reduce`` of the container folds, the axes of the restated one, or None when
+                        the container keeps its dimensions.
     :note: This function operates in-place.
     """
     move = mover(name, old_desc, new_desc)
@@ -695,6 +699,8 @@ def _restate_container(
         for edge in state.edges():
             memlet = edge.data
             if memlet.data == name:
+                if reduce_axes is not None and isinstance(edge.dst, Reduce) and edge.dst.axes is not None:
+                    edge.dst.axes = reduce_axes(edge.dst.axes)
                 if memlet.subset is not None:
                     other = memlet.other_subset
                     # A copy within the container names it on both sides: the other side's subset moves too
@@ -735,7 +741,9 @@ def _restate_container(
                         node.symbol_mapping[sym] = symbolic.pystr_to_symbolic(sym)
                 replacement = copy.deepcopy(new_desc)
                 replacement.transient = False
-                _restate_container(node.sdfg, conn, inner, replacement, mover, passed_symbols, symbol_types)
+                _restate_container(
+                    node.sdfg, conn, inner, replacement, mover, passed_symbols, symbol_types, reduce_axes
+                )
 
 
 def _widen_container(
@@ -772,8 +780,16 @@ def _widen_container(
 
         return widen
 
+    # The window's dimensions of extent one are the ones the old container lacks: a reduction's axes count the others
+    kept = [d for d, size in enumerate(window.subset.size()) if size != 1]
+    reduce_axes = None
+    if len(new_desc.shape) > len(old_desc.shape) and len(kept) == len(old_desc.shape):
+
+        def reduce_axes(axes: list[int]) -> list[int]:
+            return [kept[axis] for axis in axes]
+
     passed_symbols = set(window.free_symbols) | set(map(str, new_desc.free_symbols))
-    _restate_container(sdfg, name, old_desc, new_desc, mover, passed_symbols, symbol_types)
+    _restate_container(sdfg, name, old_desc, new_desc, mover, passed_symbols, symbol_types, reduce_axes)
 
 
 def _rebase_container(
