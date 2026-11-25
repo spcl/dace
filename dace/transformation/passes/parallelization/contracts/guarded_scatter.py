@@ -687,7 +687,7 @@ def reads_within_slot(region: LoopRegion, sdfg: SDFG, name: str, slot: subsets.S
         return False
     picked = [
         dim
-        for dim, (begin, end, _) in enumerate(slot.ndrange())
+        for dim, (begin, end, _step) in enumerate(slot.ndrange())
         if begin == end and not names.isdisjoint(str(sym) for sym in symbolic.pystr_to_symbolic(begin).free_symbols)
     ]
     if not picked:
