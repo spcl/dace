@@ -185,6 +185,23 @@ def test_a_fork_note_simplifies_its_trip_counts_and_bounds_a_moving_one():
     assert "k (N - 2 iterations)" in note, note
 
 
+def test_an_inline_fused_scan_names_the_scan_not_the_kernel_function():
+    """LLR40 tsvc_2_s323: the fused scan's loops said ``implementation loop of function <the kernel>``."""
+
+    @dace.program
+    def s323(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N], e: dace.float64[N]):
+        for i in range(1, N):
+            a[i] = b[i - 1] + c[i] * d[i]
+            b[i] = a[i] + c[i] * e[i]
+
+    code = bench_c(s323, "cpf_review2_s323")
+    labels = [
+        line.strip() for line in code.splitlines() if "library loop (" in line or "implementation loop of" in line
+    ]
+    assert labels and not [line for line in labels if "function cpf_review2_s323" in line], labels
+    assert "// parallel -- implementation loop of scan: vectorized (omp simd)" in labels, labels
+
+
 if __name__ == "__main__":
     test_a_grid_stride_reduction_kernel_says_reduction_and_grid_stride()
     test_a_block_per_row_kernel_has_one_line_per_kernel_and_per_thread_block()
@@ -197,3 +214,4 @@ if __name__ == "__main__":
     test_a_gpu_fallback_arm_says_it_runs_on_the_host_and_what_it_copies()
     test_an_array_section_reduction_says_each_thread_holds_a_copy()
     test_a_fork_note_simplifies_its_trip_counts_and_bounds_a_moving_one()
+    test_an_inline_fused_scan_names_the_scan_not_the_kernel_function()

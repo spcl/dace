@@ -275,8 +275,12 @@ class FuseScanChains(ppl.Pass):
             # One position reads one element of every array the producer reads: the block holds 512 KB of those.
             element_bytes=str(sum(sdfg.arrays[name].dtype.bytes for name in producer.reads)),
         )
+        inclusive = "exclusive" if scan.exclusive else "inclusive"
         code = "\n".join(
             [
+                # Names the construct the loops below belong to (cpf_summary reads the title before the colon)
+                f"// scan: the {inclusive} running {OPERATIONS[scan.op]} into {out_edge.data.data}, fused with the "
+                "loop that produced its input; the loops below are the scan's own blocked two-pass code",
                 "{",
                 "    const long lo = 0;",
                 f"    const long hi = (long)({length});",
