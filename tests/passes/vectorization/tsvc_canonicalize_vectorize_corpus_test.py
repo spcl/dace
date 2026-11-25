@@ -74,6 +74,8 @@ UNTILED_KERNELS = frozenset(
         "s318_d_single",
         "s321_d_single",
         "s322_d_single",
+        # A last-match: one FindFirst over the reversed range, no map left to tile (as s332's break)
+        "s331_d_single",
         "s332_d_single",
         "vsumr_d_single",
     }
