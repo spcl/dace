@@ -858,12 +858,12 @@ def loop_bindings(loop: LoopRegion) -> tuple[dict[str, Any], Counter]:
     return bindings, assigned
 
 
-def stored_subsets(state: SDFGState, edge: Any) -> list[subsets.Subset]:
-    """What the store ``edge`` really writes: the accesses of the nested SDFG behind a map exit (one box each), else the
-    subset of ``edge``."""
+def stored_accesses(state: SDFGState, edge: Any) -> list[tuple[subsets.Subset, Any]]:
+    """What the store ``edge`` really writes, each with the branch conditions inside the nested SDFG it runs under (or
+    ``None``): the accesses of the nested SDFG behind a map exit (one box each), else the subset of ``edge``."""
     from dace.transformation.interstate.loop_to_map import exact_accesses  # avoid an import loop
 
-    return [m.subset for m in exact_accesses(state, edge) or []] or [edge.data.subset]
+    return [(a.subset, a.guard) for a in exact_accesses(state, edge) or []] or [(edge.data.subset, None)]
 
 
 def write_bounds(
@@ -873,6 +873,7 @@ def write_bounds(
     bindings: dict[str, Any],
     assigned: Counter,
     subset: subsets.Subset,
+    inner: Any = None,
 ) -> tuple[list[tuple[Any, Any]], Any] | None:
     """``(box, guard)`` of the store of ``subset`` through ``edge``, ``box`` its ``(lo, hi)`` per dimension, over the
     iterator and names ``loop`` does not assign, else ``None``."""
@@ -890,13 +891,18 @@ def write_bounds(
         guard = bound_expression(guard, bindings, assigned)
         if guard is None:
             return None
+    if inner is not None:
+        # The branches inside the nested SDFG the access sits in
+        inner = bound_expression(inner, bindings, assigned)
+        if inner is not None:
+            guard = inner if guard == UNGUARDED else symbolic.pystr_to_symbolic(f"({guard}) and ({inner})")
     # An inner loop repeats the access at the same place: the store is the same box in every one of its iterations
     # unless its index or branch names the inner iterator
-    inner = inner_iterators(state, loop)
+    around = inner_iterators(state, loop)
     named = {str(x) for lo, hi in box for x in (*lo.free_symbols, *hi.free_symbols)}
     if guard != UNGUARDED:
         named |= {str(x) for x in guard.free_symbols}
-    if inner & named:
+    if around & named:
         return None
     return (box, None) if guard == UNGUARDED else (box, guard)
 
@@ -951,8 +957,10 @@ def read_bounds(
             for e in st.out_edges(dn):
                 if e.data is None or e.data.is_empty():
                     continue
-                for subset in [m.subset for m in exact_accesses(st, e) or []] or [e.data.get_src_subset(e, st)]:
-                    read = None if subset is None else write_bounds(loop, st, e, bindings, assigned, subset)
+                for subset, inner in [(a.subset, a.guard) for a in exact_accesses(st, e) or []] or [
+                    (e.data.get_src_subset(e, st), None)
+                ]:
+                    read = None if subset is None else write_bounds(loop, st, e, bindings, assigned, subset, inner)
                     if read is None:
                         return None
                     found.append(read)
@@ -993,8 +1001,8 @@ def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[A
     bindings, assigned = loop_bindings(loop)
     stores = []
     for state, edge in edges:
-        for subset in stored_subsets(state, edge):
-            store = write_bounds(loop, state, edge, bindings, assigned, subset)
+        for subset, inner in stored_accesses(state, edge):
+            store = write_bounds(loop, state, edge, bindings, assigned, subset, inner)
             if store is None or len(store[0]) != edges[0][1].data.subset.dims():
                 return None
             stores.append(store)

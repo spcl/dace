@@ -267,8 +267,12 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
             # Check inputs
             if isinstance(edge.src, nodes.AccessNode):
-                # Ensure that the storage is the same
-                if sdfg.arrays[edge.src.data].storage != sdfg.arrays[candidate].storage:
+                # Ensure that the storage is the same, or that the host reads both alike: a scratch scalar stored in a
+                # register beside the array it copies from (CloudSC's ``iphase_index = iphase[jm]`` in a nested SDFG)
+                kept = sdfg.arrays[edge.src.data].storage, sdfg.arrays[candidate].storage
+                if kept[0] != kept[1] and not all(
+                    dtypes.can_access(dtypes.ScheduleType.CPU_Multicore, k) for k in kept
+                ):
                     candidates.remove(candidate)
                     continue
                 # The promoted symbol is read on host interstate edges, which cannot read device memory

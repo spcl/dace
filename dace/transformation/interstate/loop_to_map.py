@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from math import inf
 from re import findall
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 import sympy as sp
 
@@ -240,7 +240,77 @@ def meet_within_one_iteration(
     )
 
 
-def exact_accesses(state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet]) -> list[memlet.Memlet] | None:
+class Access(NamedTuple):
+    """One access a nested SDFG makes (:func:`exact_accesses`): its memlet, and the branch conditions it runs under
+    inside the nested SDFG in the caller's names (``None``: none known)."""
+
+    memlet: memlet.Memlet
+    guard: sp.Basic | None = None
+
+    @property
+    def subset(self) -> subsets.Subset:
+        return self.memlet.subset
+
+    @property
+    def wcr(self) -> str | None:
+        return self.memlet.wcr
+
+
+def nested_bindings(state: SDFGState, ns: nodes.NestedSDFG) -> dict[str, sp.Basic]:
+    """The symbols ``ns`` assigns exactly once, with their values in the namespace outside it where they read only
+    symbols and the arrays it receives (named as the outer containers): ``target = imelt[jm]``. A value that reads
+    anything else is left out."""
+    outer = {e.dst_conn: e.data.data for e in state.in_edges(ns) if e.dst_conn} | {
+        e.src_conn: e.data.data for e in state.out_edges(ns) if e.src_conn
+    }
+    counts: Counter = Counter(name for edge in ns.sdfg.all_interstate_edges() for name in edge.data.assignments)
+    found: dict[str, sp.Basic] = {}
+    for edge in ns.sdfg.all_interstate_edges():
+        for name, text in edge.data.assignments.items():
+            if counts[name] != 1:
+                continue
+            try:
+                value = symbolic.pystr_to_symbolic(text)
+            except Exception:
+                continue
+            arrays = {str(a.args[0]) for a in value.atoms(symbolic.Subscript)}
+            if arrays <= outer.keys():
+                found[name] = value.replace(
+                    lambda x: isinstance(x, symbolic.Subscript),
+                    lambda x: symbolic.Subscript(sp.Symbol(outer[str(x.args[0])]), *x.args[1:]),
+                )
+    return found
+
+
+def resolved(expr: sp.Basic, bindings: dict[str, sp.Basic], assigned: set[str]) -> sp.Basic | None:
+    """``expr`` with every assigned symbol replaced by its binding, or ``None`` while one without a binding remains."""
+    for _ in range(8):
+        pending = {s: bindings[s.name] for s in expr.free_symbols if s.name in bindings}
+        if not pending:
+            break
+        expr = expr.xreplace(pending)
+    return None if {s.name for s in expr.free_symbols} & assigned else expr
+
+
+def access_guard(
+    block: SDFGState, ns: nodes.NestedSDFG, bindings: dict[str, sp.Basic], assigned: set[str], scope: set[str]
+) -> sp.Basic | None:
+    """The conditions inside ``ns`` that hold wherever ``block`` runs and can be written in the namespace outside it, as
+    a list of conjuncts; those that cannot (they read data computed inside) are left out, which only weakens the guard."""
+    held = cfg_analysis.collect_enclosing_conditions(block, stop=ns.sdfg)
+    todo, kept = [held], []
+    while todo:
+        c = todo.pop()
+        if isinstance(c, sp.And) or type(c).__name__ == "AND":
+            todo += c.args
+        elif c != sp.true and (r := resolved(c, bindings, assigned)) is not None:
+            r = r.xreplace({sp.Symbol(k): sp.sympify(v) for k, v in ns.symbol_mapping.items()})
+            if not {str(x) for x in r.free_symbols} & scope:
+                kept.append(r)
+    return symbolic.pystr_to_symbolic(" and ".join(f"({c})" for c in kept)) if kept else None
+
+
+def exact_accesses(state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet]) -> list[Access] | None:
     """The accesses of ``e``'s array that the nested SDFG behind ``e`` really makes, one memlet each (a reduction keeps
     its WCR), when ``e`` joins a nested SDFG to the array directly or through one map scope (a MapExit's output for
     writes, a MapEntry's input for reads), each propagated over the map; ``None`` (the caller keeps ``e``'s bounding box)
@@ -271,7 +341,7 @@ def exact_accesses(state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet]) ->
             return None
     else:
         return None
-    found: dict[tuple[str, str], memlet.Memlet] = {}
+    found: dict[tuple[str, str, str], Access] = {}
     for ns, conn in joins:
         if not isinstance(ns, nodes.NestedSDFG):
             return None
@@ -286,7 +356,8 @@ def exact_accesses(state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet]) ->
         ):
             return None
         assigned = {name for edge in ns.sdfg.all_interstate_edges() for name in edge.data.assignments}
-        accessed: list[tuple[subsets.Subset | None, str | None]] = []
+        bindings = nested_bindings(state, ns)
+        accessed: list[tuple[subsets.Subset | None, str | None, SDFGState | None]] = []
         for block in ns.sdfg.all_control_flow_blocks():
             if isinstance(block, SDFGState):
                 for dn in block.data_nodes():
@@ -301,28 +372,32 @@ def exact_accesses(state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet]) ->
                             (
                                 ne.data.get_dst_subset(ne, block) if write else ne.data.get_src_subset(ne, block),
                                 ne.data.wcr,
+                                block,
                             )
                         )
             elif not write and isinstance(block, (LoopRegion, ConditionalBlock)):
-                accessed += [(m.subset, None) for m in block.get_meta_read_memlets() if m.data == conn]
+                accessed += [(m.subset, None, None) for m in block.get_meta_read_memlets() if m.data == conn]
         if not write:
             accessed += [
-                (m.subset, None)
+                (m.subset, None, None)
                 for edge in ns.sdfg.all_interstate_edges()
                 for m in edge.data.get_read_memlets(ns.sdfg.arrays)
                 if m.data == conn
             ]
-        for subset, wcr in accessed:
+        for subset, wcr, block in accessed:
             if subset is None:
                 return None
-            outer = through_symbol_mapping(subset, ns)
-            if assigned & {str(x) for x in outer.free_symbols}:
+            ranges = [tuple(resolved(sp.sympify(x), bindings, assigned) for x in dim) for dim in subset.ndrange()]
+            if any(x is None for dim in ranges for x in dim):
                 return None
+            outer = through_symbol_mapping(subsets.Range(ranges), ns)
+            scope_params = set() if entry is None else set(entry.map.params)
+            guard = None if block is None else access_guard(block, ns, bindings, assigned, scope_params)
             access = memlet.Memlet(data=e.data.data, subset=outer, wcr=wcr)
             if entry is not None:
                 access = propagate_memlet(state, access, entry, False)
                 access.wcr = wcr
-            found[(str(access.subset), str(wcr))] = access
+            found[(str(access.subset), str(wcr), str(guard))] = Access(access, guard)
     return list(found.values()) or None
 
 
