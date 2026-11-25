@@ -53,6 +53,27 @@ from dace.transformation.passes.canonicalize.annotate_loop_kinds import MAP_DIME
 from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import NESTED_REASON
 from dace.utils import find_new_name
 
+#: The pragma of a loop whose iterations run as vector lanes of one thread.
+SIMD_PRAGMA = re.compile(r"^\s*#pragma omp simd\b", re.MULTILINE)
+#: An array section of a thread pragma's ``reduction`` clause: ``reduction(+:h[0:M])`` -> ``h``, ``0``, ``M``.
+REDUCED_SECTION = re.compile(r"#pragma omp parallel\b.*?\breduction\([^:]+:\s*(\w+)\[([^:\]]+):([^\]]+)\]")
+
+
+def with_private_copies(text: str, header: CodeIOStream) -> str:
+    """``text`` with, on its class line, what the thread pragma's array-section reduction costs: OpenMP gives every
+    thread a private copy of the section and combines them after the loop, which an agent weighs against atomics."""
+    sections = REDUCED_SECTION.findall(header.getvalue())
+    if not sections or not text.startswith(LoopClass.PARALLEL.prefix):
+        return text
+    first, newline, notes = text.partition("\n")
+    for name, start, length in sections:
+        first += (
+            f"; each thread holds a private copy of the {length} elements {name}[{start}:{length}], combined into "
+            f"{name} after the loop; alt: omp atomic updates of {name}, where a copy per thread does not fit in memory"
+        )
+    return f"{first}{newline}{notes}"
+
+
 # ``<array>_idx`` / symbolic ``<array>_size`` qualifier: host+device callable, inlined, constexpr.
 INDEX_FUNCTION_QUALIFIER = "static DACE_HDFI constexpr"
 # Constant ``<array>_size`` qualifier: ``consteval`` folds the extent at compile time (C++20).
@@ -465,24 +486,37 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         if self.thread_zero_block(sdfg, cfg.state(state_id), node):
             # Rendered as thread 0's block, not a loop: the comment says what runs, not what a loop would be.
             text = "\n".join([THREAD_ZERO_NOWAIT if node.map.omp_nowait else THREAD_ZERO, *text.split("\n")[1:]])
-        hint = cpf_lowering.hint_comment(self.with_not_parallelized(sdfg, cfg.state(state_id), node, text))
+        # The header first, so the comment can say whether it carries ``omp simd``
+        header = CodeIOStream()
+        super()._generate_MapEntry(sdfg, cfg, dfg, state_id, node, function_stream, header)
+        simd = SIMD_PRAGMA.search(header.getvalue()) is not None
+        text = with_private_copies(self.with_not_parallelized(sdfg, cfg.state(state_id), node, text, simd), header)
+        hint = cpf_lowering.hint_comment(text)
         if hint:
             callsite_stream.write(hint.rstrip("\n"), cfg, state_id, node)
-        super()._generate_MapEntry(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+        callsite_stream.write(header.getvalue(), cfg, state_id, node)
 
-    def with_not_parallelized(self, sdfg: SDFG, state: SDFGState, node: nodes.MapEntry, text: str) -> str:
+    def with_not_parallelized(
+        self, sdfg: SDFG, state: SDFGState, node: nodes.MapEntry, text: str, simd: bool = False
+    ) -> str:
         """``text`` with, on its class line, why a ``parallel`` map that renders as a plain loop (schedule
         ``Sequential``: no thread pragma on CPU, no kernel on GPU) is not run in parallel. The loop stays ``parallel``
         because it is; a pass that made it sequential gave its own reason, and only the enclosing loop's name is
-        added here."""
+        added here. A loop that carries ``omp simd`` (``simd``) is vectorized, so its note says that instead of
+        ``not parallelized``; a loop a GPU pass spread over a kernel's threads keeps its line as the pass wrote it."""
         first, newline, notes = text.partition("\n")
-        if not first.startswith(LoopClass.PARALLEL.prefix) or node.map.schedule != dtypes.ScheduleType.Sequential:
+        if (
+            not first.startswith(LoopClass.PARALLEL.prefix)
+            or node.map.schedule != dtypes.ScheduleType.Sequential
+            or cpf_lowering.SPREAD_OVER_THREADS in first
+        ):
             return text
+        note = cpf_lowering.VECTORIZED_ONLY if simd else cpf_lowering.NOT_PARALLELIZED
         outer = enclosing_parallel_map(sdfg, state, node)
         if cpf_lowering.NOT_PARALLELIZED in first:
             if outer is not None and first.endswith(NESTED_REASON):
                 first = f"{first} {outer.map.params[0]}"
-            return f"{first}{newline}{notes}"
+            return f"{first.replace(cpf_lowering.NOT_PARALLELIZED, note)}{newline}{notes}"
         if outer is None:
             if state.entry_node(node) is None and any(
                 isinstance(child, nodes.MapEntry) and child.map.schedule == dtypes.ScheduleType.CPU_Multicore
@@ -495,7 +529,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             reason = f"inside GPU kernel loop {outer.map.params[0]}: each thread runs these iterations in order"
         else:
             reason = f"{NESTED_REASON} {outer.map.params[0]}"
-        return f"{first}{cpf_lowering.NOT_PARALLELIZED}{reason}{newline}{notes}"
+        return f"{first}{note}{reason}{newline}{notes}"
 
     def thread_zero_block(self, sdfg: SDFG, state: SDFGState, node: nodes.MapEntry) -> bool:
         """Whether ``CPUCodeGen._generate_MapEntry`` renders ``node`` as ``if (omp_get_thread_num() == 0)``."""

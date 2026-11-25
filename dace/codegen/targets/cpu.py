@@ -4476,6 +4476,8 @@ class CPUCodeGen(TargetCodeGenerator):
             return False
         if not cpf_lowering.standalone():
             return True
+        if is_devicelevel_gpu(sdfg, state, map_entry):
+            return False  # a device compiler ignores the host pragma
         covered = set()
         if map_entry.map.schedule == dtypes.ScheduleType.CPU_Multicore and emits_tree_reductions(
             self.experimental_codegen

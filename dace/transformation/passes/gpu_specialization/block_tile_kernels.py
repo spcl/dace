@@ -30,8 +30,9 @@ from typing import Any
 
 from ordered_set import OrderedSet
 
-from dace import SDFG, Memlet, SDFGState, data, dtypes, properties
+from dace import SDFG, Memlet, SDFGState, cpf_lowering, data, dtypes, properties
 from dace import graphlib as nx
+from dace.cpf_lowering import LoopClass, Reason, reason_of
 from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS
 from dace.optionals import required
 from dace.sdfg import nodes
@@ -40,6 +41,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, Sym
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.warp_tiling import WarpTiling
+from dace.transformation.passes.canonicalize.annotate_loop_kinds import parallel_hint
 from dace.transformation.passes.minimize_stride_permutation import (
     UndecidableStride,
     score_indexed_strides,
@@ -47,9 +49,31 @@ from dace.transformation.passes.minimize_stride_permutation import (
 )
 
 #: What a block-tiled kernel's lane map is, for a CPF reader.
-BLOCK_TILE_HINT = "parallel -- block tile: independent iterations, one block per outer iteration, these are its lanes"
-#: What a map strided across the lanes of a block-tiled kernel is, for a CPF reader.
-LANE_STRIDED_HINT = "parallel -- lane-strided: independent iterations, lane t takes t, t + B, ..."
+BLOCK_TILE_HINT = (
+    "parallel -- block tile: the lanes of the one thread block that runs each iteration of the kernel loop; "
+    "the lane-strided loops below split that iteration's work across them"
+)
+#: How the lanes of a block-tiled kernel share out a map strided across them, for a CPF reader.
+LANE_STRIDED = (
+    f"lane-strided, lane t of the block's {BLOCK_COLLECTIVE_THREADS} takes iterations t, "
+    f"t + {BLOCK_COLLECTIVE_THREADS}, t + {2 * BLOCK_COLLECTIVE_THREADS}, ..."
+)
+#: Added to :data:`LANE_STRIDED` for a reduction.
+LANE_PARTIALS = ", each lane into its own partial; a block reduction then combines the lanes' partials"
+
+
+def lane_strided_hint(state: SDFGState, entry: nodes.MapEntry) -> str:
+    """``entry``'s class line (its hint's, else the one its accesses give it) and notes, with how the lanes share the
+    map out. The loop is run in parallel, so it keeps no ``not parallelized`` note."""
+    first, newline, notes = (entry.specialization_hint or "").partition("\n")
+    if not first.startswith(LoopClass.PARALLEL.prefix):
+        first, newline, notes = parallel_hint(state, entry, []), "\n", "\n".join(filter(None, (first, notes)))
+    first = first.split(cpf_lowering.NOT_PARALLELIZED)[0]
+    spread = LANE_STRIDED + (
+        LANE_PARTIALS if reason_of(first[len(LoopClass.PARALLEL.prefix) :]) is Reason.REDUCTION else ""
+    )
+    return f"{first}{cpf_lowering.SPREAD_OVER_THREADS}{spread}{newline}{notes}"
+
 
 #: Storage whose containers each lane holds its own copy of.
 LANE_PRIVATE_STORAGE = (dtypes.StorageType.Register, dtypes.StorageType.Default)
@@ -520,9 +544,9 @@ class BlockTileKernels(ppl.Pass):
                 for owner, entry in strided
             }
             # WarpTiling strides the non-serial maps; the serial pinning re-applies to each lane's loop.
-            for inner in [entry for owner, entry in strided]:
+            for owner, inner in strided:
                 inner.map.schedule = dtypes.ScheduleType.Default
-                inner.specialization_hint = LANE_STRIDED_HINT
+                inner.specialization_hint = lane_strided_hint(owner, inner)
             WarpTiling.apply_to(
                 state.sdfg,
                 options={"warp_size": BLOCK_COLLECTIVE_THREADS, "replicate_maps": False},

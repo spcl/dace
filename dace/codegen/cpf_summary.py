@@ -8,6 +8,9 @@ two cannot disagree. It names each loop by its counter in the rendered code.
 import re
 from dataclasses import dataclass
 
+import sympy
+
+from dace import symbolic
 from dace.cpf_lowering import KIND_EXTRAS, LoopClass, Reason, kind_line, reason_of
 from dace.ordered import OrderedSet
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import PARALLEL
@@ -29,7 +32,11 @@ LOOP_PRAGMA = re.compile(
 LOOP_HEAD = re.compile(r"^\s*for \((?:[\w:<>]+\s+)*\**(\w+)\s*=")
 WHILE_HEAD = re.compile(r"^\s*(?:while|do)\b")
 CALL_HEAD = re.compile(r"^\s*(?:[\w:<>*]+\s+)*(\w+)\s*\(")
-FUNCTION_HEAD = re.compile(r"^[A-Za-z_][\w\s:<>*,&\"]*?\b(\w+)\s*\([^;]*$")
+#: A function's head: its name is the last word before ``(``, past the attributes that take arguments
+#: (``__launch_bounds__(512)``); a ``__global__`` one is a GPU kernel.
+FUNCTION_HEAD = re.compile(
+    r"^(?=[A-Za-z_])(__global__\b)?(?:[\w\s:<>*,&\"]|\b__\w+__\([^()]*\))*?\b(?!__\w+__\()(\w+)\s*\([^;]*$"
+)
 NESTED_LOOPS = re.compile(r"the (\d+) nested loops over .* are all parallel")
 #: One ``<op> into <target>`` of a reduction comment, which lists one per accumulator.
 FOLD = re.compile(r"(\S+) into (\w+)")
@@ -80,7 +87,7 @@ def loops_of(code: str) -> list[Loop]:
         stripped = line.strip()
         head = FUNCTION_HEAD.match(line)
         if head is not None:
-            function = head.group(1)
+            function = function_of(head)
         classed = CLASS_LINE.match(line) or LIBRARY_LINE.match(line)
         if classed is not None:
             label = label or (LoopClass(classed.group(1)), classed.group(2))
@@ -156,7 +163,14 @@ def construct_of(lines: list[str], index: int, function: str) -> str:
             return title
     if not function:
         return "the code above"
+    if function.startswith("kernel "):
+        return function
     return f"{'helper' if function.startswith('cpf_') else 'function'} {function}"
+
+
+def function_of(head: re.Match) -> str:
+    """The name of the function :data:`FUNCTION_HEAD` matched, ``kernel <name>`` for a GPU kernel."""
+    return f"kernel {head.group(2)}" if head.group(1) else head.group(2)
 
 
 def bounds_of(line: str) -> tuple[str, str]:
@@ -253,7 +267,7 @@ def comment_every_loop(code: str, kinds: bool = False) -> str:
         stripped = line.strip()
         head = FUNCTION_HEAD.match(line)
         if head is not None:
-            function, parents = head.group(1), []
+            function, parents = function_of(head), []
         classed = CLASS_LINE.match(line) or LIBRARY_LINE.match(line) or (KIND_LINE.match(line) if kinds else None)
         if classed is not None:
             # A thread team's or a one-trip block's comment is not a loop's: the loop inside gets its own.
@@ -332,9 +346,57 @@ def forks_inside(lines: list[str], head: int) -> list[str]:
         pragmas = " ".join(lines[pragma_start(lines, n) : n])
         if FORK_PRAGMA.search(pragmas):
             trips = trip_count(line)
-            found.append(f"{loop_counter(line)} ({unwrapped(trips)} iterations)" if trips else loop_counter(line))
+            count = readable_count(unwrapped(trips), loop_counter(lines[head])) if trips else ""
+            found.append(f"{loop_counter(line)} ({count} iterations)" if trips else loop_counter(line))
             inside = indent_of(line)
     return found
+
+
+#: The C spellings of a trip count's helpers, as sympy reads them.
+C_HELPERS = (
+    (re.compile(r"\bcpf_min_\w+\("), "Min("),
+    (re.compile(r"\bcpf_max_\w+\("), "Max("),
+    (re.compile(r"\bcpf_int_ceil_\w+\("), "int_ceil("),
+)
+
+
+def readable_count(trips: str, counter: str) -> str:
+    """``trips``, a trip count in C, simplified (``(N - 1) - 1`` reads ``N - 2``), and when it moves with the enclosing
+    loop's ``counter`` through a min or max, followed by the bound it never exceeds (``at most ceiling((N - 1)/64)``);
+    as written when it does not parse."""
+    text = trips
+    for pattern, name in C_HELPERS:
+        text = pattern.sub(name, text)
+    try:
+        expr = symbolic.pystr_to_symbolic(text)
+    except Exception:  # pylint: disable=broad-exception-caught
+        # A comment must not fail the rendering that writes it
+        return trips
+    bound = upper_bound(expr, counter) if expr.has(sympy.Min, sympy.Max) else None
+    return f"{as_text(expr)}, at most {as_text(bound)}" if bound is not None else as_text(expr)
+
+
+def as_text(expr: sympy.Expr) -> str:
+    """``expr`` in a reader's spelling: ``min``, ``max`` and ``ceil((N - 1)/64)``."""
+    expr = expr.replace(symbolic.int_ceil, lambda a, b: sympy.Symbol(f"ceil(({a})/{b})"))
+    return str(expr).replace("Min(", "min(").replace("Max(", "max(")
+
+
+def upper_bound(expr: sympy.Expr, counter: str) -> sympy.Expr | None:
+    """An upper bound of ``expr`` free of ``counter``: each ``Min`` it adds and each ``Max`` it subtracts replaced by
+    an argument free of ``counter``; ``None`` when a term moves with ``counter`` some other way."""
+    total = sympy.Integer(0)
+    for term in sympy.Add.make_args(expr):
+        coefficient, core = term.as_coeff_Mul()
+        if isinstance(core, (sympy.Min, sympy.Max)) and (coefficient > 0) == isinstance(core, sympy.Min):
+            free = [arg for arg in core.args if counter not in {str(s) for s in arg.free_symbols}]
+            if not free:
+                return None
+            core = free[0]
+        elif counter in {str(s) for s in term.free_symbols}:
+            return None
+        total += coefficient * core
+    return sympy.simplify(total)
 
 
 def note_forks(code: str) -> str:
@@ -357,6 +419,46 @@ def note_forks(code: str) -> str:
                 f"{line[: indent_of(line)]}// its parallel loops {', '.join(forks)} fork a thread team once per "
                 "iteration of this loop"
             )
+    return "\n".join(out) + ("\n" if code.endswith("\n") else "")
+
+
+#: A device copy of the host unit: ``<vendor>MemcpyAsync(dst, src, bytes, <vendor>MemcpyDeviceToHost, stream)``.
+DEVICE_COPY = re.compile(r"MemcpyAsync\(\(?([^,()]+)\)?, \(?([^,()]+)\)?, [^;]*Memcpy(DeviceToHost|HostToDevice)\b")
+#: A line between a host loop's copies and its comment that keeps them together: a stream wait.
+STREAM_WAIT = re.compile(r"StreamSynchronize\(")
+
+
+def note_host_loops(code: str) -> str:
+    """``code`` (a GPU rendering's host unit) with, under the class line of each loop the device copies of its arrays
+    lead into, that the loop runs on the host after those device-to-host copies, and which arrays go back after it:
+    the cost of a loop no kernel runs, which the copies around it show only to a reader who matches the names."""
+    lines = code.splitlines()
+    out: list[str] = []
+    for index, line in enumerate(lines):
+        out.append(line)
+        if CLASS_LINE.match(line) is None:
+            continue
+        before, n = [], index - 1
+        while n >= 0 and (DEVICE_COPY.search(lines[n]) or STREAM_WAIT.search(lines[n])):
+            copy = DEVICE_COPY.search(lines[n])
+            if copy is not None and copy.group(3) == "DeviceToHost":
+                before.insert(0, copy.group(2).strip())
+            n -= 1
+        if not before:
+            continue
+        head = next((m for m in range(index + 1, len(lines)) if not holds_label(lines[m].strip())), None)
+        after = []
+        if head is not None and ANY_LOOP_HEAD.match(lines[head]):
+            end = head + len(loop_body(lines, head).splitlines()) + 1
+            for m in range(end, len(lines)):
+                copy = DEVICE_COPY.search(lines[m])
+                if copy is None or copy.group(3) != "HostToDevice":
+                    break
+                after.append(copy.group(1).strip())
+        back = f"; then copies {', '.join(after)} back to the device" if after else ""
+        out.append(
+            f"{line[: indent_of(line)]}// runs on the host, after device-to-host copies of {', '.join(before)}{back}"
+        )
     return "\n".join(out) + ("\n" if code.endswith("\n") else "")
 
 

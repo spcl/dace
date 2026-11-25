@@ -896,7 +896,7 @@ def test_a_guarded_loop_names_its_guard_on_both_arms():
     ), maps
     assert any(
         re.match(
-            r"sequential -- the else arm of if \(inc != 0\), taken when inc == 0 \(the loop then makes a sum into a\[0\]\): .*, so this arm keeps the order",
+            r"sequential -- the else arm of if \(inc != 0\), taken when inc == 0 \(the loop then makes a sum into a\[0\]\): a reduction, kept in order here because .*",
             line,
         )
         for line in loops

@@ -229,11 +229,24 @@ class Reason(enum.Enum):
     TILE = "tile loop"
     INNER_TILE = "inner tile of loop "
     IMPLEMENTATION = "implementation loop of "
+    #: A GPU thread-block map that carries no program loop's line of its own: what its threads are.
+    THREAD_BLOCK = "thread block"
 
 
 #: What a pass or the renderer appends to the class line of a proven-parallel loop that has no thread pragma (or, on a
 #: GPU, no kernel), followed by why: the loop stays ``parallel``, because it is; this says it is not run in parallel.
 NOT_PARALLELIZED = "; not parallelized: "
+#: What takes the place of :data:`NOT_PARALLELIZED` on a proven-parallel loop that has no thread pragma but an ``omp
+#: simd`` one: its iterations run as vector lanes of one thread, so it is vectorized, followed by why it forks no team.
+VECTORIZED_ONLY = "; vectorized (omp simd), not thread-parallel: "
+#: What a GPU pass appends to the class line of a proven-parallel loop that renders as a plain ``for`` but whose
+#: iterations the threads of a kernel share out by index (a grid-stride or lane-strided loop), followed by how: the
+#: loop is run in parallel, so it takes no :data:`NOT_PARALLELIZED` note.
+SPREAD_OVER_THREADS = "; spread over the GPU threads: "
+#: What a GPU kernel's comment appends to its class line: how the launch grid maps the loop's iterations to threads.
+KERNEL_MAPPING = "; kernel: "
+#: What a GPU thread-block map's comment appends to the class line of the program loop it runs.
+THREAD_BLOCK_MAPPING = "; thread block: "
 
 
 def reason_of(reason: str) -> Reason | None:

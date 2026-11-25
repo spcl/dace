@@ -259,7 +259,7 @@ def test_a_map_inside_a_parallel_loop_stays_parallel_and_names_the_loop():
     outer, inner = class_lines(decided(nested, "cpf_comment_nested"))
     assert outer.startswith("// parallel -- independent: ") and "not parallelized" not in outer, outer
     assert inner.startswith("// parallel -- independent: ") and inner.endswith(
-        "; not parallelized: inside parallel loop i"
+        "; vectorized (omp simd), not thread-parallel: inside parallel loop i"
     ), inner
 
 
@@ -271,7 +271,9 @@ def test_a_short_map_stays_parallel_and_says_it_is_too_short_to_fork():
 
     (only,) = class_lines(decided(short, "cpf_comment_short"))
     assert only.startswith("// parallel -- independent: "), only
-    assert only.endswith("; not parallelized: 4 iterations, too short to pay for a fork"), only
+    assert only.endswith("; vectorized (omp simd), not thread-parallel: 4 iterations, too short to pay for a fork"), (
+        only
+    )
 
 
 def test_a_map_a_gpu_thread_runs_stays_parallel_and_says_so():

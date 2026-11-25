@@ -2466,9 +2466,11 @@ def render_unit(
         commented = cpf_summary.comment_every_loop(code)
         code = cpf_summary.with_summary(
             cpf_summary.note_blas_threads(
-                cpf_summary.note_forks(
-                    cpf_summary.drop_missing_fusion_names(
-                        cpf_summary.drop_inner_reductions(cpf_summary.drop_inner_privates(commented))
+                cpf_summary.note_host_loops(
+                    cpf_summary.note_forks(
+                        cpf_summary.drop_missing_fusion_names(
+                            cpf_summary.drop_inner_reductions(cpf_summary.drop_inner_privates(commented))
+                        )
                     )
                 )
             ),

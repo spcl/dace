@@ -82,7 +82,7 @@ MAP_DIMENSIONS = "the {count} nested loops over {params} are all parallel"
 
 #: A loop whose carried dependence was proven.
 PROVEN_PREFIX = LoopClass.SEQUENTIAL.prefix + "proven dependence"
-SEQUENTIAL_PROVEN = PROVEN_PREFIX + " {reason}"
+SEQUENTIAL_PROVEN = PROVEN_PREFIX + "{reason}"
 
 #: A loop the dependence test declined to answer, or never examined.
 UNKNOWN = LoopClass.UNKNOWN.prefix + "{reason}"
@@ -205,7 +205,7 @@ def proven_reason(access: str) -> str:
     if found is None:
         return f": {access}"
     kind, element, example = found.groups()
-    return f"on {element}: {CONFLICT_MEANING[kind]}{example or ''}"
+    return f" on {element}: {CONFLICT_MEANING[kind]}{example or ''}"
 
 
 def carrying_access(refusal: LoopRefusal | str) -> str:
@@ -216,9 +216,14 @@ def carrying_access(refusal: LoopRefusal | str) -> str:
     if refusal.kind is Refusal.CARRIED_DEPENDENCE and refusal.container is not None and refusal.reads:
         return f"RAW on {refusal.container}[{refusal.reads[0]}]"
     if refusal.kind is Refusal.CARRIED_SYMBOL:
-        return f"{carried_symbol_text(refusal)} carries a value from one iteration to the next"
+        text = carried_symbol_text(refusal)
+        counter = "the counter " if COUNTER_UPDATE.match(text) is not None else ""
+        return f"{counter}{text} carries a value from one iteration to the next"
     return refusal.message
 
+
+#: A carried symbol's assignment that adds to or subtracts from its own previous value: a counter.
+COUNTER_UPDATE = re.compile(r"^\(?(\w+) = \(?\1 [+-] ")
 
 #: ``LoopToMap``'s message for a symbol an iteration assigns from its own previous value.
 SELF_RECURRENT = re.compile(r"\(assignment (.+)\)$")
@@ -617,6 +622,32 @@ def map_ranges(state: SDFGState, node: nodes.Node, mapping: dict[str, sympy.Expr
     return tuple(ranges)
 
 
+#: The library node of a plain array copy, whose ends :func:`copy_sites` reads as sites.
+COPY_NODE = "CopyLibraryNode"
+
+
+def copy_node(state: SDFGState, node: nodes.Node) -> bool:
+    """Whether ``node`` copies one range into another: a copy library node, or a tasklet of one input and one output
+    (a copy's device lowering, ``gpuMemcpyAsync``) whose memlets each cover their whole range."""
+    if type(node).__name__ == COPY_NODE:
+        return True
+    if not isinstance(node, nodes.Tasklet) or state.in_degree(node) != 1 or state.out_degree(node) != 1:
+        return False
+    ends = [state.in_edges(node)[0].data, state.out_edges(node)[0].data]
+    return (
+        all(
+            not end.is_empty()
+            and not end.dynamic
+            and end.wcr is None
+            and end.subset is not None
+            and end.subset.num_elements() != 1
+            and end.volume == end.subset.num_elements()
+            for end in ends
+        )
+        and ends[0].subset.num_elements() == ends[1].subset.num_elements()
+    )
+
+
 def copy_sites(
     edge: MultiConnectorEdge[Memlet],
     state: SDFGState,
@@ -625,15 +656,22 @@ def copy_sites(
     iters: tuple,
     seed: int,
 ) -> list[Site]:
-    """Both ends of an array copy as sites, each range dimension a fresh iterator over that range."""
+    """Both ends of an array copy as sites, each range dimension a fresh iterator over that range. A copy library
+    node's two edges are one end each: what it reads and what it writes."""
     product = type(edge.dst).__name__ in ("Dot", "MatMul") and isinstance(edge.dst, nodes.LibraryNode)
-    if not (isinstance(edge.src, nodes.AccessNode) and (product or isinstance(edge.dst, nodes.AccessNode))):
+    copy_in = copy_node(state, edge.dst) and isinstance(edge.src, nodes.AccessNode)
+    copy_out = copy_node(state, edge.src) and isinstance(edge.dst, nodes.AccessNode)
+    if not (
+        copy_out
+        or isinstance(edge.src, nodes.AccessNode)
+        and (product or copy_in or isinstance(edge.dst, nodes.AccessNode))
+    ):
         return []
     if edge.data.is_empty() or edge.data.wcr is not None or edge.data.dynamic:
         return []
     sites = []
-    sides = [(edge.src.data, edge.data.get_src_subset(edge, state), False)]
-    if not product:
+    sides = [] if copy_out else [(edge.src.data, edge.data.get_src_subset(edge, state), False)]
+    if not (product or copy_in):
         sides.append((edge.dst.data, edge.data.get_dst_subset(edge, state), True))
     for side, (name, subset, write) in enumerate(sides):
         if name not in arrays or subset is None:
@@ -933,6 +971,10 @@ def witness_search(loop: LoopRegion, traps: list[tuple[str, set[str]]] | None = 
                 continue
             if flow and write.access.array not in scratch and rewritten_in_iteration(second, sites):
                 continue
+            # A read of what its own iteration wrote meets a later iteration's write only where the two writes meet:
+            # the output conflict is the one to name
+            if not first.access.write and second.access.write and rewritten_in_iteration(first, sites):
+                continue
             # A write whose condition cannot be written is taken to happen: that only refuses more witnesses
             kills = tuple(
                 (site.access.index, site.iters, flows_into(second, site), site.guard or ())
@@ -1016,7 +1058,9 @@ def unseen_writes(region: ControlFlowRegion) -> set[str]:
             ):
                 continue  # a read
             many = isinstance(edge.src, nodes.Tasklet) and edge.data.subset.num_elements() != 1
-            if isinstance(edge.src, nodes.LibraryNode) or edge.data.dynamic or many:
+            copied = copy_node(block, edge.src)
+            library = isinstance(edge.src, nodes.LibraryNode) and not copied
+            if library or edge.data.dynamic or (many and not copied):
                 found.add(edge.dst.data if isinstance(edge.dst, nodes.AccessNode) else edge.data.data)
         for node in block.nodes():
             if isinstance(node, nodes.NestedSDFG):
@@ -1034,18 +1078,91 @@ def array_extent(sdfg: SDFG, name: str, dims: int) -> tuple[sympy.Expr | None, .
 
 
 def rewritten_in_iteration(read: Site, sites: list[Site]) -> bool:
-    """Whether some write of the same iteration stores the very element ``read`` loads."""
+    """Whether some write of the same iteration stores the very element ``read`` loads before the read: at the same
+    index under the same iterators, or, unconditionally, over a range of each dimension that covers the range the read
+    spans (a time loop's ``b[1:N-1] = f(a)`` then ``a[1:N-1] = b[1:N-1]``, its copy under an iterator of its own). A
+    write after the read leaves the read an earlier iteration's value."""
     return any(
         site.access.write
         and site.access.array == read.access.array
-        and site.iters == read.iters
         and len(site.access.index) == len(read.access.index)
-        and all(
-            sympy.simplify(sympy.sympify(a) - sympy.sympify(b)) == 0
-            for a, b in zip(site.access.index, read.access.index)
+        and written_before(site, read)
+        and (
+            (
+                site.iters == read.iters
+                and all(
+                    sympy.simplify(sympy.sympify(a) - sympy.sympify(b)) == 0
+                    for a, b in zip(site.access.index, read.access.index)
+                )
+            )
+            or (site.guard == () and covers(site, read))
         )
         for site in sites
     )
+
+
+def covers(write: Site, read: Site) -> bool:
+    """Whether, in one iteration of the carrying loop (the first iterator, which both sites share), ``write`` stores
+    every element ``read`` loads: per dimension, the contiguous range its index spans holds the read's."""
+    if not write.iters or not read.iters or write.iters[0] != read.iters[0]:
+        return False
+    for written, loaded in zip(write.access.index, read.access.index):
+        outer, inner = index_span(written, write.iters[1:]), index_span(loaded, read.iters[1:])
+        if outer is None or inner is None:
+            return False
+        if not (
+            sympy.simplify(inner[0] - outer[0]).is_nonnegative and sympy.simplify(outer[1] - inner[1]).is_nonnegative
+        ):
+            return False
+    return True
+
+
+def index_span(expr: Any, inner: tuple[smt_dependence.IterRange, ...]) -> tuple[sympy.Expr, sympy.Expr] | None:
+    """The first and last value ``expr`` takes over the iterators ``inner``, when it is a point or moves with one
+    unit-step iterator at slope 1, so it covers every value in between; else ``None``."""
+    expr = as_basic(sympy.sympify(expr))
+    moving = [it for it in inner if it[0] in free_names(expr)]
+    if not moving:
+        return expr, expr
+    if len(moving) != 1 or moving[0][3] != 1:
+        return None
+    name, begin, end, unused_step = moving[0]
+    var = next(s for s in expr.free_symbols if str(s) == name)
+    if sympy.diff(expr, var) != 1:
+        return None
+    return expr.subs(var, as_basic(begin)), expr.subs(var, as_basic(end))
+
+
+def written_before(write: Site, read: Site) -> bool:
+    """Whether every iteration runs ``write`` before ``read``: in one state, the read downstream of the write; else
+    the write's block precedes the read's in the innermost region holding both."""
+    if write.state is None or read.state is None:
+        return False
+    if write.state is read.state:
+        return write.node is not None and read.node in write.state.bfs_nodes(write.node)
+    # Region -> what of the write's chain it holds; the write's own state holds its node
+    above: dict[int, Any] = {id(write.state): write.node}
+    block: ControlFlowBlock | None = write.state
+    while block is not None and enclosing(block) is not None:
+        above[id(enclosing(block))] = block
+        block = enclosing(block)
+    block = read.state
+    while block is not None and enclosing(block) is not None:
+        region = enclosing(block)
+        if id(region) in above:
+            first = above[id(region)]
+            if isinstance(region, SDFGState):  # nodes of one state (a nested SDFG by its node): their dataflow order
+                first, block = (n.parent_nsdfg_node if isinstance(n, SDFG) else n for n in (first, block))
+            return first is not None and first is not block and block in region.bfs_nodes(first)
+        block = region
+    return False
+
+
+def enclosing(block: Any) -> Any:
+    """The region holding ``block``; for a nested SDFG, the state holding its node."""
+    if block.parent_graph is not None:
+        return block.parent_graph
+    return block.parent if isinstance(block, SDFG) else None
 
 
 def site_text(site: Site) -> str:
