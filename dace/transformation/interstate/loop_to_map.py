@@ -1048,11 +1048,15 @@ def read_before_written(
                 continue
             subset = widened(state, dn, subset)
             if fixed_subset(subset) and not any(part.free_symbols & moving for part in parts):
-                if not subsets_cover(parts, subset, symbolic.Facts.none()):
+                # Under the ranges of the loops around the read: QE vexx's ``aux2(1)`` is inside the block fill
+                # ``aux2[0:Min(256, ngm - 256*iblock + 256)]`` only because ``iblock`` stays within the block count.
+                if not subsets_cover(parts, subset, resolver.facts_at(state)):
                     return False
             elif not any(same_slot(part, subset) for part in parts):
                 return False
         return True
+
+    resolver = SymbolResolver()
 
     def changed_by(block: ControlFlowBlock) -> set[str]:
         """The names ``block`` can change: containers it writes (any written access node, no memlet analysis),
