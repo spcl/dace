@@ -20,12 +20,13 @@ def lane_identity_literal(dtype: dtypes.typeclass, identity) -> str:
     return f"{dtype.ctype}({float(identity)!r})"
 
 
-def bind_lane_symbol(inner: SDFG, lane_sdfg: SDFG) -> None:
-    """Map ``__tid`` into ``inner`` and every nested SDFG between it and ``lane_sdfg``, which holds the lane map."""
+def bind_lane_symbol(inner: SDFG, lane_sdfg: SDFG, name: str = "__tid") -> None:
+    """Map symbol ``name`` (the lane, ``__tid``) into ``inner`` and every nested SDFG between it and ``lane_sdfg``,
+    which defines it."""
     while inner is not lane_sdfg and inner.parent_nsdfg_node is not None:
-        inner.parent_nsdfg_node.symbol_mapping["__tid"] = symbolic.pystr_to_symbolic("__tid")
-        if "__tid" not in inner.symbols:
-            inner.add_symbol("__tid", dtypes.int32)
+        inner.parent_nsdfg_node.symbol_mapping[name] = symbolic.pystr_to_symbolic(name)
+        if name not in inner.symbols:
+            inner.add_symbol(name, dtypes.int32)
         inner = inner.parent_sdfg
 
 

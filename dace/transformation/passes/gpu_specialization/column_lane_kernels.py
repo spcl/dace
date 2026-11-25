@@ -9,15 +9,22 @@ loop inside it and every map over the columns a serial loop in that thread::
             map jl (Sequential): a[jl] = ...      # the whole block of columns, serially
             map jl (Sequential): b[jl] = a[jl] ...
 
-This pass gives the kernel one thread per column instead. A ``GPU_ThreadBlock`` lane map of ``__tid`` over the
-columns wraps the kernel body (the block is NPROMA threads), and lane ``t`` runs column ``t`` of every map over the
-columns, the column maps. What runs outside them, the level loop included, runs on every lane::
+This pass gives the kernel a lane per column instead, block-stride over columns in chunks of the block's lane
+count ``B``: a ``GPU_ThreadBlock`` lane map of ``__tid`` over ``B`` lanes wraps the kernel body, and lane ``t`` runs
+columns ``t, t + B, ...`` of every map over the columns, the column maps. ``B`` is a compile-time integer: the column
+extent when it is a constant up to ``MAX_LANES``, else ``BLOCK_LANES``. What runs outside the column maps, the level
+loop included, runs on every lane::
 
     GPU_Device map jb:
-        GPU_ThreadBlock map __tid = 0 : klon:
-            for jk in levels:
-                map jl = __tid + 1: a = ...
-                map jl = __tid + 1: b = a ...
+        GPU_ThreadBlock map __tid = 0 : B:
+            for __col in range(__tid, klon, B):       # chunked; one chunk (B = klon) drops the loop, __col = __tid
+                for jk in levels:
+                    map jl = __col + 1: a = ...
+                    map jl = __col + 1: b = a ...
+
+A kernel whose lanes read across columns (a fence, below) keeps every lane on the same path to its barriers: the
+level loop runs once per lane, and each column map strides over the lane's columns itself
+(``map jl = __tid + 1 : klon + 1 : B``). The form is fixed at compile time; nothing is versioned at run time.
 
 The lanes need no barrier when no lane reads what another wrote: every container the kernel writes is reached
 along its column dimension at the lane's own column (``a[jl - 1]`` in a map starting at ``jl = 1``), or over all
@@ -28,13 +35,11 @@ lane's column in that code is fenced by barriers. A kernel that breaks any of th
 :class:`~dace.transformation.passes.gpu_specialization.block_tile_kernels.BlockTileKernels`; so is a kernel without a
 sequential loop around its column maps, which is the shape that pass serves.
 
-A column buffer the kernel allocates per thread (``zsolqa(klon, 5, 5)``) loses its column dimension: each lane's copy
-is its own column (``zsolqa(5, 5)``), in registers when small, and code generation gives a larger one a per-thread
-slice of device memory, the threads innermost. A buffer whose columns lanes read across is shared instead: one copy per
-block, outside the kernel, the columns innermost.
-
-shortcut: one lane per column, so a block of more columns than a block holds threads (1024, fewer at high register
-counts) fails at launch; split such blocks before the kernel if a caller needs them.
+A column buffer the kernel allocates per thread (``zsolqa(klon, 5, 5)``) loses its column dimension when a lane runs
+a whole chunk at a time: each lane's copy is its current column (``zsolqa(5, 5)``), reused per chunk, in registers
+when small, and code generation gives a larger one a per-thread slice of device memory, the threads innermost. A
+buffer whose columns lanes read across, and every buffer of a strided kernel, is shared instead: one copy per block,
+outside the kernel, the columns innermost.
 """
 
 import ast
@@ -45,6 +50,7 @@ from ordered_set import OrderedSet
 from dace import SDFG, SDFGState, data, dtypes, properties, symbolic
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.narrowing import as_expr
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SymbolResolver
 from dace.subsets import Range
@@ -53,17 +59,25 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.warp_tiling import bind_lane_symbol
 from dace.transformation.passes.gpu_specialization.block_tile_kernels import barrier, is_kernel, lane_strided_hint
 
-#: What the lane map of a column kernel is, for a CPF reader.
+#: What the lane map of a column kernel is, for a CPF reader; ``{lanes}`` is the block's lane count.
 COLUMN_LANES_HINT = (
-    "parallel -- column lanes: the threads of the one thread block that runs each iteration of the kernel loop, one "
-    "per column; every loop over the columns below runs its lane's columns only, so no lane reads what another wrote"
+    "parallel -- column lanes: the {lanes} threads of the one thread block that runs each iteration of the kernel "
+    "loop, a lane per column, block-stride over columns in chunks of {lanes}; every loop over the columns below runs "
+    "its lane's columns only, so no lane reads what another wrote"
 )
-#: How a column map shares its columns out, for a CPF reader.
+#: How a column map shares its columns out, for a CPF reader; ``{lanes}`` is the block's lane count.
 COLUMN_STRIDED = (
-    "column lanes, lane t of the block takes column t (and t + the lane count, ... when the columns outnumber the "
-    "lanes): every loop over the columns gives a lane the same columns"
+    "column lanes, a lane per column, block-stride over columns in chunks of {lanes}: lane t takes columns t, "
+    "t + {lanes}, ..., the same columns in every loop over the columns"
 )
+#: The most lanes a block gets: a constant column extent up to it is one chunk, a lane per column. At the 255
+#: registers a CloudSC thread takes, 256 threads fill a multiprocessor's register file.
+MAX_LANES = 256
+#: The lanes of a block whose columns may outnumber ``MAX_LANES``: a symbolic or larger column extent.
+BLOCK_LANES = 128
 LANE = symbolic.symbol("__tid")
+#: The column a lane runs in the current chunk, the chunk loop's variable.
+COLUMN = symbolic.symbol("__col")
 
 #: A container as ``(owning SDFG, name)``.
 Container = tuple[SDFG, str]
@@ -507,7 +521,7 @@ def wrap_in_lanes(state: SDFGState, kernel: nodes.MapEntry, lanes) -> nodes.MapE
         xfh.reconnect_edge_through_map(state, edge, lane_entry, True)
     for edge in state.in_edges(exit_node):
         xfh.reconnect_edge_through_map(state, edge, lane_exit, False)
-    lane_entry.specialization_hint = COLUMN_LANES_HINT
+    lane_entry.specialization_hint = COLUMN_LANES_HINT.format(lanes=lanes)
     return lane_entry
 
 
@@ -520,10 +534,73 @@ def fence(state: SDFGState) -> None:
     barrier(parent.add_state_after(state, f"{state.label}_lanes_leave"))
 
 
+def memlet_sides(edge) -> list[tuple[str, Range]]:
+    """The containers ``edge`` reaches and the subset of each: its memlet's, and the other subset's access node. A
+    fill inside a map writes through the map exit, so the memlet names the container, not an endpoint."""
+    memlet = edge.data
+    sides = [(memlet.data, memlet.subset)]
+    others = [
+        node
+        for node in (edge.src, edge.dst)
+        if isinstance(node, nodes.AccessNode) and node.data != memlet.data and memlet.other_subset is not None
+    ]
+    sides += [(node.data, memlet.other_subset) for node in others]
+    return sides
+
+
+def lane_count(extent) -> int:
+    """The block's lanes: the column extent when it is a constant up to ``MAX_LANES``, else ``BLOCK_LANES``."""
+    extent = symbolic.pystr_to_symbolic(extent)
+    return int(extent) if extent.is_Number and int(extent) <= MAX_LANES else BLOCK_LANES
+
+
+def kernel_body(state: SDFGState, kernel: nodes.MapEntry) -> nodes.NestedSDFG | None:
+    """The nested SDFG that is all of ``kernel``'s body, if one is."""
+    inner = [node for node in state.scope_children()[kernel] if node is not state.exit_node(kernel)]
+    return inner[0] if len(inner) == 1 and isinstance(inner[0], nodes.NestedSDFG) else None
+
+
+def chunk_loop(body: SDFG, extent, lanes: int) -> LoopRegion:
+    """Run all of ``body`` once per column of the lane: ``for __col in range(__tid, extent, lanes)``."""
+    loop = LoopRegion(
+        "column_chunks",
+        f"{COLUMN} < {symbolic.symstr(extent)}",
+        str(COLUMN),
+        f"{COLUMN} = {LANE}",
+        f"{COLUMN} = {COLUMN} + {lanes}",
+    )
+    start = body.start_block
+    blocks, edges = list(body.nodes()), list(body.edges())
+    for block in blocks:
+        body.remove_node(block)
+    for block in blocks:
+        loop.add_node(block, is_start_block=block is start)
+    for edge in edges:
+        loop.add_edge(edge.src, edge.dst, edge.data)
+    body.add_node(loop, is_start_block=True)
+    sdutil.set_nested_sdfg_parent_references(body)
+    body.reset_cfg_list()
+    return loop
+
+
 def apply_lanes(state: SDFGState, kernel: nodes.MapEntry, region: Region, plan: LanePlan) -> None:
-    lanes = region.extent
-    lifted = OrderedSet()
-    for owner, name in plan.buffers:
+    """Give ``kernel`` a block of ``lane_count`` lanes, a lane per column, block-stride over columns in chunks of the
+    lane count. The form is fixed at compile time, by the extent and by whether lanes read across:
+
+    - one chunk (a constant extent up to ``MAX_LANES``): lane ``t`` runs column ``t``;
+    - chunked (no fence): the lane runs the whole body once per column of its, ``__col = t, t + lanes, ...``; no
+      barrier sits in the body, so the lanes may run different chunk counts;
+    - strided (a fence): every column map runs ``t, t + lanes, ...`` itself, and every lane runs the code around them
+      once, so all lanes reach each barrier; a lane then owns more than one column of a buffer, which stays per block.
+
+    One chunk and chunked contract the per-thread buffers to the lane's column: the lane reuses its copy per chunk.
+    """
+    lanes = lane_count(region.extent)
+    one_chunk = same(region.extent, lanes)
+    body = kernel_body(state, kernel)
+    strided = not one_chunk and (bool(plan.fences) or body is None)
+    lifted = OrderedSet(plan.buffers) if strided else OrderedSet()
+    for owner, name in OrderedSet() if strided else plan.buffers:
         dim = column_dims(owner.arrays[name], region.extent)[0]
         try:
             Contraction(owner, name, dim, apply=False, cross_lane=plan.cross_lane).run()
@@ -533,24 +610,32 @@ def apply_lanes(state: SDFGState, kernel: nodes.MapEntry, region: Region, plan: 
         Contraction(owner, name, dim, apply=True, cross_lane=plan.cross_lane).run()
     lift_buffers(state, kernel, lifted)
     wrap_in_lanes(state, kernel, lanes)
-    top = state.sdfg
+    column = LANE if one_chunk or strided else COLUMN
     users: OrderedSet = OrderedSet()
     for st, entry, axis in region.column_maps:
-        begin = entry.map.range[axis][0]
-        entry.map.range[axis] = (begin + LANE, begin + LANE, 1)
-        entry.specialization_hint = lane_strided_hint(st, entry, COLUMN_STRIDED)
+        begin, end, step = entry.map.range[axis]
+        entry.map.range[axis] = (begin + LANE, end, lanes) if strided else (begin + column, begin + column, 1)
+        entry.specialization_hint = lane_strided_hint(st, entry, COLUMN_STRIDED.format(lanes=lanes))
         users.add(st.sdfg)
     # A contracted buffer has no columns left; the lift put a block dimension in front of a moved one's
     for st, edge in plan.fills + plan.copies:
-        for node, subset in ((edge.src, edge.data.src_subset), (edge.dst, edge.data.dst_subset)):
-            dims = column_dims(st.sdfg.arrays[node.data], region.extent) if isinstance(node, nodes.AccessNode) else []
-            if dims and subset is not None:
-                subset[dims[0]] = (LANE, LANE, 1)
+        for name, subset in memlet_sides(edge):
+            dims = column_dims(st.sdfg.arrays[name], region.extent)
+            if dims:
+                begin, end, step = subset[dims[0]]
+                subset[dims[0]] = (begin + LANE, end, lanes) if strided else (column, column, 1)
         users.add(st.sdfg)
     for st in plan.fences:
         fence(st)
-    for sdfg in users:
-        bind_lane_symbol(sdfg, top)
+    top = state.sdfg
+    if column is COLUMN:
+        chunk_loop(body.sdfg, region.extent, lanes)
+        for sdfg in users:
+            bind_lane_symbol(sdfg, body.sdfg, str(COLUMN))
+        bind_lane_symbol(body.sdfg, top)
+    else:
+        for sdfg in users:
+            bind_lane_symbol(sdfg, top)
     kernel.map.gpu_block_size = None
 
 
@@ -712,7 +797,7 @@ def contracted_layout(desc: data.Array, dim: int) -> tuple[list, list, Any]:
 
 @properties.make_properties
 class ColumnLaneKernels(ppl.Pass):
-    """Run each column kernel one block per kernel iteration and one lane per column."""
+    """Run each column kernel one block per kernel iteration, a lane per column, block-stride over columns."""
 
     CATEGORY: str = "Device Specialization"
 
