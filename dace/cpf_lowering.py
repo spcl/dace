@@ -221,6 +221,8 @@ class Reason(enum.Enum):
     REDUCTION = "reduction"
     SCAN = "scan"
     GUARDED = "guarded by if ("
+    #: The in-order arm of a guarded loop, for the inputs its guard rejects.
+    FALLBACK = "the else arm of if ("
     CHECKED = "the runtime check found "
     SMALL_EXTENT = "small extent"
     THREAD_TEAM = "thread team"
@@ -231,6 +233,42 @@ class Reason(enum.Enum):
     IMPLEMENTATION = "implementation loop of "
     #: A GPU thread-block map that carries no program loop's line of its own: what its threads are.
     THREAD_BLOCK = "thread block"
+    WAVEFRONT_FRONT = "one wavefront step: "
+    WAVEFRONT_COLUMN = "the tiles "
+    # ``sequential``: an opening, or for a proven dependence the meaning of its kind, which follows the element
+    PROVEN_FLOW = "an iteration reads what an earlier one wrote"
+    PROVEN_ANTI = "an iteration overwrites what an earlier one still has to read"
+    PROVEN_OUTPUT = "two iterations write the same element and the last write must win"
+    CARRIED_COUNTER = "carries a value from "
+    ORDERED_CALL = "ordered call: "
+    EARLY_EXIT = "early exit ("
+    WAVEFRONT_STEP = "wavefront step: "
+    WAVEFRONT_TILE = "wavefront of tiles "
+    WAVEFRONT_INTERIOR = "inside one wavefront tile "
+    CHUNK_ORDER = "in order within a chunk"
+    WHILE_LOOP = "while loop: "
+    PINNED = "kept in order by an earlier pass"
+    # ``unknown``: one per refusal of the dependence test, then what kept the solver from an answer
+    NON_UNIQUE_WRITE = "the solver could not show that each iteration writes a different element"
+    SAME_ELEMENTS = "every iteration writes the same elements"
+    DYNAMIC_WRITE = "a conditional write to "
+    OVERLAPPING_WRITES = "the dependence test could not show that writes to "
+    CARRIED_DEPENDENCE = "the loop reads "
+    CARRIED_SYMBOL = "may carry a value from one iteration to the next"
+    LIVE_OUT_SYMBOL = "is read after the loop"
+    UNANALYZABLE_RANGE = "not analyzed for dependences: the loop bounds"
+    UNSUPPORTED_BODY = "not analyzed for dependences: the body"
+    ORDERED_SIDE_EFFECT = "the body has a side effect"
+    REFUSED = "the dependence test refused the loop"
+    COMPUTED_VALUE = "the only conflict the solver found needs "
+    #: ``unknown``: a branch condition reads a container the loop writes.
+    GUARD_READS_WRITTEN = "the guard "
+    #: ``unknown``: the index of the read that may conflict is a symbol the loop assigns.
+    ASSIGNED_INDEX = "the index "
+    #: ``unknown``: the test saw the read that may conflict only as a range it could bound.
+    RANGE_READ = "the test could only bound the read "
+    #: ``unknown``: the solver used up its resource budget before it found a conflict or showed there is none.
+    BUDGET_EXPIRED = "the solver ran out of its budget before it found a conflict or showed there is none"
 
 
 #: What a pass or the renderer appends to the class line of a proven-parallel loop that has no thread pragma (or, on a
@@ -249,9 +287,77 @@ KERNEL_MAPPING = "; kernel: "
 THREAD_BLOCK_MAPPING = "; thread block: "
 
 
+#: The members a reason holds after its opening: a proven dependence names its element first, a carried symbol its name.
+INNER_REASONS = (
+    Reason.PROVEN_FLOW,
+    Reason.PROVEN_ANTI,
+    Reason.PROVEN_OUTPUT,
+    Reason.CARRIED_COUNTER,
+    Reason.CARRIED_SYMBOL,
+    Reason.LIVE_OUT_SYMBOL,
+)
+
+
 def reason_of(reason: str) -> Reason | None:
-    """The :class:`Reason` ``reason`` opens with, or ``None`` for a proof text."""
-    return next((kind for kind in Reason if reason.startswith(kind.value)), None)
+    """The :class:`Reason` ``reason`` opens with, else the first of :data:`INNER_REASONS` it holds, else ``None``."""
+    return next((kind for kind in Reason if reason.startswith(kind.value)), None) or next(
+        (kind for kind in INNER_REASONS if kind.value in reason), None
+    )
+
+
+#: Reason -> (what it means, what would make the loop parallel or what to do), one line each for the header legend.
+REASON_LEGEND: dict[Reason, tuple[str, str]] = {
+    Reason.INDEPENDENT: (
+        "no iteration touches an element another one writes",
+        "nothing to prove; tune schedule, tiles",
+    ),
+    Reason.REDUCTION: ("iterations combine into one value with an associative op", "nothing; mind rounding order"),
+    Reason.SCAN: ("running combination, two blocked passes", "nothing; the passes are parallel"),
+    Reason.GUARDED: ("parallel arm of a run-time check", "nothing; the check picks the arm"),
+    Reason.FALLBACK: ("in-order arm for inputs the check rejects", "inputs that pass the check"),
+    Reason.CHECKED: ("verdict of the run-time check on this input", "inputs that pass the check"),
+    Reason.SMALL_EXTENT: ("unproven, too few iterations to share", "nothing; not worth threads"),
+    Reason.THREAD_TEAM: ("one team; omp for loops inside split work", "nothing"),
+    Reason.NOT_A_LOOP: ("a block, not a loop", "nothing"),
+    Reason.DIMENSION: ("one loop of a parallel nest", "nothing; see the nest's line"),
+    Reason.TILE: ("loop over tiles of a tiled loop", "nothing; tile size is a tuning knob"),
+    Reason.INNER_TILE: ("loop inside one tile", "nothing; tile size is a tuning knob"),
+    Reason.IMPLEMENTATION: ("loop a helper or library lowering wrote", "tune the call, not the loop"),
+    Reason.THREAD_BLOCK: ("threads of one GPU thread block", "nothing; block size is a tuning knob"),
+    Reason.WAVEFRONT_FRONT: ("points of one wavefront step", "nothing; tile the front"),
+    Reason.WAVEFRONT_COLUMN: ("tiles of one wavefront step", "nothing; tile size is a tuning knob"),
+    Reason.PROVEN_FLOW: (
+        "flow (RAW): a later iteration reads an earlier write",
+        "none; a scan or a wavefront if affine",
+    ),
+    Reason.PROVEN_ANTI: ("anti (WAR): a later write overwrites an earlier read", "copy the read data first"),
+    Reason.PROVEN_OUTPUT: ("output (WAW): the last write must win", "keep only the last write"),
+    Reason.CARRIED_COUNTER: ("a scalar hands its value to the next iteration", "a scan of its increments"),
+    Reason.ORDERED_CALL: ("a call whose effects must stay in order", "a call without ordered effects"),
+    Reason.EARLY_EXIT: ("later iterations must not run after the exit", "a find-first search"),
+    Reason.WAVEFRONT_STEP: ("each step reads the previous step", "none; the front inside is parallel"),
+    Reason.WAVEFRONT_TILE: ("each tile step reads the previous one", "none; the tile column is parallel"),
+    Reason.WAVEFRONT_INTERIOR: ("original order inside one tile", "none; smaller tiles"),
+    Reason.CHUNK_ORDER: ("order within a chunk; chunks in parallel", "nothing; chunk size is a tuning knob"),
+    Reason.WHILE_LOOP: ("each test reads the previous trip", "a counted loop"),
+    Reason.PINNED: ("a pass kept it in order; it tests independent", "see the pass that pinned it"),
+    Reason.NON_UNIQUE_WRITE: ("two iterations may write one element", "distinct indices (a permutation)"),
+    Reason.SAME_ELEMENTS: ("every iteration writes the same elements", "a private copy or a reduction"),
+    Reason.DYNAMIC_WRITE: ("conditional write at an unfixed index", "distinct indices"),
+    Reason.OVERLAPPING_WRITES: ("writes may overlap across iterations", "disjoint writes"),
+    Reason.CARRIED_DEPENDENCE: ("a read may see an earlier iteration's write", "no earlier write to what it reads"),
+    Reason.CARRIED_SYMBOL: ("a scalar may hand a value on", "assign it before each read"),
+    Reason.LIVE_OUT_SYMBOL: ("a scalar is read after the loop", "keep the last value (lastprivate)"),
+    Reason.UNANALYZABLE_RANGE: ("bounds or step not analyzable", "integer bounds fixed before the loop"),
+    Reason.UNSUPPORTED_BODY: ("body holds a block the test cannot read", "rewrite it as an if"),
+    Reason.ORDERED_SIDE_EFFECT: ("a side effect whose order counts", "an effect whose order does not matter"),
+    Reason.REFUSED: ("the test refused the loop", "see the named array"),
+    Reason.COMPUTED_VALUE: ("conflict needs a value computed before the loop", "a fact bounding that value"),
+    Reason.GUARD_READS_WRITTEN: ("a guard reads data the loop writes", "no earlier write to what it reads"),
+    Reason.ASSIGNED_INDEX: ("an index the loop assigns, not modeled", "an affine index"),
+    Reason.RANGE_READ: ("a read known only as a bounded range", "an affine index"),
+    Reason.BUDGET_EXPIRED: ("the solver gave up within its budget", "a simpler index or a fact"),
+}
 
 
 #: A hint's class prefix -> the one word :attr:`HintDetail.KINDS` writes; a reduction or a scan is a kind of parallel loop.

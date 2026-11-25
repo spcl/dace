@@ -65,6 +65,18 @@ CLOSING = (
     "come from memory traffic (layout, fusion, blocking) and from where the threads fork (once for a whole nest, or "
     "once per iteration of an enclosing sequential loop)."
 )
+#: :data:`CLOSING` for a unit whose sequential loops include the in-order arm of a guarded loop, which is no
+#: recurrence: it keeps the order only for the inputs its guard rejects.
+CLOSING_WITH_FALLBACKS = CLOSING.replace(
+    "either parallel or a proven recurrence",
+    "parallel, a proven recurrence, or the in-order fallback arm of a guarded loop (run only when its guard fails)",
+)
+#: :data:`CLOSING` for a unit without a loop: its work is in library calls (a BLAS call) or, for the host unit of a
+#: GPU rendering, in the kernels it launches, with nothing to reorder here.
+CLOSING_NO_LOOPS = (
+    "// No loop in this unit: its work is in the calls it makes (library calls, or the kernels of the device unit it "
+    "launches). Gains come from the callee's own threading and from memory traffic around it."
+)
 
 
 @dataclass(slots=True)
@@ -99,7 +111,13 @@ def loops_of(code: str) -> list[Loop]:
             continue
         name = loop_name(stripped)
         if label is not None:
-            if reason_of(label[1]) is Reason.DIMENSION and name:
+            if reason_of(label[1]) is Reason.SCAN and not name.startswith(LOOP_NAME_OF_HELPER) and name:
+                found.append(Loop(names.unique(name), label[0], label[1]))
+            elif reason_of(label[1]) is Reason.SCAN:
+                # A scan's blocked code: its comment names the scan, and an arm its runtime check picks is part of it
+                if Reason.CHECKED.value not in label[1]:
+                    found.append(Loop(names.unique("scan"), label[0], label[1]))
+            elif reason_of(label[1]) is Reason.DIMENSION and name:
                 names.unique(name)
             elif label[0] is not LoopClass.LIBRARY and reason_of(label[1]) not in (*NOT_A_LOOP, *ADDED_REASONS):
                 found.append(Loop(names.unique(name or call_name(stripped)), label[0], label[1]))
@@ -488,6 +506,10 @@ def note_blas_threads(code: str) -> str:
     return "\n".join(out) + ("\n" if code.endswith("\n") else "")
 
 
+#: The counter prefix of the loops a ``cpf_`` helper or a scan's blocked code writes: no program loop's name.
+LOOP_NAME_OF_HELPER = "cpf_"
+
+
 def loop_name(line: str) -> str:
     counter = LOOP_HEAD.match(line)
     if counter is not None:
@@ -543,7 +565,12 @@ def summary_lines(loops: list[Loop]) -> list[str]:
     # Every loop is analyzed (a short one too; its trip count only decides whether to fork): only unknown loops are open.
     open_loops = [loop for loop in loops if loop.kind is LoopClass.UNKNOWN]
     if not open_loops:
-        lines += [CLOSING, "// cpf: proven: all"]
+        fallbacks = any(
+            loop.kind is LoopClass.SEQUENTIAL and reason_of(loop.reason) in (Reason.FALLBACK, Reason.CHECKED)
+            for loop in loops
+        )
+        closing = CLOSING_WITH_FALLBACKS if fallbacks else CLOSING if loops else CLOSING_NO_LOOPS
+        lines += [closing, "// cpf: proven: all"]
     else:
         lines.append(f"// cpf: proven: partial; open: {', '.join(dict.fromkeys(loop.name for loop in open_loops))}")
     # A versioned loop (``if (check) parallel else in order``) counts as proven; its parallel arms are listed apart

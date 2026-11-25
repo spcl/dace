@@ -3,9 +3,16 @@
 
 Each test renders a few-line program the way the bench does and checks the line the finding is about."""
 
+from unittest import mock
+
+import pytest
+
 import dace
-from dace.codegen import cpf_summary
+from dace import cpf_lowering
+from dace.codegen import cpf, cpf_summary
 from dace.codegen.cpf import render
+from dace.cpf_lowering import LoopClass, Reason
+from dace.transformation.passes.analysis import smt_dependence
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from tests.codegen.cpf.conftest import render_gpu
@@ -242,6 +249,185 @@ def test_a_promoted_warp_tile_keeps_one_class_line_and_its_kernel_runs_a_block_p
     assert "kernel: one thread block per iteration of j" in kernel, kernel
 
 
+def test_a_launch_per_trip_note_gives_its_grid_in_blocks_of_threads():
+    """Finding 13: the per-trip launch note gave ``ceiling(N/256 - 1/128) x 256`` without a unit."""
+    code = render_gpu(time_stencil, "cpf_review2_stencil_launch", "cuda").code
+    assert "T launches per call, each of ceil((N - 2)/256) blocks of 256 threads" in code, code
+
+
+def test_a_copy_names_its_source_and_destination():
+    """Finding 14: the stencil copy said ``copy: write one buffer into another``."""
+    code = bench_c(time_stencil, "cpf_review2_stencil_copy")
+    assert "// copy: b[1:N - 1] into a[1:N - 1]" in code, code
+    assert "write one buffer into another" not in code, code
+
+
+@dace.program
+def early_exit(a: dace.float64[N], b: dace.float64[N]):
+    for i in range(N):
+        if a[i] < 0:
+            break
+        b[i] = a[i]
+
+
+def test_a_chunked_early_exit_says_its_blocks_are_searched_in_parallel():
+    """Finding 15: the chunked early-exit loop said only that iterations after the exit must not run."""
+    code = bench_c(early_exit, "cpf_review2_early")
+    (line,) = [line.strip() for line in code.splitlines() if "// sequential -- early exit (break)" in line]
+    assert "; blocks of " in line and "searched in parallel for the first exit (find-first)" in line, line
+
+
+@dace.program
+def max_reduce(a: dace.float64[N], r: dace.float64[1]):
+    for i in range(N):
+        r[0] = max(r[0], a[i])
+
+
+def test_a_reduction_call_names_its_operator_input_axis_and_output():
+    """Finding 16: the max-reduce call said ``reduction over the given axes with the given operator``."""
+    code = bench_c(max_reduce, "cpf_review2_maxred")
+    assert "// reduction: max of a[0:N] over axis 0 into r[0]" in code, code
+
+
+def test_the_closing_line_names_fallback_arms_and_units_without_loops():
+    """Finding 17: the closing line called a guard's fallback arm and a loop-free unit a proven recurrence."""
+    inc = dace.symbol("inc")
+
+    @dace.program
+    def strided_closing(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(N):
+            a[i * inc] = a[i * inc] + b[i]
+
+    assert cpf_summary.CLOSING_WITH_FALLBACKS in bench_c(strided_closing, "cpf_review2_closing_guard")
+    loop_free = bench_c(max_reduce, "cpf_review2_closing_library")
+    assert cpf_summary.CLOSING_NO_LOOPS in loop_free and cpf_summary.CLOSING not in loop_free, loop_free
+
+
+L = dace.symbol("L", dtype=dace.int64, positive=True)
+
+
+@dace.program
+def diff_skew(a: dace.float64[L, L]):
+    for i in range(1, L):
+        for j in range(0, L - 1):
+            a[i, j] = (a[i, j] + a[i - 1, j] + a[i - 1, j + 1]) / 3.0
+
+
+def test_a_row_recurrence_read_through_a_map_scalar_is_proven():
+    """wf_diff_skew: the search saw only the map's merged read box ``a[i - 1:i + 1, 0:L]`` and left ``i`` unknown."""
+    flow = "// sequential -- proven dependence on a[i - 1, 0:L - 1]: an iteration reads what an earlier one wrote"
+    cpu = bench_c(diff_skew, "cpf_review2_skew_cpu")
+    gpu = render_gpu(diff_skew, "cpf_review2_skew_gpu", "cuda").code
+    for code in (cpu, gpu):
+        (line,) = [line.strip() for line in code.splitlines() if line.strip().startswith(("// sequential", "// unk"))]
+        assert line.startswith(flow), line
+
+
+@dace.program
+def guarded_columns(aa: dace.float64[L, L], bb: dace.float64[L, L]):
+    for i in range(L):
+        if aa[0, i] > 0.0:
+            for j in range(1, L):
+                aa[j, i] = aa[j - 1, i] + bb[j, i]
+
+
+def test_an_unknown_loop_under_a_guard_on_written_data_names_the_guard():
+    """s275: the unknown row loop said only that the test could not show the conflict, not that its guard reads aa."""
+    cpu = bench_c(guarded_columns, "cpf_review2_s275_cpu")
+    gpu = render_gpu(guarded_columns, "cpf_review2_s275_gpu", "cuda").device_code
+    for code in (cpu, gpu):
+        (line,) = [line.strip() for line in code.splitlines() if line.strip().startswith("// unknown")]
+        assert line.startswith("// unknown -- the guard aa[0, "), line
+        assert "reads aa, which this loop writes" in line and "(outside the analyzable domain)" in line, line
+
+
+S = dace.symbol("S")
+
+
+@dace.program
+def modular_rows(a: dace.float64[N, N]):
+    for i in range(1, N):
+        for j in range(N):
+            a[i, j] = a[i - 1, (j * S) % N] + 1.0
+
+
+@dace.program
+def indirect_read(a: dace.float64[N], idx: dace.int64[N]):
+    for i in range(N):
+        a[i] = a[idx[i]] + 1.0
+
+
+def unknown_lines(code: str) -> list[str]:
+    return [line.strip() for line in code.splitlines() if line.strip().startswith("// unknown")]
+
+
+def test_an_unknown_loop_names_a_read_it_could_only_bound():
+    """An unknown loop whose read the test saw only as the range ``a[i - 1, 0:N]`` said nothing of why."""
+    (line,) = unknown_lines(bench_c(modular_rows, "cpf_review2_range_read"))
+    assert line.startswith("// unknown -- the test could only bound the read a[i - 1, 0:N]: "), line
+    assert "found no two iterations that meet on one element" in line, line
+
+
+def test_an_unknown_loop_names_an_index_it_assigns():
+    """An unknown loop that reads ``a[sym0]``, ``sym0 = idx[i]``, did not say the loop assigns the index."""
+    (line,) = unknown_lines(bench_c(indirect_read, "cpf_review2_assigned_index"))
+    assert line.startswith("// unknown -- the index sym0 of a[sym0] is assigned in the loop (sym0 = idx[i])"), line
+
+
+def test_an_unknown_loop_says_when_the_solver_ran_out_of_budget():
+    """A witness query z3 gave up on read as if the test had answered it."""
+    original = smt_dependence.bounded_solver
+    with mock.patch.object(smt_dependence, "bounded_solver", autospec=True, side_effect=lambda rlimit=0: original(1)):
+        (line,) = unknown_lines(bench_c(indirect_read, "cpf_review2_budget"))
+    assert line.startswith("// unknown -- " + Reason.BUDGET_EXPIRED.value + "; the index sym0"), line
+
+
+@dace.program
+def dot_then_scale(a: dace.float64[N], b: dace.float64[N], x: dace.float64[M], r: dace.float64[1]):
+    for i in range(N):
+        r[0] += a[i] * b[i]
+    for j in range(M):
+        x[j] = x[j] * r[0]
+
+
+def test_the_header_legend_has_one_row_per_reason_the_unit_uses():
+    """Finding 10: the legend explained classes only; a unit of a reduction and an independent loop gets two rows."""
+    code = bench_c(dot_then_scale, "cpf_review2_legend")
+    table = [line for line in code.splitlines() if line.startswith("//   ") and " | " in line]
+    assert table[0].split(" | ")[0].strip() == "//   class" and len(table) == 3, table
+    assert [row.split(" | ")[:2] for row in table[1:]] == [
+        ["//   parallel", "reduction  ".ljust(len(table[1].split(" | ")[1]))],
+        ["//   parallel", "independent".ljust(len(table[1].split(" | ")[1]))],
+    ], table
+    assert cpf.CPF_LINES_LEGEND in code, code
+
+
+@pytest.mark.parametrize("reason", list(Reason), ids=[reason.name for reason in Reason])
+def test_every_reason_is_told_apart_and_has_a_legend_row(reason: Reason):
+    """Each Reason member is found in a line that opens with it (or holds it after the element it names) and gets its
+    legend row."""
+    inner = "proven dependence on a[i]: " if reason in cpf_lowering.INNER_REASONS else ""
+    line = f"// {LoopClass.UNKNOWN.value} -- {inner}{reason.value} of the loop"
+    assert cpf_lowering.reason_of(line.split(" -- ", 1)[1]) is reason, line
+    (row,) = cpf.reason_table(line)[1:]
+    assert row.split(" | ")[2].strip() == cpf_lowering.REASON_LEGEND[reason][0], row
+
+
+@dace.program
+def k_shift(a: dace.float64[N + S]):
+    for i in range(N):
+        a[i] = a[i + S] + 1.0
+
+
+def test_the_summary_names_a_scans_blocked_code_as_one_scan():
+    """Finding 18: the header listed the scan's blocks as loops ``statement``, ``if()``, ``cpf_i``."""
+    header = [line for line in bench_c(k_shift, "cpf_review2_scan_names").splitlines() if line.startswith("//   ")]
+    (parallel,) = [line for line in header if line.startswith("//   parallel: ") and "proven;" not in line]
+    names = parallel.removeprefix("//   parallel: ").split(", ")
+    assert "scan" in names and not any(n.startswith(("statement", "if()", "cpf_")) for n in names), parallel
+    assert "//     scans: scan" in header, header
+
+
 if __name__ == "__main__":
     test_a_grid_stride_reduction_kernel_says_reduction_and_grid_stride()
     test_a_block_per_row_kernel_has_one_line_per_kernel_and_per_thread_block()
@@ -257,3 +443,17 @@ if __name__ == "__main__":
     test_an_inline_fused_scan_names_the_scan_not_the_kernel_function()
     test_a_carried_counter_is_named_without_a_stray_space()
     test_a_promoted_warp_tile_keeps_one_class_line_and_its_kernel_runs_a_block_per_tile()
+    test_a_launch_per_trip_note_gives_its_grid_in_blocks_of_threads()
+    test_a_copy_names_its_source_and_destination()
+    test_a_chunked_early_exit_says_its_blocks_are_searched_in_parallel()
+    test_a_reduction_call_names_its_operator_input_axis_and_output()
+    test_the_closing_line_names_fallback_arms_and_units_without_loops()
+    test_a_row_recurrence_read_through_a_map_scalar_is_proven()
+    test_an_unknown_loop_under_a_guard_on_written_data_names_the_guard()
+    test_an_unknown_loop_names_a_read_it_could_only_bound()
+    test_an_unknown_loop_names_an_index_it_assigns()
+    test_an_unknown_loop_says_when_the_solver_ran_out_of_budget()
+    test_the_header_legend_has_one_row_per_reason_the_unit_uses()
+    for member in Reason:
+        test_every_reason_is_told_apart_and_has_a_legend_row(member)
+    test_the_summary_names_a_scans_blocked_code_as_one_scan()

@@ -628,7 +628,7 @@ def test_a_map_a_library_expansion_leaves_is_labelled():
     state.add_edge(copy, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_write("dst"), None, dace.Memlet("dst[0:N]"))
     sdfg.validate()
     rendered = comment_lines(render(sdfg).code)
-    assert "// copy: write one buffer into another" in rendered, rendered
+    assert "// copy: src[0:N] into dst[0:N]" in rendered, rendered
     assert "// " + PARALLEL.splitlines()[0] in rendered, rendered
 
 
@@ -731,7 +731,7 @@ def test_a_read_ahead_dependence_is_named_war_not_raw():
     )
     assert reason, hint
     assert reason.group(2) == CONFLICT_MEANING["WAR"], hint
-    assert first_line == SEQUENTIAL_PROVEN.format(reason=reason.group(1))
+    assert first_line == SEQUENTIAL_PROVEN.format(reason=" " + reason.group(1))
     # The example is an execution: the earlier iteration reads the element the next one overwrites
     size, first, second = (int(g) for g in reason.groups()[2:])
     assert second == first + 1 and second < size - 1, hint
@@ -757,7 +757,7 @@ def test_an_offset_that_bounds_the_loop_is_named_in_the_witness():
     )
     assert reason, hint
     assert reason.group(3) == CONFLICT_MEANING["RAW"]
-    assert first_line == SEQUENTIAL_PROVEN.format(reason=reason.group(1))
+    assert first_line == SEQUENTIAL_PROVEN.format(reason=" " + reason.group(1))
     # The example is an execution: both iterations run, one after the other, for that K
     size, offset, first, second = (int(g) for g in reason.groups()[3:])
     assert 1 <= first and second == first + 1 < size - offset, hint

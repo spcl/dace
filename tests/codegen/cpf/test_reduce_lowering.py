@@ -61,7 +61,8 @@ def test_a_full_reduction_is_one_openmp_reduction_loop(language, program, clause
     )
 
     assert clause in rendering.code and "critical" not in rendering.code, rendering.code
-    assert "// reduction over the given axes with the given operator" in rendering.code, rendering.code
+    operator = clause.removeprefix("reduction(").split(":")[0]
+    assert f"// reduction: {operator} of a[0:N] over every axis into " in rendering.code, rendering.code
     assert np.array_equal(out, reference(a))
 
 

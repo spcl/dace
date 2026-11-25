@@ -56,9 +56,11 @@ from dace.codegen import codegen, cpf_compact, cpf_summary
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config, set_temporary
 from dace.cpf_lowering import LoopClass
+from dace.frontend.operations import detect_reduction_type
 from dace.libraries.blas.environments import openblas
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.fft.environments import fftw3
+from dace.libraries.standard.nodes.reduce import Reduce
 from dace.libraries.tileops.dispatch import FUNCTION_ISAS, ISA, isa_implementation, widest_function_isa
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.library import get_environment
@@ -75,7 +77,11 @@ from dace.transformation.dataflow.prune_connectors import PruneConnectors
 from dace.transformation.dataflow.tasklet_fusion import TaskletFusion
 from dace.transformation.dataflow.trivial_map_elimination import TrivialMapElimination
 from dace.transformation.passes.analysis.analysis import has_wcr_in_edge
-from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds, require_classes
+from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
+    REDUCTION_SYMBOLS,
+    AnnotateLoopKinds,
+    require_classes,
+)
 from dace.transformation.passes.canonicalize.finalize import blas_addresses
 from dace.transformation.passes.readable_names import ReadableNames
 from dace.transformation.passes.scalar_fission import AccessIndex, MustDefinition, SubsetAccesses, edge_subset
@@ -444,6 +450,24 @@ def description_of(node: nodes.LibraryNode | type[nodes.LibraryNode]) -> str | N
     return QUALIFIED_DESCRIPTIONS.get(qualified) or LIBRARY_NODE_DESCRIPTIONS.get(cls.__name__)
 
 
+def instance_description(node: nodes.LibraryNode, state: SDFGState) -> str | None:
+    """What this one library node computes, naming its containers, where the class's line would leave them out: a
+    copy's source and destination, a reduction's operator, input, axes and output. ``None`` for any other node."""
+    inputs = [e.data for e in state.in_edges(node) if not e.data.is_empty()]
+    outputs = [e.data for e in state.out_edges(node) if not e.data.is_empty()]
+    if len(inputs) != 1 or len(outputs) != 1:
+        return None
+    if type(node).__name__ == "CopyLibraryNode":
+        return f"copy: {inputs[0]} into {outputs[0]}"
+    if isinstance(node, Reduce) and node.wcr is not None:
+        kind = detect_reduction_type(node.wcr)
+        operator = REDUCTION_SYMBOLS.get(kind, kind.name.lower())
+        names = ", ".join(str(axis) for axis in node.axes or ())
+        axes = "every axis" if node.axes is None else ("axes " if len(node.axes) > 1 else "axis ") + names
+        return f"reduction: {operator} of {inputs[0]} over {axes} into {outputs[0]}"
+    return None
+
+
 def subtree_guids(node: nodes.Node, state: SDFGState) -> set[str]:
     """GUIDs of ``node`` and, if it is a nested SDFG, of every node inside it.
 
@@ -657,7 +681,7 @@ def force_renderable_expansions(sdfg: SDFG, provenance: dict[str, tuple[str, str
                 if selected != "CUDA":
                     schedule_host_level_device_node(node, state)
             if provenance is not None:
-                description = description_of(node)
+                description = instance_description(node, state) or description_of(node)
                 if description is not None:
                     # Recorded BEFORE the expansion: afterwards the node is gone from the graph, and
                     # with it any way to ask what it was.
@@ -1555,7 +1579,10 @@ OPENMP_CALL = re.compile(r"\bomp_[a-z_]+\s*\(")
 
 
 def preamble(
-    code: str, dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STANDALONE, environments: Iterable[str] = ()
+    code: str,
+    dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STANDALONE,
+    environments: Iterable[str] = (),
+    device_code: str | None = None,
 ) -> str:
     """The include block and inline definitions ``code`` needs, in the order they must appear.
 
@@ -1567,6 +1594,8 @@ def preamble(
     :param dialect: which standalone dialect emitted it.
     :param environments: the DaCe environments the unit's code generator used; a vendor library among them
                          (:data:`~dace.cpf_lowering.VENDOR_LIBRARIES`) adds its headers and definitions.
+    :param device_code: the device unit of a host unit, whose loop comments the host legend explains too; ``None``
+                        for the device unit itself, which carries no summary.
     :returns: the preamble, ending in a blank line.
     """
     used = cpf_lowering.helpers_used(code, dialect)
@@ -1579,7 +1608,8 @@ def preamble(
     vendors = cpf_lowering.vendor_libraries(environments, code, dialect)
     lines = [RENDERED_BY]
     if cpf_lowering.hint_detail() is cpf_lowering.HintDetail.PROOFS:
-        lines += contract_lines(code)
+        legend_code = "\n".join([code, *definitions, device_code or ""])
+        lines += contract_lines(legend_code, summary=device_code is not None)
     lines += [f"#include {header}" for header in headers]
     vendor_headers = [
         header
@@ -1646,16 +1676,47 @@ CONTRACT_KINDS = {
 }
 
 
-def contract_lines(code: str) -> list[str]:
+#: The head of the reason table :func:`reason_table` prints under :data:`CONTRACT_LINES`.
+REASON_COLUMNS = ("class", "reason (opening words)", "meaning", "what would make it parallel / what to do")
+#: The line that explains the ``// cpf:`` lines of the summary, the last line of the legend.
+CPF_LINES_LEGEND = (
+    "// cpf: lines -- 'proven: all': no loop needs a run-time check beyond the entry preconditions listed; "
+    "'proven: partial; open: L': the unknown loops L are unproven; 'guarded: L': loops L run in parallel only "
+    "when their run-time check passes."
+)
+REASON_LINE = re.compile(rf"// ({'|'.join(cls.value for cls in LoopClass)}) -- (.*)")
+
+
+def reason_table(code: str) -> list[str]:
+    """One aligned row of :data:`cpf_lowering.REASON_LEGEND` per (class, reason) ``code``'s loop comments use, under a
+    head row; none when no comment names a reason with a legend."""
+    used = OrderedSet()
+    for found in REASON_LINE.finditer(code):
+        reason = cpf_lowering.reason_of(found.group(2))
+        if reason is not None:
+            used.add((found.group(1), reason))
+    if not used:
+        return []
+    rows = [REASON_COLUMNS] + [(cls, reason.value.strip(), *cpf_lowering.REASON_LEGEND[reason]) for cls, reason in used]
+    widths = [max(len(row[column]) for row in rows) for column in range(len(REASON_COLUMNS) - 1)]
+    return ["//   " + " | ".join([*(c.ljust(w) for c, w in zip(row, widths)), row[-1]]).rstrip() for row in rows]
+
+
+def contract_lines(code: str, summary: bool = True) -> list[str]:
     """:data:`CONTRACT_LINES` for the classes ``code``'s loop comments use: a legend line for a class no loop has
-    would explain nothing in the unit; none at all without a classed comment."""
+    would explain nothing in the unit; none at all without a classed comment. Then :func:`reason_table` for the
+    reasons they use, and :data:`CPF_LINES_LEGEND` for a unit with a ``summary``."""
     used = OrderedSet(
         LoopClass(found.group(1) or found.group(2)) for found in re.finditer(cpf_summary.CLASS_LINE_ANYWHERE, code)
     )
     if not used:
         return []
-    return [CONTRACT_LINES[0], *(line for kind in CONTRACT_KINDS if kind in used for line in CONTRACT_KINDS[kind])] + [
-        CONTRACT_LINES[-1]
+    return [
+        CONTRACT_LINES[0],
+        *(line for kind in CONTRACT_KINDS if kind in used for line in CONTRACT_KINDS[kind]),
+        CONTRACT_LINES[-1],
+        *reason_table(code),
+        *([CPF_LINES_LEGEND] if summary else []),
     ]
 
 
@@ -2456,7 +2517,7 @@ def render_unit(
                 body = compact_blocks(body)
                 device_body = compact_blocks(device_body) if device_body else ""
     code = drop_repeated_includes(
-        keep_target_path(preamble(body, dialect, frame.environments) + body, renders_for_x86(isa))
+        keep_target_path(preamble(body, dialect, frame.environments, device_body or "") + body, renders_for_x86(isa))
     )
     names: tuple[tuple[str, str], ...] = ()
     if llm_friendly:
@@ -2476,7 +2537,7 @@ def render_unit(
                     )
                 )
             ),
-            (CONTRACT_LINES[-1], RENDERED_BY),
+            (CPF_LINES_LEGEND, CONTRACT_LINES[-1], RENDERED_BY),
         )
     # The device unit repeats the frame's state struct, whose vendor handles and plans need their declarations.
     device_environments = (set(device.environments) | set(frame.environments)) if device is not None else set()

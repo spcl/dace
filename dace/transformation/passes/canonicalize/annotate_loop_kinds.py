@@ -320,11 +320,12 @@ def unproven_reason(refusal: LoopRefusal, loop: LoopRegion | None = None) -> str
             f"iterations never overlap; parallel if they are disjoint; {later_wins}"
         )
     if kind is Refusal.CARRIED_DEPENDENCE:
-        return (
+        unshown = (
             f"the loop reads {read} and also writes {container}: the dependence test could not show that an "
             "earlier iteration never writes an element this read touches; parallel if none does; otherwise that read "
             "must see the earlier iteration's value, so keep the order"
         )
+        return blocked_read(refusal, loop, read) + unshown
     if kind is Refusal.CARRIED_SYMBOL:
         return (
             f"{carried_symbol_text(refusal)} may carry a value from one iteration to the next (a branch may skip "
@@ -337,6 +338,30 @@ def unproven_reason(refusal: LoopRefusal, loop: LoopRegion | None = None) -> str
             "otherwise the read after the loop sees whichever iteration finished last"
         )
     return unexamined_reason(refusal, written)
+
+
+def blocked_read(refusal: LoopRefusal, loop: LoopRegion | None, read: str) -> str:
+    """What keeps the solver from the one read of a carried-dependence refusal, as an opening of the reason, or ``""``:
+    an index the loop assigns (:attr:`Reason.ASSIGNED_INDEX`), or a read the test saw only as a range
+    (:attr:`Reason.RANGE_READ`)."""
+    if not refusal.reads or loop is None:
+        return ""
+    subset = refusal.reads[0]
+    assigned = {
+        name: value
+        for edge in loop.all_interstate_edges()
+        for name, value in edge.data.assignments.items()
+        if name != loop.loop_variable
+    }
+    for name in free_names(subset):
+        if name in assigned:
+            return f"{Reason.ASSIGNED_INDEX.value}{name} of {read} is assigned in the loop ({name} = {assigned[name]}), a value the solver does not model; "
+    if any(begin != end for begin, end, unused_step in subset.ndrange()):
+        return (
+            f"{Reason.RANGE_READ.value}{read}: no single element of it is an index the solver can model (an indirect, "
+            "modular or data-dependent index), so it found no two iterations that meet on one element; "
+        )
+    return ""
 
 
 def unexamined_reason(refusal: LoopRefusal, written: str) -> str:
@@ -431,6 +456,11 @@ def edge_accesses(
             (edge.src.data, memlet.get_src_subset(edge, state), False),
             (edge.dst.data, memlet.get_dst_subset(edge, state), True),
         ]
+    elif isinstance(edge.src, nodes.EntryNode) and isinstance(edge.dst, nodes.AccessNode):
+        # A map reads an element into a scalar of its body (``a_index = a[i - 1, j]``)
+        sides = [(state.memlet_path(edge)[0].src.data, memlet.get_src_subset(edge, state), False)]
+    elif isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.ExitNode):
+        sides = [(state.memlet_path(edge)[-1].dst.data, memlet.get_dst_subset(edge, state), True)]
     elif isinstance(edge.dst, nodes.Tasklet):
         sides = [(memlet.data, memlet.subset, False)]
     elif isinstance(edge.src, nodes.Tasklet):
@@ -706,7 +736,7 @@ def state_sites(
     ``terms`` as :func:`region_sites`."""
     terms = mapping if terms is None else terms
     for edge in state.edges():
-        scoped = edge.dst if isinstance(edge.dst, nodes.Tasklet) else edge.src
+        scoped = edge.dst if isinstance(edge.dst, nodes.Tasklet) or isinstance(edge.src, nodes.EntryNode) else edge.src
         inner = iters + map_ranges(state, scoped, mapping)
         copies = copy_sites(edge, state, arrays, mapping, inner, len(out))
         node = scoped if isinstance(scoped, nodes.Tasklet) else edge.dst
@@ -902,6 +932,11 @@ class Search(NamedTuple):
 
     label: str | None = None
     blocker: str | None = None
+    #: ``the guard aa[0, j] reads aa``: a branch condition reads a container the loop writes, so the conflict the
+    #: search skipped depends on values the loop computes
+    guard: str | None = None
+    #: The solver ran out of its budget on some pair before any witness was found
+    expired: bool = False
 
 
 def declared_conditions(loop: LoopRegion, traps: list[tuple[str, set[str]]]) -> smt_dependence.Guard:
@@ -944,6 +979,7 @@ def witness_search(loop: LoopRegion, traps: list[tuple[str, set[str]]] | None = 
     mapping = {name: sympy.sympify(value) for name, value in loop.sdfg.constants.items()}
     sites: list[Site] = []
     region_sites(loop, arrays, mapping, (counter,), sites)
+    guard = guard_reading_written(loop, sites)
     sites = [site._replace(guard=input_guard(loop, site.guard)) for site in sites]
     scratch = {site.access.array for site in sites if is_scratch(loop.sdfg, site.access.array)}
     # A read of scratch that no write of its own iteration reaches first sees an earlier iteration's value, which no
@@ -959,7 +995,7 @@ def witness_search(loop: LoopRegion, traps: list[tuple[str, set[str]]] | None = 
     facts = (
         SolverFacts(loop, SymbolResolver().facts_at(loop), loop_varying_symbols(loop)) if computed or fixed else None
     )
-    blocker = None
+    blocker, expired = None, False
     pairs = [(w, o) for w in sites if w.access.write for o in sites if o.access.array == w.access.array]
     pairs.sort(key=lambda pair: pair[1].access.write)
     for write, other in pairs:
@@ -1000,9 +1036,37 @@ def witness_search(loop: LoopRegion, traps: list[tuple[str, set[str]]] | None = 
                 )
             if isinstance(found, smt_dependence.NeedsComputed):
                 blocker = blocker or found.values
+            elif isinstance(found, smt_dependence.BudgetExpired):
+                expired = True
             elif found is not None:
                 return Search(conflict_label(first, second, found, counter[0]))
-    return Search(blocker=blocker)
+    return Search(blocker=blocker, guard=guard, expired=expired)
+
+
+def guard_reading_written(loop: LoopRegion, sites: list[Site]) -> str | None:
+    """``the guard aa[0, j] reads aa`` for the first branch condition under ``loop`` that reads, directly or through a
+    scalar its state loads, a container the loop writes; else ``None``."""
+    written = OrderedSet(site.access.array for site in sites if site.access.write)
+    for site in sites:
+        for term, unused_holds in site.guard or ():
+            for element in as_basic(term).atoms(symbolic.Subscript):
+                if str(element.args[0]) in written:
+                    return f"the guard {element} reads {element.args[0]}"
+    for region in loop.all_control_flow_regions(recursive=True):
+        if not isinstance(region, ConditionalBlock):
+            continue
+        for condition, unused_branch in region.branches:
+            if condition is None:
+                continue
+            names = condition.get_free_symbols()
+            for name in guard_arrays(((symbolic.pystr_to_symbolic(condition.as_string), True),)) & written:
+                return f"the guard {condition.as_string} reads {name}"
+            for site in sites:
+                loads = isinstance(site.node, nodes.AccessNode) and site.node.data in names
+                if loads and not site.access.write and site.access.array in written and site.state.sdfg is region.sdfg:
+                    index = ", ".join(str(e) for e in site.access.index)
+                    return f"the guard {site.access.array}[{index}] reads {site.access.array}"
+    return None
 
 
 def input_guard(loop: LoopRegion, guard: smt_dependence.Guard | None) -> smt_dependence.Guard | None:
@@ -1146,15 +1210,15 @@ def written_before(write: Site, read: Site) -> bool:
     while block is not None and enclosing(block) is not None:
         above[id(enclosing(block))] = block
         block = enclosing(block)
-    block = read.state
-    while block is not None and enclosing(block) is not None:
-        region = enclosing(block)
+    block = read.node
+    region = read.state
+    while region is not None:
         if id(region) in above:
             first = above[id(region)]
             if isinstance(region, SDFGState):  # nodes of one state (a nested SDFG by its node): their dataflow order
                 first, block = (n.parent_nsdfg_node if isinstance(n, SDFG) else n for n in (first, block))
             return first is not None and first is not block and block in region.bfs_nodes(first)
-        block = region
+        block, region = region, enclosing(region)
     return False
 
 
@@ -1237,7 +1301,19 @@ def loop_hint(loop: LoopRegion, session: Any = None, traps: list[tuple[str, set[
         return SEQUENTIAL_PROVEN.format(reason=proven_reason(access)) + carrier_note(loop, access)
     if searched.blocker is not None:
         return unproven_hint(loop, f"{computed_value_reason(searched.blocker)}; {UNSHOWN_TAIL}")
+    if searched.guard is not None and reason.kind is Refusal.CARRIED_DEPENDENCE:
+        return unproven_hint(loop, GUARD_READS_WRITTEN.format(guard=searched.guard))
+    if searched.expired:
+        return unproven_hint(loop, f"{Reason.BUDGET_EXPIRED.value}; {unproven_reason(reason, loop)}")
     return unproven_hint(loop, unproven_reason(reason, loop))
+
+
+#: An ``unknown`` loop whose one conflict the search could not pose: a branch condition reads what the loop writes.
+GUARD_READS_WRITTEN = (
+    "{guard}, which this loop writes, so whether two iterations conflict depends on values the loop computes "
+    "(outside the analyzable domain); parallel if no earlier iteration writes an element a later one reads; otherwise "
+    "that read must see the earlier iteration's value, so keep the order"
+)
 
 
 def computed_value_reason(values: str) -> str:
@@ -1397,6 +1473,8 @@ def carrier_note(loop: LoopRegion, access: str) -> str:
     """``; x carries the values to the next iteration (x = y)`` for the carriers of ``loop`` other than the container
     ``access`` names, or ``""``."""
     named = re.search(r"on (\w+)\[", access) or re.search(r"on (\w+)", access)
+    if access.startswith("WAW"):  # an output conflict names no value handed on: the carrier still says which
+        named = None
     found = [(name, copy) for name, copy in carriers(loop).items() if named is None or name != named.group(1)]
     if not found:
         return ""
@@ -1408,7 +1486,8 @@ def proof_of_carry(loop: LoopRegion, reason: LoopRefusal, witnessed: str | None)
     """The access that proves ``loop`` carries a dependence, or ``None``: the solver ``witnessed`` (its
     :func:`witness_search` label), else a constant distance or a carried symbol ``LoopToMap`` named."""
     if witnessed is not None:
-        return witnessed
+        # An output conflict says less than a value handed on: a flow or anti dependence, when one is proven, wins
+        return (witnessed.startswith("WAW") and proven_carrying_access(loop)) or witnessed
     # The element-level proof also names the direction: LoopToMap's "read-after-write conflict" is
     # any read meeting a write, so its access alone reads as RAW for a read-ahead WAR too.
     access = proven_carrying_access(loop)

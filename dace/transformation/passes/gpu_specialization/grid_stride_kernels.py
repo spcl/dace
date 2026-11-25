@@ -67,7 +67,8 @@ PERSISTENT_KERNEL_LEAD = "launch per trip of a sequential loop"
 
 PERSISTENT_KERNEL = (
     PERSISTENT_KERNEL_LEAD
-    + ": {launches} launches per call of {blocks} x {threads}; alt (not taken): one persistent kernel, grid-wide barrier"
+    + ": {launches} launches per call, each of {blocks} blocks of {threads} threads; alt (not taken): one persistent "
+    "kernel, grid-wide barrier"
 )
 
 
@@ -194,6 +195,16 @@ def note_grid_stride(state: SDFGState, outer: nodes.MapEntry, inner: nodes.MapEn
     )
 
 
+def grid_text(entry: nodes.MapEntry) -> str:
+    """The number of blocks ``entry``'s grid launches, as a reader counts them: ``ceil((N - 2)/256)`` for a 1-D map
+    stepping by the block width, rather than its simplified ``ceiling(N/256 - 1/128)``."""
+    if len(entry.map.range) != 1:
+        return str(symbolic.simplify(entry.map.range.num_elements()))
+    begin, end, step = entry.map.range[0]
+    span = symbolic.simplify(end - begin + 1)
+    return str(span) if step == 1 else f"ceil(({span})/{step})"
+
+
 @properties.make_properties
 class GridStrideKernels(ppl.Pass):
     """Grid-stride the oversized kernels; hint the launch-bound ones."""
@@ -296,7 +307,7 @@ class GridStrideKernels(ppl.Pass):
         inner = thread_block_child(state, entry)
         hint = PERSISTENT_KERNEL.format(
             launches=launches,
-            blocks=symbolic.simplify(entry.map.range.num_elements()),
+            blocks=grid_text(entry),
             threads=symbolic.simplify(inner.map.range.num_elements()) if inner is not None else "block-sized",
         )
         record(entry, hint)
