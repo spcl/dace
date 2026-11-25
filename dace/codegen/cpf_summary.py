@@ -8,6 +8,9 @@ two cannot disagree. It names each loop by its counter in the rendered code.
 import re
 from dataclasses import dataclass
 
+import sympy
+
+from dace import symbolic
 from dace.cpf_lowering import KIND_EXTRAS, LoopClass, Reason, kind_line, reason_of
 from dace.ordered import OrderedSet
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import PARALLEL
@@ -343,9 +346,57 @@ def forks_inside(lines: list[str], head: int) -> list[str]:
         pragmas = " ".join(lines[pragma_start(lines, n) : n])
         if FORK_PRAGMA.search(pragmas):
             trips = trip_count(line)
-            found.append(f"{loop_counter(line)} ({unwrapped(trips)} iterations)" if trips else loop_counter(line))
+            count = readable_count(unwrapped(trips), loop_counter(lines[head])) if trips else ""
+            found.append(f"{loop_counter(line)} ({count} iterations)" if trips else loop_counter(line))
             inside = indent_of(line)
     return found
+
+
+#: The C spellings of a trip count's helpers, as sympy reads them.
+C_HELPERS = (
+    (re.compile(r"\bcpf_min_\w+\("), "Min("),
+    (re.compile(r"\bcpf_max_\w+\("), "Max("),
+    (re.compile(r"\bcpf_int_ceil_\w+\("), "int_ceil("),
+)
+
+
+def readable_count(trips: str, counter: str) -> str:
+    """``trips``, a trip count in C, simplified (``(N - 1) - 1`` reads ``N - 2``), and when it moves with the enclosing
+    loop's ``counter`` through a min or max, followed by the bound it never exceeds (``at most ceiling((N - 1)/64)``);
+    as written when it does not parse."""
+    text = trips
+    for pattern, name in C_HELPERS:
+        text = pattern.sub(name, text)
+    try:
+        expr = symbolic.pystr_to_symbolic(text)
+    except Exception:  # pylint: disable=broad-exception-caught
+        # A comment must not fail the rendering that writes it
+        return trips
+    bound = upper_bound(expr, counter) if expr.has(sympy.Min, sympy.Max) else None
+    return f"{as_text(expr)}, at most {as_text(bound)}" if bound is not None else as_text(expr)
+
+
+def as_text(expr: sympy.Expr) -> str:
+    """``expr`` in a reader's spelling: ``min``, ``max`` and ``ceil((N - 1)/64)``."""
+    expr = expr.replace(symbolic.int_ceil, lambda a, b: sympy.Symbol(f"ceil(({a})/{b})"))
+    return str(expr).replace("Min(", "min(").replace("Max(", "max(")
+
+
+def upper_bound(expr: sympy.Expr, counter: str) -> sympy.Expr | None:
+    """An upper bound of ``expr`` free of ``counter``: each ``Min`` it adds and each ``Max`` it subtracts replaced by
+    an argument free of ``counter``; ``None`` when a term moves with ``counter`` some other way."""
+    total = sympy.Integer(0)
+    for term in sympy.Add.make_args(expr):
+        coefficient, core = term.as_coeff_Mul()
+        if isinstance(core, (sympy.Min, sympy.Max)) and (coefficient > 0) == isinstance(core, sympy.Min):
+            free = [arg for arg in core.args if counter not in {str(s) for s in arg.free_symbols}]
+            if not free:
+                return None
+            core = free[0]
+        elif counter in {str(s) for s in term.free_symbols}:
+            return None
+        total += coefficient * core
+    return sympy.simplify(total)
 
 
 def note_forks(code: str) -> str:

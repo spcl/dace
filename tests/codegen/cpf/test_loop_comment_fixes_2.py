@@ -4,6 +4,7 @@
 Each test renders a few-line program the way the bench does and checks the line the finding is about."""
 
 import dace
+from dace.codegen import cpf_summary
 from dace.codegen.cpf import render
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
@@ -163,6 +164,27 @@ def test_an_array_section_reduction_says_each_thread_holds_a_copy():
     assert "alt: omp atomic updates of h" in line, line
 
 
+def test_a_fork_note_simplifies_its_trip_counts_and_bounds_a_moving_one():
+    """Finding 12: ``(N - 1) - 1`` read unsimplified, and a wavefront step's count had no bound."""
+    code = """void f(double *a, int64_t N) {
+    // sequential -- wavefront of tiles [64x64]: each step reads what the previous step wrote
+    for (int64_t i = 0; i < T; i += 1) {
+        #pragma omp parallel for
+        for (int64_t j = cpf_max_int64(0, ((i - cpf_int_ceil_int64((N - 1), 64)) + 1)); j < (cpf_min_int64(i, (cpf_int_ceil_int64((N - 1), 64) - 1)) + 1); j += 1) {
+            a[j] = 0.0;
+        }
+        #pragma omp parallel for
+        for (int64_t k = 1; k < (N - 1); k += 1) {
+            a[k] = 1.0;
+        }
+    }
+}
+"""
+    (note,) = [line for line in cpf_summary.note_forks(code).splitlines() if "fork a thread team" in line]
+    assert ", at most ceil((N - 1)/64) iterations)" in note, note
+    assert "k (N - 2 iterations)" in note, note
+
+
 if __name__ == "__main__":
     test_a_grid_stride_reduction_kernel_says_reduction_and_grid_stride()
     test_a_block_per_row_kernel_has_one_line_per_kernel_and_per_thread_block()
@@ -174,3 +196,4 @@ if __name__ == "__main__":
     test_a_scatter_guard_says_what_its_flag_is_and_names_the_scattered_element()
     test_a_gpu_fallback_arm_says_it_runs_on_the_host_and_what_it_copies()
     test_an_array_section_reduction_says_each_thread_holds_a_copy()
+    test_a_fork_note_simplifies_its_trip_counts_and_bounds_a_moving_one()
