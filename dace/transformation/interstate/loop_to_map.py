@@ -1090,6 +1090,14 @@ def read_before_written(
                 seen |= stores
         return seen
 
+    def skips_first_stored(cond: str, name: str) -> set[Store]:
+        """:func:`skips_first` for a read inside a nested SDFG, when ``name`` is accessed in more than one state of the
+        loop: a transient only one state touches is allocated inside that state, afresh every iteration of an inner
+        loop, so the previous iteration's store is gone."""
+        if sum(1 for st in holders if isinstance(st, SDFGState) and any(dn.data == name for dn in st.data_nodes())) < 2:
+            return set()
+        return skips_first(cond)
+
     def iteration_stores(block: LoopRegion, written: set[Store], guarded: dict) -> set[Store]:
         """What every iteration of ``block`` stores to the same elements, when a branch in it skips the first
         iteration and nothing leaves an iteration early; empty otherwise. Walks the body once without recording."""
@@ -1156,7 +1164,9 @@ def read_before_written(
                     if (
                         not read_covered(block, dn, seen)
                         and not any(
-                            read_covered(block, dn, guarded[key][1] if key in guarded else skips_first(key))
+                            read_covered(
+                                block, dn, guarded[key][1] if key in guarded else skips_first_stored(key, dn.data)
+                            )
                             for key in nested_read_guards(block, dn)
                         )
                         and not nested_writes_first(block, dn)
@@ -3419,10 +3429,6 @@ class LoopLift:
                 root_data_name = name.split(".")[0]
                 name = root_data_name
             nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
-            # A private array an inner loop carries from one level to the next must outlive the state that uses it:
-            # a Scope lifetime allocates it afresh inside that state, every iteration of the inner loop
-            if name in unique_set and nsdfg.arrays[name].lifetime == dtypes.AllocationLifetime.Scope:
-                nsdfg.arrays[name].lifetime = dtypes.AllocationLifetime.SDFG
 
         # Add NestedSDFG node
         declare_lifted_symbols(nsdfg, sdfg, self.loop, lift_ctx)

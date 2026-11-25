@@ -36,7 +36,7 @@ def level_above(A: dace.float64[N, M, F], B: dace.float64[N, M, F]):
 
 
 @dace.program
-def level_above_in_a_map_body(A: dace.float64[N, M, F], B: dace.float64[N, M, F]):
+def level_above_in_a_map_body(A: dace.float64[N, M, F], B: dace.float64[N, M, F], C: dace.float64[N, M, F]):
     for b in range(N):
         prev = np.ndarray((F,), dtype=np.float64)
         for k in range(M):
@@ -45,6 +45,8 @@ def level_above_in_a_map_body(A: dace.float64[N, M, F], B: dace.float64[N, M, F]
                     B[b, k, l] = prev[l] + A[b, k, l]
             for l in dace.map[0:F]:
                 prev[l] = A[b, k, l]
+            for l in range(F):
+                C[b, k, l] = prev[l]
 
 
 @dace.program
@@ -144,7 +146,9 @@ def test_a_level_recurrence_under_a_first_iteration_guard_stays_inside_the_block
 def test_a_level_recurrence_read_in_a_map_body_stays_inside_the_block():
     rng = np.random.default_rng(0)
     lift_and_compare(
-        level_above_in_a_map_body, {"A": rng.random((4, 5, 3)), "B": np.zeros((4, 5, 3))}, {"N": 4, "M": 5, "F": 3}
+        level_above_in_a_map_body,
+        {"A": rng.random((4, 5, 3)), "B": np.zeros((4, 5, 3)), "C": np.zeros((4, 5, 3))},
+        {"N": 4, "M": 5, "F": 3},
     )
 
 
