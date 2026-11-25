@@ -1582,7 +1582,6 @@ def preamble(
     code: str,
     dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STANDALONE,
     environments: Iterable[str] = (),
-    device_code: str | None = None,
 ) -> str:
     """The include block and inline definitions ``code`` needs, in the order they must appear.
 
@@ -1594,8 +1593,6 @@ def preamble(
     :param dialect: which standalone dialect emitted it.
     :param environments: the DaCe environments the unit's code generator used; a vendor library among them
                          (:data:`~dace.cpf_lowering.VENDOR_LIBRARIES`) adds its headers and definitions.
-    :param device_code: the device unit of a host unit, whose loop comments the host legend explains too; ``None``
-                        for the device unit itself, which carries no summary.
     :returns: the preamble, ending in a blank line.
     """
     used = cpf_lowering.helpers_used(code, dialect)
@@ -1606,10 +1603,8 @@ def preamble(
     if OPENMP_CALL.search(code) and "<omp.h>" not in headers:
         headers = headers + ("<omp.h>",)
     vendors = cpf_lowering.vendor_libraries(environments, code, dialect)
+    # The legend follows once every loop carries its comment (:func:`with_legend`).
     lines = [RENDERED_BY]
-    if cpf_lowering.hint_detail() is cpf_lowering.HintDetail.PROOFS:
-        legend_code = "\n".join([code, *definitions, device_code or ""])
-        lines += contract_lines(legend_code, summary=device_code is not None)
     lines += [f"#include {header}" for header in headers]
     vendor_headers = [
         header
@@ -1702,15 +1697,20 @@ def reason_table(code: str) -> list[str]:
     return ["//   " + " | ".join([*(c.ljust(w) for c, w in zip(row, widths)), row[-1]]).rstrip() for row in rows]
 
 
+def with_legend(unit: str, legend: list[str]) -> str:
+    """``unit`` with ``legend`` under its :data:`RENDERED_BY` line."""
+    return unit.replace(RENDERED_BY, "\n".join([RENDERED_BY, *legend]), 1)
+
+
 def contract_lines(code: str, summary: bool = True) -> list[str]:
     """:data:`CONTRACT_LINES` for the classes ``code``'s loop comments use: a legend line for a class no loop has
-    would explain nothing in the unit; none at all without a classed comment. Then :func:`reason_table` for the
-    reasons they use, and :data:`CPF_LINES_LEGEND` for a unit with a ``summary``."""
+    would explain nothing in the unit; none without a classed comment. Then :func:`reason_table` for the reasons they
+    use, and :data:`CPF_LINES_LEGEND` for a unit with a ``summary``, which prints a ``cpf:`` line even without a loop."""
     used = OrderedSet(
         LoopClass(found.group(1) or found.group(2)) for found in re.finditer(cpf_summary.CLASS_LINE_ANYWHERE, code)
     )
     if not used:
-        return []
+        return [CPF_LINES_LEGEND] if summary else []
     return [
         CONTRACT_LINES[0],
         *(line for kind in CONTRACT_KINDS if kind in used for line in CONTRACT_KINDS[kind]),
@@ -2517,7 +2517,7 @@ def render_unit(
                 body = compact_blocks(body)
                 device_body = compact_blocks(device_body) if device_body else ""
     code = drop_repeated_includes(
-        keep_target_path(preamble(body, dialect, frame.environments, device_body or "") + body, renders_for_x86(isa))
+        keep_target_path(preamble(body, dialect, frame.environments) + body, renders_for_x86(isa))
     )
     names: tuple[tuple[str, str], ...] = ()
     if llm_friendly:
@@ -2537,7 +2537,7 @@ def render_unit(
                     )
                 )
             ),
-            (CPF_LINES_LEGEND, CONTRACT_LINES[-1], RENDERED_BY),
+            (RENDERED_BY,),
         )
     # The device unit repeats the frame's state struct, whose vendor handles and plans need their declarations.
     device_environments = (set(device.environments) | set(frame.environments)) if device is not None else set()
@@ -2547,6 +2547,10 @@ def render_unit(
         code = cpf_summary.comment_every_loop(code, kinds=True)
     if (proofs or kinds) and device_code:
         device_code = cpf_summary.comment_every_loop(device_code, kinds=kinds)
+    if proofs:
+        # The host legend explains the device unit's loop comments too; only the host unit carries a summary.
+        code = with_legend(code, contract_lines(f"{code}\n{device_code}"))
+        device_code = with_legend(device_code, contract_lines(device_code, summary=False))
     for unit in filter(None, (code, device_code)):
         verify(unit, sdfg.name, dialect)
         if check_compiles:

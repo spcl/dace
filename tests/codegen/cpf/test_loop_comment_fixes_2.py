@@ -402,6 +402,21 @@ def test_the_header_legend_has_one_row_per_reason_the_unit_uses():
     assert cpf.CPF_LINES_LEGEND in code, code
 
 
+def table_rows(code: str) -> list[list[str]]:
+    """The (class, reason) cells of the header's reason table, past its head row."""
+    rows = [line.split(" | ") for line in code.splitlines() if line.startswith("//   ") and " | " in line]
+    return [[cell.removeprefix("//").strip() for cell in row[:2]] for row in rows[1:]]
+
+
+def test_a_loop_free_unit_explains_its_cpf_line_and_its_implementation_loops():
+    """A unit without a program loop printed ``cpf: proven: all`` with no legend, and its ``implementation loop of``
+    lines had no table row: the legend was written before those comments were."""
+    code = bench_c(max_reduce, "cpf_review3_loop_free")
+    assert cpf_summary.CLOSING_NO_LOOPS in code and cpf.CPF_LINES_LEGEND in code, code
+    assert ["parallel", Reason.IMPLEMENTATION.value.strip()] in table_rows(code), code
+    assert code.index(cpf.CPF_LINES_LEGEND) < code.index("// cpf: proven: all"), code
+
+
 @pytest.mark.parametrize("reason", list(Reason), ids=[reason.name for reason in Reason])
 def test_every_reason_is_told_apart_and_has_a_legend_row(reason: Reason):
     """Each Reason member is found in a line that opens with it (or holds it after the element it names) and gets its
@@ -454,6 +469,7 @@ if __name__ == "__main__":
     test_an_unknown_loop_names_an_index_it_assigns()
     test_an_unknown_loop_says_when_the_solver_ran_out_of_budget()
     test_the_header_legend_has_one_row_per_reason_the_unit_uses()
+    test_a_loop_free_unit_explains_its_cpf_line_and_its_implementation_loops()
     for member in Reason:
         test_every_reason_is_told_apart_and_has_a_legend_row(member)
     test_the_summary_names_a_scans_blocked_code_as_one_scan()
