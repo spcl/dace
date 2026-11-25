@@ -62,6 +62,35 @@ def test_a_loop_storing_only_under_an_invariant_flag_is_versioned_on_it():
         assert np.allclose(b, b_ref) and np.allclose(v, v_ref), (flag, j)
 
 
+M = dace.symbol("M")
+
+
+@dace.program
+def flag_stores_shared_in_a_map(flag: dace.int32, a: dace.float64[M, N], v: dace.float64[M, 4], b: dace.float64[M, N]):
+    for r in dace.map[0:M]:
+        for i in range(N):
+            if flag:
+                v[r, 1] = 0.002 * a[r, i]
+            b[r, i] = v[r, 1] * a[r, i]
+
+
+# Reproducer: the versioning looked the loop's containers up in the top-level SDFG, a KeyError for a loop nested in a
+# map (velocity_tendencies, __gather8_o)
+def test_a_loop_in_a_nested_sdfg_is_versioned_in_its_own_sdfg():
+    sdfg = flag_stores_shared_in_a_map.to_sdfg(simplify=True)
+    assert ParallelizeUnderConstraint().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    rng = np.random.default_rng(1)
+    for flag in (0, 1):
+        a = rng.standard_normal((3, 8))
+        v, b = rng.standard_normal((3, 4)), np.zeros((3, 8))
+        v_ref, b_ref = v.copy(), b.copy()
+        for r in range(3):
+            reference(flag, 2, a[r], v_ref[r], b_ref[r])
+        sdfg(flag=flag, a=a, v=v, b=b, M=3, N=8)
+        assert np.allclose(b, b_ref) and np.allclose(v, v_ref), flag
+
+
 @dace.program
 def flag_changes_in_loop(a: dace.float64[N], v: dace.float64[4], b: dace.float64[N]):
     flag = 0
@@ -79,4 +108,5 @@ def test_a_branch_on_a_condition_the_loop_changes_is_not_versioned():
 
 if __name__ == "__main__":
     test_a_loop_storing_only_under_an_invariant_flag_is_versioned_on_it()
+    test_a_loop_in_a_nested_sdfg_is_versioned_in_its_own_sdfg()
     test_a_branch_on_a_condition_the_loop_changes_is_not_versioned()

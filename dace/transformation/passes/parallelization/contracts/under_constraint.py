@@ -129,7 +129,7 @@ class ParallelizeUnderConstraint(ppl.Pass):
                 if (
                     self.version_carried_distance(loop, owner, refusal)
                     or self.version_segment_writes(loop, sd, owner, refusal, checks)
-                    or self.version_invariant_branch(loop, owner, refusal)
+                    or self.version_invariant_branch(loop, refusal)
                 ):
                     facts = ScopeFacts(sd)
                     specialized += 1
@@ -164,7 +164,7 @@ class ParallelizeUnderConstraint(ppl.Pass):
                 specialized += 1
         return specialized or None
 
-    def version_invariant_branch(self, loop: LoopRegion, owner: SDFG, refusal) -> bool:
+    def version_invariant_branch(self, loop: LoopRegion, refusal) -> bool:
         """Version ``loop`` on the condition of the one branch that stores the container it was refused on, when the
         loop does not change that condition: ``if (!cond) { the loop without the branch, parallel } else { loop }``
         (CloudSC's ``IF (LAERICESED .AND. JM == NCLDQI) ZVQX(NCLDQI) = ...`` in the column loop).
@@ -202,7 +202,8 @@ class ParallelizeUnderConstraint(ppl.Pass):
             drop_block(list(par_loop.all_control_flow_blocks())[position])
             ParallelizeLoops().parallelize_loop(own, par_loop, proven=True)
 
-        specialize_loop_under_condition(loop, f"not ({condition})", parallelize, owner)
+        # The loop's own SDFG: a nested one has its own containers
+        specialize_loop_under_condition(loop, f"not ({condition})", parallelize, loop.sdfg)
         return True
 
     def version_carried_distance(self, loop: LoopRegion, owner: SDFG, refusal) -> bool:
