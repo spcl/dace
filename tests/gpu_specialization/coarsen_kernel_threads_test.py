@@ -9,6 +9,7 @@ import pytest
 
 import dace
 from dace import dtypes
+from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.gpu_specialization.coarsen_kernel_threads import CoarsenKernelThreads
@@ -69,6 +70,25 @@ def test_two_parameters_are_coarsened_into_a_tile_per_thread():
     sdfg.validate()
 
 
+@dace.program
+def species_rows(w: dace.float64[N], A: dace.float64[5, N], B: dace.float64[5, N]):
+    for s, j in dace.map[1:6, 0:N]:
+        B[s - 1, j] = w[j] * A[s - 1, j]
+
+
+def test_a_factor_past_a_constant_extent_stays_in_bounds():
+    """CloudSC's species axis 1:6 tiled by 64 left ``A[0:64]`` around the grid once its memlets were propagated."""
+    sdfg = species_rows.to_sdfg(simplify=True)
+    canonicalize(sdfg, target="gpu")
+    offload_to_gpu(sdfg)
+    with dace.config.set_temporary("optimizer", "canonicalization", "gpu_coarsen_factor", value=1):
+        finalize_for_target(sdfg, "gpu")
+    applied = CoarsenKernelThreads(factor=64).apply_pass(sdfg, {})
+    propagate_memlets_sdfg(sdfg)
+    sdfg.validate()
+    assert list(applied.values()) == [{"s": 5}]
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("factors", [{"i": 6}, {"j": 6}, {"i": 6, "j": 2}])
 def test_coarsened_kernels_compute_what_numpy_does(factors):
@@ -126,3 +146,4 @@ if __name__ == "__main__":
     test_the_outer_axis_becomes_a_serial_loop_of_each_thread()
     test_a_named_parameter_is_coarsened_and_factor_one_changes_nothing()
     test_two_parameters_are_coarsened_into_a_tile_per_thread()
+    test_a_factor_past_a_constant_extent_stays_in_bounds()

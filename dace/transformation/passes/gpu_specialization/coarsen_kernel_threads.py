@@ -23,7 +23,7 @@ coarsens several parameters at once (``{"jk": 6, "jc": 2}``: a thread computes a
 
 from typing import Any
 
-from dace import SDFG, SDFGState, dtypes, properties
+from dace import SDFG, SDFGState, dtypes, properties, symbolic
 from dace.sdfg import nodes
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
@@ -91,12 +91,24 @@ class CoarsenKernelThreads(ppl.Pass):
             chosen = self.choose(kernel)
             if not chosen:
                 continue
-            self.coarsen(state, kernel, chosen)
-            coarsened[kernel.map.label] = chosen
+            applied = self.coarsen(state, kernel, chosen)
+            if applied:
+                coarsened[kernel.map.label] = applied
         return coarsened or None
 
-    def coarsen(self, state: SDFGState, kernel: nodes.MapEntry, factors: dict[str, int]) -> None:
-        """Tile ``kernel`` by ``factors``; the original entry becomes the thread's serial loop over the tile."""
+    def coarsen(self, state: SDFGState, kernel: nodes.MapEntry, factors: dict[str, int]) -> dict[str, int]:
+        """Tile ``kernel`` by ``factors``, each at most its parameter's constant extent; the original entry becomes the
+        thread's serial loop over the tile. Returns the factors applied, empty when none exceeds one."""
+        # A tile wider than a constant extent carries its overhang into the memlets around the grid: CloudSC's species
+        # axis 1:6 by 64 propagated to zsolqb[0:64] once map fusion re-propagated it.
+        extents = dict(zip(kernel.map.params, kernel.map.range.size()))
+        factors = {
+            p: f if symbolic.issymbolic(extent := symbolic.simplify(extents[p])) else min(f, int(extent))
+            for p, f in factors.items()
+        }
+        factors = {p: f for p, f in factors.items() if f > 1}
+        if not factors:
+            return factors
         tile_sizes = [factors.get(p, 1) for p in kernel.map.params]
         MapTiling.apply_to(
             state.sdfg,
@@ -114,3 +126,4 @@ class CoarsenKernelThreads(ppl.Pass):
         kernel.map.schedule = dtypes.ScheduleType.Sequential
         kernel.map.gpu_block_size = None
         kernel.map.instrument = dtypes.InstrumentationType.No_Instrumentation
+        return factors
