@@ -284,7 +284,7 @@ def nested_bindings(state: SDFGState, ns: nodes.NestedSDFG) -> dict[str, sp.Basi
 
 def resolved(expr: sp.Basic, bindings: dict[str, sp.Basic], assigned: set[str]) -> sp.Basic | None:
     """``expr`` with every assigned symbol replaced by its binding, or ``None`` while one without a binding remains."""
-    for _ in range(8):
+    for depth in range(8):
         pending = {s: bindings[s.name] for s in expr.free_symbols if s.name in bindings}
         if not pending:
             break
