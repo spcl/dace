@@ -1261,6 +1261,29 @@ def test_the_pure_dft_types_its_local_across_statements_and_builds_its_twiddle_i
     assert_matches({"y": np.fft.fft(x), "z": np.fft.ifft(np.fft.fft(x))}, {"y": y, "z": z}, name)
 
 
+def test_a_host_without_fftw3_renders_the_fft_as_the_pure_dft():
+    """The render compiles its unit against this machine's headers, so on a host without FFTW3 an FFT rendered as
+    an ``fftw_*`` call fails that check every time (``fftw3.h: No such file or directory`` on ault); the node's own
+    DFT expansion renders and computes the same transform."""
+    from dace.libraries.fft.environments.fftw3 import FFTW3
+
+    name = "cpf_c_pure_fft"
+    installed = FFTW3.is_installed
+    FFTW3.is_installed = staticmethod(lambda: False)
+    cpf_module.host_vendor_implementations.cache_clear()
+    try:
+        sdfg, code = render_c(c_fft_roundtrip, name)
+    finally:
+        FFTW3.is_installed = installed
+        cpf_module.host_vendor_implementations.cache_clear()
+    assert "fftw3.h" not in code and "fftw_" not in code, code
+    n = 12
+    x = np.random.default_rng(4).random(n) + 1j * np.random.default_rng(5).random(n)
+    y, z = np.zeros(n, dtype=np.complex128), np.zeros(n, dtype=np.complex128)
+    run_c(sdfg, code, {"x": x, "y": y, "z": z, "N": n}, name)
+    assert_matches({"y": np.fft.fft(x), "z": np.fft.ifft(np.fft.fft(x))}, {"y": y, "z": z}, name)
+
+
 @dace.program
 def c_scatter_accumulate(bins: dace.float64[N], src: dace.float64[N], ip: dace.int32[N]):
     for i in dace.map[0:N]:
@@ -1425,6 +1448,7 @@ if __name__ == "__main__":
     test_a_tasklet_call_on_a_symbol_an_interstate_edge_binds_is_typed_in_c()
     test_a_dynamic_scalar_read_binds_by_value_in_c()
     test_the_pure_dft_types_its_local_across_statements_and_builds_its_twiddle_in_c()
+    test_a_host_without_fftw3_renders_the_fft_as_the_pure_dft()
     test_a_scatter_sized_by_its_iteration_space_takes_atomics_not_an_array_reduction()
     test_a_stack_array_the_frame_allocates_is_cast_in_c()
     test_a_map_bounded_by_a_power_casts_its_bound_in_c()

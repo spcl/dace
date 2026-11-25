@@ -150,9 +150,11 @@ def add_dft_axis_state(
     # Divide by a FLOATING denominator: ``1/(M*N)`` over integer symbols is C integer division, i.e. zero. In the
     # element's own precision: ``complex64 * double`` multiplies to zero.
     scale = "" if is_unit(factor) else f"o *= {real}({floating_text(factor)});"
+    # ``sum`` is copy-initialized from a real zero: the direct initialization ``T sum(0, 0)`` has no C spelling, and
+    # the C dialect of CPF renders this text as written.
     # The angle's integer part is reduced modulo the length first, as an FFT's twiddle factors are
     code = f"""
-{element.ctype} sum({real}(0), {real}(0));
+{element.ctype} sum = {real}(0);
 for (long long __n = 0; __n < {length}; ++__n) {{
     const {real} angle = {real}(2.0 * {math.pi!r}) * {real}((__i{axis} * __n) % {length}) / {real}({length});
     sum += {element.ctype}(cos(angle), {"" if inverse else "-"}sin(angle)) * inp[__n * ({sym2cpp(sdfg.arrays[src].strides[axis])})];
