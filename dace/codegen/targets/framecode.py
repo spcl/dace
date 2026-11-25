@@ -1778,23 +1778,40 @@ def late_allocation_block(
     blocks = {sized_after(e) for e in edges if e.data.assignments.keys() & sizes}
     if not blocks:
         return alloc_block
-    if len(blocks) > 1:
+    # The size is final at the block every other assignment runs before (QE's nij: set to 0, then summed in a loop)
+    last = [b for b in blocks if all(o is b or precedes(o, b) for o in blocks)]
+    if len(last) != 1:
         raise NotImplementedError(f"{desc} is sized at {len(blocks)} places: it would need a reallocation")
-    (block,) = blocks
+    (block,) = last
     outer = block.parent_graph
     while outer is not region:
         if isinstance(outer, LoopRegion):
             raise NotImplementedError(f"{desc} is sized in {outer}, which reallocates it per iteration")
         outer = outer.parent_graph
-    # Accessed before the assignment: the earlier accesses use the size in force at the dominating block, as before
+    # Accessed before the assignment: the earlier accesses use the size in force at the dominating block, as before;
+    # accessed on both sides of a size that changes in between needs a reallocation
     if any(precedes(state, block) for state in access_states):
+        if len(blocks) > 1 and any(
+            block is state or precedes(block, state) or contains(block, state) for state in access_states
+        ):
+            raise NotImplementedError(f"{desc} is sized at {len(blocks)} places: it would need a reallocation")
         return alloc_block
     return block
 
 
-def precedes(state: SDFGState, block: ControlFlowBlock) -> bool:
-    """Whether ``state`` runs before ``block`` is entered on some path, in one iteration of the loops around both."""
-    chain = [state]
+def contains(block: ControlFlowBlock, state: SDFGState) -> bool:
+    """Whether ``state`` lies inside the region ``block``."""
+    graph = state.parent_graph
+    while graph is not None and not isinstance(graph, SDFG):
+        if graph is block:
+            return True
+        graph = graph.parent_graph
+    return False
+
+
+def precedes(first: ControlFlowBlock, block: ControlFlowBlock) -> bool:
+    """Whether ``first`` runs before ``block`` is entered on some path, in one iteration of the loops around both."""
+    chain = [first]
     while not isinstance(chain[-1], SDFG):
         chain.append(chain[-1].parent_graph)
     if any(block is other for other in chain):
