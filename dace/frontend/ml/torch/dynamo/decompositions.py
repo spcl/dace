@@ -8,6 +8,7 @@ structured maps) are removed from the table so they are not decomposed into less
 """
 
 from collections.abc import Iterable
+from contextlib import contextmanager
 
 import torch
 
@@ -64,7 +65,6 @@ EXTRA_DECOMPOSITIONS = [
     "embedding",
     "nan_to_num",
     "cumsum",
-    "upsample_nearest2d",
     "_adaptive_avg_pool2d",
     "binary_cross_entropy_with_logits",
     "mse_loss",
@@ -119,6 +119,9 @@ NATIVE_OPS = [
     "avg_pool2d",
     "avg_pool1d",
     "avg_pool3d",
+    "upsample_nearest1d",
+    "upsample_nearest2d",
+    "upsample_nearest3d",
     "sum",
     "mean",
     "amax",
@@ -160,6 +163,27 @@ NATIVE_OPS = [
     "pow",
     "copy",
 ]
+
+
+@contextmanager
+def preserve_native_upsampling():
+    """Keep nearest upsampling intact during inference's post-dispatch tracing.
+
+    PyTorch also registers these decompositions as CompositeImplicitAutograd
+    Python kernels. Removing them from the AOT table alone does not preserve
+    them. Use the same scoped preservation mechanism as torch.export, restoring
+    the dispatcher on exit. Training continues to use the autograd decomposition.
+    """
+    from torch._export.utils import _special_op_to_preserve_cia
+    from torch.export.exported_program import _override_composite_implicit_decomp
+
+    preserved = {
+        getattr(getattr(aten, f"upsample_nearest{nd}d"), overload): _special_op_to_preserve_cia
+        for nd in (1, 2, 3)
+        for overload in ("default", "vec")
+    }
+    with _override_composite_implicit_decomp(preserved):
+        yield
 
 
 def _resolve_packets(names: Iterable):

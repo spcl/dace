@@ -34,26 +34,42 @@ def _is_none(v) -> bool:
 
 @register_lowering(*resolve("aten.index.Tensor", "aten._unsafe_index.Tensor"))
 def lower_index(ctx: LoweringContext, node, x: TensorValue, indices):
-    """Advanced indexing with exactly one index tensor (other positions ``None``): a gather along that dimension."""
+    """Integer advanced indexing, with broadcast indices and ATen's output dimension order."""
     indices = list(indices.items) if hasattr(indices, "items") and not isinstance(indices, dict) else list(indices)
     active = [(d, idx) for d, idx in enumerate(indices) if not _is_none(idx)]
-    if len(active) != 1 or not isinstance(active[0][1], TensorValue):
-        raise UnsupportedOpError(node.target, "only indexing with a single index tensor is supported")
-    dim, idx = active[0]
+    if not active or len(indices) > x.rank or any(not isinstance(idx, TensorValue) for _, idx in active):
+        raise UnsupportedOpError(node.target, "expected integer index tensors for dimensions of the input")
+    if any(idx.torch_dtype not in (torch.int32, torch.int64) for _, idx in active):
+        raise UnsupportedOpError(node.target, "boolean/mask indexing with data-dependent output sizes is unsupported")
     val = node.meta["val"]
     out = ctx.add_tensor_like("t_" + node.name, val)
-    # Output dims: x dims before `dim`, then idx dims, then x dims after `dim`
     params = [f"__i{k}" for k in range(out.rank)]
-    idx_params = params[dim : dim + idx.rank]
-    x_idx = params[:dim] + ["__idx"] + params[dim + idx.rank :]
-    size = x.tshape[dim]
-    code = f"__p = __idx + ({size} if __idx < 0 else 0)\n__out = {cast_expr('__x[__p]', out.dtype)}"
-    inputs = {
-        "__idx": index_memlet(idx.name, idx_params),
-        "__x": _range_memlet(x.name, [p if p != "__idx" else "0" for p in x_idx], x.tshape, dim),
-    }
+    broadcast_rank = max(idx.rank for _, idx in active)
+    # Consecutive indexed dimensions are replaced in place by the broadcast
+    # shape. If separated by basic slices, the broadcast shape comes first.
+    consecutive = active[-1][0] - active[0][0] + 1 == len(active)
+    start = active[0][0] if consecutive else 0
+    broadcast_params = params[start : start + broadcast_rank]
+    basic_params = iter(params[:start] + params[start + broadcast_rank :])
+    indexed_dims = {dim for dim, _ in active}
+    x_indices = ["0" if dim in indexed_dims else next(basic_params) for dim in range(x.rank)]
+    inputs = {"__x": x.memlet()}
+    code = []
+    for i, (dim, idx) in enumerate(active):
+        offset = broadcast_rank - idx.rank
+        idx_params = ["0" if size == 1 else broadcast_params[offset + k] for k, size in enumerate(idx.tshape)]
+        inputs[f"__idx{i}"] = index_memlet(idx.name, idx_params)
+        code.append(f"__p{i} = __idx{i} + ({x.tshape[dim]} if __idx{i} < 0 else 0)")
+        x_indices[dim] = f"__p{i}"
+    # Python tasklet subscripts use the source memlet's strides, including
+    # non-contiguous layouts and broadcast views; do not linearize by hand.
+    source_indices = [index for index, size in zip(x_indices, x.tshape) if size != 1]
+    source = f"__x[{', '.join(source_indices)}]" if source_indices else "__x"
+    code.append(f"__out = {cast_expr(source, out.dtype)}")
     ranges = [(0, s - 1, 1) for s in out.tshape]
-    ctx.emit_mapped_tasklet(node.name, params, ranges, inputs, code, {"__out": index_memlet(out.name, params)})
+    ctx.emit_mapped_tasklet(
+        node.name, params, ranges, inputs, "\n".join(code), {"__out": index_memlet(out.name, params)}
+    )
     return out
 
 

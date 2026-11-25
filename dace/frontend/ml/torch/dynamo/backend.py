@@ -25,7 +25,7 @@ from dace.config import Config
 from . import distributed
 from . import joint as jt
 from .context import UnsupportedOpError
-from .decompositions import build_decomposition_table
+from .decompositions import build_decomposition_table, preserve_native_upsampling
 from .importer import GraphImporter, PhaseInterface
 from .runtime import CompiledGraph, DifferentiableGraph
 from .sources import GraphDescription, describe_graph
@@ -149,7 +149,8 @@ class DaceBackend:
             partition_fn=self._partition,
             decompositions=self.decomposition_table,
         )
-        with sdpa_kernel(SDPBackend.MATH):
+        preservation = contextlib.nullcontext() if _requires_gradients(example_inputs) else preserve_native_upsampling()
+        with sdpa_kernel(SDPBackend.MATH), preservation:
             return compiler(gm, example_inputs)
 
     # ------------------------------------------------------------------ compilers

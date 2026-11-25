@@ -135,6 +135,9 @@ How programs are lowered
   operators become maps with broadcasting, reductions use the standard-library ``Reduce`` node, matrix products use
   the BLAS ``MatMul`` node, pooling becomes maps, and ``view``/``permute``/``slice``/``expand`` become DaCe views that
   reuse the FakeTensor's strides. Type promotion follows ATen.
+  Inference nearest-neighbor upsampling in 1D, 2D and 3D (``aten.upsample_nearest{N}d``, both ``.default`` and ``.vec``)
+  is kept intact and lowered to one output-element map, without temporary index tensors or gathers. It honors explicit
+  scales, symbolic output sizes and tensor strides. Training uses the autograd decomposition.
 * **Library nodes.** Every other ATen operator becomes a library node of :mod:`dace.libraries.torch` (an ``ATenOp``
   whose connectors are named after the operator schema and whose remaining arguments are node properties), so the
   SDFG shows the operator itself and the decision how to implement it is taken when the SDFG is expanded. Convolution
