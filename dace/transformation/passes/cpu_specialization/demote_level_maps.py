@@ -338,7 +338,8 @@ def split_out(state: SDFGState, entry: nodes.MapEntry, outer: list[str]) -> node
 def collapse_into_inner_map(state: SDFGState, entry: nodes.MapEntry) -> bool:
     """Collapse ``entry`` with the one map its body holds when the two are perfectly nested; whether it did."""
     inner = [n for n in state.scope_children()[entry] if isinstance(n, nodes.MapEntry)]
-    if len(inner) != 1:
+    # A warp tile is a thread block PromoteWarpTiles redeems after the offload: collapsing would erase it.
+    if len(inner) != 1 or inner[0].map.is_warp_tile:
         return False
     where = {"outer_map_entry": entry, "inner_map_entry": inner[0]}
     if not MapCollapse.can_be_applied_to(state.sdfg, **where):
@@ -355,7 +356,7 @@ def small_maps(sdfg: SDFG) -> list[nodes.MapEntry]:
     A map around maps is one when its every extent is small (:func:`~dace.symbolic_facts.is_small_extent`: a literal,
     or symbols declared ``SMALL``), or when its every parameter is a block index (:func:`block_params`). A map whose
     parameters are only partly block indices (ICON's ``jb`` x ``jk`` around a map over ``jc``) splits them out as a map
-    around the rest. A map with no map inside is never one: the whole nest is the kernel. A map whose body is one
+    around the rest. A map with no map inside is never one: the whole nest is the kernel. Such a map whose body is one
     perfectly nested map collapses with it into one map, which the offload launches once. A
     symbolic extent of default scale (CloudSC's ``NBLOCKS``) stays the grid, and a small map with no map inside stays
     the kernel: its iterations are all the parallelism there is."""
@@ -369,16 +370,16 @@ def small_maps(sdfg: SDFG) -> list[nodes.MapEntry]:
             # block axis out (ICON's ``jb`` x ``jk`` x ``jc``) would launch a kernel per block from a host loop.
             if not holds_maps(state, entry):
                 continue
-            # One perfectly nested map inside: one map over both, so the offload launches it once
-            if collapse_into_inner_map(state, entry):
-                continue
             sizes = [symbolic.pystr_to_symbolic(size) for size in entry.map.range.size()]
             blocks = block_params(state, entry, set(facts.small))
+            if not (blocks or all(is_small_extent(size, facts) for size in sizes)):
+                continue
+            # One perfectly nested map inside: one map over both, launched once, not a host loop of launches
+            if collapse_into_inner_map(state, entry):
+                continue
             if 0 < len(blocks) < len(entry.map.params):
                 entry = split_out(state, entry, list(blocks))
                 sizes = [symbolic.pystr_to_symbolic(size) for size in entry.map.range.size()]
-            elif not (blocks or all(is_small_extent(size, facts) for size in sizes)):
-                continue
             names = sorted(set().union(*blocks.values())) or sorted(
                 {str(free) for size in sizes for free in size.free_symbols}
             )
