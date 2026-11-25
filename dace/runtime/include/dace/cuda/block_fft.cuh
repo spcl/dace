@@ -2,7 +2,10 @@
 //
 // A batch of 1-D DFTs by ONE thread block, for an FFT library node inside a GPU kernel. A power-of-two length runs
 // an iterative radix-2 Cooley-Tukey transform in the output (bit-reversed scatter, then log2(n) butterfly stages);
-// any other length a direct DFT. Both are out of place and need no scratch.
+// any other length a direct DFT. The radix-2 transform may run in place (``in`` and ``out`` the same lines, as a
+// kernel's IFFT of a row into itself): it copies the input into the output and permutes it there by swaps, so no
+// thread reads an element another thread has already overwritten. The direct DFT is out of place and needs no
+// scratch.
 
 #pragma once
 
@@ -28,7 +31,7 @@ DACE_DFI C twiddle(long long r, long long n, bool inverse) {
 /// ``out[line(l) + k*os] = scale * sum_j in[in_line(l) + j*is] * w^(jk)`` for ``lines`` lines of length ``n``.
 /// Every thread of the block must call it with the same arguments; ``lanes`` threads share the work.
 template <typename C, typename In, typename InLine, typename OutLine>
-__device__ void transform(const In* __restrict__ in, C* __restrict__ out, long long n, long long lines, long long is,
+__device__ void transform(const In* in, C* out, long long n, long long lines, long long is,
                           long long os, InLine in_line, OutLine out_line, bool inverse,
                           typename C::value_type scale, long long lanes) {
   using T = typename C::value_type;
@@ -51,10 +54,22 @@ __device__ void transform(const In* __restrict__ in, C* __restrict__ out, long l
     return;
   }
   const int bits = __ffsll(n) - 1;
+  // Each thread reads and writes the same element, so the copy is race-free in place too.
+  for (long long t = tid; t < lines * n; t += lanes) {
+    const long long l = t / n, j = t % n;
+    out[out_line(l) + j * os] = C(in[in_line(l) + j * is]) * scale;
+  }
+  __syncthreads();
+  // Bit reversal by swaps: the pair (j, k) with j < k belongs to the one thread that holds j.
   for (long long t = tid; t < lines * n; t += lanes) {
     const long long l = t / n, j = t % n;
     const long long k = bits == 0 ? 0 : (long long)(__brevll((unsigned long long)j) >> (64 - bits));
-    out[out_line(l) + k * os] = C(in[in_line(l) + j * is]) * scale;
+    if (j < k) {
+      C* line = out + out_line(l);
+      const C a = line[j * os];
+      line[j * os] = line[k * os];
+      line[k * os] = a;
+    }
   }
   __syncthreads();
   const long long pairs = n / 2;

@@ -44,6 +44,34 @@ def plane_kernel(**kwargs):
     return state, node
 
 
+def in_place_row_kernel():
+    """A ``GPU_Device`` map over ``b`` transforming row ``X[b]`` into itself through two views, as QE's vexx inverts
+    a band's grid in place: the views hide from the block lowering that the transform is in place."""
+    inner = dace.SDFG("in_place_row")
+    inner.add_array("x", [B, N], dace.complex128, storage=dtypes.StorageType.GPU_Global)
+    inner.add_symbol("b", dace.int64)
+    inner.add_view("xin", [N], dace.complex128, storage=dtypes.StorageType.GPU_Global)
+    inner.add_view("xout", [N], dace.complex128, storage=dtypes.StorageType.GPU_Global)
+    state = inner.add_state()
+    node = IFFT("transform")
+    node.factor = 1 / N
+    node.implementation = BLOCK
+    xin, xout = state.add_access("xin"), state.add_access("xout")
+    state.add_edge(state.add_read("x"), None, xin, "views", dace.Memlet("x[b, 0:N]"))
+    state.add_edge(xin, None, node, "_inp", dace.Memlet("xin[0:N]"))
+    state.add_edge(node, "_out", xout, None, dace.Memlet("xout[0:N]"))
+    state.add_edge(xout, "views", state.add_write("x"), None, dace.Memlet("x[b, 0:N]"))
+
+    sdfg = dace.SDFG("block_ifft_in_place_rows")
+    sdfg.add_array("X", [B, N], dace.complex128, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("rows", {"b": "0:B"}, schedule=dtypes.ScheduleType.GPU_Device)
+    nsdfg = state.add_nested_sdfg(inner, {"x"}, {"x"}, {"N": "N", "B": "B", "b": "b"})
+    state.add_memlet_path(state.add_read("X"), entry, nsdfg, dst_conn="x", memlet=dace.Memlet("X[0:B, 0:N]"))
+    state.add_memlet_path(nsdfg, exit_node, state.add_write("X"), src_conn="x", memlet=dace.Memlet("X[0:B, 0:N]"))
+    return sdfg
+
+
 def block_tasklet(sdfg: dace.SDFG) -> nodes.Tasklet:
     """Expand the node and return its one tasklet, checking it sits in a 256-lane map inside the device map."""
     sdfg.expand_library_nodes()
@@ -110,6 +138,19 @@ def test_batched_block_fft_matches_numpy(n: int, dtype: dace.typeclass, inverse:
     np.testing.assert_allclose(y.get(), expected, rtol=tolerance, atol=tolerance * n)
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize("n", [64, 2048])
+def test_an_in_place_block_ifft_longer_than_the_block_matches_numpy(n: int):
+    import cupy
+
+    rows = 5
+    rng = np.random.default_rng(n)
+    x = rng.uniform(-1, 1, (rows, n)) + 1j * rng.uniform(-1, 1, (rows, n))
+    out = cupy.asarray(x)
+    in_place_row_kernel()(X=out, B=rows, N=n)
+    np.testing.assert_allclose(out.get(), np.fft.ifft(x), rtol=1e-12, atol=1e-12)
+
+
 if __name__ == "__main__":
     test_a_one_axis_fft_in_a_kernel_offers_the_block_lowering()
     test_the_block_fft_calls_the_device_transform_once_per_block()
@@ -119,3 +160,5 @@ if __name__ == "__main__":
         for element in (dace.complex64, dace.complex128):
             for backward in (False, True):
                 test_batched_block_fft_matches_numpy(size, element, backward)
+    for size in (64, 2048):
+        test_an_in_place_block_ifft_longer_than_the_block_matches_numpy(size)
