@@ -602,10 +602,18 @@ def _scatter_idx_targets_for_loop(
                     read = {n.data for st in region.states() for n in st.data_nodes() if is_read(st, n)} | {
                         m.data for e in region.all_interstate_edges() for m in e.data.get_read_memlets(sdfg.arrays)
                     }
-                if node.data not in outside or node.data in read:
+                if node.data not in outside:
                     continue
             for e in state.in_edges(node):
                 if e.data is None or e.data.subset is None or not indirect_write_needs_injectivity(e.data):
+                    continue
+                # A transient the loop reads only inside the slot it writes (QE vexx's column ``big_result_d[:, ibnd -
+                # 1]``, updated in place) is still a scatter target: distinct slots keep each iteration to its own.
+                if (
+                    desc.transient
+                    and node.data in read
+                    and not reads_within_slot(region, sdfg, node.data, e.data.subset, bindings.keys() | chained.keys())
+                ):
                     continue
                 # A span between two loaded bounds overlaps others although the bounds are distinct: no guard here
                 # asks for that.
@@ -669,6 +677,35 @@ def _scatter_idx_targets_for_loop(
         if index_slice is not None or one_dim:
             result[arr] = (tgts, index_slice)
     return result
+
+
+def reads_within_slot(region: LoopRegion, sdfg: SDFG, name: str, slot: subsets.Subset, names: set[str]) -> bool:
+    """Whether every read of ``name`` in ``region`` stays inside ``slot``: in each dimension ``slot`` picks by a loaded
+    index of ``names``, the read names that same point. An interstate-edge read, or a slot no loaded index picks,
+    says nothing of which iteration's element it reads."""
+    if any(m.data == name for e in region.all_interstate_edges() for m in e.data.get_read_memlets(sdfg.arrays)):
+        return False
+    picked = [
+        dim
+        for dim, (begin, end, _) in enumerate(slot.ndrange())
+        if begin == end and not names.isdisjoint(str(sym) for sym in symbolic.pystr_to_symbolic(begin).free_symbols)
+    ]
+    if not picked:
+        return False
+    for state in region.states():
+        for node in state.data_nodes():
+            if node.data != name:
+                continue
+            for edge in state.out_edges(node):
+                if edge.data.is_empty():
+                    continue
+                subset = edge.data.src_subset if edge.data.src_subset is not None else edge.data.subset
+                if subset is None or len(subset) != len(slot):
+                    return False
+                ranges = subset.ndrange()
+                if any(ranges[dim][0] != ranges[dim][1] or ranges[dim][0] != slot.ndrange()[dim][0] for dim in picked):
+                    return False
+    return True
 
 
 def slot_follows_index(subset: subsets.Subset, names: set[str]) -> bool:

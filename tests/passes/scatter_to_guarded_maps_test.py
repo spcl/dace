@@ -1109,6 +1109,33 @@ def test_a_transient_scattered_through_an_index_of_an_index_is_guarded_on_both()
 
 
 @dace.program
+def column_updated_in_place(x: dace.float64[N, N], ib: dace.int64[N], out: dace.float64[N, N]):
+    buf = np.ones((N, N), dtype=np.float64)
+    for i in range(N):
+        c = ib[i]
+        buf[:, c] = buf[:, c] * x[:, i]
+    out[:] = buf
+
+
+def test_a_transient_column_updated_in_place_through_an_index_is_guarded():
+    """vexx_bp_k_gpu's ``big_result_d(:, ibnd)``, ``ibnd = ibands(i)``: the loop reads the transient only in the column
+    it writes, so distinct ``ibnd`` keep every iteration to its own column. The read made it "state the loop consults"
+    and the loop stayed unproven."""
+    sdfg = column_updated_in_place.to_sdfg(simplify=True)
+    assert "ib" in set(detect_scatter_idx_arrays(sdfg))
+    canonicalize(sdfg)
+    n = 12
+    x = np.random.default_rng(1).random((n, n))
+    for ib in (_make_permutation(n, 3), np.zeros(n, np.int64)):
+        expected = np.ones((n, n))
+        for i in range(n):
+            expected[:, ib[i]] *= x[:, i]
+        out = np.zeros((n, n))
+        sdfg(x=x, ib=ib.astype(np.int64), out=out, N=n)
+        assert np.allclose(out, expected)
+
+
+@dace.program
 def shifted_chained_scatter(c: dace.float64[N], nl: dace.int64[N], igk: dace.int64[N], out: dace.float64[N]):
     for i in range(N):
         out[nl[igk[i] - 1] - 1] = c[i]
