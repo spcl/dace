@@ -588,16 +588,24 @@ class BufferSharing:
         """Whether the last access through ``first`` is a whole-array copy that is the first access through ``second``:
         in one buffer the copy reads and writes the same elements, and :meth:`run` drops it."""
         order = self.order(state)
-        for edge in state.edges():
+
+        def copy(edge) -> bool:
             source, target = edge.src, edge.dst
             if not (source in first and target in second) or edge.data.wcr is not None or edge.data.is_empty():
-                continue
-            if state.out_degree(source) != 1 or state.in_degree(target) != 1 or not self.whole_copy(state, edge):
-                continue
-            return all(n is source or source in order.descendants(n) for n in first) and all(
-                n is target or n in order.descendants(target) for n in second
-            )
-        return False
+                return False
+            return state.out_degree(source) == 1 and state.in_degree(target) == 1 and self.whole_copy(state, edge)
+
+        # Only an out-edge of a ``first`` node can match: scanning those, not the whole state, keeps this per pair
+        # cheap. Several matches fall back to the state's edge order, which picks the one judged.
+        found = [edge for source in OrderedSet(first) for edge in state.out_edges(source) if copy(edge)]
+        if len(found) > 1:
+            found = [edge for edge in state.edges() if edge in found]
+        if not found:
+            return False
+        source, target = found[0].src, found[0].dst
+        return all(n is source or source in order.descendants(n) for n in first) and all(
+            n is target or n in order.descendants(target) for n in second
+        )
 
     def whole_copy(self, state: SDFGState, edge) -> bool:
         desc, other = self.sdfg.arrays[edge.src.data], self.sdfg.arrays[edge.dst.data]
