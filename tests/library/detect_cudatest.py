@@ -97,13 +97,15 @@ def test_find_first_host_expansion_refuses_device_memory():
         sdfg.expand_library_nodes()
 
 
-def make_conflict_sdfg(implementation: str, capacity: int) -> dace.SDFG:
-    """``count[0] = 1`` iff the device-resident index ``ip`` holds a duplicate."""
+def make_conflict_sdfg(implementation: str, capacity: int | None) -> dace.SDFG:
+    """``count[0] = 1`` iff the device-resident index ``ip`` holds a duplicate. Without a ``capacity`` the check gets
+    no tag array and must work out its own."""
     on_device = implementation == "CUDA"
     sdfg = dace.SDFG(f"scatter_conflict_{implementation}")
     sdfg.add_array("ip", [N], dace.int64)
     sdfg.add_array("count", [1], dace.int64)
-    sdfg.add_transient("owner", [capacity], dace.int64, storage=dace.StorageType.CPU_Heap)
+    if capacity is not None:
+        sdfg.add_transient("owner", [capacity], dace.int64, storage=dace.StorageType.CPU_Heap)
 
     if on_device:
         sdfg.add_transient("ip_dev", [N], dace.int64, storage=dace.StorageType.GPU_Global)
@@ -119,10 +121,12 @@ def make_conflict_sdfg(implementation: str, capacity: int) -> dace.SDFG:
     node.implementation = implementation
     node.schedule = dace.ScheduleType.Sequential
     state.add_node(node)
-    node.add_out_connector("_owner_out")  # optional connector: the caller-sized tag array
+    if capacity is not None:
+        node.add_out_connector("_owner_out")  # optional connector: the caller-sized tag array
     state.add_edge(state.add_read(source), None, node, "_idx_in", dace.Memlet(f"{source}[0:N]"))
     state.add_edge(node, "_count_out", state.add_write("count"), None, dace.Memlet("count[0]"))
-    state.add_edge(node, "_owner_out", state.add_write("owner"), None, dace.Memlet(f"owner[0:{capacity}]"))
+    if capacity is not None:
+        state.add_edge(node, "_owner_out", state.add_write("owner"), None, dace.Memlet(f"owner[0:{capacity}]"))
     sdfg.validate()
     return sdfg
 
@@ -144,6 +148,24 @@ def test_scatter_conflict_check_cuda_matches_host(duplicate):
 
     assert got_gpu[0] == expected, f"CUDA answered {got_gpu[0]}, expected {expected}"
     assert got_cpu[0] == expected, f"CPU answered {got_cpu[0]}, expected {expected}"
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("duplicate", [False, True])
+def test_a_check_without_a_tag_array_handles_index_values_of_any_size(duplicate):
+    """Without the scattered array's extent the device check sized its tag buffer from max(idx): an index array of
+    huge values (or one read before it is written, SC40 CUDA fv3_dycore) asked for a buffer past the device and the
+    check failed with out of memory. The check's memory now follows the index count, not the values."""
+    n = 4096
+    ip = (np.arange(n, dtype=np.int64) * 7919 + (1 << 40))[::-1].copy()
+    ip[0] = (1 << 62) + 5
+    if duplicate:
+        ip[n // 3] = ip[0]
+    got_gpu = np.zeros(1, dtype=np.int64)
+
+    make_conflict_sdfg("CUDA", None)(ip=ip.copy(), count=got_gpu, N=n)
+
+    assert got_gpu[0] == np.int64(duplicate), f"CUDA answered {got_gpu[0]}, expected {int(duplicate)}"
 
 
 @pytest.mark.gpu

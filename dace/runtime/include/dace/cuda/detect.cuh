@@ -161,23 +161,29 @@ inline gpuError_t detect_collision_device(const T* idx, long long n, TagT* owner
 }
 
 /**
- * Largest in-range value in ``idx``, OR-free: a block max folded by ``gpucub::BlockReduce`` and one
- * ``atomicMax`` per block. Negative entries clamp to 0 -- they are skipped by the check anyway,
- * and an unsigned atomic would read them as huge.
+ * Open addressing over a power-of-two table of at least ``2n`` slots, keyed by value: a lane that finds its value
+ * already in the table sets ``flag``. A slot holding ``~0`` is empty, which no non-negative value can be; negative
+ * values are skipped, as the capacity check skips them.
  */
 template <typename T>
-__global__ void detect_max_kernel(const T* idx, long long n, unsigned long long* mx) {
-  typedef ::gpucub::BlockReduce<long long, DETECT_BLOCK_THREADS, ::gpucub::BLOCK_REDUCE_WARP_REDUCTIONS> BlockMax;
-  __shared__ typename BlockMax::TempStorage tmp;
-
-  long long local = 0;
+__global__ void detect_hash_kernel(const T* idx, long long n, unsigned long long* keys, unsigned long long mask,
+                                   unsigned long long* flag) {
   const long long stride = static_cast<long long>(gridDim.x) * blockDim.x;
   for (long long i = static_cast<long long>(blockIdx.x) * blockDim.x + threadIdx.x; i < n; i += stride) {
     const long long v = static_cast<long long>(idx[i]);
-    if (v > local) local = v;
+    if (v < 0) continue;
+    const unsigned long long key = static_cast<unsigned long long>(v);
+    unsigned long long slot = (key * 0x9E3779B97F4A7C15ull) & mask;
+    while (true) {
+      const unsigned long long seen = atomicCAS(&keys[slot], ~0ull, key);
+      if (seen == ~0ull) break;
+      if (seen == key) {
+        *flag = 1ull;
+        break;
+      }
+      slot = (slot + 1) & mask;
+    }
   }
-  const long long best = BlockMax(tmp).Reduce(local, detect_detail::MaxOp());
-  if (threadIdx.x == 0 && best > 0) atomicMax(mx, static_cast<unsigned long long>(best));
 }
 
 /**
@@ -198,35 +204,43 @@ inline gpuError_t detect_collision_device(const T* idx, long long n, long long c
 }
 
 /**
- * :cpp:func:`dace::detect_collision` on the device, sizing the tag buffer from ``max(idx)``.
+ * :cpp:func:`dace::detect_collision` on the device when the scattered array's extent is unknown.
  *
- * Costs an extra device reduction AND an extra round trip before the check can start, because the
- * tag buffer cannot be allocated until the maximum is known on the host. Prefer the overload
- * taking a capacity wherever the scattered array's domain is known.
+ * A hash table of the values in one pass: its size follows ``n``, not the values, so an index array of huge or
+ * uninitialized values cannot make the check allocate past the device. Prefer the overload taking a capacity wherever
+ * the scattered array's domain is known.
  */
 template <typename T>
 inline gpuError_t detect_collision_device(const T* idx, long long n, long long* out, gpuStream_t stream) {
   *out = 0;
   if (n <= 0) return gpuSuccess;
 
+  unsigned long long slots = 1;
+  while (slots < 2ull * static_cast<unsigned long long>(n)) slots <<= 1;
   gpuError_t status = gpuSuccess;
-  unsigned long long* mx = static_cast<unsigned long long*>(
+  unsigned long long* keys = static_cast<unsigned long long*>(::dace::cub::get_scratch<::dace::cub::DetectOwnerTag>(
+      slots * sizeof(unsigned long long), stream, &status));
+  if (keys == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;
+  unsigned long long* flag = static_cast<unsigned long long*>(
       ::dace::cub::get_scratch<::dace::cub::DetectFlagTag>(sizeof(unsigned long long), stream, &status));
-  if (mx == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;
+  if (flag == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;
 
   long long blocks = (n + DETECT_BLOCK_THREADS - 1) / DETECT_BLOCK_THREADS;
   if (blocks > DETECT_MAX_BLOCKS) blocks = DETECT_MAX_BLOCKS;
 
-  status = gpuMemsetAsync(mx, 0, sizeof(unsigned long long), stream);
+  status = gpuMemsetAsync(keys, 0xFF, slots * sizeof(unsigned long long), stream);
   if (status != gpuSuccess) return status;
-  detect_max_kernel<<<static_cast<unsigned>(blocks), DETECT_BLOCK_THREADS, 0, stream>>>(idx, n, mx);
+  status = gpuMemsetAsync(flag, 0, sizeof(unsigned long long), stream);
+  if (status != gpuSuccess) return status;
+  detect_hash_kernel<<<static_cast<unsigned>(blocks), DETECT_BLOCK_THREADS, 0, stream>>>(idx, n, keys, slots - 1,
+                                                                                         flag);
 
-  unsigned long long host_max = 0;
-  status = gpuMemcpyAsync(&host_max, mx, sizeof(unsigned long long), gpuMemcpyDeviceToHost, stream);
+  unsigned long long host_flag = 0;
+  status = gpuMemcpyAsync(&host_flag, flag, sizeof(unsigned long long), gpuMemcpyDeviceToHost, stream);
   if (status != gpuSuccess) return status;
   status = gpuStreamSynchronize(stream);
-  if (status != gpuSuccess) return status;
-  return detect_collision_device(idx, n, static_cast<long long>(host_max) + 1, out, stream);
+  *out = static_cast<long long>(host_flag != 0);
+  return status;
 }
 
 /**
