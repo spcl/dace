@@ -461,11 +461,12 @@ class ParallelizeLoops(ppl.Pass):
             while xform.last_refusal is not None and xform.last_refusal.kind in (
                 Refusal.NON_UNIQUE_WRITE,
                 Refusal.DYNAMIC_WRITE,
+                Refusal.OVERLAPPING_WRITES,
             ):
                 name = xform.last_refusal.container
                 if name is None or name in xform.contract_arrays:
                     return False
-                proof = array_facts.conflict_free_under_facts(sd, loop, name)
+                proof = array_facts.conflict_free_under_facts(sd, loop, name, name in xform.assume_wcr)
                 if proof is None:
                     return False
                 used += [f for f in proof if f not in used]

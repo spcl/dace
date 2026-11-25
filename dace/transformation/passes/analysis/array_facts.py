@@ -858,12 +858,15 @@ def loop_bindings(loop: LoopRegion) -> tuple[dict[str, Any], Counter]:
     return bindings, assigned
 
 
-def stored_accesses(state: SDFGState, edge: Any) -> list[tuple[subsets.Subset, Any]]:
+def stored_accesses(state: SDFGState, edge: Any) -> list[tuple[subsets.Subset, Any, str | None, bool]]:
     """What the store ``edge`` really writes, each with the branch conditions inside the nested SDFG it runs under (or
-    ``None``): the accesses of the nested SDFG behind a map exit (one box each), else the subset of ``edge``."""
+    ``None``), its write-conflict resolution and whether it is a read-modify-write: the accesses of the nested SDFG behind a map exit (one box each), else
+    the subset of ``edge``."""
     from dace.transformation.interstate.loop_to_map import exact_accesses  # avoid an import loop
 
-    return [(a.subset, a.guard) for a in exact_accesses(state, edge) or []] or [(edge.data.subset, None)]
+    return [(a.subset, a.guard, a.wcr, a.update) for a in exact_accesses(state, edge) or []] or [
+        (edge.data.subset, None, edge.data.wcr, False)
+    ]
 
 
 def write_bounds(
@@ -877,8 +880,6 @@ def write_bounds(
 ) -> tuple[list[tuple[Any, Any]], Any] | None:
     """``(box, guard)`` of the store of ``subset`` through ``edge``, ``box`` its ``(lo, hi)`` per dimension, over the
     iterator and names ``loop`` does not assign, else ``None``."""
-    if edge.data.wcr is not None:
-        return None
     box = []
     for rb, re_, stride in subset.ndrange():
         lo = bound_expression(symbolic.pystr_to_symbolic(str(rb)), bindings, assigned)
@@ -936,7 +937,7 @@ def resolved_range(loop: LoopRegion) -> tuple[Any, Any, Any] | None:
 
 
 def read_bounds(
-    loop: LoopRegion, name: str, bindings: dict[str, Any], assigned: Counter
+    loop: LoopRegion, name: str, bindings: dict[str, Any], assigned: Counter, accumulating: bool = False
 ) -> list[tuple[list[tuple[Any, Any]], Any]] | None:
     """``(box, guard)`` of every read of ``name`` in ``loop``, as :func:`write_bounds` gives them for stores; ``None`` if
     one cannot be written over the iterator and names ``loop`` does not assign, or a read sits in an interstate edge or
@@ -957,9 +958,11 @@ def read_bounds(
             for e in st.out_edges(dn):
                 if e.data is None or e.data.is_empty():
                     continue
-                for subset, inner in [(a.subset, a.guard) for a in exact_accesses(st, e) or []] or [
-                    (e.data.get_src_subset(e, st), None)
+                for subset, inner, update in [(a.subset, a.guard, a.update) for a in exact_accesses(st, e) or []] or [
+                    (e.data.get_src_subset(e, st), None, False)
                 ]:
+                    if accumulating and update:
+                        continue
                     read = None if subset is None else write_bounds(loop, st, e, bindings, assigned, subset, inner)
                     if read is None:
                         return None
@@ -990,7 +993,9 @@ def runs_at_most_once(loop: LoopRegion, bounds: tuple[Any, Any, Any]) -> bool:
     return symbolic.ask(relation, loop.sdfg.facts()) is symbolic.Truth.TRUE
 
 
-def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[ArrayFact] | None:
+def conflict_free_under_facts(
+    sdfg: SDFG, loop: LoopRegion, name: str, accumulating: bool = False
+) -> list[ArrayFact] | None:
     """The facts under which the solver proves that no two iterations of ``loop`` store into one element of
     ``name``, whose reads of other iterations' stores the solver also excludes (:func:`read_bounds`); ``None`` if there are
     none.
@@ -999,7 +1004,9 @@ def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[A
     (``row = perm[r]``); they are replaced by their values, as are the names the loop's bounds read
     (:func:`resolved_range`). The branch conditions guarding a store are kept for both iterations, and every array
     read gets the facts known of it on entry to ``loop`` (:func:`facts_at`). Every read of ``name``
-    is shown clear of the stores of the other iterations in the same way.
+    is shown clear of the stores of the other iterations in the same way. With ``accumulating``, the read-modify-writes
+    of ``name`` are reductions (a WCR the caller will make): they may meet one another, and the reads they make of
+    their own element are no reads.
     """
     if not smt_dependence.has_z3():
         return None
@@ -1011,16 +1018,18 @@ def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[A
     if not edges:
         return None
     bindings, assigned = loop_bindings(loop)
-    stores = []
+    stores, reductions = [], []
     for state, edge in edges:
-        for subset, inner in stored_accesses(state, edge):
+        for subset, inner, wcr, update in stored_accesses(state, edge):
+            wcr = wcr or ("update" if accumulating and update else None)
             store = write_bounds(loop, state, edge, bindings, assigned, subset, inner)
             if store is None or len(store[0]) != edges[0][1].data.subset.dims():
                 return None
             stores.append(store)
+            reductions.append(wcr)
     # A read meets a store of another iteration unless the solver shows its box clear of it under both guards: a read at
     # the very subset a store writes is no proof, since another iteration may read it without storing
-    seen = read_bounds(loop, name, bindings, assigned) if name in reads else []
+    seen = read_bounds(loop, name, bindings, assigned, accumulating) if name in reads else []
     if seen is None:
         return None
     exprs = [e for box, guard in stores + seen for e in [*(x for lh in box for x in lh), guard] if e is not None]
@@ -1032,7 +1041,15 @@ def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[A
     tables = {n: table for n in sorted(arrays) if (table := constant_table(sdfg, n)) is not None}
     facts = facts_at(sdfg, loop, sorted(arrays - tables.keys()))
     start, end, step = bounds
-    pairs = [(first, second) for x, first in enumerate(stores) for second in stores[x:]]
+    # Reductions of one operator combine in any order: only a plain store, or another operator, must stay clear of one
+    if len({w for w in reductions if w is not None}) > 1:
+        return None
+    pairs = [
+        (first, second)
+        for x, first in enumerate(stores)
+        for y, second in enumerate(stores[x:], x)
+        if reductions[x] is None or reductions[y] is None
+    ]
     pairs += [(read, store) for read in seen for store in stores]
     with canon_stats.timed("z3", sdfg):
         for first, second in pairs:

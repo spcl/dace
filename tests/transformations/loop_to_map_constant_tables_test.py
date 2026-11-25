@@ -87,6 +87,29 @@ def melt_ice_into_liquid_read_inside_the_column_map(q: dace.float64[5, L], x: da
                     q[target, jl] = q[target, jl] + x[jm, jl]
 
 
+@dace.program
+def melt_two_ice_species_into_one_liquid_inside_the_column_map(q: dace.float64[5, L], x: dace.float64[5, L]):
+    iphase = np.ndarray([5], dtype=np.int32)
+    imelt = np.ndarray([5], dtype=np.int32)
+    iphase[0] = 0
+    iphase[1] = 1
+    iphase[2] = 1
+    iphase[3] = 2
+    iphase[4] = 2
+    imelt[0] = 0
+    imelt[1] = 0
+    imelt[2] = 0
+    imelt[3] = 1
+    imelt[4] = 1
+    for jm in range(5):
+        for jl in dace.map[0:L]:
+            if iphase[jm] == 2:
+                target = imelt[jm]
+                if x[jm, jl] > 0.0:
+                    q[jm, jl] = q[jm, jl] - x[jm, jl]
+                    q[target, jl] = q[target, jl] + x[jm, jl]
+
+
 def folded_and_parallelized(program: dace.program = melt_ice_into_liquid) -> dace.SDFG:
     sdfg = program.to_sdfg(simplify=True)
     assert FoldConstantTables().apply_pass(sdfg, {}) == {"iphase", "imelt"}
@@ -126,11 +149,34 @@ def test_tables_read_inside_the_column_map_still_let_the_species_loop_map_and_co
     assert np.allclose(q, expected, rtol=0, atol=1e-15)
 
 
+def test_two_ice_species_melting_into_one_liquid_lift_as_a_sum_over_the_species_and_compute_the_same():
+    """Both write ``q[1]`` under ``iphase == 2``; the rows the plain writes touch (3, 4) never meet it."""
+    from dace.sdfg import nodes
+    from dace.transformation.passes.canonicalize import canonicalize
+
+    sdfg = melt_two_ice_species_into_one_liquid_inside_the_column_map.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, validate_all=False, target="cpu")
+    assert loops(sdfg) == 0
+    for node, parent in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.MapEntry):
+            node.map.omp_num_threads = 8
+    rng = np.random.default_rng(2)
+    q, x = rng.standard_normal((5, 4000)), rng.standard_normal((5, 4000))
+    expected = q.copy()
+    for jm in (3, 4):
+        gone = np.where(x[jm] > 0.0, x[jm], 0.0)
+        expected[jm] -= gone
+        expected[1] += gone
+    sdfg(q=q, x=x, L=4000)
+    assert np.allclose(q, expected, rtol=0, atol=1e-12)
+
+
 def test_a_loop_whose_two_ice_species_melt_into_one_liquid_stays_a_loop():
     assert loops(folded_and_parallelized(melt_ice_into_one_liquid)) == 1
 
 
 if __name__ == "__main__":
+    test_two_ice_species_melting_into_one_liquid_lift_as_a_sum_over_the_species_and_compute_the_same()
     test_tables_read_inside_the_column_map_still_let_the_species_loop_map_and_compute_the_same()
     test_a_loop_whose_two_ice_species_melt_into_one_liquid_stays_a_loop()
     test_a_loop_whose_writes_go_through_constant_tables_is_a_map_and_computes_the_same()

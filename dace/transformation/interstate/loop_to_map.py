@@ -246,6 +246,9 @@ class Access(NamedTuple):
 
     memlet: memlet.Memlet
     guard: sp.Basic | None = None
+    #: A write that a tasklet makes from a read of the same element (or that read): a read-modify-write, a reduction once
+    #: its container is accumulated
+    update: bool = False
 
     @property
     def subset(self) -> subsets.Subset:
@@ -310,7 +313,10 @@ def access_guard(
             todo += c.args
         elif c != sp.true and (r := resolved(c, bindings, assigned)) is not None:
             r = r.xreplace({sp.Symbol(k): sp.sympify(v) for k, v in ns.symbol_mapping.items()})
-            if not {str(x) for x in r.free_symbols} & scope:
+            bases = {str(a.args[0]) for a in r.atoms(symbolic.Subscript)}
+            names = {str(x) for x in r.free_symbols} - bases
+            # Data the nest holds in a scratch scalar (``x_index > 0``) means nothing outside it
+            if not names & scope and not names & set(ns.sdfg.arrays):
                 kept.append(r)
     return symbolic.pystr_to_symbolic(" and ".join(f"({c})" for c in kept)) if kept else None
 
@@ -362,7 +368,7 @@ def exact_accesses(state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet]) ->
             return None
         assigned = {name for edge in ns.sdfg.all_interstate_edges() for name in edge.data.assignments}
         bindings = nested_bindings(state, ns)
-        accessed: list[tuple[subsets.Subset | None, str | None, SDFGState | None]] = []
+        accessed: list[tuple[subsets.Subset | None, str | None, SDFGState | None, bool]] = []
         for block in ns.sdfg.all_control_flow_blocks():
             if isinstance(block, SDFGState):
                 for dn in block.data_nodes():
@@ -373,23 +379,32 @@ def exact_accesses(state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet]) ->
                             continue
                         if isinstance(ne.src if write else ne.dst, nodes.NestedSDFG):
                             return None
-                        accessed.append(
-                            (
-                                ne.data.get_dst_subset(ne, block) if write else ne.data.get_src_subset(ne, block),
-                                ne.data.wcr,
-                                block,
-                            )
+                        subset = ne.data.get_dst_subset(ne, block) if write else ne.data.get_src_subset(ne, block)
+                        tasklet = ne.src if write else ne.dst
+                        # The element the tasklet updates is both read and written by it
+                        peers = (
+                            (block.in_edges(tasklet) if write else block.out_edges(tasklet))
+                            if isinstance(tasklet, nodes.Tasklet)
+                            else []
                         )
+                        update = any(
+                            pe.data.data == conn
+                            and not pe.data.is_empty()
+                            and (pe.data.get_src_subset(pe, block) if write else pe.data.get_dst_subset(pe, block))
+                            == subset
+                            for pe in peers
+                        )
+                        accessed.append((subset, ne.data.wcr, block, update))
             elif not write and isinstance(block, (LoopRegion, ConditionalBlock)):
-                accessed += [(m.subset, None, None) for m in block.get_meta_read_memlets() if m.data == conn]
+                accessed += [(m.subset, None, None, False) for m in block.get_meta_read_memlets() if m.data == conn]
         if not write:
             accessed += [
-                (m.subset, None, None)
+                (m.subset, None, None, False)
                 for edge in ns.sdfg.all_interstate_edges()
                 for m in edge.data.get_read_memlets(ns.sdfg.arrays)
                 if m.data == conn
             ]
-        for subset, wcr, block in accessed:
+        for subset, wcr, block, update in accessed:
             if subset is None:
                 return None
             ranges = [tuple(resolved(sp.sympify(x), bindings, assigned) for x in dim) for dim in subset.ndrange()]
@@ -402,7 +417,7 @@ def exact_accesses(state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet]) ->
             if entry is not None:
                 access = propagate_memlet(state, access, entry, False)
                 access.wcr = wcr
-            found[(str(access.subset), str(wcr), str(guard))] = Access(access, guard)
+            found[(str(access.subset), str(wcr), str(guard))] = Access(access, guard, update)
     return list(found.values()) or None
 
 
