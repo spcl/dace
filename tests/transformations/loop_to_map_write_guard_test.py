@@ -12,6 +12,7 @@ import numpy as np
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
+from dace.transformation.passes.analysis import array_facts
 from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
 M = dace.symbol("M")
@@ -44,6 +45,12 @@ def write_where_the_iterator_is_c_and_the_symbol_is_positive(z: dace.float64[M],
     for jm in range(M):
         if jm == c and M > 3:
             z[c] = x[jm] * 2.0
+
+
+@dace.program
+def store_in_a_descending_loop_of_one_iteration(z: dace.float64[M], x: dace.float64[M]):
+    for jm in range(M - 1, M - 2, -1):
+        z[0] = x[jm] * 2.0
 
 
 def parallelized(program: dace.program) -> dace.SDFG:
@@ -85,7 +92,16 @@ def test_a_write_under_a_branch_several_iterations_satisfy_stays_a_loop():
     assert (loops(sdfg), maps(sdfg)) == (1, 0)
 
 
+def test_a_descending_loop_of_one_iteration_is_not_vouched_for_by_a_vacuous_uniqueness_proof():
+    """No two iterations exist, so no solver proof about two of them says anything: CloudSC's last-level sweep stays a loop."""
+    sdfg = store_in_a_descending_loop_of_one_iteration.to_sdfg(simplify=False)
+    (loop,) = [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+    assert array_facts.runs_at_most_once(loop, array_facts.resolved_range(loop))
+    assert array_facts.conflict_free_under_facts(sdfg, loop, "z") is None
+
+
 if __name__ == "__main__":
+    test_a_descending_loop_of_one_iteration_is_not_vouched_for_by_a_vacuous_uniqueness_proof()
     test_a_write_under_the_iterator_equal_to_a_symbol_is_parallel_and_computes_the_same()
     test_a_write_under_a_conjunction_of_the_iterator_test_and_an_invariant_symbol_is_parallel()
     test_a_write_under_a_conjunction_with_an_array_test_still_uses_the_iterator_test()

@@ -959,6 +959,17 @@ def read_bounds(
     return found
 
 
+def runs_at_most_once(loop: LoopRegion, bounds: tuple[Any, Any, Any]) -> bool:
+    """Whether ``loop``, of unit stride up or down, provably runs at most once. No two of its iterations exist, so any
+    proof that none of them store alike holds for nothing, and a solver verdict on it says nothing about the body."""
+    start, end, step = bounds
+    if step not in (1, -1):
+        return False
+    low, high = (end, start) if step == 1 else (start, end)
+    relation = symbolic.Relation(symbolic.RelationKind.LE, low, high)
+    return symbolic.ask(relation, loop.sdfg.facts()) is symbolic.Truth.TRUE
+
+
 def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[ArrayFact] | None:
     """The facts under which the solver proves that no two iterations of ``loop`` store into one element of
     ``name``, whose reads of other iterations' stores the solver also excludes (:func:`read_bounds`); ``None`` if there are
@@ -973,7 +984,7 @@ def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[A
     if not smt_dependence.has_z3():
         return None
     bounds = resolved_range(loop)
-    if bounds is None:
+    if bounds is None or runs_at_most_once(loop, bounds):
         return None
     reads, written = loop.read_and_write_sets()
     edges = write_edges(loop, name)

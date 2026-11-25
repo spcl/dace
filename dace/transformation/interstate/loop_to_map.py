@@ -43,7 +43,7 @@ from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation import helpers
 from dace.transformation import transformation as xf
 from dace.transformation.dataflow.wcr_conversion import wcr_operator
-from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
+from dace.transformation.passes.analysis import array_facts, canon_stats, loop_analysis, smt_dependence
 from dace.transformation.passes.parallelization.facts import SolverFacts
 from dace.transformation.passes.scalar_fission import subsets_cover
 
@@ -830,6 +830,8 @@ def write_refusal(
                 # A write unique only through its branch needs the loop to read the container nowhere: another iteration
                 # reading the stored element would see it, which the shared-subset read test assumes it does not
                 lone = lift is not None and dn.data not in lift.loop.read_and_write_sets()[0]
+                # (A loop that runs at most once has no two iterations to tell apart: nothing is proven for the body)
+                lone = lone and not array_facts.runs_at_most_once(lift.loop, (start, end, step))
                 guard = write_guard(state, lift.loop, itersym, varying) if lone else sp.true
                 injective = smt_proves_injective_write(dst_subset, itersym, start, end, step, verdicts, facts, guard)
             if not injective:
