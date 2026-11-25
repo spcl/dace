@@ -13,6 +13,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     PROVEN_PREFIX,
     AnnotateLoopKinds,
+    unseen_writes,
     witnessed_carrying_access,
 )
 
@@ -92,8 +93,21 @@ def test_a_level_loop_from_an_input_top_read_below_the_top_proves_the_recurrence
     assert first <= earlier and later == earlier + 1 < size, line
 
 
+def test_a_write_in_a_loop_without_a_constant_stride_is_unseen():
+    """minife and qe_vexx_k crashed here: the loop's states were read through a method regions do not have."""
+    sdfg = dace.SDFG("doubling")
+    sdfg.add_array("y", [N], dace.float64)
+    loop = LoopRegion("doubling", "j < N", "j", "j = 1", "j = j * 2")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("one", {}, {"out"}, "out = 1.0")
+    body.add_edge(tasklet, "out", body.add_write("y"), None, dace.Memlet("y[j]"))
+    assert "y" in unseen_writes(sdfg)
+
+
 if __name__ == "__main__":
     test_a_read_under_a_counter_guard_proves_the_recurrence()
     test_a_read_under_an_input_flag_proves_the_recurrence_naming_the_flag()
     test_a_read_under_a_guard_false_where_it_meets_the_write_proves_nothing()
     test_a_level_loop_from_an_input_top_read_below_the_top_proves_the_recurrence()
+    test_a_write_in_a_loop_without_a_constant_stride_is_unseen()

@@ -1113,7 +1113,13 @@ def unseen_writes(region: ControlFlowRegion) -> set[str]:
     found: set[str] = set()
     for block in region.all_control_flow_blocks():
         if isinstance(block, LoopRegion) and block.loop_variable and loop_range(block, {}) is None:
-            found |= {n.data for s in block.all_states() for n in s.data_nodes() if s.in_degree(n) > 0}
+            found |= {
+                n.data
+                for s in block.all_control_flow_blocks(recursive=True)
+                if isinstance(s, SDFGState)
+                for n in s.data_nodes()
+                if s.in_degree(n) > 0
+            }
         if not isinstance(block, SDFGState):
             continue
         for edge in block.edges():
