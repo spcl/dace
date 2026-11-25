@@ -586,7 +586,7 @@ def _scatter_idx_targets_for_loop(
     dim_nodes_by_arr: dict[str, list[ast.AST]] = {}
     outside: set[str] | None = None
     read: set[str] = set()
-    slots: dict[str, str] = {}
+    slots: dict[str, list[subsets.Subset]] = {}
     for state in region.states():
         for node in state.data_nodes():
             if not is_written(state, node):
@@ -645,8 +645,16 @@ def _scatter_idx_targets_for_loop(
                 if not slot_follows_index(e.data.subset, bindings.keys() | chained.keys()):
                     return {}
                 # Each store is checked alone, so a second slot of one target can meet the first in another iteration
-                if found and slots.setdefault(node.data, str(e.data.subset)) != str(e.data.subset):
-                    return {}
+                # A second slot apart from the first by a constant (QE vexx's ``temppsic_nc_d[nl - 1, 0, ..]`` and
+                # ``[nl - 1, 1, ..]``) never meets it, whatever the index.
+                if found:
+                    seen = slots.setdefault(node.data, [])
+                    if any(
+                        str(other) != str(e.data.subset) and not apart_by_constant(other, e.data.subset)
+                        for other in seen
+                    ):
+                        return {}
+                    seen.append(e.data.subset)
                 for arr, dim_nodes in found.items():
                     loop_arrays.setdefault(arr, set()).add(node.data)
                     if dim_nodes is not None:
@@ -677,6 +685,17 @@ def _scatter_idx_targets_for_loop(
         if index_slice is not None or one_dim:
             result[arr] = (tgts, index_slice)
     return result
+
+
+def apart_by_constant(first: subsets.Subset, second: subsets.Subset) -> bool:
+    """Whether two point slots differ in some dimension that each fixes to a different integer."""
+    if len(first) != len(second):
+        return False
+    for (b1, e1, _), (b2, e2, _) in zip(first.ndrange(), second.ndrange()):
+        b1, e1, b2, e2 = (symbolic.pystr_to_symbolic(x) for x in (b1, e1, b2, e2))
+        if b1 == e1 and b2 == e2 and b1.is_Integer and b2.is_Integer and b1 != b2:
+            return True
+    return False
 
 
 def reads_within_slot(region: LoopRegion, sdfg: SDFG, name: str, slot: subsets.Subset, names: set[str]) -> bool:

@@ -1156,3 +1156,31 @@ def test_a_scatter_through_a_shifted_index_of_an_index_is_guarded_on_both():
         out = np.zeros(n)
         sdfg(c=c, nl=(nl + 1).astype(np.int64), igk=(igk + 1).astype(np.int64), out=out, N=n)
         assert np.allclose(out, expected)
+
+
+@dace.program
+def two_planes_through_a_shifted_chain(
+    c: dace.float64[N], d: dace.float64[N], nl: dace.int64[N], igk: dace.int64[N], out: dace.float64[N, 2]
+):
+    for i in range(N):
+        out[nl[igk[i] - 1] - 1, 0] = c[i]
+        out[nl[igk[i] - 1] - 1, 1] = d[i]
+
+
+def test_two_planes_of_one_shifted_chain_are_guarded_on_both():
+    """vexx_bp_k_gpu's non-collinear ``temppsic_nc_d(nl(igk(j)), 1)`` and ``(.., 2)``: two stores apart by a constant
+    plane never meet, so the index chain alone decides. The second slot made the loop no scatter."""
+    sdfg = two_planes_through_a_shifted_chain.to_sdfg(simplify=True)
+    assert {"nl", "igk"} <= set(detect_scatter_idx_arrays(sdfg))
+    canonicalize(sdfg)
+    n = 16
+    rng = np.random.default_rng(2)
+    c, d = rng.random(n), rng.random(n)
+    for nl, igk in ((_make_permutation(n, 1), _make_permutation(n, 2)), (np.zeros(n, np.int64), np.arange(n))):
+        expected = np.zeros((n, 2))
+        for i in range(n):
+            expected[nl[igk[i]], 0] = c[i]
+            expected[nl[igk[i]], 1] = d[i]
+        out = np.zeros((n, 2))
+        sdfg(c=c, d=d, nl=(nl + 1).astype(np.int64), igk=(igk + 1).astype(np.int64), out=out, N=n)
+        assert np.allclose(out, expected)
