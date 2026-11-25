@@ -407,7 +407,7 @@ def rejoin_block_maps(sdfg: SDFG) -> int:
             where = {"outer_map_entry": entry, "inner_map_entry": inner[0], "permissive": True}
             if not MapCollapse.can_be_applied_to(sdfg, **where):
                 continue
-            merged, _ = MapCollapse.apply_to(sdfg, verify=False, **where)
+            merged = MapCollapse.apply_to(sdfg, verify=False, **where)[0]
             merged.map.schedule = dtypes.ScheduleType.GPU_Device
             merged.specialization_hint = None
             collapsed += 1
