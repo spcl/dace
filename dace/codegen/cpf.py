@@ -348,6 +348,8 @@ RENDERABLE_BY_NODE_DEVICE: dict[str, tuple[str, ...]] = {
     "FindFirst": ("CUDA",),
     "Reduce": ("pure",),
     "Scan": ("CUDA",),
+    # Its host lowering runs the OpenMP check over the index array, a device pointer here.
+    "ScatterConflictCheck": ("CUDA",),
     "StateScan": ("CUDA",),
     # A host that has the tensor library makes it canonicalize's pick (``find_fast_library`` lists cuTENSOR /
     # hipTENSOR ahead of TTGT), and CPF renders no tensor library: TTGT's transposes and GEMM are what reach the

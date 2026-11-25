@@ -366,6 +366,48 @@ def test_a_device_argmax_runs_on_the_device_and_keeps_the_first_extreme(tmp_path
     assert cupy.asnumpy(device["out_value"])[0] == picked.max()
 
 
+M = dace.symbol("M")
+
+
+@dace.program
+def guarded_scatter(a: dace.float64[M], b: dace.float64[N], idx: dace.int64[N]):
+    for i in range(N):
+        a[idx[i]] = b[i] * 2.0
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("collides", (False, True), ids=("permutation", "duplicates"))
+def test_a_device_scatter_guard_checks_the_index_on_the_device(tmp_path: pathlib.Path, collides: bool):
+    """The guard took its host ``CPU`` lowering, an OpenMP ``detect_collision`` over the device index array
+    (spcl/dace#2803). With duplicates the sequential arm must run, and the last writer wins."""
+    require_gpu_backend("cuda")
+    import cupy  # Deferred: the optional GPU dependency, needed only where a GPU runs this test.
+
+    name = f"cpf_cuda_guarded_scatter_{'dup' if collides else 'perm'}"
+    rendering = render_gpu(guarded_scatter, name, language="cuda")
+    assert "#pragma omp" not in rendering.code, "the guard must not be a host loop over the device index array"
+    assert "detect_collision_device(" in rendering.device_code, "the guard must run on the device"
+    entry = ctypes.CDLL(str(nvcc_library(rendering, tmp_path, name)))[name]
+    entry.argtypes = entry_argtypes(rendering.sdfg)
+    generator = np.random.default_rng(5)
+    length, extent = 2000, 3000
+    idx = generator.permutation(extent)[:length]
+    if collides:
+        idx[[100, 1500]] = idx[700]  # three writers of one slot: the last one (1500) wins
+    b, a = generator.random(length), generator.random(extent)
+    expected = a.copy()
+    for i in range(length):
+        expected[idx[i]] = b[i] * 2.0
+    device = {"a": cupy.asarray(a), "b": cupy.asarray(b), "idx": cupy.asarray(idx)}
+    scalars = {"N": length, "M": extent}
+
+    entry(
+        *[ctypes.c_void_p(device[arg].data.ptr) if arg in device else scalars[arg] for arg in rendering.sdfg.arglist()]
+    )
+
+    assert_matches({"a": expected}, {"a": cupy.asnumpy(device["a"])}, name)
+
+
 def persistent_device_sdfg(
     name: str,
     lifetime: dace.dtypes.AllocationLifetime,
