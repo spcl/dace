@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from math import inf
 from re import findall
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 import sympy as sp
 
@@ -43,7 +43,7 @@ from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation import helpers
 from dace.transformation import transformation as xf
 from dace.transformation.dataflow.wcr_conversion import wcr_operator
-from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
+from dace.transformation.passes.analysis import array_facts, canon_stats, loop_analysis, smt_dependence
 from dace.transformation.passes.parallelization.facts import SolverFacts
 from dace.transformation.passes.scalar_fission import subsets_cover
 
@@ -240,35 +240,135 @@ def meet_within_one_iteration(
     )
 
 
-def exact_accesses(state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet]) -> list[subsets.Subset] | None:
-    """The subsets of ``e``'s array that a nested SDFG behind the map scope ``e`` leaves or enters really accesses, each
-    propagated over the map, when ``e`` is a MapExit's output (writes) or a MapEntry's input (reads) whose connector
-    carries nested SDFGs only; ``None`` (the caller keeps ``e``'s bounding box) when an access is a write-conflict, sits
-    in a deeper SDFG, or names a symbol the nested SDFG assigns.
+class Access(NamedTuple):
+    """One access a nested SDFG makes (:func:`exact_accesses`): its memlet, and the branch conditions it runs under
+    inside the nested SDFG in the caller's names (``None``: none known)."""
+
+    memlet: memlet.Memlet
+    guard: sp.Basic | None = None
+    #: A write that a tasklet makes from a read of the same element (or that read): a read-modify-write, a reduction once
+    #: its container is accumulated
+    update: bool = False
+
+    @property
+    def subset(self) -> subsets.Subset:
+        return self.memlet.subset
+
+    @property
+    def wcr(self) -> str | None:
+        return self.memlet.wcr
+
+
+def nested_bindings(state: SDFGState, ns: nodes.NestedSDFG) -> dict[str, sp.Basic]:
+    """The symbols ``ns`` assigns exactly once, with their values in the namespace outside it where they read only
+    symbols and the arrays it receives or the constant tables it reads (named as the outer containers): ``target = imelt[jm]``. A value that reads
+    anything else is left out."""
+    outer = {e.dst_conn: e.data.data for e in state.in_edges(ns) if e.dst_conn} | {
+        e.src_conn: e.data.data for e in state.out_edges(ns) if e.src_conn
+    }
+    # A constant table is no connector: the nest reads it by its name
+    top = state.sdfg
+    while top.parent_sdfg is not None:
+        top = top.parent_sdfg
+    outer |= {name: name for name in top.constants}
+    counts: Counter = Counter(name for edge in ns.sdfg.all_interstate_edges() for name in edge.data.assignments)
+    found: dict[str, sp.Basic] = {}
+    for edge in ns.sdfg.all_interstate_edges():
+        for name, text in edge.data.assignments.items():
+            if counts[name] != 1:
+                continue
+            try:
+                value = symbolic.pystr_to_symbolic(text)
+            except Exception:
+                continue
+            arrays = {str(a.args[0]) for a in value.atoms(symbolic.Subscript)}
+            if arrays <= outer.keys():
+                found[name] = value.replace(
+                    lambda x: isinstance(x, symbolic.Subscript),
+                    lambda x: symbolic.Subscript(sp.Symbol(outer[str(x.args[0])]), *x.args[1:]),
+                )
+    return found
+
+
+def resolved(expr: sp.Basic, bindings: dict[str, sp.Basic], assigned: set[str]) -> sp.Basic | None:
+    """``expr`` with every assigned symbol replaced by its binding, or ``None`` while one without a binding remains."""
+    for depth in range(8):
+        pending = {s: bindings[s.name] for s in expr.free_symbols if s.name in bindings}
+        if not pending:
+            break
+        expr = expr.xreplace(pending)
+    return None if {s.name for s in expr.free_symbols} & assigned else expr
+
+
+def access_guard(
+    block: SDFGState, ns: nodes.NestedSDFG, bindings: dict[str, sp.Basic], assigned: set[str], scope: set[str]
+) -> sp.Basic | None:
+    """The conditions inside ``ns`` that hold wherever ``block`` runs and can be written in the namespace outside it, as
+    a list of conjuncts; those that cannot (they read data computed inside) are left out, which only weakens the guard."""
+    held = cfg_analysis.collect_enclosing_conditions(block, stop=ns.sdfg)
+    todo, kept = [held], []
+    while todo:
+        c = todo.pop()
+        if isinstance(c, sp.And) or type(c).__name__ == "AND":
+            todo += c.args
+        elif c != sp.true and (r := resolved(c, bindings, assigned)) is not None:
+            r = r.xreplace({sp.Symbol(k): sp.sympify(v) for k, v in ns.symbol_mapping.items()})
+            bases = {str(a.args[0]) for a in r.atoms(symbolic.Subscript)}
+            names = {str(x) for x in r.free_symbols} - bases
+            # Data the nest holds in a scratch scalar (``x_index > 0``) means nothing outside it
+            if not names & scope and not names & set(ns.sdfg.arrays):
+                kept.append(r)
+    return symbolic.pystr_to_symbolic(" and ".join(f"({c})" for c in kept)) if kept else None
+
+
+def exact_accesses(state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet]) -> list[Access] | None:
+    """The accesses of ``e``'s array that the nested SDFG behind ``e`` really makes, one memlet each (a reduction keeps
+    its WCR), when ``e`` joins a nested SDFG to the array directly or through one map scope (a MapExit's output for
+    writes, a MapEntry's input for reads), each propagated over the map; ``None`` (the caller keeps ``e``'s bounding box)
+    when an access sits in a deeper SDFG or names a symbol the nested SDFG assigns.
 
     Propagation unions the accesses behind one connector into a box: ``a[jm, c, jl]`` and ``a[c, jm, jl]`` in a map over
     ``jl`` leave it as ``a[Min(c, jm):Max(c, jm) + 1, ..., 0:L]``, which meets every other ``jm`` though no element is
-    shared."""
+    shared; a reduction into one row and the zeroing of another leave as the box of both."""
     from dace.sdfg.propagation import propagate_memlet  # avoid an import cycle
 
-    write = isinstance(e.src, nodes.MapExit)
-    scope = e.src if write else e.dst
-    if not isinstance(scope, nodes.MapExit if write else nodes.MapEntry) or e.data.is_empty() or e.data.wcr is not None:
+    if e.data.is_empty():
         return None
-    entry = state.entry_node(scope) if write else scope
-    suffix = (e.src_conn if write else e.dst_conn or "")[len("OUT_" if write else "IN_") :]
-    inner = list(
-        state.in_edges_by_connector(scope, "IN_" + suffix)
-        if write
-        else state.out_edges_by_connector(scope, "OUT_" + suffix)
-    )
-    found: dict[str, subsets.Subset] = {}
-    for ie in inner:
-        ns, conn = (ie.src, ie.src_conn) if write else (ie.dst, ie.dst_conn)
-        if not isinstance(ns, nodes.NestedSDFG) or ie.data.is_empty() or ie.data.data != e.data.data:
+    write = isinstance(e.src, (nodes.MapExit, nodes.NestedSDFG))
+    scope = e.src if write else e.dst
+    if isinstance(scope, nodes.NestedSDFG):
+        joins = [(scope, e.src_conn if write else e.dst_conn)]
+        entry = None
+    elif isinstance(scope, nodes.MapExit if write else nodes.MapEntry):
+        entry = state.entry_node(scope) if write else scope
+        suffix = (e.src_conn if write else e.dst_conn or "")[len("OUT_" if write else "IN_") :]
+        inner = list(
+            state.in_edges_by_connector(scope, "IN_" + suffix)
+            if write
+            else state.out_edges_by_connector(scope, "OUT_" + suffix)
+        )
+        joins = [(ie.src, ie.src_conn) if write else (ie.dst, ie.dst_conn) for ie in inner]
+        if any(ie.data.is_empty() or ie.data.data != e.data.data for ie in inner):
+            return None
+    else:
+        return None
+    found: dict[tuple[str, str, str], Access] = {}
+    for ns, conn in joins:
+        if not isinstance(ns, nodes.NestedSDFG):
+            return None
+        mapped = {s: sp.sympify(v) for s, v in ns.symbol_mapping.items()}
+        inner_desc, outer_desc = ns.sdfg.arrays.get(conn), state.sdfg.arrays.get(e.data.data)
+        # Indices are absolute only while the connector's array has the shape of the outer one
+        if (
+            inner_desc is None
+            or outer_desc is None
+            or [str(sp.sympify(d).subs({sp.Symbol(k): v for k, v in mapped.items()})) for d in inner_desc.shape]
+            != [str(d) for d in outer_desc.shape]
+        ):
             return None
         assigned = {name for edge in ns.sdfg.all_interstate_edges() for name in edge.data.assignments}
-        accessed: list[subsets.Subset] = []
+        bindings = nested_bindings(state, ns)
+        accessed: list[tuple[subsets.Subset | None, str | None, SDFGState | None, bool]] = []
         for block in ns.sdfg.all_control_flow_blocks():
             if isinstance(block, SDFGState):
                 for dn in block.data_nodes():
@@ -277,28 +377,47 @@ def exact_accesses(state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet]) ->
                     for ne in block.in_edges(dn) if write else block.out_edges(dn):
                         if ne.data.is_empty():
                             continue
-                        if ne.data.wcr is not None or isinstance(ne.src if write else ne.dst, nodes.NestedSDFG):
+                        if isinstance(ne.src if write else ne.dst, nodes.NestedSDFG):
                             return None
-                        accessed.append(
-                            ne.data.get_dst_subset(ne, block) if write else ne.data.get_src_subset(ne, block)
+                        subset = ne.data.get_dst_subset(ne, block) if write else ne.data.get_src_subset(ne, block)
+                        tasklet = ne.src if write else ne.dst
+                        # The element the tasklet updates is both read and written by it
+                        peers = (
+                            (block.in_edges(tasklet) if write else block.out_edges(tasklet))
+                            if isinstance(tasklet, nodes.Tasklet)
+                            else []
                         )
+                        update = any(
+                            pe.data.data == conn
+                            and not pe.data.is_empty()
+                            and (pe.data.get_src_subset(pe, block) if write else pe.data.get_dst_subset(pe, block))
+                            == subset
+                            for pe in peers
+                        )
+                        accessed.append((subset, ne.data.wcr, block, update))
             elif not write and isinstance(block, (LoopRegion, ConditionalBlock)):
-                accessed += [m.subset for m in block.get_meta_read_memlets() if m.data == conn]
+                accessed += [(m.subset, None, None, False) for m in block.get_meta_read_memlets() if m.data == conn]
         if not write:
             accessed += [
-                m.subset
+                (m.subset, None, None, False)
                 for edge in ns.sdfg.all_interstate_edges()
                 for m in edge.data.get_read_memlets(ns.sdfg.arrays)
                 if m.data == conn
             ]
-        for subset in accessed:
+        for subset, wcr, block, update in accessed:
             if subset is None:
                 return None
-            outer = through_symbol_mapping(subset, ns)
-            if assigned & {str(x) for x in outer.free_symbols}:
+            ranges = [tuple(resolved(sp.sympify(x), bindings, assigned) for x in dim) for dim in subset.ndrange()]
+            if any(x is None for dim in ranges for x in dim):
                 return None
-            box = propagate_memlet(state, memlet.Memlet(data=e.data.data, subset=outer), entry, False).subset
-            found[str(box)] = box
+            outer = through_symbol_mapping(subsets.Range(ranges), ns)
+            scope_params = set() if entry is None else set(entry.map.params)
+            guard = None if block is None else access_guard(block, ns, bindings, assigned, scope_params)
+            access = memlet.Memlet(data=e.data.data, subset=outer, wcr=wcr)
+            if entry is not None:
+                access = propagate_memlet(state, access, entry, False)
+                access.wcr = wcr
+            found[(str(access.subset), str(wcr), str(guard))] = Access(access, guard, update)
     return list(found.values()) or None
 
 
@@ -309,7 +428,7 @@ def read_subsets(
     exact = exact_accesses(state, e)
     if exact is None:
         return [in_closed_form(e.data.get_src_subset(e, state), closed_forms)]
-    return [in_closed_form(subset, closed_forms) for subset in exact]
+    return [in_closed_form(access.subset, closed_forms) for access in exact]
 
 
 def nested_write_subsets(nsdfg_node, conn) -> list[subsets.Subset]:
@@ -806,6 +925,8 @@ def write_refusal(
                 # A write unique only through its branch needs the loop to read the container nowhere: another iteration
                 # reading the stored element would see it, which the shared-subset read test assumes it does not
                 lone = lift is not None and dn.data not in lift.loop.read_and_write_sets()[0]
+                # (A loop that runs at most once has no two iterations to tell apart: nothing is proven for the body)
+                lone = lone and not array_facts.runs_at_most_once(lift.loop, (start, end, step))
                 guard = write_guard(state, lift.loop, itersym, varying) if lone else sp.true
                 injective = smt_proves_injective_write(dst_subset, itersym, start, end, step, verdicts, facts, guard)
             if not injective:
@@ -2742,7 +2863,16 @@ class LoopLift:
                             write_memlets[dn.data].append(accumulated)
                             continue
                         # Each access behind a nested SDFG's bounding box is checked alone: the box meets other iterations'
-                        for exact in exact_accesses(state, e) or [None]:
+                        for access in exact_accesses(state, e) or [None]:
+                            exact = None if access is None else access.subset
+                            if access is not None and access.wcr is not None:
+                                # A reduction combines the writes of any iterations; the other writes are checked against it
+                                write_memlets[dn.data].append(
+                                    memlet.Memlet(
+                                        data=dn.data, subset=in_closed_form(exact, closed_forms), wcr=access.wcr
+                                    )
+                                )
+                                continue
                             reason = write_refusal(
                                 sdfg,
                                 state,

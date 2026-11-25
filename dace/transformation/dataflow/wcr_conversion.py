@@ -233,6 +233,18 @@ def boundary_write_index_syms(sdfg: SDFG, data_name: str) -> set:
         node = cur.parent_nsdfg_node
         if conn not in node.out_connectors:
             break
+        # Several different writes leave through one connector as the box of all of them (``zq[jn - 1:5]`` for the rows
+        # ``jn - 1`` and ``4``): that box varies with an outer parameter the one write being asked about never does
+        written = {
+            str(e.data.get_dst_subset(e, st))
+            for st in (b for b in cur.all_control_flow_blocks() if isinstance(b, SDFGState))
+            for dn in st.data_nodes()
+            if dn.data == conn
+            for e in st.in_edges(dn)
+            if not e.data.is_empty()
+        }
+        if len(written) > 1:
+            break
         state = cur.parent
         edges = [e for e in state.out_edges_by_connector(node, conn) if e.data is not None and not e.data.is_empty()]
         if len(edges) != 1 or edges[0].data.data is None:

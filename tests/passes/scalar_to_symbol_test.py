@@ -41,6 +41,23 @@ def test_find_promotable():
     assert "j" in scalars
 
 
+def test_a_register_scalar_copied_from_an_array_in_host_memory_is_promotable():
+    """CloudSC's ``iphase_index = iphase[jm]`` inside a nested SDFG: the array is in default storage, the scratch scalar in
+    a register, and the host reads both alike."""
+    sdfg = dace.SDFG("register_scalar_from_array")
+    sdfg.add_array("A", [5], dace.int32)
+    sdfg.add_array("B", [1], dace.int32)
+    sdfg.add_scalar("s", dace.int32, transient=True, storage=dace.StorageType.Register)
+    load = sdfg.add_state("load", is_start_block=True)
+    load.add_nedge(load.add_read("A"), load.add_write("s"), dace.Memlet("A[2] -> [0]"))
+    use = sdfg.add_state_after(load, "use")
+    tasklet = use.add_tasklet("use", {"inp"}, {"out"}, "out = inp + 1")
+    use.add_edge(use.add_read("s"), None, tasklet, "inp", dace.Memlet("s[0]"))
+    use.add_edge(tasklet, "out", use.add_write("B"), None, dace.Memlet("B[0]"))
+
+    assert "s" in scalar_to_symbol.find_promotable_scalars(sdfg)
+
+
 def test_promote_simple():
     """Simple promotion with Python tasklets."""
 

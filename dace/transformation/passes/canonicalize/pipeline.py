@@ -8,7 +8,7 @@ from typing import Any
 from dace import SDFG, data, properties, symbolic
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
-from dace.sdfg.state import ControlFlowRegion
+from dace.sdfg.state import ControlFlowRegion, SDFGState
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -22,7 +22,8 @@ from dace.transformation.dataflow.redundant_array import RedundantArray, Redunda
 from dace.transformation.dataflow.trivial_map_elimination import TrivialMapElimination
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
-from dace.transformation.passes.analysis import canon_stats
+from dace.transformation.passes import scalar_to_symbol
+from dace.transformation.passes.analysis import array_facts, canon_stats
 from dace.transformation.passes.array_elimination import ArrayElimination
 from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import (
     AssignmentAndCopyKernelToMemsetAndMemcpy,
@@ -739,6 +740,53 @@ def recurrence_lifts(interchange_carry_with_map: bool, target: str, only: list |
     ]
 
 
+class PromoteNestedScalars(ppl.Pass):
+    """:class:`ScalarToSymbolPromotion` in every SDFG nested in the one given, for the scalars copied from a constant table
+    only (CloudSC's ``iphase_index = iphase[jm]`` that a branch reads): as symbols, the dependence tests read them as the
+    table lookups they are. A scalar that holds data a loop writes (a guard on ``zqxn[jn]``) stays data."""
+
+    CATEGORY: str = "Canonicalization"
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Everything
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    @staticmethod
+    def copied_from_table(nested: SDFG, name: str) -> bool:
+        """Whether every write of the scalar ``name`` of ``nested`` is a copy of an element of a constant table, or the
+        result of a tasklet that reads nothing else."""
+
+        def table_only(state: SDFGState, node: nodes.Node) -> bool:
+            if isinstance(node, nodes.AccessNode):
+                return array_facts.constant_table(nested, node.data) is not None
+            if not isinstance(node, nodes.Tasklet):
+                return False
+            reads = [edge for edge in state.in_edges(node) if not edge.data.is_empty()]
+            return bool(reads) and all(table_only(state, state.memlet_path(edge)[0].src) for edge in reads)
+
+        writers = [
+            (state, edge.src)
+            for state in nested.states()
+            for node in state.data_nodes()
+            if node.data == name
+            for edge in state.in_edges(node)
+        ]
+        return bool(writers) and all(table_only(state, src) for state, src in writers)
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
+        """:return: how many scalars were promoted, or ``None`` when none was."""
+        promoted = 0
+        for nested in [sd for sd in sdfg.all_sdfgs_recursive() if sd is not sdfg]:
+            promote = ScalarToSymbolPromotion()
+            promote.transients_only = False
+            found = scalar_to_symbol.find_promotable_scalars(nested, transients_only=False)
+            promote.ignore = {name for name in found if not self.copied_from_table(nested, name)}
+            promoted += len(promote.apply_pass(nested, {}) or ())
+        return promoted or None
+
+
 def derive_parallelism(
     peel_limit: int,
     scatter_to_guarded_maps: bool,
@@ -804,9 +852,14 @@ def derive_parallelism(
         s += [(LIFT_SEMANTICS, AssignmentAndCopyKernelToMemsetAndMemcpy())]
     if target == "gpu":
         s += [(label, PatternApplyOnceEverywhere([PerfLoopNesting()]))]
+    # The first lift nested loop bodies, whose scratch scalars (``iphase_index = iphase[jm]`` read by a branch) the
+    # statement rounds never saw inside a nest: as symbols, the dependence tests below read them as the table lookups
+    # they are
+    s += [(label, PromoteNestedScalars()), (label, PropagateAndPrune())]
     s += [(label, ParallelizeUnderConstraint(assume_constraint=assume_parallel_guards))]
     # Accumulators become reduction loops, then derive again.
     s += [
+        (label, PromoteNestedScalars()),
         (label, FuseChainedScalarReductions()),
         (label, AccumulatorCopyChainToWCR()),
         (label, ParallelizeLoops(propagate=False, hold_sibling_chains=True)),
