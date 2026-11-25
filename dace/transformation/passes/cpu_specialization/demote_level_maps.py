@@ -314,7 +314,7 @@ def block_params(state: SDFGState, entry: nodes.MapEntry, small: set[str]) -> di
                 continue
             for rng, size in zip(ranges, shape):
                 names = {str(free) for free in symbolic.pystr_to_symbolic(size).free_symbols}
-                read = {str(free) for bound in rng[:2] for free in symbolic.pystr_to_symbolic(bound).free_symbols}
+                read = set(symbolic.symlist(rng[:2]))
                 if names and names <= small and param in read:
                     found.setdefault(param, set()).update(names)
     return found
