@@ -469,7 +469,7 @@ class ParallelizeLoops(ppl.Pass):
                 if proof is None:
                     return False
                 used += [f for f in proof if f not in used]
-                # The proof also holds that the loop reads only the elements it stores (``reads_own_slots``)
+                # The proof also shows every read clear of the stores of other iterations (``read_bounds``)
                 xform.contract_arrays = xform.contract_arrays | {name}
                 xform.contract_reads = xform.contract_reads | {name}
                 if xform.probe(self.permissive):
