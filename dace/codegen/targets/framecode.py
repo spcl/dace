@@ -1235,10 +1235,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     first_block, last_block = paired_allocation_blocks([state for state, _ in instances])
                     alloc_state = first_block if isinstance(first_block, SDFGState) else first_state_instance
                     alloc_block = allocation_block(first_block, desc, access_states)
-                    sized_block = late_allocation_block(alloc_block, last_block, desc, access_states)
                     if (
-                        sized_block is alloc_block
-                        and getattr(desc.storage, "force", False)
+                        getattr(desc.storage, "force", False)
                         and scope_allocation_repeats_per_iteration(alloc_block)
                         and straight_line(alloc_block.parent_graph)
                     ):
@@ -1259,7 +1257,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         # instances. This is especially needed for Views which require both the SDFGState and the
                         # AccessNode.
                         self.to_allocate[curscope].append((sdfg, None, nodes.AccessNode(name), True, False, False))
-                    curscope = sized_block
+                    curscope = alloc_block
                     if getattr(desc.storage, "force", False) and not scope_allocation_repeats_per_iteration(curscope):
                         self.frame_allocated.add((sdfg, name))
                     self.to_allocate[curscope].append((sdfg, alloc_state, first_node_instance, False, True, False))
@@ -1725,96 +1723,6 @@ def allocation_block(state: SDFGState, desc: data.Data, access_states: set[SDFGS
             break
         block = successor
     return block
-
-
-def late_allocation_block(
-    alloc_block: ControlFlowBlock, last_block: ControlFlowBlock, desc: data.Data, access_states: set[SDFGState]
-) -> ControlFlowBlock:
-    """
-    The block whose entry allocates ``desc`` when a symbol it is sized by is assigned between ``alloc_block`` and
-    ``last_block``, inside a branch or a loop (QE's ``qgm``: one conditional sizes and fills it, a later one reads
-    it). Its declaration stays at ``alloc_block``, where the size is not yet assigned; the allocation follows the
-    assignment. Without such an assignment, the block is ``alloc_block``.
-
-    :param alloc_block: The block :func:`allocation_block` picked.
-    :param last_block: The block whose exit frees ``desc``.
-    :param desc: The descriptor to allocate.
-    :param access_states: The states that access ``desc`` or read it on an adjacent edge.
-    :raises NotImplementedError: When the size is assigned at more than one place, after an access, or in a loop the
-                                 free does not run in: each would need a reallocation.
-    """
-    sizes = {str(sym) for sym in desc.free_symbols}
-    region = alloc_block.parent_graph
-    while not any(last_block is block for block in region.nodes()):
-        if isinstance(last_block, SDFG):
-            return alloc_block
-        last_block = last_block.parent_graph
-
-    def accesses(graph: ControlFlowBlock) -> bool:
-        return (
-            graph in access_states if isinstance(graph, SDFGState) else any(s in access_states for s in graph.states())
-        )
-
-    span = reachable(alloc_block, region.successors) & reachable(last_block, region.predecessors)
-    edges = [e for e in region.edges() if e.src in span and e.dst in span]
-    edges += [e for b in span if isinstance(b, AbstractControlFlowRegion) for e in b.all_interstate_edges()]
-
-    def sized_after(edge) -> ControlFlowBlock:
-        """The first block after ``edge`` that runs once its assignment is final, lifted out of regions that do not
-        access ``desc`` (a loop summing the size)."""
-        graph, block = edge.src.parent_graph, edge.dst
-        while graph is not region and not accesses(graph):
-            outer = graph.parent_graph
-            if isinstance(outer, ConditionalBlock):
-                graph, outer = outer, outer.parent_graph
-            out_edges = outer.out_edges(graph)
-            if len(out_edges) != 1:
-                raise NotImplementedError(f"No single block follows {graph} to allocate {desc} after its size")
-            graph, block = outer, out_edges[0].dst
-        return allocation_block(block, desc, access_states)
-
-    blocks = {sized_after(e) for e in edges if e.data.assignments.keys() & sizes}
-    if not blocks:
-        return alloc_block
-    if len(blocks) > 1:
-        raise NotImplementedError(f"{desc} is sized at {len(blocks)} places: it would need a reallocation")
-    (block,) = blocks
-    outer = block.parent_graph
-    while outer is not region:
-        if isinstance(outer, LoopRegion):
-            raise NotImplementedError(f"{desc} is sized in {outer}, which reallocates it per iteration")
-        outer = outer.parent_graph
-    if any(precedes(state, block) for state in access_states):
-        raise NotImplementedError(f"{desc} is accessed before it is sized at {block}: it would need a reallocation")
-    return block
-
-
-def precedes(state: SDFGState, block: ControlFlowBlock) -> bool:
-    """Whether ``state`` runs before ``block`` is entered on some path, in one iteration of the loops around both."""
-    chain = [state]
-    while not isinstance(chain[-1], SDFG):
-        chain.append(chain[-1].parent_graph)
-    if any(block is other for other in chain):
-        return False
-    inner = block
-    while not any(inner.parent_graph is other for other in chain):
-        inner = inner.parent_graph
-    common = inner.parent_graph
-    if isinstance(common, ConditionalBlock):
-        return False
-    start = chain[next(i for i, r in enumerate(chain) if r is common) - 1]
-    return inner in reachable(start, common.successors)
-
-
-def reachable(start: ControlFlowBlock, step) -> set[ControlFlowBlock]:
-    """``start`` and every block ``step`` (a region's ``successors`` or ``predecessors``) reaches from it."""
-    seen, stack = {start}, [start]
-    while stack:
-        for nxt in step(stack.pop()):
-            if nxt not in seen:
-                seen.add(nxt)
-                stack.append(nxt)
-    return seen
 
 
 def common_dominator(idom: dict, blocks) -> Any:
