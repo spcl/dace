@@ -11,10 +11,18 @@ from dace.symbolic import equal_valued
 from dace.transformation.transformation import ExpandTransformation
 
 
-def symmetric_element(uplo: bool, row: str, col: str) -> str:
-    """The condition under which element ``(row, col)`` of a symmetric matrix is stored at that position rather than
-    at its mirror, when only the upper (``uplo``) or lower triangle is referenced."""
-    return f"{row} <= {col}" if uplo else f"{row} >= {col}"
+def stored_and_mirrored(uplo: bool, inner_is_row: bool, fixed: str, extent) -> tuple[str, str]:
+    """The ranges of one index of a symmetric matrix's elements whose other index is ``fixed``: those stored at their
+    position, and those stored at their mirror, when only the upper (``uplo``) or lower triangle is referenced.
+
+    :param inner_is_row: Whether the ranged index is the row index.
+    :param extent: The extent of the ranged index.
+    """
+    n = dace.symbolic.symstr(extent)
+    # Upper: row <= col. The ranged index starts at ``fixed`` for an upper column or a lower row.
+    if uplo != inner_is_row:
+        return f"{fixed}:{n}", f"0:{fixed}"
+    return f"0:{fixed} + 1", f"{fixed} + 1:{n}"
 
 
 @library.expansion
@@ -28,24 +36,30 @@ class ExpandSymvPure(ExpandTransformation):
         n = sdfg.arrays["_x"].shape[0]
         init = sdfg.add_state(f"{node.label}_init")
         # As in BLAS, beta == 0 does not read y, so NaN there does not reach the result
-        zero = equal_valued(0, node.beta)
-        init.add_mapped_tasklet(
-            "scale_y",
-            {"__i": f"0:{n}"},
-            {} if zero else {"__y": dace.Memlet("_yin[__i]")},
-            "__out = 0" if zero else f"__out = ({node.beta}) * __y",
-            {"__out": dace.Memlet("_yout[__i]")},
-            external_edges=True,
-        )
-        product = sdfg.add_state_after(init, f"{node.label}_product")
-        product.add_mapped_tasklet(
-            "symv",
-            {"__i": f"0:{n}", "__j": f"0:{n}"},
-            {"__aij": dace.Memlet("_A[__i, __j]"), "__aji": dace.Memlet("_A[__j, __i]"), "__x": dace.Memlet("_x[__j]")},
-            f"__out = ({node.alpha}) * (__aij if {symmetric_element(node.uplo, '__i', '__j')} else __aji) * __x",
-            {"__out": dace.Memlet("_yout[__i]", wcr="lambda a, b: a + b")},
-            external_edges=True,
-        )
+        if equal_valued(0, node.beta):
+            blas_helpers.add_fill(init, "_yout")
+        else:
+            init.add_mapped_tasklet(
+                "scale_y",
+                {"__i": f"0:{n}"},
+                {"__y": dace.Memlet("_yin[__i]")},
+                f"__out = ({node.beta}) * __y",
+                {"__out": dace.Memlet("_yout[__i]")},
+                external_edges=True,
+            )
+        # Each row sums the stored triangle's elements, then those read at their mirror
+        after = init
+        for ranged, a in zip(stored_and_mirrored(node.uplo, False, "__i", n), ("_A[__i, __j]", "_A[__j, __i]")):
+            after = sdfg.add_state_after(after, f"{node.label}_product")
+            blas_helpers.add_nested_mapped_tasklet(
+                after,
+                "symv",
+                {"__i": f"0:{n}"},
+                {"__j": ranged},
+                {"__a": dace.Memlet(a), "__x": dace.Memlet("_x[__j]")},
+                f"__out = ({node.alpha}) * __a * __x",
+                {"__out": dace.Memlet("_yout[__i]", wcr="lambda a, b: a + b")},
+            )
         return sdfg
 
 

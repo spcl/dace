@@ -6,7 +6,7 @@ from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import blas_helpers, gpu_dialect, vendor
 from dace.libraries.blas.blas_helpers import operand
-from dace.libraries.blas.nodes.symv import symmetric_element
+from dace.libraries.blas.nodes.symv import stored_and_mirrored
 from dace.sdfg import nodes
 from dace.symbolic import equal_valued
 from dace.transformation.transformation import ExpandTransformation
@@ -24,14 +24,7 @@ class ExpandSyrkPure(ExpandTransformation):
         k = sdfg.arrays["_A"].shape[0 if node.transA else 1]
         sdfg.add_transient("_product", [n, n], sdfg.arrays["_Cin"].dtype, sdfg.arrays["_Cin"].storage)
         init = sdfg.add_state(f"{node.label}_init")
-        init.add_mapped_tasklet(
-            "zero",
-            {"__i": f"0:{n}", "__j": f"0:{n}"},
-            {},
-            "__out = 0",
-            {"__out": dace.Memlet("_product[__i, __j]")},
-            external_edges=True,
-        )
+        blas_helpers.add_fill(init, "_product")
         # A @ A^T multiplies rows i and j of A; A^T @ A its columns
         ai, aj = ("_A[__k, __i]", "_A[__k, __j]") if node.transA else ("_A[__i, __k]", "_A[__j, __k]")
         product = sdfg.add_state_after(init, f"{node.label}_product")
@@ -43,16 +36,23 @@ class ExpandSyrkPure(ExpandTransformation):
             {"__out": dace.Memlet("_product[__i, __j]", wcr="lambda a, b: a + b")},
             external_edges=True,
         )
-        # As in BLAS, only the referenced triangle of C is updated, and beta == 0 does not read it
-        scaled_c = "" if equal_valued(0, node.beta) else f" + ({node.beta}) * __c"
-        update = sdfg.add_state_after(product, f"{node.label}_update")
-        update.add_mapped_tasklet(
+        # As in BLAS, only the referenced triangle of C is updated, and beta == 0 does not read it: C is copied, then
+        # the triangle overwritten
+        keep = sdfg.add_state_after(product, f"{node.label}_keep")
+        whole = f"0:{n}, 0:{n}"
+        keep.add_nedge(
+            keep.add_read("_Cin"), keep.add_write("_Cout"), mm.Memlet(data="_Cin", subset=whole, other_subset=whole)
+        )
+        zero = equal_valued(0, node.beta)
+        update = sdfg.add_state_after(keep, f"{node.label}_update")
+        blas_helpers.add_nested_mapped_tasklet(
+            update,
             "update",
-            {"__i": f"0:{n}", "__j": f"0:{n}"},
-            {"__c": dace.Memlet("_Cin[__i, __j]"), "__p": dace.Memlet("_product[__i, __j]")},
-            f"__out = ({node.alpha}) * __p{scaled_c} if {symmetric_element(node.uplo, '__i', '__j')} else __c",
+            {"__i": f"0:{n}"},
+            {"__j": stored_and_mirrored(node.uplo, False, "__i", n)[0]},
+            {"__p": dace.Memlet("_product[__i, __j]")} | ({} if zero else {"__c": dace.Memlet("_Cin[__i, __j]")}),
+            f"__out = ({node.alpha}) * __p" + ("" if zero else f" + ({node.beta}) * __c"),
             {"__out": dace.Memlet("_Cout[__i, __j]")},
-            external_edges=True,
         )
         return sdfg
 
