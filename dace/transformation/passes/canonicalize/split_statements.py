@@ -896,6 +896,10 @@ def guarded_groups(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> list[
     body = guarded_body(loop, sdfg, index)
     if body is None or len(body.stores) < 2:
         return None
+    # Guards that read no container test the counter and parameters only (``if i < K``): an index-set split turns
+    # them into guard-free loops each lift reads whole, which per-statement copies of the guard would hide
+    if not body.guard_reads:
+        return None
     # A guard that tests a value the body stores later couples the statements: a compare-and-update (a masked argmin)
     # or a test-and-clear is one statement other lifts match whole, and per-statement copies of its guard only multiply
     # it. A guard that tests a value stored before it (``c = test; if c: ...``) is an ordinary read of an earlier group
