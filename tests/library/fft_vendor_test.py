@@ -8,6 +8,8 @@ staging copy, the cached plan and the ``norm`` scale.
 import ctypes
 import gc
 import os
+import subprocess
+import sys
 import tempfile
 import warnings
 
@@ -522,6 +524,16 @@ def test_a_loaded_program_keeps_planning_after_a_threaded_one_was_unloaded():
     plan, and a new program plans a new length."""
     if not fftw3.threaded(True):
         pytest.skip("no threaded FFTW planner")
+    # glibc's MALLOC_PERTURB_ overwrites freed memory, so a plan FFTW already freed crashes on every run, not only
+    # sometimes; FFTW plans for a team of four, as on a CI runner
+    env = dict(os.environ, MALLOC_PERTURB_="165", OMP_NUM_THREADS="4")
+    code = f"import runpy; runpy.run_path({__file__!r}, run_name='fft_vendor_test')['plan_after_a_threaded_program_unloaded']()"
+    subprocess.run([sys.executable, "-c", code], env=env, check=True)
+
+
+def plan_after_a_threaded_program_unloaded():
+    """The body of ``test_a_loaded_program_keeps_planning_after_a_threaded_one_was_unloaded``, run in a fresh
+    process."""
     compiled = {}
     for n in (40, 41):
 
