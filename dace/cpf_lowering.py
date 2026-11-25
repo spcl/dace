@@ -4163,6 +4163,91 @@ HIP_DEVICE_INLINE_DEFINITIONS: dict[str, str] = {
     "static inline gpuError_t segmented_inclusive_max(const T *in, T *out, long n, long s, gpuStream_t stream) {\n"
     "    return segments_inclusive(in, out, cpf_segments{n, s, n / s, 1, n / s}, cpf_cub_maximum(), max_identity<T>(), stream);\n"
     "}",
+    # ``ArgReduce``'s CUDA expansion calls ``dace::cub::arg_reduce`` and, for a strided or transformed read,
+    # ``dace::cub::gather_iterator``. Without these the node took its host OpenMP lowering, which read the
+    # device operand on the host (SIGSEGV: argmax_with_index, tsvc_2_s318, tsvc_2_s3110 on CUDA).
+    "gather_iterator": "//: A strided, transformed read ``xf(base[j * stride])``, indexed as an array is.\n"
+    "struct IdentityXf {\n"
+    "    template <typename T> __host__ __device__ T operator()(const T &v) const { return v; }\n"
+    "};\n"
+    "struct AbsXf {\n"
+    "    template <typename T> __host__ __device__ T operator()(const T &v) const { return v < T(0) ? -v : v; }\n"
+    "};\n"
+    "template <typename T, typename Xf>\n"
+    "struct cpf_strided_read {\n"
+    "    const T *base;\n"
+    "    long long stride;\n"
+    "    __host__ __device__ T operator[](long long j) const { return Xf()(base[j * stride]); }\n"
+    "};\n"
+    "template <typename Xf, typename T>\n"
+    "static inline cpf_strided_read<T, Xf> gather_iterator(const T *base, long long stride) {\n"
+    "    return cpf_strided_read<T, Xf>{base, stride};\n"
+    "}",
+    "arg_reduce": "//: The device arg-reduction, answered on the host: each lane folds its grid-strided elements into a\n"
+    "//: (value, index) pair, each block folds its lanes, and one block folds the blocks' pairs. A lane that has\n"
+    "//: taken no element holds index -1 and loses every fold; a NaN past element 0 starts no lane, as the\n"
+    "//: sequential loop never takes one. ``arg_combine`` breaks ties by index, so the answer is the loop's.\n"
+    "struct ReduceTag {};\n"
+    "template <bool Max, bool Last>\n"
+    "struct ArgPairOp {\n"
+    "    static constexpr bool max = Max, last = Last;\n"
+    "};\n"
+    "using ArgMaxOp = ArgPairOp<true, false>;\n"
+    "using ArgMinOp = ArgPairOp<false, false>;\n"
+    "template <bool Max, bool Last, typename P>\n"
+    "__device__ inline P arg_lane_fold(const P &l, const P &r) {\n"
+    "    return l.__ar_i < 0 ? r : (r.__ar_i < 0 ? l : arg_combine<Max, Last>(l, r));\n"
+    "}\n"
+    "template <bool Max, bool Last, typename P>\n"
+    "__device__ inline void arg_block_fold(P mine, P *out) {\n"
+    "    __shared__ P lanes[256];\n"
+    "    lanes[threadIdx.x] = mine;\n"
+    "    __syncthreads();\n"
+    "    for (unsigned s = 128; s > 0; s >>= 1) {\n"
+    "        if (threadIdx.x < s) lanes[threadIdx.x] = arg_lane_fold<Max, Last>(lanes[threadIdx.x], lanes[threadIdx.x + s]);\n"
+    "        __syncthreads();\n"
+    "    }\n"
+    "    if (threadIdx.x == 0) *out = lanes[0];\n"
+    "}\n"
+    "template <bool Max, bool Last, typename InIt, typename T>\n"
+    "__global__ void __launch_bounds__(256) arg_reduce_kernel(InIt in, long long items, arg_pair<T, long long> *partial) {\n"
+    "    arg_pair<T, long long> mine{T(), -1};\n"
+    "    for (long long j = (long long)blockIdx.x * 256 + threadIdx.x; j < items; j += (long long)gridDim.x * 256) {\n"
+    "        const T x = in[j];\n"
+    "        if (j == 0 || x == x) mine = mine.__ar_i < 0 ? arg_pair<T, long long>{x, j}\n"
+    "                                                   : arg_combine<Max, Last>(mine, arg_pair<T, long long>{x, j});\n"
+    "    }\n"
+    "    arg_block_fold<Max, Last>(mine, &partial[blockIdx.x]);\n"
+    "}\n"
+    "template <bool Max, bool Last, typename T>\n"
+    "__global__ void __launch_bounds__(256) arg_reduce_blocks(arg_pair<T, long long> *partial, long long blocks) {\n"
+    "    arg_pair<T, long long> mine{T(), -1};\n"
+    "    for (long long b = threadIdx.x; b < blocks; b += 256) mine = arg_lane_fold<Max, Last>(mine, partial[b]);\n"
+    "    arg_block_fold<Max, Last>(mine, &partial[0]);\n"
+    "}\n"
+    "template <typename Op, typename InIt>\n"
+    "static inline gpuError_t arg_reduce(InIt in, std::decay_t<decltype(in[0])> *val_out, long long *idx_out,\n"
+    "                                    long long items, gpuStream_t stream) {\n"
+    "    using T = std::decay_t<decltype(in[0])>;\n"
+    "    using P = arg_pair<T, long long>;\n"
+    "    long long blocks = (items + 255) / 256;\n"
+    "    if (blocks > 1024) blocks = 1024;\n"
+    "    gpuError_t status = gpuSuccess;\n"
+    "    P *partial = (P *)get_scratch<ReduceTag>((size_t)blocks * sizeof(P), stream, &status);\n"
+    "    if (partial == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;\n"
+    "    arg_reduce_kernel<Op::max, Op::last><<<(unsigned)blocks, 256, 0, stream>>>(in, items, partial);\n"
+    "    arg_reduce_blocks<Op::max, Op::last><<<1, 256, 0, stream>>>(partial, blocks);\n"
+    "    status = gpuGetLastError();\n"
+    "    if (status != gpuSuccess) return status;\n"
+    "    P host;\n"
+    "    status = gpuMemcpyAsync(&host, partial, sizeof(P), gpuMemcpyDeviceToHost, stream);\n"
+    "    if (status != gpuSuccess) return status;\n"
+    "    status = gpuStreamSynchronize(stream);\n"
+    "    if (status != gpuSuccess) return status;\n"
+    "    if (val_out != nullptr) *val_out = host.__ar_v;\n"
+    "    *idx_out = host.__ar_i;\n"
+    "    return gpuSuccess;\n"
+    "}",
 }
 
 #: The head of a host helper function in :data:`INLINE_DEFINITIONS`: ``static`` before ``inline`` or ``constexpr inline``.
@@ -4184,6 +4269,7 @@ HIP_INLINE_DEFINITIONS: dict[str, str] = {
 HIP_DEFINITION_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     **DEFINITION_DEPENDENCIES,
     "find_first_index_device": ("get_scratch",),
+    "arg_reduce": ("get_scratch", "arg_pair"),
     "inclusive_affine": ("get_scratch",),
     "segments_inclusive": ("get_scratch",),
     "strided_inclusive_sum": ("segments_inclusive",),
@@ -4203,6 +4289,7 @@ HIP_CTYPE_RENAMES: dict[str, str] = {
     **CTYPE_RENAMES,
     "dace::cub::ScanTag": "ScanTag",
     "dace::cub::DetectFlagTag": "DetectFlagTag",
+    **{f"dace::cub::{name}": name for name in ("ArgMaxOp", "ArgMinOp", "ArgPairOp", "IdentityXf", "AbsXf")},
     # The toolkit's own bfloat16, which ``dace::bfloat16`` IS in a device build (``dace/types.h``): two bytes, the
     # bit layout of HB's ``__npb_bf16`` (``uint16_t``) storage, so a pointer to either crosses the C ABI alike.
     "dace::bfloat16": "__hip_bfloat16",

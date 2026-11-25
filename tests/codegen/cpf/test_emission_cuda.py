@@ -312,6 +312,60 @@ def test_a_device_scan_cuda_unit_builds_with_nvcc_through_cpf_functors(
     nvcc_library(rendering, tmp_path, name)
 
 
+@dace.program
+def argmax_with_index(a: dace.float64[N], out_value: dace.float64[1], out_index: dace.int64[1]):
+    x = a[0]
+    idx = 0
+    for i in range(1, N):
+        if a[i] > x:
+            x = a[i]
+            idx = i + 0
+    out_value[0] = x
+    out_index[0] = idx
+
+
+@dace.program
+def strided_abs_argmax(a: dace.float64[N], out_value: dace.float64[1], out_index: dace.int64[1], inc: dace.int64):
+    k = inc
+    idx = 0
+    x = abs(a[0])
+    for i in range(1, N // 2):
+        if abs(a[k]) > x:
+            x = abs(a[k])
+            idx = i + 0
+        k = k + inc
+    out_value[0] = x
+    out_index[0] = idx
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("program", (argmax_with_index, strided_abs_argmax), ids=("contiguous", "strided_abs"))
+def test_a_device_argmax_runs_on_the_device_and_keeps_the_first_extreme(tmp_path: pathlib.Path, program: DaceProgram):
+    """A host-level ``ArgReduce`` over device memory took its host OpenMP lowering, which dereferenced the device
+    operand on the host: SIGSEGV for argmax_with_index, tsvc_2_s318 and tsvc_2_s3110 on CUDA."""
+    require_gpu_backend("cuda")
+    import cupy  # Deferred: the optional GPU dependency, needed only where a GPU runs this test.
+
+    name = f"cpf_cuda_{program.name}"
+    rendering = render_gpu(program, name, language="cuda")
+    assert "#pragma omp" not in rendering.code, "the argmax must not be a host loop over the device operand"
+    entry = ctypes.CDLL(str(nvcc_library(rendering, tmp_path, name)))[name]
+    entry.argtypes = entry_argtypes(rendering.sdfg)
+    length, inc = 3000, 2
+    host = np.random.default_rng(7).random(length)
+    host[[1200, 2400]] = 2.0  # the extreme twice, both on the stride: the FIRST one wins
+    picked = np.abs(host[: length // 2 * inc : inc]) if program is strided_abs_argmax else host
+    device = {"a": cupy.asarray(host), "out_value": cupy.zeros(1), "out_index": cupy.zeros(1, dtype=np.int64)}
+    scalars = {"N": length, "inc": inc}
+
+    entry(
+        *[ctypes.c_void_p(device[arg].data.ptr) if arg in device else scalars[arg] for arg in rendering.sdfg.arglist()]
+    )
+
+    assert cupy.asnumpy(device["out_index"])[0] == np.argmax(picked)
+    assert cupy.asnumpy(device["out_value"])[0] == picked.max()
+
+
 def persistent_device_sdfg(
     name: str,
     lifetime: dace.dtypes.AllocationLifetime,

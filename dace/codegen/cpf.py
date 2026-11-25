@@ -339,10 +339,12 @@ RENDERABLE_BY_NODE: dict[str, tuple[str, ...]] = {
 #: implementation canonicalize already chose for the node.
 #:
 #: The device expansions named here reach the runtime the same way the host ones do, and CPF spells
-#: what they reach: ``get_scratch``, ``find_first_index_device`` and ``inclusive_affine`` are
+#: what they reach: ``get_scratch``, ``find_first_index_device``, ``arg_reduce`` and ``inclusive_affine`` are
 #: inline definitions in :mod:`dace.cpf_lowering`, exactly as ``find_first_index`` and the scans are
 #: for the host.
 RENDERABLE_BY_NODE_DEVICE: dict[str, tuple[str, ...]] = {
+    # Its host ``CPU`` lowering is the OpenMP loop over the operand: over device memory, a host read of a device pointer.
+    "ArgReduce": ("CUDA",),
     "FindFirst": ("CUDA",),
     "Reduce": ("pure",),
     "Scan": ("CUDA",),
