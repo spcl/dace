@@ -1529,13 +1529,28 @@ class Consume:
     relationship between the input stream and the scope subgraph. The
     subgraph is scheduled to a given number of processing elements
     for processing, and they will try to pop elements from the input
-    stream until a given quiescence condition is reached."""
+    stream until a given quiescence condition is reached.
+
+    Its meaning is that of a map over the processing elements, each of which
+    loops popping chunks of up to ``chunksize`` elements from the stream (one
+    global FIFO) and running the scope on each chunk. Tasks of one processing
+    element run in sequence; tasks of different ones race like map iterations.
+    Pushes into the consumed stream from within the scope are enqueued at once
+    and may be popped by any processing element. Code generation lowers the
+    scope to that form (see ``LowerConsumeScopes``)."""
 
     # Properties
     label = Property(dtype=str, category="General", desc="Name of the consume node")
     pe_index = Property(dtype=str, category="Semantics", desc="Processing element identifier")
     num_pes = SymbolicProperty(category="Scheduling", desc="Number of processing elements", default=1)
-    condition = CodeProperty(category="Semantics", desc="Quiescence condition", allow_none=True, default=None)
+    condition = CodeProperty(
+        category="Semantics",
+        desc="Quiescence (stop) condition: a PE stops consuming as soon as it holds. If None, consumption stops "
+        "once nothing is queued and no task is running. Data the condition reads may be written by other PEs at "
+        "the same time; that read is relaxed and only decides when a PE stops.",
+        allow_none=True,
+        default=None,
+    )
     schedule = EnumProperty(
         dtype=dtypes.ScheduleType, category="Scheduling", desc="Consume schedule", default=dtypes.ScheduleType.Default
     )

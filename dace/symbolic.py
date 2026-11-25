@@ -1407,19 +1407,35 @@ TYPECAST_CPP = {"int32": "dace::int32", "int64": "dace::int64", "float32": "dace
 
 
 class bitwise_and(sympy.Function):
-    pass
+    @classmethod
+    def eval(cls, x, y):
+        """Evaluates ``x & y`` if both operands are integer literals (else stays symbolic)."""
+        if x.is_Integer and y.is_Integer:
+            return sympy.Integer(int(x) & int(y))
 
 
 class bitwise_or(sympy.Function):
-    pass
+    @classmethod
+    def eval(cls, x, y):
+        """Evaluates ``x | y`` if both operands are integer literals (else stays symbolic)."""
+        if x.is_Integer and y.is_Integer:
+            return sympy.Integer(int(x) | int(y))
 
 
 class bitwise_xor(sympy.Function):
-    pass
+    @classmethod
+    def eval(cls, x, y):
+        """Evaluates ``x ^ y`` if both operands are integer literals (else stays symbolic)."""
+        if x.is_Integer and y.is_Integer:
+            return sympy.Integer(int(x) ^ int(y))
 
 
 class bitwise_invert(sympy.Function):
-    pass
+    @classmethod
+    def eval(cls, x):
+        """Evaluates ``~x`` if the operand is an integer literal (else stays symbolic)."""
+        if x.is_Integer:
+            return sympy.Integer(~int(x))
 
 
 class left_shift(sympy.Function):
@@ -1458,28 +1474,42 @@ class right_shift(sympy.Function):
 # ``symstr`` prints these as the operator, while the bare ``bitwise_or`` etc. print as
 # ``func(a, b)`` (both lower to the operator in C++). They subclass the bare classes so
 # ``isinstance`` checks still match.
-class __bitwise_and(bitwise_and):
+class _PrintsAsOperator:
+    """Prints a binary (or, without an operator, unary ``~``) function as the Python operator in SymPy's Python code
+    printer, so that the expression can be evaluated (the string printer keeps the function call, which
+    serialization relies on)."""
+
+    OPERATOR = ""
+
+    def _pythoncode(self, printer) -> str:
+        operands = [printer._print(arg) for arg in self.args]
+        if len(operands) == 1:
+            return f"(~({operands[0]}))"
+        return f"(({operands[0]}) {self.OPERATOR} ({operands[1]}))"
+
+
+class __bitwise_and(_PrintsAsOperator, bitwise_and):
+    OPERATOR = "&"
+
+
+class __bitwise_or(_PrintsAsOperator, bitwise_or):
+    OPERATOR = "|"
+
+
+class __bitwise_xor(_PrintsAsOperator, bitwise_xor):
+    OPERATOR = "^"
+
+
+class __bitwise_invert(_PrintsAsOperator, bitwise_invert):
     pass
 
 
-class __bitwise_or(bitwise_or):
-    pass
+class __left_shift(_PrintsAsOperator, left_shift):
+    OPERATOR = "<<"
 
 
-class __bitwise_xor(bitwise_xor):
-    pass
-
-
-class __bitwise_invert(bitwise_invert):
-    pass
-
-
-class __left_shift(left_shift):
-    pass
-
-
-class __right_shift(right_shift):
-    pass
+class __right_shift(_PrintsAsOperator, right_shift):
+    OPERATOR = ">>"
 
 
 class ROUND(sympy.Function):

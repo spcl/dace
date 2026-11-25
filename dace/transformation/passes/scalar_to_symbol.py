@@ -483,24 +483,14 @@ def _handle_connectors(
             node.add_in_connector(cname)
         else:
             node.add_out_connector(cname)
-        # Add new edge
+        # Add new edge (an update keeps its write-conflict resolution, and a dynamic access stays dynamic)
         orig_edge = orig_edges[orig]
+        memlet = mm.Memlet(data=orig_edge.data.data, subset=subset, wcr=orig_edge.data.wcr)
+        memlet.dynamic = orig_edge.data.dynamic
         if in_edges:
-            state.add_edge(
-                orig_edge.src,
-                orig_edge.src_conn,
-                orig_edge.dst,
-                cname,
-                mm.Memlet(data=orig_edge.data.data, subset=subset),
-            )
+            state.add_edge(orig_edge.src, orig_edge.src_conn, orig_edge.dst, cname, memlet)
         else:
-            state.add_edge(
-                orig_edge.src,
-                cname,
-                orig_edge.dst,
-                orig_edge.dst_conn,
-                mm.Memlet(data=orig_edge.data.data, subset=subset),
-            )
+            state.add_edge(orig_edge.src, cname, orig_edge.dst, orig_edge.dst_conn, memlet)
     # Remove connectors and edges
     conns_to_remove = {v[0] for v in mapping.values()} - ignore
     for conn in conns_to_remove:
@@ -691,6 +681,10 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: dict[str, str]):
 
                         # Set symbol mapping
                         dst.sdfg.remove_data(e.dst_conn, validate=False)
+                        # The remaining uses of the scalar's name are symbolic (e.g., in the symbol mapping of an
+                        # SDFG nested further, or in a memlet): they now refer to the symbol
+                        if e.dst_conn != tmp_symname:
+                            dst.sdfg.replace_dict({e.dst_conn: tmp_symname}, replace_keys=False)
                         dst.remove_in_connector(e.dst_conn)
                         dst.sdfg.symbols[tmp_symname] = sdfg.arrays[node.data].dtype
                         dst.symbol_mapping[tmp_symname] = symname

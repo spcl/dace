@@ -315,8 +315,6 @@ __perf_cpy_{node_id}_{unique_cpy_id}.enterCritical();""",
             return
         if isinstance(node, nodes.MapEntry):
             return self.on_map_entry(sdfg, cfg, state, node, outer_stream, inner_stream)
-        elif isinstance(node, nodes.ConsumeEntry):
-            return self.on_consume_entry(sdfg, cfg, state, node, outer_stream, inner_stream)
         raise TypeError
 
     def on_scope_exit(self, sdfg, cfg, state, node, outer_stream, inner_stream, global_stream):
@@ -366,53 +364,6 @@ __perf_cpy_{node_id}_{unique_cpy_id}.enterCritical();""",
         map_name = node.map.params[-1]
 
         result.write(self.perf_counter_start_measurement_string(unified_id, map_name), cfg, state_id, node)
-
-    def on_consume_entry(self, sdfg, cfg, state, node, outer_stream, inner_stream):
-        state_id = cfg.node_id(state)
-        unified_id = _unified_id(state.node_id(node), state_id)
-
-        # Outer part
-        result = outer_stream
-
-        if self.should_instrument_entry(node):
-            # Mark the SuperSection start (if possible)
-            result.write(
-                self.perf_get_supersection_start_string(node, state, unified_id),
-                cfg,
-                state_id,
-                node,
-            )
-
-            # Mark the section start with zeros (due to dynamic accesses)
-            result.write(self.perf_section_start_string(unified_id, "0", "0"), cfg, state_id, node)
-
-            # Generate a thread affinity locker
-            result.write(
-                "dace::perf::ThreadLockProvider __perf_tlp_%d;\n" % unified_id,
-                cfg,
-                state_id,
-                node,
-            )
-
-        # Inner part
-        result = inner_stream
-
-        # Since the consume internally creates threads, it is instrumented like
-        # a map. However, since std::threads are used rather than OpenMP,
-        # this implementation only allows to measure on a per-task basis
-        # (instead of per-thread). This incurs additional overhead.
-        if self.should_instrument_entry(node):
-            result.write(
-                (f"auto __perf_tlp_{unified_id}_releaser = __perf_tlp_{unified_id}.enqueue();\n")
-                + self.perf_counter_start_measurement_string(
-                    unified_id,
-                    f"__perf_tlp_{unified_id}.getAndIncreaseCounter()",
-                    core_str="dace::perf::getThreadID()",
-                ),
-                cfg,
-                state_id,
-                node,
-            )
 
     @staticmethod
     def perf_get_supersection_start_string(node, dfg, unified_id):
@@ -553,7 +504,6 @@ class PAPIUtils:
             nodes.Tasklet,
             nodes.NestedSDFG,
             nodes.MapEntry,
-            nodes.ConsumeEntry,
         )
         for node, _ in sdfg.all_nodes_recursive():
             if isinstance(node, nodes.EntryNode) and node.map.instrument == dace.InstrumentationType.PAPI_Counters:

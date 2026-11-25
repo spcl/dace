@@ -5,6 +5,7 @@ import ast
 import sympy
 
 from dace import SDFG, SDFGState, dtypes, nodes, symbolic
+from dace import data as dt
 from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python import astutils
 from dace.sdfg import utils as sdutil
@@ -45,6 +46,9 @@ class LiftEinsum(xf.SingleStateTransformation):
                 return False
             if memlet.volume != 1 or memlet.subset.num_elements() != 1:
                 return False
+            # Streams are pushed to and popped from, not indexed
+            if isinstance(sdfg.arrays[memlet.data], dt.Stream):
+                return False
             ind = {str(rb) for rb, _, _ in memlet.subset.ndrange()}
             unique_chars |= ind
             if any(i != "0" and i not in self.map_entry.map.params for i in ind):
@@ -59,6 +63,8 @@ class LiftEinsum(xf.SingleStateTransformation):
         if len(input_chars) == 0:
             return False
 
+        # Constant indices ("0") are not einsum characters. Without any map parameter, there is no einsum to lift.
+        unique_chars.discard("0")
         # If there are too many characters for an einsum expression, fail
         if len(unique_chars) == 0 or len(unique_chars) > len(self.EINSUM_CHARS):
             return False

@@ -289,8 +289,6 @@ def devicelevel_block_size(
     :return: A tuple of sizes or None if the node is not in device-level
              code.
     """
-    from dace.sdfg import nodes as nd
-    from dace.sdfg.sdfg import SDFGState
 
     while sdfg is not None:
         sdict = state.scope_dict()
@@ -308,19 +306,10 @@ def devicelevel_block_size(
                 return gpu_helpers.dynamic_map_block_dims()
 
             scope = sdict[scope]
-        # Traverse up nested SDFGs
+        # Traverse up nested SDFGs (which may be in states of control flow regions, e.g., branches)
         if sdfg.parent is not None:
-            if isinstance(sdfg.parent, SDFGState):
-                parent = sdfg.parent.parent
-            else:
-                parent = sdfg.parent
-            state, node = next(
-                (s, n)
-                for s in parent.nodes()
-                for n in s.nodes()
-                if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name
-            )
+            state, node, parent = sdfg.parent, sdfg.parent_nsdfg_node, sdfg.parent_sdfg
         else:
-            parent = sdfg.parent
+            parent = None
         sdfg = parent
     return None

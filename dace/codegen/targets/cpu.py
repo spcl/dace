@@ -895,6 +895,14 @@ class CPUCodeGen(TargetCodeGenerator):
                 )
                 return
 
+            # The count of a non-blocking pop is written by the pop itself (see ``_stream_try_pop``)
+            if (
+                isinstance(src_node, nodes.AccessNode)
+                and isinstance(src_nodedesc, data.Stream)
+                and uconn == data.Stream.NUM_POPPED_CONNECTOR
+            ):
+                return
+
             # Writing from/to a stream
             if isinstance(sdfg.arrays[memlet.data], data.Stream) or (
                 isinstance(src_node, nodes.AccessNode) and isinstance(src_nodedesc, data.Stream)
@@ -919,6 +927,16 @@ class CPUCodeGen(TargetCodeGenerator):
                     stream_expr = cpp.cpp_offset_expr(src_nodedesc, stream_subset)
                     array_expr = cpp.cpp_offset_expr(dst_nodedesc, array_subset)
                     assert functools.reduce(lambda a, b: a * b, src_nodedesc.shape, 1) == 1
+                    if memlet.dynamic:
+                        stream.write(
+                            self._stream_try_pop(
+                                sdfg, dfg, src_node, src_nodedesc, dst_node, dst_nodedesc, array_subset
+                            ),
+                            cfg,
+                            state_id,
+                            [src_node, dst_node],
+                        )
+                        return
                     stream.write(
                         f"{self.ptr(src_node.data, src_nodedesc, sdfg)}.pop(&{self.ptr(dst_node.data, dst_nodedesc, sdfg)}[{array_expr}], {cpp.sym2cpp(array_subset.num_elements())});",
                         cfg,
@@ -1112,12 +1130,22 @@ class CPUCodeGen(TargetCodeGenerator):
     # Memlet handling
 
     def write_and_resolve_expr(
-        self, sdfg: SDFG, memlet: mmlt.Memlet, nc: bool, outname: str, inname: str, indices=None, dtype=None
+        self,
+        sdfg: SDFG,
+        memlet: mmlt.Memlet,
+        nc: bool,
+        outname: str,
+        inname: str,
+        indices=None,
+        dtype=None,
+        acq_rel: bool = False,
     ):
         """
         Emits a conflict resolution call from a memlet.
-        """
 
+        :param acq_rel: Whether the program reads the old value that the update returns, which makes the atomic
+                        update acquire-release (see ``dace::wcr_acq_rel``). Otherwise, it is relaxed.
+        """
         redtype = operations.detect_reduction_type(memlet.wcr)
         atomic = "_atomic" if not nc else ""
         ptrname = self.ptr(memlet.data, sdfg.arrays[memlet.data], sdfg)
@@ -1145,14 +1173,26 @@ class CPUCodeGen(TargetCodeGenerator):
                 dtype = dtype.base_type
         func = f"{vec_prefix}reduce{atomic}{vec_suffix}"
 
+        # An atomic update whose old value is read is acquire-release
+        acq_rel = acq_rel and not nc
+        if acq_rel:
+            block = sdfg.arrays[memlet.data].storage == dtypes.StorageType.GPU_Shared
+            ordered = f"dace::wcr_acq_rel<{'true' if block else 'false'}>"
+
         # Special call for detected reduction types
         if redtype != dtypes.ReductionType.Custom:
             credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1 :]
-            return f"dace::wcr_fixed<{credtype}, {dtype.ctype}>::{func}({ptr}, {inname})"
+            if acq_rel and not vec_prefix:
+                return f"{ordered}::fixed<{credtype}, {dtype.ctype}>({ptr}, {inname})"
+            update = f"dace::wcr_fixed<{credtype}, {dtype.ctype}>::{func}({ptr}, {inname})"
+            return f"{ordered}::fenced([&] {{ return {update}; }})" if acq_rel else update
 
         # General reduction
         custom_reduction = cpp.unparse_cr(sdfg, memlet.wcr, dtype)
-        return f"const auto __dace__reduction_lambda = {custom_reduction};\ndace::wcr_custom<{dtype.ctype}>::{func}<decltype(__dace__reduction_lambda)>(__dace__reduction_lambda, {ptr}, {inname})"
+        update = f"dace::wcr_custom<{dtype.ctype}>::{func}<decltype(__dace__reduction_lambda)>(__dace__reduction_lambda, {ptr}, {inname})"
+        if acq_rel:
+            update = f"{ordered}::fenced([&] {{ return {update}; }})"
+        return f"const auto __dace__reduction_lambda = {custom_reduction};\n{update}"
 
     def process_out_memlets(
         self,
@@ -1480,6 +1520,45 @@ class CPUCodeGen(TargetCodeGenerator):
 
         return result
 
+    def _stream_try_pop(
+        self,
+        sdfg: SDFG,
+        dfg: StateSubgraphView,
+        src_node: nodes.AccessNode,
+        src_desc: data.Stream,
+        dst_node: nodes.AccessNode,
+        dst_desc: data.Data,
+        array_subset: subsets.Subset,
+    ) -> str:
+        """The code of a dynamic (non-blocking) copy from a stream into ``dst_node``.
+
+        It pops up to ``array_subset`` elements and leaves them pending in the stream until
+        ``task_done``, the protocol consume termination relies on. The count is assigned to the
+        target of the ``num_popped`` edge out of ``src_node``, if there is one.
+        """
+        stream_ptr = self.ptr(src_node.data, src_desc, sdfg)
+        dst_ptr = self.ptr(dst_node.data, dst_desc, sdfg)
+        num_elements = array_subset.num_elements()
+        if isinstance(dst_desc, data.Scalar):
+            target = dst_ptr
+        else:
+            target = f"{dst_ptr}[{cpp.cpp_offset_expr(dst_desc, array_subset)}]"
+        if dst_desc.storage == dtypes.StorageType.GPU_Shared:
+            # Into memory the thread block shares: the block pops once, and every thread sees the count
+            pop = f"{stream_ptr}.block_pop_try(&{target}, {cpp.sym2cpp(num_elements)}, true)"
+        elif num_elements == 1:
+            pop = f"{stream_ptr}.pop_try({target}, true)"
+        else:
+            pop = f"{stream_ptr}.pop_try(&{target}, {cpp.sym2cpp(num_elements)}, true)"
+        count_edge = next((e for e in dfg.out_edges(src_node) if e.src_conn == data.Stream.NUM_POPPED_CONNECTOR), None)
+        if count_edge is None:
+            return f"{pop};"
+        count_desc = sdfg.arrays[count_edge.data.data]
+        count_ptr = self.ptr(count_edge.data.data, count_desc, sdfg)
+        if not isinstance(count_desc, data.Scalar):
+            count_ptr = f"{count_ptr}[{cpp.cpp_offset_expr(count_desc, count_edge.data.subset)}]"
+        return f"{count_ptr} = {pop};"
+
     def memlet_stream_ctor(self, sdfg: SDFG, memlet: mmlt.Memlet) -> str:
         stream = sdfg.arrays[memlet.data]
         return memlet.data + (
@@ -1668,7 +1747,16 @@ class CPUCodeGen(TargetCodeGenerator):
     ) -> None:
         cdtype = src_node.out_connectors[edge.src_conn]
         if isinstance(sdfg.arrays[edge.data.data], data.Stream):
-            pass
+            # A dynamic memlet hands the connector the stream object. Python tasklets do not need it,
+            # since their writes become pushes on the stream itself.
+            if (
+                edge.data.dynamic
+                and isinstance(src_node, nodes.Tasklet)
+                and src_node.language != dtypes.Language.Python
+            ):
+                callsite_stream.write(
+                    f"auto &{edge.src_conn} = {self.memlet_stream_ctor(sdfg, edge.data)};", cfg, state_id, src_node
+                )
         elif isinstance(cdtype, dtypes.pointer):  # If pointer, also point to output
             desc = sdfg.arrays[edge.data.data]
 
@@ -2199,163 +2287,6 @@ class CPUCodeGen(TargetCodeGenerator):
         result.write(outer_stream.getvalue())
 
         callsite_stream.write("}", cfg, state_id, node)
-
-    def _generate_ConsumeEntry(
-        self,
-        sdfg: SDFG,
-        cfg: ControlFlowRegion,
-        dfg: StateSubgraphView,
-        state_id: int,
-        node: nodes.ConsumeEntry,
-        function_stream: CodeIOStream,
-        callsite_stream: CodeIOStream,
-    ) -> None:
-        result = callsite_stream
-
-        state_dfg: SDFGState = cfg.nodes()[state_id]
-
-        input_sedge = next(e for e in state_dfg.in_edges(node) if e.dst_conn == "IN_stream")
-        output_sedge = next(e for e in state_dfg.out_edges(node) if e.src_conn == "OUT_stream")
-        input_stream = state_dfg.memlet_path(input_sedge)[0].src
-        input_streamdesc = input_stream.desc(sdfg)
-
-        # Take chunks into account
-        if node.consume.chunksize == 1:
-            ctype = f"const {input_streamdesc.dtype.ctype}"
-            chunk = "{}& {}".format(ctype, "__dace_" + node.consume.label + "_element")
-            self._dispatcher.defined_vars.add("__dace_" + node.consume.label + "_element", DefinedType.Scalar, ctype)
-        else:
-            ctype = f"const {input_streamdesc.dtype.ctype} *"
-            chunk = "{} {}, size_t {}".format(
-                ctype,
-                "__dace_" + node.consume.label + "_elements",
-                "__dace_" + node.consume.label + "_numelems",
-            )
-            self._dispatcher.defined_vars.add("__dace_" + node.consume.label + "_elements", DefinedType.Pointer, ctype)
-            self._dispatcher.defined_vars.add(
-                "__dace_" + node.consume.label + "_numelems", DefinedType.Scalar, "size_t"
-            )
-
-        # Take quiescence condition into account
-        if node.consume.condition is not None:
-            condition_string = f"[&]() {{ return {cppunparse.cppunparse(node.consume.condition.code, False)}; }}, "
-        else:
-            condition_string = ""
-
-        inner_stream = CodeIOStream()
-
-        self.generate_scope_preamble(sdfg, dfg, state_id, function_stream, callsite_stream, inner_stream)
-
-        # Instrumentation: Post-scope
-        instr = self._dispatcher.instrumentation[node.consume.instrument]
-        if instr is not None:
-            instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream, inner_stream, function_stream)
-
-        pe_type = node.new_symbols(sdfg, state_dfg, self._frame.symbols_defined_at(state_dfg, node)).get(
-            node.consume.pe_index
-        )
-
-        result.write(
-            "dace::Consume<{chunksz}>::template consume{cond}({stream_in}, "
-            "{num_pes}, {condition}"
-            "[&]({pe_type} {pe_index}, {element_or_chunk}) {{".format(
-                chunksz=node.consume.chunksize,
-                cond="" if node.consume.condition is None else "_cond",
-                condition=condition_string,
-                stream_in=input_stream.data,  # TODO: stream arrays
-                element_or_chunk=chunk,
-                num_pes=cpp.sym2cpp(node.consume.num_pes),
-                pe_type=pe_type.ctype if pe_type is not None else "int",
-                pe_index=node.consume.pe_index,
-            ),
-            cfg,
-            state_id,
-            node,
-        )
-
-        # Since consume is an alias node, we create an actual array for the
-        # consumed element and modify the outgoing memlet path ("OUT_stream")
-        # TODO: do this before getting to the codegen (preprocess)
-        if node.consume.chunksize == 1:
-            newname, _ = sdfg.add_scalar(
-                "__dace_" + node.consume.label + "_element",
-                input_streamdesc.dtype,
-                transient=True,
-                storage=dtypes.StorageType.Register,
-                find_new_name=True,
-            )
-            ce_node = nodes.AccessNode(newname)
-        else:
-            newname, _ = sdfg.add_array(
-                "__dace_" + node.consume.label + "_elements",
-                [node.consume.chunksize],
-                input_streamdesc.dtype,
-                transient=True,
-                storage=dtypes.StorageType.Register,
-                find_new_name=True,
-            )
-            ce_node = nodes.AccessNode(newname)
-        state_dfg.add_node(ce_node)
-        out_memlet_path = state_dfg.memlet_path(output_sedge)
-        state_dfg.remove_edge(out_memlet_path[0])
-        state_dfg.add_edge(
-            out_memlet_path[0].src,
-            out_memlet_path[0].src_conn,
-            ce_node,
-            None,
-            mmlt.Memlet.from_array(ce_node.data, ce_node.desc(sdfg)),
-        )
-        state_dfg.add_edge(
-            ce_node,
-            None,
-            out_memlet_path[0].dst,
-            out_memlet_path[0].dst_conn,
-            mmlt.Memlet.from_array(ce_node.data, ce_node.desc(sdfg)),
-        )
-        for e in out_memlet_path[1:]:
-            e.data.data = ce_node.data
-        # END of SDFG-rewriting code
-
-        result.write(inner_stream.getvalue())
-
-        # Emit internal transient array allocation
-        self._frame.allocate_arrays_in_scope(sdfg, cfg, node, function_stream, result)
-
-    def _generate_ConsumeExit(
-        self,
-        sdfg: SDFG,
-        cfg: ControlFlowRegion,
-        dfg: StateSubgraphView,
-        state_id: int,
-        node: nodes.ConsumeExit,
-        function_stream: CodeIOStream,
-        callsite_stream: CodeIOStream,
-    ) -> None:
-        result = callsite_stream
-
-        # Obtain start of map
-        scope_dict = dfg.scope_dict()
-        entry_node = scope_dict[node]
-        state_dfg: SDFGState = cfg.node(state_id)
-
-        if entry_node is None:
-            raise ValueError("Exit node " + str(node.consume.label) + " is not dominated by a scope entry node")
-
-        # Emit internal transient array deallocation
-        self._frame.deallocate_arrays_in_scope(sdfg, cfg, entry_node, function_stream, result)
-
-        outer_stream = CodeIOStream()
-
-        # Instrumentation: Post-scope
-        instr = self._dispatcher.instrumentation[node.consume.instrument]
-        if instr is not None:
-            instr.on_scope_exit(sdfg, state_dfg, node, outer_stream, callsite_stream, function_stream)
-
-        self.generate_scope_postamble(sdfg, dfg, state_id, function_stream, outer_stream, callsite_stream)
-
-        result.write("});", cfg, state_id, node)
-
-        result.write(outer_stream.getvalue())
 
     def _generate_AccessNode(
         self,

@@ -22,6 +22,16 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 
 
+def _top_level_state_id(sdfg: SDFG, tcfg: ControlFlowRegion, match: xf.PatternTransformation) -> int | None:
+    """
+    The block ID of the state ``match`` applied to, for an ``InvalidSDFGError`` on ``sdfg``. The ID counts the blocks
+    of ``tcfg``, so it only names a block of ``sdfg`` there; a multi-state transformation has no state (-1).
+    """
+    if tcfg is sdfg and match.state_id >= 0:
+        return match.state_id
+    return None
+
+
 @dataclass
 @properties.make_properties
 class PatternMatchAndApply(ppl.Pass):
@@ -230,7 +240,9 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                 sdfg.validate()
             except InvalidSDFGError as err:
                 raise InvalidSDFGError(
-                    f"Validation failed after applying {match_name}. {type(err).__name__}: {err}", sdfg, match.state_id
+                    f"Validation failed after applying {match_name}. {type(err).__name__}: {err}",
+                    sdfg,
+                    _top_level_state_id(sdfg, tcfg, match),
                 ) from err
 
     def _apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any], apply_once: bool) -> dict[str, list[Any]]:
@@ -322,7 +334,9 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                 assert match is not None
                 tcfg = sdfg.cfg_list[match.cfg_id]
                 raise InvalidSDFGError(
-                    f"Validation failed after applying {match.print_match(tcfg)}.", sdfg, match.state_id
+                    f"Validation failed after applying {match.print_match(tcfg)}. {type(err).__name__}: {err}",
+                    sdfg,
+                    _top_level_state_id(sdfg, tcfg, match),
                 ) from err
 
         return applied_transformations

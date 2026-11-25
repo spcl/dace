@@ -2,7 +2,9 @@
 #ifndef __DACE_REDUCTION_H
 #define __DACE_REDUCTION_H
 
+#include <atomic>
 #include <cstdint>
+#include <type_traits>
 
 #include "types.h"
 #include "vector.h"
@@ -23,6 +25,10 @@
     #include "../../../external/cub/cub/iterator/counting_input_iterator.cuh"
     #include "../../../external/cub/cub/iterator/transform_input_iterator.cuh"
 #endif
+#endif
+
+#if defined(__CUDACC__) && !defined(__HIPCC__)
+    #include <cuda/atomic>  // Acquire-release updates (wcr_acq_rel)
 #endif
 
 #ifdef __HIPCC__
@@ -51,6 +57,38 @@ namespace dace {
     };
 
 
+#if __cplusplus >= 202002L
+    /// Whether the CPU updates ``T`` atomically without a lock (``std::atomic_ref`` needs a trivially copyable type)
+    template <typename T, bool = std::is_trivially_copyable<T>::value>
+    struct _cpu_lock_free : std::false_type {};
+    template <typename T>
+    struct _cpu_lock_free<T, true> : std::bool_constant<std::atomic_ref<T>::is_always_lock_free> {};
+#endif
+
+    /// An atomic update with ``wcr`` on the CPU: a compare-and-swap loop where the CPU updates ``T`` without a lock,
+    /// a critical section (one lock for all updates of the program) otherwise. Relaxed: acquire-release updates add
+    /// fences around it (``wcr_acq_rel``).
+    template <typename T, typename WCR>
+    inline T _cpu_atomic_update(WCR wcr, T *ptr, const T& value) {
+        #if __cplusplus >= 202002L
+            if constexpr (_cpu_lock_free<T>::value) {
+                std::atomic_ref<T> ref(*ptr);
+                T old = ref.load(std::memory_order_relaxed);
+                while (!ref.compare_exchange_weak(old, wcr(old, value), std::memory_order_relaxed)) {}
+                return old;
+            } else
+        #endif
+        {
+            T old;
+            #pragma omp critical
+            {
+                old = *ptr;
+                *ptr = wcr(old, value);
+            }
+            return old;
+        }
+    }
+
     // Custom reduction with a lambda function
     template <typename T>
     struct wcr_custom {
@@ -68,11 +106,7 @@ namespace dace {
                     old = atomicCAS(ptr, assumed, wcr(assumed, value));
                 } while (assumed != old);
             #else
-                #pragma omp critical
-                {
-                  old = *ptr;
-                  *ptr = wcr(old, value);
-                }
+                old = _cpu_atomic_update(wcr, ptr, value);
             #endif
 
             return old;
@@ -105,13 +139,7 @@ namespace dace {
                 } while (assumed != old);
                 return __int_as_float(old);
             #else
-                float old;
-                #pragma omp critical
-                {
-                    old = *ptr;
-                    *ptr = wcr(old, value);
-                }
-                return old;
+                return _cpu_atomic_update(wcr, ptr, value);
             #endif
         }
 
@@ -133,7 +161,7 @@ namespace dace {
             #ifdef DACE_USE_GPU_ATOMICS
                 // Adapted from CUDA's pre-v8.0 double atomicAdd implementation
                 unsigned long long *iptr = (unsigned long long *)ptr;
-                unsigned long long old = *ptr, assumed;
+                unsigned long long old = *iptr, assumed;  // The bits of the double, not its value
                 do {
                     assumed = old;
                     old = atomicCAS(
@@ -144,13 +172,7 @@ namespace dace {
                 } while (assumed != old);
                 return __longlong_as_double(old);
             #else
-                double old;
-                #pragma omp critical
-                {
-                    old = *ptr;
-                    *ptr = wcr(old, value);
-                }
-                return old;
+                return _cpu_atomic_update(wcr, ptr, value);
             #endif
         }
 
@@ -163,6 +185,31 @@ namespace dace {
         }
     };
     // End of specialization
+
+#if defined(DACE_USE_GPU_ATOMICS)
+    /// The types that GPU atomic functions take for ``T``: they have ``long long`` and ``unsigned long long`` overloads,
+    /// but not ``long`` and ``unsigned long`` (``int64_t`` and ``uint64_t`` on Linux)
+    template <typename T>
+    struct _gpu_atomic {
+        using type = T;  // For minimum and maximum
+        using bits = T;  // For bitwise operations and exchange, which have no signed 64-bit overloads
+    };
+    template <>
+    struct _gpu_atomic<long> {
+        using type = std::conditional_t<sizeof(long) == 8, long long, int>;
+        using bits = std::conditional_t<sizeof(long) == 8, unsigned long long, int>;
+    };
+    template <>
+    struct _gpu_atomic<unsigned long> {
+        using type = std::conditional_t<sizeof(long) == 8, unsigned long long, unsigned int>;
+        using bits = type;
+    };
+    template <>
+    struct _gpu_atomic<long long> {
+        using type = long long;
+        using bits = unsigned long long;
+    };
+#endif
 
     template <typename T>
     struct _wcr_fixed<ReductionType::Sum, T> {
@@ -239,7 +286,7 @@ namespace dace {
 
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
-                return wcr_custom<T>::reduce(
+                return wcr_custom<T>::reduce_atomic(
                     _wcr_fixed<ReductionType::Product, T>(), ptr, value);
             #elif defined (_OPENMP) && _OPENMP >= 201107
                 T old;
@@ -265,7 +312,8 @@ namespace dace {
 
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
-                return atomicMin(ptr, value);
+                using A = typename _gpu_atomic<T>::type;
+                return T(atomicMin(reinterpret_cast<A *>(ptr), A(value)));
             #else
                 return wcr_custom<T>::reduce_atomic(
                     _wcr_fixed<ReductionType::Min, T>(), ptr, value);
@@ -281,7 +329,8 @@ namespace dace {
 
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
-                return atomicMax(ptr, value);
+                using A = typename _gpu_atomic<T>::type;
+                return T(atomicMax(reinterpret_cast<A *>(ptr), A(value)));
             #else
                 return wcr_custom<T>::reduce_atomic(
                     _wcr_fixed<ReductionType::Max, T>(), ptr, value);
@@ -372,7 +421,8 @@ namespace dace {
 
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
-                return atomicAnd(ptr, value);
+                using A = typename _gpu_atomic<T>::bits;
+                return T(atomicAnd(reinterpret_cast<A *>(ptr), A(value)));
             #elif defined (_OPENMP) && _OPENMP >= 201107
                 T old;
                 #pragma omp atomic capture
@@ -424,7 +474,8 @@ namespace dace {
 
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
-                return atomicOr(ptr, value);
+                using A = typename _gpu_atomic<T>::bits;
+                return T(atomicOr(reinterpret_cast<A *>(ptr), A(value)));
             #elif defined (_OPENMP) && _OPENMP >= 201107
                 T old;
                 #pragma omp atomic capture
@@ -476,7 +527,8 @@ namespace dace {
 
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
-                return atomicXor(ptr, value);
+                using A = typename _gpu_atomic<T>::bits;
+                return T(atomicXor(reinterpret_cast<A *>(ptr), A(value)));
             #elif defined (_OPENMP) && _OPENMP >= 201107
                 T old;
                 #pragma omp atomic capture
@@ -501,15 +553,10 @@ namespace dace {
 
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
-                return atomicExch(ptr, value);
+                using A = typename _gpu_atomic<T>::bits;
+                return T(atomicExch(reinterpret_cast<A *>(ptr), A(value)));
             #else
-                T old;
-                #pragma omp critical
-                {
-                    old = *ptr;
-                    *ptr = value;
-                }
-                return old;
+                return _cpu_atomic_update([](const T &, const T &b) { return b; }, ptr, value);
             #endif
         }
 
@@ -588,6 +635,110 @@ namespace dace {
 
             return _wcr_fixed<REDTYPE, T>::reduce_atomic(ptr, scal);
         }
+    };
+
+
+    /**
+     * Write-conflict resolutions whose old value the program reads, as acquire-release atomic updates.
+     *
+     * A thread that reads the old value of an update sees every write made before the updates it observed
+     * (by their threads), and its own writes made before its update are visible to the threads that observe
+     * it. This makes "the last thread to arrive continues the work of all" safe: e.g., the thread that brings
+     * a counter to zero may read what all other threads wrote before decrementing it. Updates whose old
+     * value is not read stay relaxed (atomic, but unordered).
+     *
+     * ``BLOCK`` limits the guarantee to the threads of one GPU thread block (data in shared memory).
+     */
+    template <bool BLOCK = false>
+    struct wcr_acq_rel {
+        static DACE_HDFI void release() {
+            #if defined(__CUDA_ARCH__)
+                ::cuda::atomic_thread_fence(::cuda::memory_order_release, SCOPE);
+            #elif defined(__HIP_DEVICE_COMPILE__)
+                if constexpr (BLOCK) __builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup");
+                else __builtin_amdgcn_fence(__ATOMIC_RELEASE, "agent");
+            #else
+                std::atomic_thread_fence(std::memory_order_release);
+            #endif
+        }
+
+        static DACE_HDFI void acquire() {
+            #if defined(__CUDA_ARCH__)
+                ::cuda::atomic_thread_fence(::cuda::memory_order_acquire, SCOPE);
+            #elif defined(__HIP_DEVICE_COMPILE__)
+                if constexpr (BLOCK) __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "workgroup");
+                else __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "agent");
+            #else
+                std::atomic_thread_fence(std::memory_order_acquire);
+            #endif
+        }
+
+        /// Any atomic update (a callable that performs it and returns the old value), between fences
+        template <typename UPDATE>
+        static DACE_HDFI auto fenced(UPDATE&& update) {
+            release();
+            auto old = update();
+            acquire();
+            return old;
+        }
+
+        /// A built-in reduction: one acquire-release atomic instruction where the GPU has it
+        template <ReductionType REDTYPE, typename T>
+        static DACE_HDFI T fixed(T *ptr, const T& value) {
+            #if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
+                constexpr bool integer = std::is_integral<T>::value && !std::is_same<T, bool>::value &&
+                                         (sizeof(T) == 4 || sizeof(T) == 8);
+                constexpr bool floating = std::is_same<T, float>::value || std::is_same<T, double>::value;
+                if constexpr ((REDTYPE == ReductionType::Sum && (integer || floating)) ||
+                              (integer && (REDTYPE == ReductionType::Min || REDTYPE == ReductionType::Max ||
+                                           REDTYPE == ReductionType::Bitwise_And ||
+                                           REDTYPE == ReductionType::Bitwise_Or ||
+                                           REDTYPE == ReductionType::Bitwise_Xor ||
+                                           REDTYPE == ReductionType::Exchange))) {
+                    return native<REDTYPE>(ptr, value);
+                }
+            #endif
+            return fenced([&] { return wcr_fixed<REDTYPE, T>::reduce_atomic(ptr, value); });
+        }
+
+    private:
+        #if defined(__CUDACC__) && !defined(__HIPCC__)
+            static constexpr ::cuda::thread_scope SCOPE = BLOCK ? ::cuda::thread_scope_block
+                                                                : ::cuda::thread_scope_device;
+        #endif
+
+        #if defined(__CUDA_ARCH__)
+            template <ReductionType REDTYPE, typename T>
+            static __device__ __forceinline__ T native(T *ptr, const T& value) {
+                ::cuda::atomic_ref<T, SCOPE> ref(*ptr);
+                constexpr auto order = ::cuda::memory_order_acq_rel;
+                if constexpr (REDTYPE == ReductionType::Sum) return ref.fetch_add(value, order);
+                else if constexpr (REDTYPE == ReductionType::Min) return ref.fetch_min(value, order);
+                else if constexpr (REDTYPE == ReductionType::Max) return ref.fetch_max(value, order);
+                else if constexpr (REDTYPE == ReductionType::Bitwise_And) return ref.fetch_and(value, order);
+                else if constexpr (REDTYPE == ReductionType::Bitwise_Or) return ref.fetch_or(value, order);
+                else if constexpr (REDTYPE == ReductionType::Bitwise_Xor) return ref.fetch_xor(value, order);
+                else return ref.exchange(value, order);
+            }
+        #elif defined(__HIP_DEVICE_COMPILE__)
+            template <ReductionType REDTYPE, typename T>
+            static __device__ __forceinline__ T native(T *ptr, const T& value) {
+                constexpr int scope = BLOCK ? __HIP_MEMORY_SCOPE_WORKGROUP : __HIP_MEMORY_SCOPE_AGENT;
+                if constexpr (REDTYPE == ReductionType::Sum)
+                    return __hip_atomic_fetch_add(ptr, value, __ATOMIC_ACQ_REL, scope);
+                else if constexpr (REDTYPE == ReductionType::Min)
+                    return __hip_atomic_fetch_min(ptr, value, __ATOMIC_ACQ_REL, scope);
+                else if constexpr (REDTYPE == ReductionType::Max)
+                    return __hip_atomic_fetch_max(ptr, value, __ATOMIC_ACQ_REL, scope);
+                else if constexpr (REDTYPE == ReductionType::Bitwise_And)
+                    return __hip_atomic_fetch_and(ptr, value, __ATOMIC_ACQ_REL, scope);
+                else if constexpr (REDTYPE == ReductionType::Bitwise_Or)
+                    return __hip_atomic_fetch_or(ptr, value, __ATOMIC_ACQ_REL, scope);
+                else if constexpr (REDTYPE == ReductionType::Bitwise_Xor)
+                    return __hip_atomic_fetch_xor(ptr, value, __ATOMIC_ACQ_REL, scope);
+                else return __hip_atomic_exchange(ptr, value, __ATOMIC_ACQ_REL, scope);
+            }
+        #endif
     };
 
 

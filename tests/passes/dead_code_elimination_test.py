@@ -594,6 +594,38 @@ def test_dde_loop_condition():
     assert count_f_nodes == 2
 
 
+def test_dde_keeps_data_written_through_live_view():
+    """A transient that is not read again, written through a view by a nested SDFG that also reads it: the nested
+    SDFG and the view stay, and so does the transient that the view writes to."""
+    inner = dace.SDFG("increment")
+    inner.add_array("x", [3, 4], dace.float64)
+    inner.add_state().add_mapped_tasklet(
+        "increment",
+        dict(i="0:3", j="0:4"),
+        dict(a=dace.Memlet("x[i, j]")),
+        "b = a + 1",
+        dict(b=dace.Memlet("x[i, j]")),
+        external_edges=True,
+    )
+
+    sdfg = dace.SDFG("dde_live_view")
+    sdfg.add_transient("buf", [12], dace.float64)
+    sdfg.add_view("v", [3, 4], dace.float64)
+    state = sdfg.add_state()
+    nsdfg = state.add_nested_sdfg(inner, {"x"}, {"x"})
+    view_in, view_out = state.add_access("v"), state.add_access("v")
+    state.add_edge(state.add_read("buf"), None, view_in, "views", dace.Memlet("buf[0:12]"))
+    state.add_edge(view_in, None, nsdfg, "x", dace.Memlet("v[0:3, 0:4]"))
+    state.add_edge(nsdfg, "x", view_out, None, dace.Memlet("v[0:3, 0:4]"))
+    written = state.add_write("buf")
+    state.add_edge(view_out, "views", written, None, dace.Memlet("buf[0:12]"))
+    sdfg.validate()
+
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert written in state.nodes() and view_out in state.nodes()
+
+
 if __name__ == "__main__":
     test_dse_simple()
     test_dse_unconditional()
@@ -622,3 +654,4 @@ if __name__ == "__main__":
     test_dce_add_type_hint_of_variable(np.float64)
     test_prune_single_branch_conditional_block()
     test_dde_loop_condition()
+    test_dde_keeps_data_written_through_live_view()

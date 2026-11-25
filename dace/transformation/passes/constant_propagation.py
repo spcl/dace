@@ -11,6 +11,7 @@ from dace import SDFG, SDFGState, data, dtypes, properties, symbolic
 from dace.cli.progress import optional_progressbar
 from dace.frontend.python import astutils
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
@@ -125,7 +126,8 @@ class ConstantPropagation(ppl.Pass):
         if not initial_symbols and not self.should_apply(sdfg):
             result = {}
         else:
-            arrays: set[str] = set(sdfg.arrays.keys() | sdfg.constants_prop.keys())
+            # A symbol an enclosing SDFG binds to data is data here: a value that reads it is not a constant
+            arrays: set[str] = set(sdfg.arrays.keys() | sdfg.constants_prop.keys() | sdutil.data_bound_symbols(sdfg))
 
             # Add nested data to arrays
             def _add_nested_datanames(name: str, desc: data.Structure):

@@ -34,6 +34,13 @@ def _cos(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
     return simple_call(pv, sdfg, state, input, "cos")
 
 
+@oprepo.replaces("tanh")
+@oprepo.replaces("dace.tanh")
+@oprepo.replaces("math.tanh")
+def _tanh(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
+    return simple_call(pv, sdfg, state, input, "tanh")
+
+
 @oprepo.replaces("sqrt")
 @oprepo.replaces("dace.sqrt")
 @oprepo.replaces("numpy.sqrt")

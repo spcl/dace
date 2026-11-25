@@ -12,6 +12,7 @@ from dace.config import Config
 from dace.sdfg import SDFG, infer_types
 from dace.sdfg.state import SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
+from dace.transformation.passes.lower_consume import LowerConsumeScopes
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
@@ -146,21 +147,12 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         # Instrumentation-related query
         if isinstance(node, SDFGState):
             disp.instrumentation[node.symbol_instrument] = provider_mapping[node.symbol_instrument]
-        # MapEntry and ConsumeEntry forward ``instrument`` to their Map/Consume object
+        # MapEntry forwards ``instrument`` to its Map
         if isinstance(
             node,
-            (
-                SDFGState,
-                dace.nodes.AccessNode,
-                dace.nodes.Tasklet,
-                dace.nodes.NestedSDFG,
-                dace.nodes.MapEntry,
-                dace.nodes.ConsumeEntry,
-            ),
+            (SDFGState, dace.nodes.AccessNode, dace.nodes.Tasklet, dace.nodes.NestedSDFG, dace.nodes.MapEntry),
         ):
             disp.instrumentation[node.instrument] = provider_mapping[node.instrument]
-        elif isinstance(node, dace.nodes.ConsumeExit):
-            disp.instrumentation[node.consume.instrument] = provider_mapping[node.consume.instrument]
         elif isinstance(node, dace.nodes.MapExit):
             disp.instrumentation[node.map.instrument] = provider_mapping[node.map.instrument]
 
@@ -220,6 +212,10 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
         # It is being done here to ensure that for now the semantics of the setting are preserved and legacy tests,
         # where explicit control flow was not used, continue to work as expected.
         FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
+
+    # Consume scopes become maps over their processing elements, so they follow map code generation on
+    # every target. Before type inference (the lowering adds tasklets) and before explicit copies.
+    LowerConsumeScopes().apply_pass(sdfg, {})
 
     # Before generating the code, run type inference on the SDFG connectors
     infer_types.infer_connector_types(sdfg)

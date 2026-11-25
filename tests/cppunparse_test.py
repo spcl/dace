@@ -142,6 +142,15 @@ if (something) {
     assert success
 
 
+def test_chained_assignment():
+    # The value goes to the last target, and each target to the one before it
+    assert _test_py2cpp("a = b = c + 1", "auto b = (c + 1);\nauto a = b;")
+    assert _test_py2cpp("x = 0\nx = y[1] = 5", "auto x = 0;\ny[1] = 5;\nx = y[1];")
+    # A tuple target is still unpacked
+    assert _test_py2cpp("a, b = f()", "auto [a, b] = f();")
+
+
 if __name__ == "__main__":
     test()
     test_annotated_definition()
+    test_chained_assignment()

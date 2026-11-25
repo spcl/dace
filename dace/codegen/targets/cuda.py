@@ -81,6 +81,60 @@ def _expr(val):
     return val
 
 
+def _stream_aliases(sdfg: SDFG, name: str) -> tuple[list[dt.Stream], bool]:
+    """The descriptors stream ``name`` of ``sdfg`` is known by, through the connectors of nested SDFGs it
+    is passed to, and whether device code pops it with a dynamic (non-blocking) copy."""
+    worklist = [(sdfg, name)]
+    seen = set()
+    aliases = []
+    popped = False
+    while worklist:
+        current, data_name = worklist.pop()
+        if (id(current), data_name) in seen:
+            continue
+        seen.add((id(current), data_name))
+        aliases.append(current.arrays[data_name])
+        for state in current.states():
+            for node in state.data_nodes():
+                if node.data != data_name:
+                    continue
+                for edge in state.out_edges(node):
+                    if (
+                        edge.data.dynamic
+                        and edge.src_conn is None
+                        and isinstance(edge.dst, nodes.AccessNode)
+                        and not isinstance(current.arrays[edge.dst.data], dt.Stream)
+                        and is_devicelevel_gpu(current, state, node)
+                    ):
+                        popped = True
+                for edge in state.all_edges(node):
+                    for leaf in state.memlet_tree(edge).leaves():
+                        for nsdfg_node, conn in ((leaf.dst, leaf.dst_conn), (leaf.src, leaf.src_conn)):
+                            if isinstance(nsdfg_node, nodes.NestedSDFG) and conn in nsdfg_node.sdfg.arrays:
+                                worklist.append((nsdfg_node.sdfg, conn))
+    return aliases, popped
+
+
+def mark_device_queues(sdfg: SDFG) -> None:
+    """Marks the global-memory streams that device code pops while tasks may push to them.
+
+    Such a stream needs a queue in which every push is visible on its own (``dace::GPUQueue``); every
+    descriptor of the stream, in every nested SDFG, says so through ``device_queue``.
+    """
+    for owner in sdfg.all_sdfgs_recursive():
+        for name, desc in owner.arrays.items():
+            if not (
+                isinstance(desc, dt.Stream)
+                and desc.transient
+                and desc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared)
+            ):
+                continue
+            aliases, popped = _stream_aliases(owner, name)
+            if popped:
+                for alias in aliases:
+                    alias.device_queue = True
+
+
 def cpu_to_gpu_cpred(sdfg, state, src_node, dst_node):
     """Copy predicate from CPU to GPU that determines when a copy is illegal.
     Returns True if copy is illegal, False otherwise.
@@ -192,6 +246,9 @@ class CUDACodeGen(TargetCodeGenerator):
         # Determine GPU backend
         self.backend = common.get_gpu_backend()
         self.language = "cu" if self.backend == "cuda" else "cpp"
+
+        # Streams popped on the device become work queues, which every use must agree on
+        mark_device_queues(sdfg)
         target_type = "" if self.backend == "cuda" else self.backend
         self._codeobject = CodeObject(
             sdfg.name + "_" + "cuda", "", self.language, CUDACodeGen, "CUDA", target_type=target_type
@@ -893,6 +950,33 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
     ) -> None:
         dataname = node.data
         allocname = self.ptr(dataname, nodedesc, sdfg)
+        if nodedesc.storage == dtypes.StorageType.GPU_Shared and nodedesc.device_queue:
+            # A work queue of the thread block, in shared memory, set up by the whole block
+            capacity = nodedesc.buffer_size
+            if symbolic.issymbolic(capacity, sdfg.constants):
+                raise NotImplementedError(
+                    f'Shared-memory stream "{dataname}" needs a constant buffer size, not {capacity}'
+                )
+            capacity = max(32, 1 << (int(capacity) - 1).bit_length())
+            ctype = nodedesc.dtype.ctype
+            ctypedef = f"dace::GPUQueue<{ctype}, true>"
+            self._dispatcher.defined_vars.add(allocname, DefinedType.Stream, ctypedef, allow_shadowing=True)
+            declaration_stream.write(
+                f"__shared__ {ctype} {allocname}_data[{capacity}];\n"
+                f"__shared__ uint32_t {allocname}_seq[{capacity}];\n"
+                f"__shared__ uint32_t {allocname}_counters[{ctypedef}::NUM_COUNTERS * {ctypedef}::COUNTER_STRIDE];\n"
+                f"{ctypedef} {allocname};",
+                cfg,
+                state_id,
+                node,
+            )
+            allocation_stream.write(
+                f"{allocname}.init_block({allocname}_data, {allocname}_seq, {allocname}_counters, {capacity});",
+                cfg,
+                state_id,
+                node,
+            )
+            return
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             fmtargs = {
                 "name": allocname,  # TODO: Handle persistent streams
@@ -948,6 +1032,33 @@ void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type},
                 )
                 allocation_stream.write(
                     "__dace_alloc_{location}({ptr}, {size}, {allocname});".format(**fmtargs), cfg, state_id, node
+                )
+            elif nodedesc.device_queue:
+                # Popped on the device while tasks push: a queue whose every push is visible on its own
+                fmtargs["size"] = sym2cpp(nodedesc.buffer_size)
+                ctypedef = "dace::GPUQueue<{type}>".format(**fmtargs)
+                self._dispatcher.defined_vars.add(allocname, DefinedType.Stream, ctypedef, allow_shadowing=True)
+                function_stream.write(
+                    "DACE_EXPORTED void __dace_alloc_{location}(uint32_t size, dace::GPUQueue<{type}>& result);".format(
+                        **fmtargs
+                    ),
+                    cfg,
+                    state_id,
+                    node,
+                )
+                self._globalcode.write(
+                    """
+DACE_EXPORTED void __dace_alloc_{location}(uint32_t size, dace::GPUQueue<{type}>& result);
+void __dace_alloc_{location}(uint32_t size, dace::GPUQueue<{type}>& result) {{
+    result = dace::AllocGPUQueue<{type}>(size);
+}}""".format(**fmtargs),
+                    cfg,
+                    state_id,
+                    node,
+                )
+                declaration_stream.write("dace::GPUQueue<{type}> {name};".format(**fmtargs), cfg, state_id, node)
+                allocation_stream.write(
+                    "__dace_alloc_{location}({size}, {allocname});".format(**fmtargs), cfg, state_id, node
                 )
             else:
                 fmtargs["size"] = sym2cpp(nodedesc.buffer_size)
@@ -1233,6 +1344,17 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
     ) -> None:
         u, uconn, v, vconn, memlet = edge
         state_dfg = cfg.state(state_id)
+
+        # A non-blocking pop (and its count) is a queue operation, not a memory copy
+        if (
+            isinstance(src_node, nodes.AccessNode)
+            and isinstance(sdfg.arrays[src_node.data], dt.Stream)
+            and isinstance(dst_node, nodes.AccessNode)
+            and not isinstance(sdfg.arrays[dst_node.data], dt.Stream)
+            and (memlet.dynamic or uconn == dt.Stream.NUM_POPPED_CONNECTOR)
+        ):
+            self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
+            return
 
         cpu_storage_types = [
             dtypes.StorageType.CPU_Heap,
@@ -3327,6 +3449,10 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
                 else:
                     callsite_stream.write("{", cfg, state_id, scope_entry)
 
+            # A map with fewer dimensions than the thread block runs on its first threads in the others
+            for i in self._unmapped_block_dims(scope_map):
+                callsite_stream.write(f"if (threadIdx.{_named_idx(i)} == 0) {{", cfg, state_id, scope_entry)
+
         ##########################################################
 
         # need to handle subgraphs appropriately if they contain
@@ -3493,7 +3619,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
 
         elif node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
             # Close block invocation conditions
-            for i in range(len(node.map.params)):
+            for i in range(len(node.map.params) + len(self._unmapped_block_dims(node.map))):
                 callsite_stream.write("}", cfg, state_id, node)
 
         elif node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
@@ -3504,6 +3630,10 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
             return
 
         self._cpu_codegen._generate_MapExit(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+
+    def _unmapped_block_dims(self, block_map: nodes.Map) -> list[int]:
+        """The dimensions of the thread block (up to three) that a thread-block map does not span."""
+        return [i for i in range(len(block_map.params), 3) if self._block_dims[i] != 1]
 
     def _get_thread_id(self) -> str:
         result = "threadIdx.x"

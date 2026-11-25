@@ -240,26 +240,29 @@ def _dispatch_lhs_tuple(targets, symbols, inferred_symbols):
 
 
 def _Assign(t, symbols, inferred_symbols):
-    # Handle the case of a tuple output
+    # A chained assignment (``a = b = value``) assigns the value to the last target, then each target to the one
+    # before it (as the C++ unparser emits it)
     if len(t.targets) > 1:
-        _dispatch_lhs_tuple(t.targets, symbols, inferred_symbols)
-    else:
-        target = t.targets[0]
-        if isinstance(target, ast.Tuple):
-            if len(target.elts) > 1:
-                _dispatch_lhs_tuple(target.elts, symbols, inferred_symbols)
-            target = target.elts[0]
+        _Assign(ast.Assign(targets=[t.targets[-1]], value=t.value), symbols, inferred_symbols)
+        for target, source in zip(reversed(t.targets[:-1]), reversed(t.targets[1:])):
+            _Assign(ast.Assign(targets=[target], value=source), symbols, inferred_symbols)
+        return
+    target = t.targets[0]
+    if isinstance(target, ast.Tuple):
+        if len(target.elts) > 1:
+            _dispatch_lhs_tuple(target.elts, symbols, inferred_symbols)
+        target = target.elts[0]
 
-        if (
-            not isinstance(target, (ast.Subscript, ast.Attribute))
-            and not target.id in symbols
-            and not target.id in inferred_symbols
-        ):
-            # the target is not already defined: we should try to infer the type looking at the value
-            inferred_type = _dispatch(t.value, symbols, inferred_symbols)
-            inferred_symbols[target.id] = inferred_type
+    if (
+        not isinstance(target, (ast.Subscript, ast.Attribute))
+        and not target.id in symbols
+        and not target.id in inferred_symbols
+    ):
+        # the target is not already defined: we should try to infer the type looking at the value
+        inferred_type = _dispatch(t.value, symbols, inferred_symbols)
+        inferred_symbols[target.id] = inferred_type
 
-        inferred_type = _dispatch(target, symbols, inferred_symbols)
+    inferred_type = _dispatch(target, symbols, inferred_symbols)
     _dispatch(t.value, symbols, inferred_symbols)
 
 
