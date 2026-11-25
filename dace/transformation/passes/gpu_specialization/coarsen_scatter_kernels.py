@@ -71,6 +71,6 @@ class CoarsenScatterKernels(ppl.Pass):
             factor = min(MAX_FACTOR, math.ceil(COVERAGE * size / block))
             if factor < 2:
                 continue
-            CoarsenKernelThreads().coarsen(state, kernel, {kernel.map.params[0]: factor})
-            coarsened += 1
+            if CoarsenKernelThreads().coarsen(state, kernel, {kernel.map.params[0]: factor}):
+                coarsened += 1
         return coarsened or None
