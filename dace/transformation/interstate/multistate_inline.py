@@ -9,7 +9,7 @@ from dace.properties import make_properties
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.replace import replace_datadesc_names, replace_properties_dict
+from dace.sdfg.replace import rename_clashing_tasklet_connectors, replace_datadesc_names, replace_properties_dict
 from dace.sdfg.state import LoopRegion, ReturnBlock
 from dace.transformation import helpers, transformation
 
@@ -75,6 +75,15 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
 
+    @staticmethod
+    def _same_layout(outer_desc: data.Data, inner_desc: data.Data) -> bool:
+        # A connector with an offset of its own (e.g., one-based indices) addresses another index space
+        return (
+            outer_desc.shape == inner_desc.shape
+            and outer_desc.strides == inner_desc.strides
+            and list(outer_desc.offset) == list(inner_desc.offset)
+        )
+
     def can_be_applied(self, state: SDFGState, expr_index, sdfg: SDFG, permissive=False):
         nested_sdfg = self.nested_sdfg
         if nested_sdfg.no_inline:
@@ -103,7 +112,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             #  for that. Clone the descriptor because the operation is inplace.
             inner_desc = nested_sdfg.sdfg.arrays[edge.dst_conn].clone()
             symbolic.safe_replace(nested_sdfg.symbol_mapping, lambda m: replace_properties_dict(inner_desc, m))
-            if outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides:
+            if not self._same_layout(outer_desc, inner_desc):
                 return False
 
         for edge in state.out_edges(nested_sdfg):
@@ -119,7 +128,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
             inner_desc = nested_sdfg.sdfg.arrays[edge.src_conn].clone()
             symbolic.safe_replace(nested_sdfg.symbol_mapping, lambda m: replace_properties_dict(inner_desc, m))
-            if outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides:
+            if not self._same_layout(outer_desc, inner_desc):
                 return False
 
         if not helpers.isolate_nested_sdfg(state, nsdfg_node=nested_sdfg, test_if_applicable=True):
@@ -184,9 +193,23 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             outputs[e.src_conn] = e
             output_set[e.data.data] = e.src_conn
 
+        inner_assignments = set()
+        for e in nsdfg.all_interstate_edges():
+            inner_assignments |= e.data.assignments.keys()
+        edge_assigned = set(inner_assignments)
+        for b in nsdfg.all_control_flow_blocks():
+            if isinstance(b, LoopRegion) and b.loop_variable:
+                inner_assignments.add(b.loop_variable)
+                edge_assigned.discard(b.loop_variable)
+
         # Replace symbols using invocation symbol mapping
         # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
-        symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
+        # A symbol the nested SDFG assigns is not substituted but assigned its mapped value on entry
+        entry_assignments = {
+            str(k): symbolic.symstr(v) for k, v in nsdfg_node.symbol_mapping.items() if str(k) in inner_assignments
+        }
+        symbol_mapping = {k: v for k, v in nsdfg_node.symbol_mapping.items() if str(k) not in entry_assignments}
+        symbolic.safe_replace(symbol_mapping, nsdfg.replace_dict)
 
         # The replacement restates the descriptors of this SDFG and the symbol mappings of the nested SDFGs within,
         # but not the connector descriptors inside those. Symbol mapping entries that are not plain symbols (e.g.,
@@ -201,19 +224,12 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         for e in sdfg.all_interstate_edges():
             outer_assignments |= e.data.assignments.keys()
         for b in sdfg.all_control_flow_blocks():
-            if isinstance(b, LoopRegion):
-                if b.loop_variable is not None:
-                    outer_assignments.add(b.loop_variable)
+            # A while loop's loop variable is the empty string
+            if isinstance(b, LoopRegion) and b.loop_variable:
+                outer_assignments.add(b.loop_variable)
 
-        inner_assignments = set()
-        for e in nsdfg.all_interstate_edges():
-            inner_assignments |= e.data.assignments.keys()
-        for b in nsdfg.all_control_flow_blocks():
-            if isinstance(b, LoopRegion):
-                if b.loop_variable is not None:
-                    inner_assignments.add(b.loop_variable)
-
-        allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys())
+        # Loop variables are not necessarily declared as symbols
+        allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys()) | outer_assignments
         assignments_to_replace = inner_assignments & (outer_assignments | allnames)
         sym_replacements: dict[str, str] = {}
         for assign in assignments_to_replace:
@@ -228,28 +244,43 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             if assign in nsdfg.symbols and name not in sdfg.symbols and name not in sdfg.arrays:
                 sdfg.add_symbol(name, nsdfg.symbols[assign])
         nsdfg.replace_dict(sym_replacements)
+        # An assigned symbol keeps its declared type; undeclared, codegen would infer one from the assigned value
+        for name in sorted(edge_assigned):
+            name = sym_replacements.get(name, name)
+            if name in nsdfg.symbols and name not in sdfg.symbols:
+                sdfg.add_symbol(name, nsdfg.symbols[name])
 
         #######################################################
         # Collect and modify access nodes as necessary
+
+        rename_clashing_tasklet_connectors(nsdfg, set(sdfg.arrays) | set(outer_symbols) | set(sdfg.constants))
 
         # Mapping from nested transient name to top-level name
         transients: dict[str, str] = {}
 
         # All transients become transients of the parent (if data already
         # exists, find new name)
+        # A connector of a code node may not share a name with data either (see validation), and the code nodes of
+        # the nested SDFG join the parent too.
+        taken = set(sdfg.arrays) | set(outer_symbols) | set(sdfg.constants)
+        for block in itertools.chain(sdfg.states(), nsdfg.states()):
+            for node in block.nodes():
+                if isinstance(node, nodes.CodeNode) and not isinstance(node, (nodes.NestedSDFG, nodes.LibraryNode)):
+                    taken.update(node.in_connectors, node.out_connectors)
         for nstate in nsdfg.states():
             for node in nstate.nodes():
                 if isinstance(node, nodes.AccessNode):
                     datadesc = nsdfg.arrays[node.data]
                     if node.data not in transients and datadesc.transient:
                         new_name = node.data
-                        if new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants:
+                        if new_name in taken:
                             new_name = f"{nsdfg.label}_{node.data}"
 
                         name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
                         transients[node.data] = name
 
         # All constants (and associated transients) become constants of the parent
+        renamed_constants: dict[str, str] = {}
         for cstname, (csttype, cstval) in nsdfg.constants_prop.items():
             if cstname in sdfg.constants:
                 if cstname in transients:
@@ -257,9 +288,13 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 else:
                     newname = sdfg.find_new_constant(cstname)
                     transients[cstname] = newname
+                    renamed_constants[cstname] = newname
                 sdfg.constants_prop[newname] = (csttype, cstval)
             else:
                 sdfg.constants_prop[cstname] = (csttype, cstval)
+        # Code and memlets read a constant by name, too
+        if renamed_constants:
+            nsdfg.replace_dict(renamed_constants)
 
         #######################################################
         # Replace data on inlined SDFG nodes/edges
@@ -296,6 +331,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # Reconnect state machine
         for e in outer_state.parent_graph.in_edges(nsdfg_state):
+            e.data.assignments.update({sym_replacements.get(k, k): v for k, v in entry_assignments.items()})
             outer_state.parent_graph.add_edge(e.src, source, e.data)
         for e in outer_state.parent_graph.out_edges(nsdfg_state):
             for sink in sinks:
