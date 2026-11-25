@@ -372,6 +372,12 @@ def test_data_assumptions_follow_the_symbol_registry_api():
         sdfg.add_data_assumption("missing", nonneg)
 
 
+def test_a_select_of_booleans_is_no_integer_polynomial():
+    select = dace.symbolic.pystr_to_symbolic("ITE(x > 0, True, False)")
+
+    assert not array_facts.integer_polynomial(select, clamps=True)
+
+
 def test_a_difference_is_not_nonnegative():
     """A transient stored as ``a - b`` of two nonnegative transients is not nonnegative; a sum of them is."""
     sdfg = dace.SDFG("nonneg")
