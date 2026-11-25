@@ -5,10 +5,13 @@ Each test renders a few-line program the way the bench does and checks the line 
 
 from unittest import mock
 
+import pytest
+
 import dace
-from dace.codegen import cpf_summary
+from dace import cpf_lowering
+from dace.codegen import cpf, cpf_summary
 from dace.codegen.cpf import render
-from dace.cpf_lowering import Reason
+from dace.cpf_lowering import LoopClass, Reason
 from dace.transformation.passes.analysis import smt_dependence
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
@@ -379,6 +382,37 @@ def test_an_unknown_loop_says_when_the_solver_ran_out_of_budget():
     assert line.startswith("// unknown -- " + Reason.BUDGET_EXPIRED.value + "; the index sym0"), line
 
 
+@dace.program
+def dot_then_scale(a: dace.float64[N], b: dace.float64[N], x: dace.float64[M], r: dace.float64[1]):
+    for i in range(N):
+        r[0] += a[i] * b[i]
+    for j in range(M):
+        x[j] = x[j] * r[0]
+
+
+def test_the_header_legend_has_one_row_per_reason_the_unit_uses():
+    """Finding 10: the legend explained classes only; a unit of a reduction and an independent loop gets two rows."""
+    code = bench_c(dot_then_scale, "cpf_review2_legend")
+    table = [line for line in code.splitlines() if line.startswith("//   ") and " | " in line]
+    assert table[0].split(" | ")[0].strip() == "//   class" and len(table) == 3, table
+    assert [row.split(" | ")[:2] for row in table[1:]] == [
+        ["//   parallel", "reduction  ".ljust(len(table[1].split(" | ")[1]))],
+        ["//   parallel", "independent".ljust(len(table[1].split(" | ")[1]))],
+    ], table
+    assert cpf.CPF_LINES_LEGEND in code, code
+
+
+@pytest.mark.parametrize("reason", list(Reason), ids=[reason.name for reason in Reason])
+def test_every_reason_is_told_apart_and_has_a_legend_row(reason: Reason):
+    """Each Reason member is found in a line that opens with it (or holds it after the element it names) and gets its
+    legend row."""
+    inner = "proven dependence on a[i]: " if reason in cpf_lowering.INNER_REASONS else ""
+    line = f"// {LoopClass.UNKNOWN.value} -- {inner}{reason.value} of the loop"
+    assert cpf_lowering.reason_of(line.split(" -- ", 1)[1]) is reason, line
+    (row,) = cpf.reason_table(line)[1:]
+    assert row.split(" | ")[2].strip() == cpf_lowering.REASON_LEGEND[reason][0], row
+
+
 if __name__ == "__main__":
     test_a_grid_stride_reduction_kernel_says_reduction_and_grid_stride()
     test_a_block_per_row_kernel_has_one_line_per_kernel_and_per_thread_block()
@@ -404,3 +438,6 @@ if __name__ == "__main__":
     test_an_unknown_loop_names_a_read_it_could_only_bound()
     test_an_unknown_loop_names_an_index_it_assigns()
     test_an_unknown_loop_says_when_the_solver_ran_out_of_budget()
+    test_the_header_legend_has_one_row_per_reason_the_unit_uses()
+    for member in Reason:
+        test_every_reason_is_told_apart_and_has_a_legend_row(member)

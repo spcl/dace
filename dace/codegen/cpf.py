@@ -1575,7 +1575,10 @@ OPENMP_CALL = re.compile(r"\bomp_[a-z_]+\s*\(")
 
 
 def preamble(
-    code: str, dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STANDALONE, environments: Iterable[str] = ()
+    code: str,
+    dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STANDALONE,
+    environments: Iterable[str] = (),
+    device_code: str | None = None,
 ) -> str:
     """The include block and inline definitions ``code`` needs, in the order they must appear.
 
@@ -1587,6 +1590,8 @@ def preamble(
     :param dialect: which standalone dialect emitted it.
     :param environments: the DaCe environments the unit's code generator used; a vendor library among them
                          (:data:`~dace.cpf_lowering.VENDOR_LIBRARIES`) adds its headers and definitions.
+    :param device_code: the device unit of a host unit, whose loop comments the host legend explains too; ``None``
+                        for the device unit itself, which carries no summary.
     :returns: the preamble, ending in a blank line.
     """
     used = cpf_lowering.helpers_used(code, dialect)
@@ -1599,7 +1604,8 @@ def preamble(
     vendors = cpf_lowering.vendor_libraries(environments, code, dialect)
     lines = [RENDERED_BY]
     if cpf_lowering.hint_detail() is cpf_lowering.HintDetail.PROOFS:
-        lines += contract_lines(code)
+        legend_code = "\n".join([code, *definitions, device_code or ""])
+        lines += contract_lines(legend_code, summary=device_code is not None)
     lines += [f"#include {header}" for header in headers]
     vendor_headers = [
         header
@@ -1666,16 +1672,47 @@ CONTRACT_KINDS = {
 }
 
 
-def contract_lines(code: str) -> list[str]:
+#: The head of the reason table :func:`reason_table` prints under :data:`CONTRACT_LINES`.
+REASON_COLUMNS = ("class", "reason (opening words)", "meaning", "what would make it parallel / what to do")
+#: The line that explains the ``// cpf:`` lines of the summary, the last line of the legend.
+CPF_LINES_LEGEND = (
+    "// cpf: lines -- 'proven: all': no loop needs a run-time check beyond the entry preconditions listed; "
+    "'proven: partial; open: L': the unknown loops L are unproven; 'guarded: L': loops L run in parallel only "
+    "when their run-time check passes."
+)
+REASON_LINE = re.compile(rf"// ({'|'.join(cls.value for cls in LoopClass)}) -- (.*)")
+
+
+def reason_table(code: str) -> list[str]:
+    """One aligned row of :data:`cpf_lowering.REASON_LEGEND` per (class, reason) ``code``'s loop comments use, under a
+    head row; none when no comment names a reason with a legend."""
+    used = OrderedSet()
+    for found in REASON_LINE.finditer(code):
+        reason = cpf_lowering.reason_of(found.group(2))
+        if reason is not None:
+            used.add((found.group(1), reason))
+    if not used:
+        return []
+    rows = [REASON_COLUMNS] + [(cls, reason.value.strip(), *cpf_lowering.REASON_LEGEND[reason]) for cls, reason in used]
+    widths = [max(len(row[column]) for row in rows) for column in range(len(REASON_COLUMNS) - 1)]
+    return ["//   " + " | ".join([*(c.ljust(w) for c, w in zip(row, widths)), row[-1]]).rstrip() for row in rows]
+
+
+def contract_lines(code: str, summary: bool = True) -> list[str]:
     """:data:`CONTRACT_LINES` for the classes ``code``'s loop comments use: a legend line for a class no loop has
-    would explain nothing in the unit; none at all without a classed comment."""
+    would explain nothing in the unit; none at all without a classed comment. Then :func:`reason_table` for the
+    reasons they use, and :data:`CPF_LINES_LEGEND` for a unit with a ``summary``."""
     used = OrderedSet(
         LoopClass(found.group(1) or found.group(2)) for found in re.finditer(cpf_summary.CLASS_LINE_ANYWHERE, code)
     )
     if not used:
         return []
-    return [CONTRACT_LINES[0], *(line for kind in CONTRACT_KINDS if kind in used for line in CONTRACT_KINDS[kind])] + [
-        CONTRACT_LINES[-1]
+    return [
+        CONTRACT_LINES[0],
+        *(line for kind in CONTRACT_KINDS if kind in used for line in CONTRACT_KINDS[kind]),
+        CONTRACT_LINES[-1],
+        *reason_table(code),
+        *([CPF_LINES_LEGEND] if summary else []),
     ]
 
 
@@ -2476,7 +2513,7 @@ def render_unit(
                 body = compact_blocks(body)
                 device_body = compact_blocks(device_body) if device_body else ""
     code = drop_repeated_includes(
-        keep_target_path(preamble(body, dialect, frame.environments) + body, renders_for_x86(isa))
+        keep_target_path(preamble(body, dialect, frame.environments, device_body or "") + body, renders_for_x86(isa))
     )
     names: tuple[tuple[str, str], ...] = ()
     if llm_friendly:
@@ -2496,7 +2533,7 @@ def render_unit(
                     )
                 )
             ),
-            (CONTRACT_LINES[-1], RENDERED_BY),
+            (CPF_LINES_LEGEND, CONTRACT_LINES[-1], RENDERED_BY),
         )
     # The device unit repeats the frame's state struct, whose vendor handles and plans need their declarations.
     device_environments = (set(device.environments) | set(frame.environments)) if device is not None else set()
