@@ -1637,6 +1637,7 @@ def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reducti
     # Carry the sequential pin forward: a nested reduction stays sequential downstream
     # (``LoopToMap`` honors the flag) so it opens no OpenMP region per outer iteration.
     new_loop.pinned_sequential = loop.pinned_sequential
+    new_loop.pinned_by = loop.pinned_by
     parent.add_node(new_loop, ensure_unique_name=True)  # derived label; wired below by object ref
 
     body = new_loop.add_state(loop.label + "_body", is_start_block=True)

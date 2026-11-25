@@ -41,6 +41,7 @@ from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     EARLY_EXIT,
     MAP_DIMENSIONS,
     PARALLEL,
+    PINNED_BY_USER,
     PRIVATE,
     PROVEN_PREFIX,
     REDUCTION,
@@ -790,9 +791,28 @@ def test_a_pinned_independent_loop_does_not_read_as_parallel():
     for loop in loops:
         loop.pinned_sequential = True
     code = named(sdfg)
-    assert "// " + SEQUENTIAL_PINNED.splitlines()[0] in [line.strip() for line in code.splitlines()], code
+    assert "// " + SEQUENTIAL_PINNED.format(who=PINNED_BY_USER) in [line.strip() for line in code.splitlines()], code
     assert "#pragma omp" not in code
     assert not any(line.startswith("// parallel --") for line in comment_lines(code))
+
+
+def test_a_pinned_loop_names_who_pinned_it():
+    """The pinned comment said ``kept in order by an earlier pass`` whoever pinned the loop: it names the pinning pass,
+    or the user's schedule when no pass did."""
+
+    @dace.program
+    def scaled(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(N):
+            b[i] = a[i] * 2.0
+
+    for pinned_by, who in (("", PINNED_BY_USER), ("the ExamplePin pass", "the ExamplePin pass")):
+        sdfg = scaled.to_sdfg(simplify=True)
+        sdfg.name = f"pinned_by_{len(pinned_by)}"
+        for loop in loops_of(sdfg):
+            loop.pinned_sequential = True
+            loop.pinned_by = pinned_by
+        lines = [line.strip() for line in named(sdfg).splitlines()]
+        assert f"// sequential -- kept in order by {who}; the dependence test finds its iterations independent" in lines
 
 
 def overlapping_writes_sdfg(name: str) -> dace.SDFG:
@@ -1301,6 +1321,7 @@ if __name__ == "__main__":
     test_an_offset_that_bounds_the_loop_is_named_in_the_witness()
     test_no_carried_dependence_is_claimed_for_independent_elements()
     test_a_pinned_independent_loop_does_not_read_as_parallel()
+    test_a_pinned_loop_names_who_pinned_it()
     test_writes_the_test_cannot_separate_are_proven_by_a_witness()
     test_a_distance_set_by_an_argument_stays_unknown()
     test_a_conflict_only_under_a_branch_is_not_witnessed()

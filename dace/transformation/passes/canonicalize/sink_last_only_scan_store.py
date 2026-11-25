@@ -177,6 +177,10 @@ class SinkLastOnlyScanStore(ppl.Pass):
         if not stores:
             return 0
         loop.pinned_sequential = True
+        loop.pinned_by = (
+            "the SinkLastOnlyScanStore pass, which moved its store into a scan read only at the last element to "
+            "after the loop"
+        )
         after = loop.parent_graph.add_state_after(loop, label=f"{loop.label}_last")
         for state, edge, acc, last in stores:
             scan = edge.dst

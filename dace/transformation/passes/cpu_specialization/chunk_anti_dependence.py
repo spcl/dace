@@ -387,6 +387,7 @@ class ChunkAntiDependence(ppl.Pass):
         # The order is this pass's decision, not an open question: the rendering must not invite parallelizing it
         sweep = to_loop.loop_region
         sweep.pinned_sequential = True
+        sweep.pinned_by = "the ChunkAntiDependence pass, which runs each chunk's iterations in order"
         sweep.specialization_hint = CHUNK_SWEEP_HINT.format(i=counter, arr=arr, offset=offset, seam=seam)
 
     @staticmethod

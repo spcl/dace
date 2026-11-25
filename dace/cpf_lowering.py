@@ -247,7 +247,8 @@ class Reason(enum.Enum):
     WAVEFRONT_INTERIOR = "inside one wavefront tile "
     CHUNK_ORDER = "in order within a chunk"
     WHILE_LOOP = "while loop: "
-    PINNED = "kept in order by an earlier pass"
+    #: Followed by who pinned the loop: a pass (``LoopRegion.pinned_by``) or the user's schedule.
+    PINNED = "kept in order by "
     # ``unknown``: one per refusal of the dependence test, then what kept the solver from an answer
     NON_UNIQUE_WRITE = "the solver could not show that each iteration writes a different element"
     SAME_ELEMENTS = "every iteration writes the same elements"
@@ -340,7 +341,7 @@ REASON_LEGEND: dict[Reason, tuple[str, str]] = {
     Reason.WAVEFRONT_INTERIOR: ("original order inside one tile", "none; smaller tiles"),
     Reason.CHUNK_ORDER: ("order within a chunk; chunks in parallel", "nothing; chunk size is a tuning knob"),
     Reason.WHILE_LOOP: ("each test reads the previous trip", "a counted loop"),
-    Reason.PINNED: ("a pass kept it in order; it tests independent", "see the pass that pinned it"),
+    Reason.PINNED: ("a pass or the user's schedule kept it in order; it tests independent", "see who pinned it"),
     Reason.NON_UNIQUE_WRITE: ("two iterations may write one element", "distinct indices (a permutation)"),
     Reason.SAME_ELEMENTS: ("every iteration writes the same elements", "a private copy or a reduction"),
     Reason.DYNAMIC_WRITE: ("conditional write at an unfixed index", "distinct indices"),

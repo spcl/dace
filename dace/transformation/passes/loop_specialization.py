@@ -308,6 +308,8 @@ def specialize_loop_under_condition(
     # lifts it back to a Map -- it exists for values violating ``condition`` and must
     # stay sequential.
     seq_loop.pinned_sequential = pin
+    if pin:
+        seq_loop.pinned_by = "a run-time loop specialization: it is the in-order arm for inputs its check rejects"
     conditional, par_region, seq_region = version_block(
         loop,
         f"{loop.label}_specialize",

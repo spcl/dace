@@ -106,12 +106,13 @@ NO_COUNTER = f"{NEVER_EXAMINED}: a while loop has no single counter to test"
 WHILE_LOOP = (
     LoopClass.SEQUENTIAL.prefix + "while loop: each test of the condition reads what the previous iteration computed"
 )
-#: A loop the dependence test finds independent that an earlier pass pinned sequential anyway (the
-#: fallback arm of a specialization). Rendered without a pragma, so it must not read as parallel.
+#: A loop the dependence test finds independent that something pinned sequential anyway; ``{who}`` is the loop's
+#: ``pinned_by``, else :data:`PINNED_BY_USER`. Rendered without a pragma, so it must not read as parallel.
 SEQUENTIAL_PINNED = (
-    LoopClass.SEQUENTIAL.prefix
-    + "kept in order by an earlier pass; the dependence test finds its iterations independent"
+    LoopClass.SEQUENTIAL.prefix + Reason.PINNED.value + "{who}; the dependence test finds its iterations independent"
 )
+#: Who pinned a loop whose ``pinned_by`` is empty: no pass did, so the pin came with the input SDFG.
+PINNED_BY_USER = "the user's schedule (the input SDFG sets pinned_sequential on it)"
 
 #: The untiled skew: a sequential diagonal over a parallel front; ``alt`` names the other correct shape. ``{skew}`` is
 #: :func:`skew_label` on the diagonal and :func:`front_label` on the front, both in the loops' own names: the skew
@@ -1293,7 +1294,9 @@ def loop_hint(loop: LoopRegion, session: Any = None, traps: list[tuple[str, set[
     ``abort()`` guards its function rests on, which a witness must satisfy."""
     reason = refusal_reason(loop, session)
     if reason is None:
-        return SEQUENTIAL_PINNED if loop.pinned_sequential else parallel_loop_hint(loop)
+        if loop.pinned_sequential:
+            return SEQUENTIAL_PINNED.format(who=loop.pinned_by or PINNED_BY_USER)
+        return parallel_loop_hint(loop)
     if reason == NO_COUNTER:
         return WHILE_LOOP
     if isinstance(reason, str):

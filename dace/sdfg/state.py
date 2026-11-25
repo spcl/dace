@@ -4852,6 +4852,12 @@ class LoopRegion(ControlFlowRegion):
         "``if cond: parallel else: sequential`` specialization) and parallelizing passes "
         "(``LoopToMap`` / ``LoopToReduce``) must leave it as a loop.",
     )
+    pinned_by = Property(
+        dtype=str,
+        default="",
+        desc="Who set ``pinned_sequential``: the pass that pinned the loop and why, which the CPF comment names; "
+        "empty for a pin the input SDFG carries (a user schedule).",
+    )
     known_parallel = Property(
         dtype=bool,
         default=False,

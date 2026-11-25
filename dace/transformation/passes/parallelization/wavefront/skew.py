@@ -69,6 +69,8 @@ from dace.transformation.passes.parallelization.wavefront.statements import (
 from dace.transformation.passes.unique_loop_iterators import SKEW_T_PREFIX
 
 SKEW_P_PREFIX = "_skew_p_"
+#: ``pinned_by`` of the loops the wavefront skew keeps in order.
+WAVEFRONT_PIN = "the wavefront skew, which runs its steps in order and each step's front in parallel"
 
 #: Tile extent per axis. CPU: 64x64 doubles measured 2.04-2.16x over the sequential nest at N=768 on 4
 #: threads (the element diagonal: 0.17x). GPU: one launch per tile diagonal; 64 fills a gfx942 wavefront.
@@ -477,6 +479,7 @@ class WavefrontSkew(ppl.Pass):
         )
         set_header(outer, t_var, t_lo, t_hi)
         outer.pinned_sequential = True
+        outer.pinned_by = WAVEFRONT_PIN
         outer.specialization_hint = WAVEFRONT_DIAGONAL.format(skew=skew_label(a, b, t_var))
         t = sym(t_var)
         for st, p_var in zip(body.statements, p_vars):
@@ -527,6 +530,7 @@ class WavefrontSkew(ppl.Pass):
             f"{u} = {u} + 1",
         )
         i_loop.pinned_sequential = True
+        i_loop.pinned_by = WAVEFRONT_PIN
         i_loop.specialization_hint = WAVEFRONT_TILE_INTERIOR.format(tile=tile)
         move_body(outer, i_loop)
         p_loop.add_node(i_loop, is_start_block=True)
@@ -536,6 +540,7 @@ class WavefrontSkew(ppl.Pass):
             outer, t_var, bound_str(tp.bounds.t_lo_terms, subs, "max"), bound_str(tp.bounds.t_hi_terms, subs, "min")
         )
         outer.pinned_sequential = True
+        outer.pinned_by = WAVEFRONT_PIN
         outer.specialization_hint = WAVEFRONT_TILE_DIAGONAL.format(skew=skew_label(1, 1, t_var, "tile "), tile=tile)
 
         for st in body.statements:
@@ -548,6 +553,7 @@ class WavefrontSkew(ppl.Pass):
                 assert isinstance(loop, LoopRegion)
                 set_header(loop, st.var, lo, hi)
                 loop.pinned_sequential = True
+                loop.pinned_by = WAVEFRONT_PIN
                 loop.specialization_hint = WAVEFRONT_TILE_INTERIOR.format(tile=tile)
             else:
                 assert st.node is not None and isinstance(st.block, SDFGState)
@@ -592,6 +598,7 @@ class WavefrontSkew(ppl.Pass):
         declare_iterators(d_var, *k_vars)
         set_header(i_loop, d_var, symbolic.symstr(d_lo), symbolic.symstr(d_hi))
         i_loop.pinned_sequential = True
+        i_loop.pinned_by = WAVEFRONT_PIN
         i_loop.specialization_hint = WAVEFRONT_DIAGONAL.format(skew=skew_label(1, 1, d_var) + " within the tile")
         d = sym(d_var)
         for st, bounds, k_var in zip(body.statements, fronts, k_vars):
