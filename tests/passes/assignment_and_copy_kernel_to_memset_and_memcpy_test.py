@@ -25,20 +25,6 @@ from dace.transformation.passes.canonicalize.fold_scalar_read_copies import Fold
 DIM_SIZE = 10
 D = dace.symbol("D")
 EXPANSION_TYPES = ["pure", "CPU", pytest.param("CUDA", marks=pytest.mark.gpu)]
-# Not supported: the CUDA expansion emits cudaMemsetAsync/cudaMemcpyAsync, which are host-side
-# runtime calls and cannot execute from device code, so nesting a memset/memcpy library node
-# inside a GPU kernel has no valid CUDA expansion.
-EXPANSION_TYPES_CPU_ONLY = [
-    "pure",
-    "CPU",
-    pytest.param(
-        "CUDA",
-        marks=pytest.mark.skip(
-            reason="nested memset/memcpy inside a GPU kernel is unsupported: "
-            "cudaMemsetAsync/cudaMemcpyAsync cannot be called from device code"
-        ),
-    ),
-]
 
 
 @pytest.fixture
@@ -391,7 +377,7 @@ def test_nested_memset_maps_with_dimension_change(expansion_type, xp):
     assert xp.allclose(B_IN, 0.0)
 
 
-@pytest.mark.parametrize("expansion_type", EXPANSION_TYPES_CPU_ONLY)
+@pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
 @temporarily_disable_autoopt_and_serialization
 def test_nested_memset_maps_with_dynamic_connectors(expansion_type, xp):
     sdfg = _prepare_sdfg(_sdfg_from_program(nested_memset_maps_with_dynamic_connectors), expansion_type)
@@ -415,7 +401,7 @@ def test_nested_memset_maps_with_dynamic_connectors(expansion_type, xp):
     assert xp.allclose(B_IN, 0.0)
 
 
-@pytest.mark.parametrize("expansion_type", EXPANSION_TYPES_CPU_ONLY)
+@pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
 @temporarily_disable_autoopt_and_serialization
 def test_nested_memcpy_maps_with_dynamic_connectors(expansion_type, xp):
     sdfg = _prepare_sdfg(_sdfg_from_program(nested_memcpy_maps_with_dynamic_connectors), expansion_type)

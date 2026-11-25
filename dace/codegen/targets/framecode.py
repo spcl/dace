@@ -1740,8 +1740,10 @@ def late_allocation_block(
     :param last_block: The block whose exit frees ``desc``.
     :param desc: The descriptor to allocate.
     :param access_states: The states that access ``desc`` or read it on an adjacent edge.
-    :raises NotImplementedError: When the size is assigned at more than one place, after an access, or in a loop the
-                                 free does not run in: each would need a reallocation.
+    A size assigned after an access keeps ``alloc_block``, as before this placement existed.
+
+    :raises NotImplementedError: When the size is assigned at more than one place or in a loop the free does not run
+                                 in: each would need a reallocation.
     """
     sizes = {str(sym) for sym in desc.free_symbols}
     region = alloc_block.parent_graph
@@ -1784,8 +1786,9 @@ def late_allocation_block(
         if isinstance(outer, LoopRegion):
             raise NotImplementedError(f"{desc} is sized in {outer}, which reallocates it per iteration")
         outer = outer.parent_graph
+    # Accessed before the assignment: the earlier accesses use the size in force at the dominating block, as before
     if any(precedes(state, block) for state in access_states):
-        raise NotImplementedError(f"{desc} is accessed before it is sized at {block}: it would need a reallocation")
+        return alloc_block
     return block
 
 

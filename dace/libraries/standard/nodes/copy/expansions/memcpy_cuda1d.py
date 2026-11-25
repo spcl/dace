@@ -5,8 +5,11 @@ from typing import TYPE_CHECKING
 
 from dace import library
 from dace.libraries.standard import environments
+from dace.libraries.standard.helper import auto_dispatch
 from dace.libraries.standard.nodes.copy.common import _make_memcpy_tasklet
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
+from dace.libraries.standard.nodes.copy.select import select_copy_implementation
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
 
 if TYPE_CHECKING:
@@ -22,4 +25,7 @@ class ExpandMemcpyCUDA1D(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
+        # The memcpy is a host call: inside a kernel the node takes the in-kernel form Auto picks there
+        if is_devicelevel_gpu(parent_state.sdfg, parent_state, node):
+            return auto_dispatch(node, parent_state, select_copy_implementation, CopyLibraryNode)
         return _make_memcpy_tasklet(node, parent_state, cuda=True)

@@ -7,9 +7,11 @@ import dace
 from dace import library, nodes
 from dace.codegen.common import get_gpu_backend, sym2cpp
 from dace.libraries.standard import environments
-from dace.libraries.standard.helper import CURRENT_STREAM_NAME, exact_element_count
+from dace.libraries.standard.helper import CURRENT_STREAM_NAME, auto_dispatch, exact_element_count
 from dace.libraries.standard.nodes.fill.common import OUTPUT_CONNECTOR_NAME, byte_pattern
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
+from dace.libraries.standard.nodes.fill.select import select_fill_implementation
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
 
 if TYPE_CHECKING:
@@ -22,6 +24,9 @@ class ExpandCUDA(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "FillLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        # The memset is a host call: inside a kernel the node takes the in-kernel form Auto picks there
+        if is_devicelevel_gpu(parent_state.sdfg, parent_state, node):
+            return auto_dispatch(node, parent_state, select_fill_implementation, FillLibraryNode)
         out_name, out, out_subset = node.validate(parent_state.sdfg, parent_state)
         if not out_subset.is_contiguous_subset(out):
             raise ValueError(
