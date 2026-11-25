@@ -11,7 +11,7 @@ from dace.codegen import cpf
 from dace.sdfg.utils import specialize_symbols
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.cpu_specialization.demote_level_maps import block_params
+from dace.transformation.passes.cpu_specialization.demote_level_maps import block_params, rejoin_block_maps
 
 N = dace.symbol("N")
 
@@ -228,11 +228,41 @@ def test_a_block_index_read_through_an_approximated_bound_is_found():
     assert block_params(state, entry, {"NB"}) == {"jb": {"NB"}}
 
 
+def test_a_host_block_map_around_one_kernel_map_becomes_one_kernel():
+    """A host block map left around one perfectly nested kernel map (ICON's ``jb`` around its ``jc`` lanes after the
+    offload) collapses into one kernel over both, so the host launches once, not once per block."""
+    sdfg = dace.SDFG("rejoin")
+    sdfg.add_array("A", (NB, N), dace.float64, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    outer_entry, outer_exit = state.add_map("blocks", {"jb": "0:NB"}, schedule=dtypes.ScheduleType.Sequential)
+    inner_entry, inner_exit = state.add_map("lanes", {"jc": "0:N"}, schedule=dtypes.ScheduleType.GPU_Device)
+    tasklet = state.add_tasklet("set", {}, {"out"}, "out = 1.0")
+    write = state.add_write("A")
+    state.add_nedge(outer_entry, inner_entry, dace.Memlet())
+    state.add_nedge(inner_entry, tasklet, dace.Memlet())
+    state.add_edge(tasklet, "out", inner_exit, "IN_A", dace.Memlet("A[jb, jc]"))
+    inner_exit.add_in_connector("IN_A")
+    inner_exit.add_out_connector("OUT_A")
+    outer_exit.add_in_connector("IN_A")
+    outer_exit.add_out_connector("OUT_A")
+    state.add_edge(inner_exit, "OUT_A", outer_exit, "IN_A", dace.Memlet("A[jb, 0:N]"))
+    state.add_edge(outer_exit, "OUT_A", write, None, dace.Memlet("A[0:NB, 0:N]"))
+    sdfg.validate()
+
+    assert rejoin_block_maps(sdfg) == 1
+    entries = [n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry)]
+    assert len(entries) == 1
+    assert entries[0].map.schedule == dtypes.ScheduleType.GPU_Device
+    assert entries[0].map.params == ["jb", "jc"]
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_a_block_index_read_through_an_approximated_bound_is_found()
-    test_a_block_dimension_of_a_merged_map_is_split_out_as_a_host_map_around_the_kernel()
+    test_a_block_dimension_of_a_map_without_inner_maps_stays_in_the_one_kernel()
     test_a_block_dimension_of_undeclared_scale_stays_in_the_grid()
-    test_a_split_block_dimension_matches_numpy()
+    test_a_block_dimension_in_the_kernel_matches_numpy()
+    test_a_host_block_map_around_one_kernel_map_becomes_one_kernel()
     test_a_map_over_a_symbolic_block_count_stays_the_grid("NB")
     test_a_map_over_a_symbolic_block_count_stays_the_grid("nblks")
     test_a_map_over_blocks_declared_small_is_a_sequential_host_map_around_the_kernels()

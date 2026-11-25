@@ -391,6 +391,29 @@ def small_maps(sdfg: SDFG) -> list[nodes.MapEntry]:
     return found
 
 
+def rejoin_block_maps(sdfg: SDFG) -> int:
+    """After the offload, collapse each host map :func:`small_maps` kept whose body became one perfectly nested kernel
+    map (ICON's ``jb`` map around the ``jc`` lanes, lifted out of a nested SDFG by the offload) into that kernel: one
+    launch over blocks x lanes in place of a launch per block. Returns how many it collapsed."""
+    collapsed = 0
+    for state in sdfg.states():
+        children = state.scope_children()
+        for entry in list(children[None]):
+            if not (isinstance(entry, nodes.MapEntry) and entry.map.schedule == dtypes.ScheduleType.Sequential):
+                continue
+            inner = [n for n in children[entry] if isinstance(n, nodes.MapEntry)]
+            if len(inner) != 1 or inner[0].map.schedule != dtypes.ScheduleType.GPU_Device:
+                continue
+            where = {"outer_map_entry": entry, "inner_map_entry": inner[0], "permissive": True}
+            if not MapCollapse.can_be_applied_to(sdfg, **where):
+                continue
+            merged, _ = MapCollapse.apply_to(sdfg, verify=False, **where)
+            merged.map.schedule = dtypes.ScheduleType.GPU_Device
+            merged.specialization_hint = None
+            collapsed += 1
+    return collapsed
+
+
 def demote_level_maps(sdfg: SDFG, pays: Callable[[str, list[Plane]], bool], relift_planeless: bool = False) -> int:
     """Demote every top-level level map of ``sdfg``'s own states for which ``pays(param, planes)`` holds.
 

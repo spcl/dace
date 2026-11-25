@@ -51,6 +51,7 @@ from dace.transformation.passes.cpu_specialization.chunk_stream_compaction impor
 from dace.transformation.passes.cpu_specialization.demote_level_maps import (
     demote_strided_level_maps,
     demote_uncoalesced_level_maps,
+    rejoin_block_maps,
     small_maps,
 )
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
@@ -686,6 +687,8 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False, tile_programs: bool = Fal
     # One validation for the whole offload, at the end.
     sdfg.apply_gpu_transformations(validate=False, simplify=False)
     SimplifyPass(pass_options={"FuseStates.aggressive_merges": True}).apply_pass(sdfg, {})
+    # A host block map whose body the offload left as one kernel map: one launch over both, not one per block.
+    rejoin_block_maps(sdfg)
     # After the offload, which makes nested scopes Sequential, and before the block size, which skips a kernel holding
     # a thread-block map.
     if not tile_programs:
