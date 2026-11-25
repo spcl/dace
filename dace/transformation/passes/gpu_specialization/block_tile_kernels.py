@@ -151,7 +151,8 @@ def fills_per_lane_buffer(state: SDFGState, kernel: nodes.MapEntry, strided) -> 
             continue
         for owner_state in owner.states():
             for node in owner_state.data_nodes():
-                if node.data == name and node not in striding and owner_state.in_degree(node) > 0:
+                # The writer counts, not the node: a strided map's exit writes into an access node outside it
+                if node.data == name and any(edge.src not in striding for edge in owner_state.in_edges(node)):
                     return True
     return False
 

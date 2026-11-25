@@ -646,7 +646,12 @@ def integer_polynomial(value: Any, clamps: bool) -> bool:
         return all(integer_polynomial(a, clamps) for a in value.args)
     if clamps and isinstance(value, SELECTS):
         return all(integer_polynomial(a, clamps) for a in value.args[1:])
-    return value.is_polynomial() and all(number.is_Integer for number in value.atoms(sympy.Number))
+    # A boolean (a select of ``True`` and ``False``) is not a number: nothing to bound
+    return (
+        isinstance(value, sympy.Expr)
+        and value.is_polynomial()
+        and all(number.is_Integer for number in value.atoms(sympy.Number))
+    )
 
 
 def stored_value(state: SDFGState, edge: Any, clamps: bool = False) -> Any | None:

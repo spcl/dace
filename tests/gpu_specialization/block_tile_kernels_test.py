@@ -298,6 +298,27 @@ def test_a_per_thread_buffer_filled_outside_the_inner_map_keeps_one_thread_per_i
     assert not maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)
 
 
+def test_a_per_thread_buffer_only_the_inner_map_writes_is_strided_across_the_lanes():
+    """``row[j]`` beside ``B[k, j] = 2 * A[k, j]``, written by the inner map alone: each lane writes its share. The
+    access node after the inner map's exit is not code outside it (ICON velocity_tendencies' per-block z_w_con_c)."""
+    sdfg = dace.SDFG("row_written_by_the_inner_map")
+    sdfg.add_array("A", [K, M], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("B", [K, M], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_transient("row", [M], dace.float64)
+    state = sdfg.add_state()
+    kernel, kernel_exit = state.add_map("rows", {"k": "0:K"}, schedule=dtypes.ScheduleType.GPU_Device)
+    inner, inner_exit = state.add_map("cols", {"j": "0:M"}, schedule=dtypes.ScheduleType.Sequential)
+    tasklet = state.add_tasklet("twice", {"x"}, {"y", "z"}, "y = 2 * x; z = y")
+    state.add_memlet_path(state.add_read("A"), kernel, inner, tasklet, dst_conn="x", memlet=dace.Memlet("A[k, j]"))
+    state.add_memlet_path(tasklet, inner_exit, state.add_access("row"), src_conn="z", memlet=dace.Memlet("row[j]"))
+    state.add_memlet_path(
+        tasklet, inner_exit, kernel_exit, state.add_write("B"), src_conn="y", memlet=dace.Memlet("B[k, j]")
+    )
+    sdfg.validate()
+    BlockTileKernels().apply_pass(sdfg, {})
+    assert len(maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)) == 1
+
+
 @dace.program
 def shuffled_rows(A: dace.float64[K, 512], P: dace.int64[512], B: dace.float64[K, 512]):
     for k in dace.map[0:K]:
@@ -488,6 +509,7 @@ if __name__ == "__main__":
     test_a_body_that_accumulates_outside_the_inner_map_keeps_one_thread_per_iteration()
     test_a_per_thread_scratch_read_after_the_inner_map_keeps_one_thread_per_iteration()
     test_a_per_thread_buffer_filled_outside_the_inner_map_keeps_one_thread_per_iteration()
+    test_a_per_thread_buffer_only_the_inner_map_writes_is_strided_across_the_lanes()
     for sizes in SIZES:
         test_the_block_lowerings_compute_what_numpy_does(*sizes)
     test_a_lane_strided_map_in_a_loop_waits_for_every_lane_before_its_next_trip()

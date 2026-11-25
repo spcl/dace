@@ -15,7 +15,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.memlet_utils import MemletReplacer
 from dace.sdfg.replace import replace_datadesc_names
 from dace.sdfg.sdfg import SDFG, scope_bound_names
-from dace.sdfg.state import SymbolResolver
+from dace.sdfg.state import SDFGState, SymbolResolver
 from dace.transformation.helpers import unsqueeze_memlet
 
 
@@ -624,6 +624,16 @@ class SubscriptReplacer(MemletReplacer):
         return node
 
 
+def far_end_is(state: SDFGState, edge, name: str) -> bool:
+    """Whether the end of ``edge``'s memlet path that its ``other_subset`` describes is an access node of ``name``."""
+    path = state.memlet_path(edge)
+    data_is_src = edge.data._is_data_src
+    if data_is_src is None:
+        data_is_src = isinstance(path[0].src, nd.AccessNode) and path[0].src.data == name
+    far = path[-1].dst if data_is_src else path[0].src
+    return isinstance(far, nd.AccessNode) and far.data == name
+
+
 def _restate_container(
     sdfg: SDFG,
     name: str,
@@ -687,6 +697,9 @@ def _restate_container(
             if memlet.data == name:
                 if memlet.subset is not None:
                     other = memlet.other_subset
+                    # A copy within the container names it on both sides: the other side's subset moves too
+                    if other is not None and far_end_is(state, edge, name):
+                        other = move(Memlet(data=name, subset=copy.deepcopy(other))).subset
                     edge.data = move(memlet)
                     edge.data.other_subset = other
             elif memlet.other_subset is not None and any(

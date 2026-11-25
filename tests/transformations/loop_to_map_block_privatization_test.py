@@ -36,6 +36,20 @@ def level_above(A: dace.float64[N, M, F], B: dace.float64[N, M, F]):
 
 
 @dace.program
+def level_above_in_a_map_body(A: dace.float64[N, M, F], B: dace.float64[N, M, F], C: dace.float64[N, M, F]):
+    for b in range(N):
+        prev = np.ndarray((F,), dtype=np.float64)
+        for k in range(M):
+            for l in dace.map[0:F]:
+                if k > 0:
+                    B[b, k, l] = prev[l] + A[b, k, l]
+            for l in dace.map[0:F]:
+                prev[l] = A[b, k, l]
+            for l in range(F):
+                C[b, k, l] = prev[l]
+
+
+@dace.program
 def level_above_from_the_first_level(A: dace.float64[N, M, F], B: dace.float64[N, M, F]):
     for b in range(N):
         prev = np.ndarray((F,), dtype=np.float64)
@@ -129,6 +143,15 @@ def test_a_level_recurrence_under_a_first_iteration_guard_stays_inside_the_block
     lift_and_compare(level_above, {"A": rng.random((4, 5, 3)), "B": np.zeros((4, 5, 3))}, {"N": 4, "M": 5, "F": 3})
 
 
+def test_a_level_recurrence_read_in_a_map_body_stays_inside_the_block():
+    rng = np.random.default_rng(0)
+    lift_and_compare(
+        level_above_in_a_map_body,
+        {"A": rng.random((4, 5, 3)), "B": np.zeros((4, 5, 3)), "C": np.zeros((4, 5, 3))},
+        {"N": 4, "M": 5, "F": 3},
+    )
+
+
 def test_a_guard_true_on_the_first_iteration_reads_the_previous_block():
     sdfg = level_above_from_the_first_level.to_sdfg(simplify=True)
     assert "prev" in read_before_written(block_loop(sdfg), transients(sdfg))
@@ -158,6 +181,7 @@ def test_a_dynamic_in_place_read_indexed_by_the_block_is_tested_on_its_subset():
 
 if __name__ == "__main__":
     test_a_level_recurrence_under_a_first_iteration_guard_stays_inside_the_block()
+    test_a_level_recurrence_read_in_a_map_body_stays_inside_the_block()
     test_a_guard_true_on_the_first_iteration_reads_the_previous_block()
     test_an_in_place_map_body_that_writes_first_reads_nothing_from_outside()
     test_an_in_place_map_body_that_reads_first_is_carried()
