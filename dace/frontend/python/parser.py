@@ -20,6 +20,7 @@ from dace.frontend.python import cached_program, newast, preprocessing
 from dace.frontend.python import common as pycommon
 from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutils
+from dace.transformation.passes.canonicalize import CanonicalizationPipeline
 
 if TYPE_CHECKING:
     from dace.codegen.compiled_sdfg import CompiledSDFG
@@ -582,6 +583,10 @@ class DaceProgram(pycommon.SDFGConvertible):
         sdfg.using_explicit_control_flow = self.use_explicit_cf
 
         sdfg.reset_cfg_list()
+
+        # Bring the SDFG into canonical form before any simplification or optimization (a no-op if it already is,
+        # e.g., when it comes from the cache)
+        CanonicalizationPipeline().apply_pass(sdfg, {})
 
         # Apply simplification pass automatically
         if not cached and (

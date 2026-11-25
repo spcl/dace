@@ -1,0 +1,486 @@
+Dace.sound : ∀ (fuel : ℕ), Dace.Sound fuel
+Dace.execSDFG_sound : ∀ (fuel : ℕ) {ctx : Dace.Ctx} {ρ : Dace.Valuation} {m : Dace.Mem} {g : Dace.SDFG}
+  {r : Dace.Res (Dace.Valuation × Dace.Mem × Dace.Log)},
+  Dace.execSDFG fuel ctx ρ m g = some r → Dace.SDFGExec ctx ρ m g r
+Dace.SDFG.run_sound : ∀ (I : Dace.Interp) (g : Dace.SDFG) (ρ₀ : Dace.Valuation) (m₀ : Dace.Mem) (fuel : ℕ)
+  {r : Dace.Res Dace.Mem}, Dace.SDFG.run I g ρ₀ m₀ fuel = some r → Dace.SDFG.Exec I g ρ₀ m₀ r
+Dace.SDFG.run_ok_sound : ∀ (I : Dace.Interp) (g : Dace.SDFG) (ρ₀ : Dace.Valuation) (m₀ : Dace.Mem) (fuel : ℕ)
+  {m : Dace.Mem}, Dace.SDFG.run I g ρ₀ m₀ fuel = some (Dace.Res.ok m) → Dace.SDFG.Exec I g ρ₀ m₀ (Dace.Res.ok m)
+Dace.STree.sound : ∀ (fuel : ℕ), Dace.STree.Sound fuel
+Dace.STree.execList_sound : ∀ (fuel : ℕ) {tc : Dace.TCtx} {full : List Dace.SNode} {gb : Bool} {sc : Dace.SibCtx}
+  {nodes : List Dace.SNode} {cst : Dace.CSt} {r : Dace.Res (Dace.TCtl × Dace.CSt)},
+  Dace.STree.execList fuel tc full gb sc nodes cst = some r → Dace.STree.ListExec tc full gb sc nodes cst r
+Dace.STree.run_sound : ∀ (I : Dace.Interp) (t : Dace.STree) (ρ₀ : Dace.Valuation) (m₀ : Dace.Mem) (fuel : ℕ)
+  {r : Dace.Res Dace.Mem}, Dace.STree.run I t ρ₀ m₀ fuel = some r → Dace.STree.Exec I t ρ₀ m₀ r
+Dace.STree.run_ok_sound : ∀ (I : Dace.Interp) (t : Dace.STree) (ρ₀ : Dace.Valuation) (m₀ : Dace.Mem) (fuel : ℕ)
+  {m : Dace.Mem}, Dace.STree.run I t ρ₀ m₀ fuel = some (Dace.Res.ok m) → Dace.STree.Exec I t ρ₀ m₀ (Dace.Res.ok m)
+@Dace.raceFree?_sound : ∀ {g : Dace.SDFG}, Dace.raceFree? g = true → Dace.RaceFree g
+@Dace.raceFreeWith_sound : ∀ {orc : Dace.Query → Bool},
+  (∀ (q : Dace.Query), orc q = true → q.Valid) → ∀ {g : Dace.SDFG}, Dace.raceFreeWith orc g = true → Dace.RaceFree g
+@Dace.StateExec.det : ∀ {ctx : Dace.Ctx} {s : Dace.State},
+  Dace.SeqPure ctx s →
+    ctx.I.wcr.Lawful →
+      Dace.ScopesOk s →
+        ∀ {cst : Dace.CSt} {x : Dace.Ctl × Dace.CSt} {r : Dace.Res (Dace.Ctl × Dace.CSt)},
+          Dace.StateExec ctx cst s r →
+            Dace.StateExec ctx cst s (Dace.Res.ok x) →
+              ∃ x', r = Dace.Res.ok x' ∧ x'.1 = x.1 ∧ x'.2.ρ = x.2.ρ ∧ x'.2.mem = x.2.mem ∧ x'.2.log.Eqv x.2.log
+@Dace.StateExec.no_err : ∀ {ctx : Dace.Ctx} {s : Dace.State},
+  Dace.SeqPure ctx s →
+    ctx.I.wcr.Lawful →
+      Dace.ScopesOk s →
+        ∀ {cst : Dace.CSt} {x : Dace.Ctl × Dace.CSt} {e : Dace.ErrReason},
+          Dace.StateExec ctx cst s (Dace.Res.ok x) → ¬Dace.StateExec ctx cst s (Dace.Res.err e)
+@Dace.scopesOk?_sound : ∀ {s : Dace.State}, Dace.scopesOk? s = true → Dace.ScopesOk s
+@Dace.seqPure?_sound : ∀ {ctx : Dace.Ctx} {s : Dace.State}, Dace.seqPure? ctx s = true → Dace.SeqPure ctx s
+@Dace.Congr.block : ∀ {g : Dace.SDFG} {p : List Dace.PathStep} {i : Dace.BlockId} {b' b : Dace.Block},
+  g.top.blockAt? p i = some b →
+    Dace.sameTransientMentions? g b' b = true →
+      (∀ (I : Dace.Interp),
+          I.Lawful →
+            ∀ (cst : Dace.CSt) (r' : Dace.Res (Dace.Ctl × Dace.CSt)),
+              Dace.BlockExec { I := I, g := g } cst b' r' →
+                Dace.MatchedE Dace.CtlRel (Dace.BlockExec { I := I, g := g } cst b) r') →
+        Dace.Supported g.prog → Dace.Refines (g.setBlockAt p i b').prog g.prog
+@Dace.Congr.blockEquiv : ∀ {g : Dace.SDFG} {p : List Dace.PathStep} {i : Dace.BlockId} {b' b : Dace.Block},
+  g.top.blockAt? p i = some b →
+    Dace.sameTransientMentions? g b' b = true →
+      (∀ (I : Dace.Interp),
+          I.Lawful →
+            ∀ (cst : Dace.CSt) (r' : Dace.Res (Dace.Ctl × Dace.CSt)),
+              Dace.BlockExec { I := I, g := g } cst b' r' →
+                Dace.MatchedE Dace.CtlRel (Dace.BlockExec { I := I, g := g } cst b) r') →
+        (∀ (I : Dace.Interp),
+            I.Lawful →
+              ∀ (cst : Dace.CSt) (r : Dace.Res (Dace.Ctl × Dace.CSt)),
+                Dace.BlockExec { I := I, g := g } cst b r →
+                  Dace.MatchedE Dace.CtlRel (Dace.BlockExec { I := I, g := g } cst b') r) →
+          Dace.Supported g.prog → Dace.Equiv (g.setBlockAt p i b').prog g.prog
+@Dace.Congr.emptyState : ∀ {g : Dace.SDFG} {p : List Dace.PathStep} {i : Dace.BlockId} {s s' : Dace.State},
+  g.top.blockAt? p i = some (Dace.Block.state s) →
+    s.nodes = [] →
+      s'.nodes = [] → Dace.Supported g.prog → Dace.Equiv (g.setBlockAt p i (Dace.Block.state s')).prog g.prog
+@Dace.Congr.splitEmpty : ∀ {g : Dace.SDFG} {p : List Dace.PathStep} {i : Dace.BlockId} {s : Dace.State},
+  g.top.blockAt? p i = some (Dace.Block.state s) →
+    Dace.Supported g.prog → Dace.Equiv (g.setBlockAt p i (Dace.Block.region s.thenEmpty)).prog g.prog
+@Dace.Congr.mergeEmpty : ∀ {g : Dace.SDFG} {p : List Dace.PathStep} {i : Dace.BlockId} {s : Dace.State},
+  g.top.blockAt? p i = some (Dace.Block.region s.thenEmpty) →
+    Dace.Supported g.prog → Dace.Equiv (g.setBlockAt p i (Dace.Block.state s)).prog g.prog
+@Dace.Congr.scopeBody : ∀ {g : Dace.SDFG} {p : List Dace.PathStep} {i : Dace.BlockId} {s s' : Dace.State}
+  {M : Dace.NodeId},
+  g.top.blockAt? p i = some (Dace.Block.state s) →
+    Dace.sameOutside? g s' s M = true →
+      s'.outerNodes (s'.scopeNodes M) = s.outerNodes (s.scopeNodes M) →
+        s'.outerEdges (s'.scopeNodes M) = s.outerEdges (s.scopeNodes M) →
+          (∀ (I : Dace.Interp), I.Lawful → Dace.BodyMatchedE { I := I, g := g } s' s M) →
+            Dace.Supported g.prog → Dace.Refines (g.setBlockAt p i (Dace.Block.state s')).prog g.prog
+@Dace.Congr.scopeBodyEquiv : ∀ {g : Dace.SDFG} {p : List Dace.PathStep} {i : Dace.BlockId} {s s' : Dace.State}
+  {M : Dace.NodeId},
+  g.top.blockAt? p i = some (Dace.Block.state s) →
+    Dace.sameOutside? g s' s M = true →
+      Dace.sameOutside? g s s' M = true →
+        s'.outerNodes (s'.scopeNodes M) = s.outerNodes (s.scopeNodes M) →
+          s'.outerEdges (s'.scopeNodes M) = s.outerEdges (s.scopeNodes M) →
+            (∀ (I : Dace.Interp), I.Lawful → Dace.BodyMatchedE { I := I, g := g } s' s M) →
+              (∀ (I : Dace.Interp), I.Lawful → Dace.BodyMatchedE { I := I, g := g } s s' M) →
+                Dace.Supported g.prog → Dace.Equiv (g.setBlockAt p i (Dace.Block.state s')).prog g.prog
+@Dace.Congr.mapBody : ∀ {g : Dace.SDFG} {p : List Dace.PathStep} {i : Dace.BlockId} {s : Dace.State} {M : Dace.NodeId}
+  {bn : List Dace.DNode} {be : List Dace.DEdge},
+  g.top.blockAt? p i = some (Dace.Block.state s) →
+    s.bodyFits? M bn be = true →
+      Dace.sameOutside? g (s.withBody M bn be) s M = true →
+        (∀ (I : Dace.Interp), I.Lawful → Dace.BodyMatchedE { I := I, g := g } (s.withBody M bn be) s M) →
+          Dace.Supported g.prog → Dace.Refines (g.setBlockAt p i (Dace.Block.state (s.withBody M bn be))).prog g.prog
+@Dace.sameOutside?_spec : ∀ {g : Dace.SDFG} {s' s : Dace.State} {M : Dace.NodeId},
+  Dace.sameOutside? g s' s M = true →
+    s'.outerNodes (s'.scopeNodes M) = s.outerNodes (s.scopeNodes M) →
+      s'.outerEdges (s'.scopeNodes M) = s.outerEdges (s.scopeNodes M) →
+        ∀ (I : Dace.Interp), Dace.OuterFacts { I := I, g := g } s' s M
+@Dace.Congr.relabelState : ∀ {φ : Equiv.Perm Dace.NodeId} {g : Dace.SDFG} {p : List Dace.PathStep} {i : Dace.BlockId}
+  {s : Dace.State},
+  g.top.blockAt? p i = some (Dace.Block.state s) →
+    Dace.Supported g.prog → Dace.Equiv (g.setBlockAt p i (Dace.Block.state (Dace.State.relabel φ s))).prog g.prog
+@Dace.Congr.replaceState : ∀ {g : Dace.SDFG} {p : List Dace.PathStep} {i : Dace.BlockId} {s s' : Dace.State},
+  g.top.blockAt? p i = some (Dace.Block.state s) →
+    Dace.stateSame? g s' s = true →
+      Dace.Supported g.prog → Dace.Equiv (g.setBlockAt p i (Dace.Block.state s')).prog g.prog
+@Dace.Congr.regionEquiv : ∀ {g : Dace.SDFG} {p : List Dace.PathStep} {c' c : Dace.Region},
+  g.top.regionAt? p = some c →
+    Dace.sameRegionMentions? g c' c = true →
+      (∀ (I : Dace.Interp),
+          I.Lawful →
+            ∀ (cst : Dace.CSt) (r' : Dace.Res (Dace.Ctl × Dace.CSt)),
+              Dace.RegionExec { I := I, g := g } cst c' r' →
+                Dace.MatchedE Dace.CtlRel (Dace.RegionExec { I := I, g := g } cst c) r') →
+        (∀ (I : Dace.Interp),
+            I.Lawful →
+              ∀ (cst : Dace.CSt) (r : Dace.Res (Dace.Ctl × Dace.CSt)),
+                Dace.RegionExec { I := I, g := g } cst c r →
+                  Dace.MatchedE Dace.CtlRel (Dace.RegionExec { I := I, g := g } cst c') r) →
+          Dace.Supported g.prog → Dace.Equiv (g.setRegionAt p c').prog g.prog
+@Dace.Congr.relabelBlocks : ∀ {g : Dace.SDFG} {p : List Dace.PathStep} {c : Dace.Region} {φ : Equiv.Perm ℕ},
+  g.top.regionAt? p = some c →
+    c.blocksPermOk φ = true →
+      Dace.sameRegionMentions? g (c.relabelBlocks φ) c = true →
+        Dace.Supported g.prog → Dace.Equiv (g.setRegionAt p (c.relabelBlocks φ)).prog g.prog
+@Dace.Congr.insertEmpty : ∀ {j : Dace.BlockId} {e : Dace.State} {g : Dace.SDFG} {p : List Dace.PathStep}
+  {c : Dace.Region},
+  g.top.regionAt? p = some c →
+    c.insertOk? j e = true →
+      Dace.sameRegionMentions? g (c.insertEmpty j e) c = true →
+        Dace.Supported g.prog → Dace.Equiv (g.setRegionAt p (c.insertEmpty j e)).prog g.prog
+@Dace.Congr.removeEmpty : ∀ {j : Dace.BlockId} {e : Dace.State} {g : Dace.SDFG} {p : List Dace.PathStep}
+  {c c' : Dace.Region},
+  g.top.regionAt? p = some c →
+    c = c'.insertEmpty j e →
+      c'.insertOk? j e = true →
+        Dace.sameRegionMentions? g c' c = true → Dace.Supported g.prog → Dace.Equiv (g.setRegionAt p c').prog g.prog
+@Dace.SDFG.beq_sound : ∀ {a b : Dace.SDFG}, a.beq b = true → a = b
+@Dace.Refines.refl_of_supported : ∀ {P : Dace.Prog}, Dace.Supported P → Dace.Refines P P
+@Dace.Refines.refl_iff_supported : ∀ {P : Dace.Prog}, Dace.Refines P P ↔ Dace.Supported P
+@Dace.Refines.trans : ∀ {R Q P : Dace.Prog},
+  Dace.Refines R Q →
+    Dace.Refines Q P →
+      (∀ (I : Dace.Interp) (ρ₀ : Dace.Valuation) (m₀ : Dace.Mem), P.Pre I ρ₀ m₀ → Q.Pre I ρ₀ m₀) →
+        (∀ n ∈ P.interface, n ∈ Q.interface) → Dace.Refines R P
+@Dace.Refines.conservative : ∀ {Q P Q' P' : Dace.Prog},
+  Dace.Refines Q P → Dace.Extends Q' Q → Dace.Extends P' P → Dace.Refines Q' P'
+@Dace.Equiv.symm : ∀ {P Q : Dace.Prog}, Dace.Equiv P Q → Dace.Equiv Q P
+@Dace.Equiv.trans : ∀ {P Q R : Dace.Prog},
+  Dace.Equiv P Q →
+    Dace.Equiv Q R →
+      (∀ (I : Dace.Interp) (ρ₀ : Dace.Valuation) (m₀ : Dace.Mem), P.Pre I ρ₀ m₀ → Q.Pre I ρ₀ m₀) →
+        (∀ (I : Dace.Interp) (ρ₀ : Dace.Valuation) (m₀ : Dace.Mem), R.Pre I ρ₀ m₀ → Q.Pre I ρ₀ m₀) →
+          (∀ n ∈ P.interface, n ∈ Q.interface) → (∀ n ∈ R.interface, n ∈ Q.interface) → Dace.Equiv P R
+@Dace.Equiv.refl_iff_supported : ∀ {P : Dace.Prog}, Dace.Equiv P P ↔ Dace.Supported P
+@Dace.Refines_iff_matched : ∀ {Q P : Dace.Prog},
+  Dace.Refines Q P ↔
+    ∀ (I : Dace.Interp) (ρ₀ : Dace.Valuation) (m₀ : Dace.Mem),
+      P.Pre I ρ₀ m₀ →
+        ∀ (r : Dace.Res Dace.Mem), Q.exec I ρ₀ m₀ r → Dace.Matched (Dace.obsEq P.interface) (P.exec I ρ₀ m₀) r
+@Dace.Subset.disjoint?_sound : ∀ {I : Dace.ExprInterp} {ρ : Dace.Valuation} {C : Dace.Constraints} {A B : Dace.Subset},
+  Dace.Subset.disjoint? C A B = true →
+    Dace.Constraints.satisfies I ρ C →
+      ∀ {ps qs : List Dace.Idx},
+        Dace.Subset.points I ρ A = some ps → Dace.Subset.points I ρ B = some qs → ∀ p ∈ ps, p ∉ qs
+@Dace.Subset.subsetOf?_sound : ∀ {I : Dace.ExprInterp} {ρ : Dace.Valuation} {C : Dace.Constraints} {A B : Dace.Subset},
+  Dace.Subset.subsetOf? C A B = true →
+    Dace.Constraints.satisfies I ρ C →
+      ∀ {ps qs : List Dace.Idx},
+        Dace.Subset.points I ρ A = some ps → Dace.Subset.points I ρ B = some qs → ∀ p ∈ ps, p ∈ qs
+@Dace.iterObligations?_sound : ∀ {I : Dace.ExprInterp} {ρ : Dace.Valuation} {C : Dace.Constraints}
+  {params : List Dace.Sym} {rng : Dace.Range} {dA dB : Dace.DataDesc} {A B : Dace.Subset} {qs : List Dace.Query},
+  Dace.iterObligations? C params rng dA A dB B = some qs →
+    (∀ q ∈ qs, q.Valid) →
+      Dace.Constraints.satisfies I ρ C →
+        ∀ {pts : List Dace.Idx},
+          Dace.Range.points I ρ rng = some pts →
+            ∀ {i i' : Dace.Idx},
+              i ∈ pts →
+                i' ∈ pts →
+                  i ≠ i' →
+                    ∀ {ρi ρi' : Dace.Valuation},
+                      Dace.Binds ρ params i ρi →
+                        Dace.Binds ρ params i' ρi' →
+                          ∀ {psA psB : List Dace.Idx},
+                            Dace.Subset.points I ρi A = some psA →
+                              Dace.Subset.points I ρi' B = some psB →
+                                ∀ {p q : Dace.Idx},
+                                  p ∈ psA →
+                                    q ∈ psB →
+                                      ∀ {o o' : ℤ},
+                                        Dace.DataDesc.linearOffset I ρi dA p = some o →
+                                          Dace.DataDesc.linearOffset I ρi' dB q = some o' → o ≠ o'
+@Dace.iterDisjoint?_sound : ∀ {I : Dace.ExprInterp} {ρ : Dace.Valuation} {C : Dace.Constraints} {params : List Dace.Sym}
+  {rng : Dace.Range} {dA dB : Dace.DataDesc} {A B : Dace.Subset},
+  Dace.iterDisjoint? C params rng dA A dB B = true →
+    Dace.Constraints.satisfies I ρ C →
+      ∀ {pts : List Dace.Idx},
+        Dace.Range.points I ρ rng = some pts →
+          ∀ {i i' : Dace.Idx},
+            i ∈ pts →
+              i' ∈ pts →
+                i ≠ i' →
+                  ∀ {ρi ρi' : Dace.Valuation},
+                    Dace.Binds ρ params i ρi →
+                      Dace.Binds ρ params i' ρi' →
+                        ∀ {psA psB : List Dace.Idx},
+                          Dace.Subset.points I ρi A = some psA →
+                            Dace.Subset.points I ρi' B = some psB →
+                              ∀ {p q : Dace.Idx},
+                                p ∈ psA →
+                                  q ∈ psB →
+                                    ∀ {o o' : ℤ},
+                                      Dace.DataDesc.linearOffset I ρi dA p = some o →
+                                        Dace.DataDesc.linearOffset I ρi' dB q = some o' → o ≠ o'
+Dace.Cert.check_sound : ∀ (c : Dace.Cert) (q : Dace.Query), Dace.Cert.check q c = true → q.Valid
+@Dace.Query.withAxioms_sound : ∀ {I : Dace.ExprInterp} {ρ : Dace.Valuation} (q : Dace.Query) (n : ℕ),
+  (q.withAxioms n).Valid →
+    ∀ (env : Dace.Env),
+      (∀ a ∈ q.atoms, a.isVar = false → Dace.AtomOk I ρ a ∧ env a = Dace.atomEnv I ρ a) →
+        (∀ h ∈ q.hyps, Dace.Ineq.holds env h) → (∀ d ∈ q.disj, Dace.Disj.holds env d) → 0 ≤ Dace.Poly.eval env q.goal
+@Dace.Query.decide_sound : ∀ {q : Dace.Query} {depth : ℕ}, q.decide depth = true → q.Valid
+@Dace.Constraints.toHyps_sound : ∀ {I : Dace.ExprInterp} {ρ : Dace.Valuation} {C : Dace.Constraints},
+  Dace.Constraints.satisfies I ρ C → Dace.HypsOk I ρ C.toHyps
+@Dace.toPoly?_sound : ∀ {I : Dace.ExprInterp} {ρ : Dace.Valuation} {e : Dace.Expr} {p : Dace.Poly},
+  e.toPoly? = some p →
+    (∀ s ∈ e.freeSyms, ∃ n, ρ s = some (Dace.Val.int n)) →
+      ∀ {v : ℤ}, Dace.Expr.evalInt I ρ e = some v → v = Dace.Poly.eval (Dace.atomEnv I ρ) p
+@Dace.Expr.nonneg?_sound : ∀ {I : Dace.ExprInterp} {ρ : Dace.Valuation} {C : Dace.Constraints} {e : Dace.Expr},
+  Dace.Expr.nonneg? C e = true → Dace.Constraints.satisfies I ρ C → ∀ {v : ℤ}, Dace.Expr.evalInt I ρ e = some v → 0 ≤ v
+@Dace.Expr.pos?_sound : ∀ {I : Dace.ExprInterp} {ρ : Dace.Valuation} {C : Dace.Constraints} {e : Dace.Expr},
+  Dace.Expr.pos? C e = true → Dace.Constraints.satisfies I ρ C → ∀ {v : ℤ}, Dace.Expr.evalInt I ρ e = some v → 0 < v
+@Dace.SDFGExec.sim : ∀ {π : Equiv.Perm Dace.Name} {P L : Dace.Name → Prop} {ctx₂ ctx₁ : Dace.Ctx},
+  Dace.CtxSim π P ctx₂ ctx₁ →
+    (∀ (op : Dace.WcrOp) (v : Dace.Val), ctx₁.I.wcr op Dace.Val.undef v = Dace.Val.undef) →
+      ∀ {g : Dace.SDFG},
+        Dace.Region.Names π P ctx₂ ctx₁ g.top →
+          ∀ {ρ : Dace.Valuation} {m₁ : Dace.Mem} {r₁ : Dace.Res (Dace.Valuation × Dace.Mem × Dace.Log)},
+            Dace.SDFGExec ctx₁ ρ m₁ g r₁ →
+              ∀ (m₂ : Dace.Mem),
+                Dace.Mem.Sim π P L m₂ m₁ → ∃ r₂, Dace.SDFGExec ctx₂ ρ m₂ g r₂ ∧ Dace.ResSim (Dace.InvSim π P L) r₂ r₁
+@Dace.STree.ListExec.ren : ∀ {σ : Equiv.Perm Dace.Name} {tc' tc : Dace.TCtx},
+  Dace.TCtx.Ren σ tc' tc →
+    ∀ {full : List Dace.SNode} {gb : Bool} {sc : Dace.SibCtx} {cs : List Dace.SNode} {cst : Dace.CSt}
+      {r : Dace.Res (Dace.TCtl × Dace.CSt)},
+      Dace.STree.ListExec tc full gb sc cs cst r →
+        Dace.SNodes.renOk σ tc'.privateTransients tc.privateTransients full = true →
+          Dace.SNodes.renOk σ tc'.privateTransients tc.privateTransients cs = true →
+            ∃ r',
+              Dace.STree.ListExec tc' (Dace.SNodes.ren σ full) gb (Dace.SibCtx.ren σ sc) (Dace.SNodes.ren σ cs) cst r' ∧
+                r'.get? = r.get?
+Dace.STree.ListExec.unlabel : ∀ (L : String) {tc : Dace.TCtx} {full full' pre : List Dace.SNode} {sc : Dace.SibCtx}
+  {cst : Dace.CSt} {r : Dace.Res (Dace.TCtl × Dace.CSt)},
+  Dace.SNodes.hasLabel L pre = false →
+    Dace.SNodes.jumpsTo (some L) pre = true →
+      Dace.STree.ListExec tc full false sc (pre ++ [Dace.SNode.stateLabel L]) cst r →
+        ∃ r', Dace.STree.ListExec tc full' false sc (Dace.SNodes.retarget L pre) cst r' ∧ Dace.STree.UnlabelRel r r'
+@Dace.SDFG.Exec.det : ∀ {I : Dace.Interp} {g : Dace.SDFG} {ρ₀ : Dace.Valuation} {m₀ : Dace.Mem} {r : Dace.Res Dace.Mem}
+  {m : Dace.Mem},
+  I.wcr.Lawful →
+    g.det? = true → Dace.SDFG.Exec I g ρ₀ m₀ r → Dace.SDFG.Exec I g ρ₀ m₀ (Dace.Res.ok m) → r = Dace.Res.ok m
+@Dace.SDFG.Exec.no_err : ∀ {I : Dace.Interp} {g : Dace.SDFG} {ρ₀ : Dace.Valuation} {m₀ m : Dace.Mem}
+  {e : Dace.ErrReason},
+  I.wcr.Lawful → g.det? = true → Dace.SDFG.Exec I g ρ₀ m₀ (Dace.Res.ok m) → ¬Dace.SDFG.Exec I g ρ₀ m₀ (Dace.Res.err e)
+@Dace.Corr.ProgCorr.refines : ∀ {g : Dace.SDFG} {t : Dace.STree},
+  (∀ (I : Dace.Interp), Dace.Corr.ProgCorr I g t) → Dace.Supported g.prog → Dace.Refines t.prog g.prog
+@Dace.Corr.corrCheck_sound : ∀ {g : Dace.SDFG} {t : Dace.STree},
+  Dace.Corr.corrCheck g t = Except.ok () → ∀ (I : Dace.Interp), Dace.Corr.ProgCorr I g t
+@Dace.Corr.corr?_exec : ∀ {g : Dace.SDFG} {t : Dace.STree},
+  Dace.Corr.corr? g t = true →
+    ∀ {I : Dace.Interp},
+      I.Lawful →
+        ∀ {ρ₀ : Dace.Valuation} {m₀ : Dace.Mem},
+          (∀ (n : Dace.Name), m₀.aliases n = none) →
+            ∀ {r : Dace.Res Dace.Mem},
+              Dace.STree.Exec I t ρ₀ m₀ r →
+                (∃ e, e.isUB = true ∧ Dace.SDFG.Exec I g ρ₀ m₀ (Dace.Res.err e)) ∨
+                  (∃ e e', r = Dace.Res.err e ∧ Dace.SDFG.Exec I g ρ₀ m₀ (Dace.Res.err e')) ∨
+                    ∃ m,
+                      r = Dace.Res.ok m ∧ ∃ m', Dace.SDFG.Exec I g ρ₀ m₀ (Dace.Res.ok m') ∧ Dace.obsEq g.interface m m'
+@Dace.Corr.corr?_refines : ∀ {g : Dace.SDFG} {t : Dace.STree},
+  Dace.Corr.corr? g t = true → Dace.Supported g.prog → Dace.Refines t.prog g.prog
+@Dace.Congr.rename : ∀ {σ : Equiv.Perm Dace.Name} {g : Dace.SDFG},
+  Dace.SDFG.RenOk σ g → Dace.Supported g.prog → Dace.Equiv (Dace.SDFG.ren σ g).prog g.prog
+@Dace.Congr.swapNames : ∀ {g : Dace.SDFG} {t u : Dace.Name},
+  Dace.renameOk? g t u = true → Dace.Supported g.prog → Dace.Equiv (Dace.SDFG.ren (Equiv.swap t u) g).prog g.prog
+@Dace.checkBy_sound : ∀ {a b : Dace.SDFG} {sts : List Dace.Step},
+  Dace.checkBy a b sts = true → Dace.Supported a.prog → Dace.Equiv b.prog a.prog
+@Dace.OrderedExec.coherent' : ∀ {ctx : Dace.Ctx} {s : Dace.State} {ρ : Dace.Valuation} {all direct : List Dace.NodeId}
+  {st st' : Dace.St},
+  (∀ id ∈ direct, ∀ (n : Dace.DNode), s.node? id = some n → Dace.DNode.CohIn s n) →
+    Dace.OrderedExec ctx ρ s all direct { mem := st.mem, vals := st.vals } (Dace.Res.ok st') →
+      st'.mem = st'.log.apply ctx.I.wcr st.mem
+Dace.merge_perm : ∀ (w : Dace.WcrSem),
+  w.Lawful →
+    ∀ (m : Dace.Mem) {gs gs' : List Dace.Log},
+      gs.Perm gs' →
+        Dace.Log.pairwiseFree gs = true →
+          List.Pairwise Dace.Log.QueuesDisjoint gs → Dace.merge w m gs = Dace.merge w m gs'
+@Dace.State.scopeWF?_sound : ∀ {s : Dace.State}, s.scopeWF? = true → s.ScopeWF
+@Dace.State.mem_scopeNodes : ∀ {s : Dace.State},
+  s.ScopeWF → ∀ {e id : Dace.NodeId}, id ∈ s.scopeNodes e ↔ e ∈ s.scopeChain id
+@Dace.State.mem_scopeNodes_iff_parent : ∀ {s : Dace.State},
+  s.ScopeWF → ∀ {e id : Dace.NodeId}, id ∈ s.scopeNodes e ↔ ∃ p, s.parent? id = some p ∧ (p = e ∨ p ∈ s.scopeNodes e)
+@Dace.State.scopeNodes_nodup : ∀ {s : Dace.State}, s.ScopeWF → ∀ (e : Dace.NodeId), (s.scopeNodes e).Nodup
+@Dace.State.mem_component : ∀ {s : Dace.State} {x y : Dace.NodeId}, y ∈ s.component x ↔ s.Connected x y
+@Dace.State.components_cover : ∀ {s : Dace.State} {n : Dace.DNode}, n ∈ s.nodes → ∃ c ∈ s.components, n.id ∈ c
+@Dace.State.components_flatten_nodup : ∀ {s : Dace.State}, s.components.flatten.Nodup
+@Dace.State.mem_components_iff : ∀ {s : Dace.State} {c : List Dace.NodeId},
+  c ∈ s.components → ∀ {x y : Dace.NodeId}, x ∈ c → (y ∈ c ↔ s.Connected x y)
+@Dace.State.components_edge : ∀ {s : Dace.State} {c : List Dace.NodeId},
+  c ∈ s.components → ∀ {e : Dace.DEdge}, e ∈ s.edges → (e.src ∈ c ↔ e.dst ∈ c)
+@Dace.State.components_eq_of_mem : ∀ {s : Dace.State} {c₁ c₂ : List Dace.NodeId},
+  c₁ ∈ s.components → c₂ ∈ s.components → ∀ {x : Dace.NodeId}, x ∈ c₁ → x ∈ c₂ → c₁ = c₂
+@Dace.State.components_flatten_perm : ∀ {s : Dace.State},
+  (List.map (fun x => x.id) s.nodes).Nodup →
+    (∀ e ∈ s.edges, (∃ n ∈ s.nodes, n.id = e.src) ∧ ∃ n ∈ s.nodes, n.id = e.dst) →
+      s.components.flatten.Perm (List.map (fun x => x.id) s.nodes)
+@Dace.State.components_convex : ∀ {s : Dace.State} {c : List Dace.NodeId}, c ∈ s.components → s.Convex c
+@Dace.State.mem_treeEdges : ∀ {s : Dace.State} {e f : Dace.DEdge},
+  f ∈ s.treeEdges e ↔ Relation.ReflTransGen s.TreeStep e f
+@Dace.State.treeEdges_nodup : ∀ {s : Dace.State} (e : Dace.DEdge), (s.treeEdges e).Nodup
+@Dace.State.topoOrder_spec : ∀ {s : Dace.State} {ids o : List Dace.NodeId},
+  ids.Nodup → s.topoOrder ids = some o → s.isTopologicalOrder ids o = true
+@Dace.State.isTopologicalOrder_perm : ∀ {s : Dace.State} {ids o : List Dace.NodeId},
+  ids.Nodup → s.isTopologicalOrder ids o = true → o.Perm ids
+@Dace.State.topo_pairwise : ∀ {s : Dace.State} {all o : List Dace.NodeId},
+  all.Nodup → s.Convex all → s.isTopologicalOrder all o = true → List.Pairwise (fun x y => s.reaches y x = false) o
+@Dace.State.reaches_iff : ∀ {s : Dace.State} {a b : Dace.NodeId}, s.reaches a b = true ↔ Relation.TransGen s.Edge a b
+@Dace.State.reaches_irrefl : ∀ {s : Dace.State} {o : List Dace.NodeId},
+  (List.map (fun x => x.id) s.nodes).Nodup →
+    s.topoOrder (List.map (fun x => x.id) s.nodes) = some o →
+      (∀ e ∈ s.edges, e.src ∈ List.map (fun x => x.id) s.nodes ∧ e.dst ∈ List.map (fun x => x.id) s.nodes) →
+        ∀ (a : Dace.NodeId), s.reaches a a = false
+Dace.Log.seq_assoc : ∀ (a b c : Dace.Log), (a.seq b).seq c = a.seq (b.seq c)
+Dace.Log.conflicts_comm : ∀ (a b : Dace.Log), a.conflicts b = b.conflicts a
+@Dace.Log.pairwiseFree_perm : ∀ {gs gs' : List Dace.Log},
+  gs.Perm gs' → Dace.Log.pairwiseFree gs = Dace.Log.pairwiseFree gs'
+Dace.Log.apply_seq : ∀ (w : Dace.WcrSem) (a b : Dace.Log) (m : Dace.Mem), (a.seq b).apply w m = b.apply w (a.apply w m)
+Dace.Log.dropNames_seq : ∀ (a b : Dace.Log) (P : List Dace.Name),
+  (a.seq b).dropNames P = (a.dropNames P).seq (b.dropNames P)
+Dace.Log.dropNames_unionAll : ∀ (gs : List Dace.Log) (P : List Dace.Name),
+  (Dace.Log.unionAll gs).dropNames P = Dace.Log.unionAll (List.map (fun x => x.dropNames P) gs)
+@Dace.Log.dropNames_mono : ∀ {P Q : List Dace.Name},
+  (∀ n ∈ P, n ∈ Q) → ∀ (g : Dace.Log), (g.dropNames Q).Sub (g.dropNames P)
+@Dace.Log.Le.seq_comm : ∀ {a b : Dace.Log}, a.conflicts b = false → a.QueuesDisjoint b → (a.seq b).Le (b.seq a)
+Dace.merge_eq_apply : ∀ (w : Dace.WcrSem) (m : Dace.Mem) {gs : List Dace.Log},
+  Dace.Log.pairwiseFree gs = true → Dace.merge w m gs = Except.ok ((Dace.Log.unionAll gs).apply w m)
+Dace.merge_cons_seq : ∀ (w : Dace.WcrSem) (m : Dace.Mem) {g : Dace.Log} {gs : List Dace.Log},
+  Dace.Log.pairwiseFree (g :: gs) = true → Dace.merge w m (g :: gs) = Dace.merge w (g.apply w m) gs
+Dace.merge_eq_foldl : ∀ (w : Dace.WcrSem) (m : Dace.Mem) {gs : List Dace.Log},
+  Dace.Log.pairwiseFree gs = true → Dace.merge w m gs = Except.ok (List.foldl (fun m g => g.apply w m) m gs)
+Dace.merge_le : ∀ (w : Dace.WcrSem),
+  w.Lawful →
+    ∀ (m : Dace.Mem) {gs' gs : List Dace.Log},
+      List.Forall₂ Dace.Log.Le gs' gs →
+        Dace.Log.pairwiseFree gs = true → Dace.Log.pairwiseFree gs' = true ∧ Dace.merge w m gs' = Dace.merge w m gs
+@Dace.merge_le_conflict : ∀ {gs' gs : List Dace.Log},
+  List.Forall₂ Dace.Log.Le gs' gs → Dace.Log.pairwiseFree gs' = false → Dace.Log.pairwiseFree gs = false
+@Dace.CompsExec.merge_perm : ∀ {ctx : Dace.Ctx} {ρ : Dace.Valuation} {s : Dace.State},
+  Dace.SeqPure ctx s →
+    ctx.I.wcr.Lawful →
+      ∀ {m : Dace.Mem} {comps : List (List Dace.NodeId)} {logs logs' : List Dace.Log},
+        Dace.CompsExec ctx ρ s m comps (Dace.Res.ok logs) →
+          Dace.Log.pairwiseFree logs = true →
+            logs.Perm logs' →
+              Dace.merge ctx.I.wcr m logs = Except.ok (List.foldl (fun m g => g.apply ctx.I.wcr m) m logs')
+@Dace.CompsExec.sequential : ∀ {ctx : Dace.Ctx} {ρ : Dace.Valuation} {s : Dace.State},
+  Dace.SeqPure ctx s →
+    ∀ {m : Dace.Mem} {comps : List (List Dace.NodeId)} {logs : List Dace.Log},
+      Dace.CompsExec ctx ρ s m comps (Dace.Res.ok logs) →
+        Dace.Log.pairwiseFree logs = true →
+          ∀ (m₀ : Dace.Mem),
+            Dace.Mem.Agree (Dace.Log.unionAll logs).reads m₀ m →
+              Dace.CompsSeq ctx ρ s m₀ comps (List.foldl (fun m g => g.apply ctx.I.wcr m) m₀ logs)
+@Dace.OrderedExec.order_indep : ∀ {ctx : Dace.Ctx} {ρ : Dace.Valuation} {s : Dace.State},
+  Dace.SeqPure ctx s →
+    ctx.I.wcr.Lawful →
+      ∀ {all direct : List Dace.NodeId} {st a : Dace.St},
+        all.Nodup →
+          s.Convex all →
+            Dace.OrderedExec ctx ρ s all direct st (Dace.Res.ok a) →
+              ∀ {o : List Dace.NodeId},
+                s.isTopologicalOrder all o = true →
+                  ∃ a' tr',
+                    Dace.SeqExec ctx ρ s (List.filter direct.contains o) st (Dace.Res.ok (a', tr')) ∧
+                      s.hbFree tr' = true ∧ a'.Eqv a
+@Dace.OrderedExec.order_indep_exec : ∀ {ctx : Dace.Ctx} {ρ : Dace.Valuation} {s : Dace.State},
+  Dace.SeqPure ctx s →
+    ctx.I.wcr.Lawful →
+      ∀ {all direct : List Dace.NodeId} {st a : Dace.St},
+        all.Nodup →
+          s.Convex all →
+            Dace.OrderedExec ctx ρ s all direct st (Dace.Res.ok a) →
+              ∀ {o : List Dace.NodeId},
+                s.isTopologicalOrder all o = true →
+                  ∃ a',
+                    Dace.OrderedExec ctx ρ s all direct st (Dace.Res.ok a') ∧
+                      a'.Eqv a ∧ ∃ tr', Dace.SeqExec ctx ρ s (List.filter direct.contains o) st (Dace.Res.ok (a', tr'))
+@Dace.OrderedExec.order_indep_component : ∀ {ctx : Dace.Ctx} {ρ : Dace.Valuation} {s : Dace.State},
+  Dace.SeqPure ctx s →
+    ctx.I.wcr.Lawful →
+      ∀ {c : List Dace.NodeId},
+        c ∈ s.components →
+          ∀ {st a : Dace.St},
+            Dace.OrderedExec ctx ρ s c (s.topLevelOf c) st (Dace.Res.ok a) →
+              ∀ {o : List Dace.NodeId},
+                s.isTopologicalOrder c o = true →
+                  ∃ a' tr',
+                    Dace.SeqExec ctx ρ s (List.filter (s.topLevelOf c).contains o) st (Dace.Res.ok (a', tr')) ∧
+                      s.hbFree tr' = true ∧ a'.Eqv a
+@Dace.OrderedExec.frame : ∀ {ctx : Dace.Ctx} {s : Dace.State},
+  Dace.SeqPure ctx s →
+    ∀ {ρ : Dace.Valuation} {all direct : List Dace.NodeId} {st : Dace.St} {r : Dace.Res Dace.St},
+      Dace.OrderedExec ctx ρ s all direct st r →
+        ∀ (st' : Dace.St), r = Dace.Res.ok st' → Dace.St.Footed ctx.I.wcr (Dace.OrderedExec ctx ρ s all direct) st st'
+@Dace.IterExec.frame : ∀ {ctx : Dace.Ctx} {s : Dace.State},
+  Dace.SeqPure ctx s →
+    ∀ {ρ : Dace.Valuation} {entry : Dace.NodeId} {params : List Dace.Sym} {priv : List Dace.Name} {pre : Dace.St}
+      {pts : List Dace.Idx} {r : Dace.Res (List Dace.Log)},
+      priv = [] →
+        Dace.IterExec ctx ρ s entry params priv pre pts r →
+          ∀ (logs : List Dace.Log),
+            r = Dace.Res.ok logs →
+              (∀ g ∈ logs, g.Plain) ∧
+                ∀ (pre₂ : Dace.St),
+                  Dace.Mem.Agree (Dace.Log.unionAll logs).reads pre₂.mem pre.mem →
+                    pre₂.vals = pre.vals → Dace.IterExec ctx ρ s entry params priv pre₂ pts (Dace.Res.ok logs)
+@Dace.SeqExec.reorder : ∀ {ctx : Dace.Ctx} {ρ : Dace.Valuation} {s : Dace.State},
+  Dace.SeqPure ctx s →
+    ctx.I.wcr.Lawful →
+      ∀ (f₂ : List Dace.NodeId) {st a : Dace.St} {tr : List (Dace.NodeId × Dace.Log)},
+        Dace.SeqExec ctx ρ s (List.map Prod.fst tr) st (Dace.Res.ok (a, tr)) →
+          s.hbFree tr = true →
+            (List.map Prod.fst tr).Nodup →
+              List.Pairwise (fun x y => s.reaches y x = false) (List.map Prod.fst tr) →
+                List.Pairwise (fun x y => s.reaches y x = false) f₂ →
+                  (List.map Prod.fst tr).Perm f₂ →
+                    ∃ a' tr', Dace.SeqExec ctx ρ s f₂ st (Dace.Res.ok (a', tr')) ∧ a'.Eqv a ∧ tr'.Perm tr
+@Dace.NodeExec.fp_step : ∀ {ctx : Dace.Ctx} {m₀ : Dace.Mem} {ρ : Dace.Valuation} {s : Dace.State} {n : Dace.DNode}
+  {st st' : Dace.St} {r : Dace.Res Dace.St} {F : ℕ} {A : List Dace.Access},
+  Dace.NodeExec ctx ρ s n st r →
+    r = Dace.Res.ok st' → Dace.nodeFp ctx s F n = some A → Dace.St.Step m₀ (Dace.LocPred.ofAccesses ctx m₀ ρ A) st st'
+@Dace.SeqExec.fp_trace : ∀ {ctx : Dace.Ctx} {m₀ : Dace.Mem} {ρ : Dace.Valuation} {s : Dace.State}
+  {ids : List Dace.NodeId} {st st₂ : Dace.St} {tr : List (Dace.NodeId × Dace.Log)} {F : ℕ} {A : List Dace.Access},
+  Dace.SeqExec ctx ρ s ids st (Dace.Res.ok (st₂, tr)) →
+    Dace.FpIncl ctx s F ids A →
+      st.mem.aliases = m₀.aliases →
+        ∀ x ∈ tr,
+          ∃ n An,
+            s.node? x.1 = some n ∧
+              Dace.nodeFp ctx s F n = some An ∧ Dace.Log.Within (Dace.LocPred.ofAccesses ctx m₀ ρ An) x.2
+@Dace.CompsExec.fp_logs : ∀ {ctx : Dace.Ctx} {ρ : Dace.Valuation} {s : Dace.State} {m : Dace.Mem} {F : ℕ}
+  {comps : List (List Dace.NodeId)} {r : Dace.Res (List Dace.Log)} {logs : List Dace.Log},
+  Dace.CompsExec ctx ρ s m comps r →
+    r = Dace.Res.ok logs →
+      List.Forall₂
+        (fun comp g =>
+          ∀ (A : List Dace.Access),
+            Dace.scopeFp ctx s F (s.topLevelOf comp) = some A → Dace.Log.Within (Dace.LocPred.ofAccesses ctx m ρ A) g)
+        comps logs
+@Dace.IterExec.footprint : ∀ {ctx : Dace.Ctx} {m₀ : Dace.Mem} {ρ : Dace.Valuation} {s : Dace.State}
+  {entry : Dace.NodeId} {params : List Dace.Sym} {priv : List Dace.Name} {pre : Dace.St} {pts : List Dace.Idx}
+  {logs : List Dace.Log} {F : ℕ} {A : List Dace.Access},
+  Dace.IterExec ctx ρ s entry params priv pre pts (Dace.Res.ok logs) →
+    Dace.scopeFp ctx s F (s.directChildren (some entry)) = some A →
+      pre.mem.aliases = m₀.aliases →
+        ∀ g ∈ logs,
+          ∃ i ∈ pts,
+            (∀ l ∈ g.reads, ∃ a ∈ A, a.kind = Dace.AccKind.read ∧ Dace.Access.Hit ctx m₀ (ρ.bindIdx params i) a l) ∧
+              (∀ x ∈ g.writes,
+                  ∃ a ∈ A, a.kind = Dace.AccKind.write ∧ Dace.Access.Hit ctx m₀ (ρ.bindIdx params i) a x.1) ∧
+                (∀ x ∈ g.wcrs,
+                    ∃ a ∈ A, a.kind = Dace.AccKind.wcr x.2.1 ∧ Dace.Access.Hit ctx m₀ (ρ.bindIdx params i) a x.1) ∧
+                  g.aliasSets = [] ∧ g.queues = []
+@Dace.Access.hit_static : ∀ {ctx : Dace.Ctx} {m₀ : Dace.Mem} {ρ : Dace.Valuation} {a : Dace.Access} {l : Dace.Loc},
+  Dace.Access.Hit ctx m₀ ρ a l →
+    Dace.Access.pureIn ctx a = true →
+      ∃ ρ',
+        Dace.Binders.ExtS ctx.I.expr ρ a.binders ρ' ∧
+          ∃ d off,
+            ctx.desc? a.data = some d ∧
+              (∃ pts,
+                  Dace.Subset.points ctx.I.expr ρ' (a.sub.getD (Dace.Subset.range d.fullRange)) = some pts ∧
+                    ∃ p ∈ pts, ctx.elemOffset ρ' d p = some off) ∧
+                l = m₀.resolve (Dace.Loc.elem (ctx.cname a.data) off)

@@ -3315,6 +3315,13 @@ class SDFG(ControlFlowRegion):
             if expanded_something:
                 states.append(state)  # Nodes have changed. Check state again
 
+        # Expansions may create nested SDFGs that own shared (e.g., Persistent) transients: restore the canonical form
+        # once, from the top level (the recursive calls above are on nested SDFGs, which have a parent)
+        if self.parent is None:
+            from dace.transformation.passes.canonicalize import CanonicalizationPipeline  # Avoid import loop
+
+            CanonicalizationPipeline().apply_pass(self, {})
+
     def generate_code(self):
         """Generates code from this SDFG and returns it.
 

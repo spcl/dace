@@ -61,37 +61,20 @@ class SeparableMemlet(MemletPattern):
         data_dims = len(expressions[0])
         self.patterns_per_dim = [None] * data_dims
 
-        overapprox_range = subsets.Range(
-            [
-                (
-                    rb.approx if isinstance(rb, symbolic.SymExpr) else rb,
-                    re.approx if isinstance(re, symbolic.SymExpr) else re,
-                    rs.approx if isinstance(rs, symbolic.SymExpr) else rs,
-                )
-                for rb, re, rs in node_range
-            ]
-        )
+        exact_range = subsets.Range([(_exact(rb), _exact(re), _exact(rs)) for rb, re, rs in node_range])
 
         for dim in range(data_dims):
             dexprs = []
             for expr in expressions:
                 expr_dim = expr[dim]
-                if isinstance(expr_dim, symbolic.SymExpr):
-                    dexprs.append(expr_dim.approx)
-                elif isinstance(expr_dim, tuple):
-                    dexprs.append(
-                        (
-                            expr_dim[0].approx if isinstance(expr_dim[0], symbolic.SymExpr) else expr_dim[0],
-                            expr_dim[1].approx if isinstance(expr_dim[1], symbolic.SymExpr) else expr_dim[1],
-                            expr_dim[2].approx if isinstance(expr_dim[2], symbolic.SymExpr) else expr_dim[2],
-                        )
-                    )
+                if isinstance(expr_dim, tuple):
+                    dexprs.append((_exact(expr_dim[0]), _exact(expr_dim[1]), _exact(expr_dim[2])))
                 else:
-                    dexprs.append(expr_dim)
+                    dexprs.append(_exact(expr_dim))
 
             for pattern_class in SeparableMemletPattern.extensions().keys():
                 smpattern = pattern_class()
-                if smpattern.can_be_applied(dexprs, variable_context, overapprox_range, orig_edges, dim, data_dims):
+                if smpattern.can_be_applied(dexprs, variable_context, exact_range, orig_edges, dim, data_dims):
                     self.patterns_per_dim[dim] = smpattern
                     break
 
@@ -100,36 +83,18 @@ class SeparableMemlet(MemletPattern):
     def propagate(self, array, expressions, node_range):
         result = [(None, None, None)] * len(self.patterns_per_dim)
 
-        overapprox_range = subsets.Range(
-            [
-                (
-                    rb.approx if isinstance(rb, symbolic.SymExpr) else rb,
-                    re.approx if isinstance(re, symbolic.SymExpr) else re,
-                    rs.approx if isinstance(rs, symbolic.SymExpr) else rs,
-                )
-                for rb, re, rs in node_range
-            ]
-        )
+        exact_range = subsets.Range([(_exact(rb), _exact(re), _exact(rs)) for rb, re, rs in node_range])
 
         for i, smpattern in enumerate(self.patterns_per_dim):
             dexprs = []
             for expr in expressions:
                 expr_i = expr[i]
-                if isinstance(expr_i, symbolic.SymExpr):
-                    dexprs.append(expr_i.approx)
-                elif isinstance(expr_i, tuple):
-                    dexprs.append(
-                        (
-                            expr_i[0].approx if isinstance(expr_i[0], symbolic.SymExpr) else expr_i[0],
-                            expr_i[1].approx if isinstance(expr_i[1], symbolic.SymExpr) else expr_i[1],
-                            expr_i[2].approx if isinstance(expr_i[2], symbolic.SymExpr) else expr_i[2],
-                            expr.tile_sizes[i],
-                        )
-                    )
+                if isinstance(expr_i, tuple):
+                    dexprs.append((_exact(expr_i[0]), _exact(expr_i[1]), _exact(expr_i[2]), expr.tile_sizes[i]))
                 else:
-                    dexprs.append(expr_i)
+                    dexprs.append(_exact(expr_i))
 
-            result[i] = smpattern.propagate(array, dexprs, overapprox_range)
+            result[i] = smpattern.propagate(array, dexprs, exact_range)
 
         # TODO(later): Not necessarily Range (general integer sets)
         return subsets.Range(result)
@@ -255,9 +220,17 @@ class AffineSMemlet(SeparableMemletPattern):
         return True
 
     def propagate(self, array, dim_exprs, node_range):
-        # Compute last index in map according to range definition
-        node_rb, node_re, node_rs = node_range[self.paramind]  # node_rs = 1
-        node_rlen = node_re - node_rb + 1
+        # Compute the iteration count and the last *visited* index of the map range. For a strided range
+        # (``node_rs != 1``) the declared end ``node_re`` is generally not visited; the last visited index is
+        # ``node_rlast``. The iteration count is expressed with the exact same ``ceiling`` form that
+        # :meth:`subsets.Range.size`/``num_elements`` produces, so that memlets propagated here are structurally
+        # identical (not merely numerically equal) to the ranges that transformations derive from the map size.
+        # Substituting the last visited index (rather than ``node_re``) yields the exact image of the access
+        # function over the range, e.g. ``A[i:i+T]`` over ``i in [0:N:T]`` propagates to the contiguous span up to
+        # the last tile (equal to ``A[0:N-1]`` exactly when ``T`` divides ``N``, exposing the over-run otherwise).
+        node_rb, node_re, node_rs = node_range[self.paramind]
+        node_rlen = subsets.Range([(node_rb, node_re, node_rs)]).num_elements()
+        node_rlast = node_rb + (node_rlen - 1) * node_rs
 
         if isinstance(dim_exprs, list):
             dim_exprs = dim_exprs[0]
@@ -281,23 +254,25 @@ class AffineSMemlet(SeparableMemletPattern):
             rt = 1
 
         result_begin = rb.subs(self.param, node_rb).expand()
-        result_end = re.subs(self.param, node_re).expand()
+        result_end = re.subs(self.param, node_rlast).expand()
+
+        # Special case: a point access in a strided map accesses every ``multiplier * stride``-th element. The
+        # strided result denotes the same points with the literal map end, which keeps it structurally equal to
+        # ranges derived from the map range itself (e.g., ``Range.size()``).
+        if node_rs != 1 and rb == re and rs == 1 and rt == 1 and self.multiplier.is_Integer and self.multiplier > 0:
+            return (result_begin, re.subs(self.param, node_re).expand(), self.multiplier * node_rs, 1)
 
         # Special case: multiplier < 0
         if (self.multiplier < 0) == True:
             result_begin, result_end = result_end, result_begin
 
-        # Special case: a point access in a strided map accesses every ``multiplier * stride``-th element
-        if node_rs != 1 and rb == re and rs == 1 and rt == 1 and self.multiplier.is_Integer and self.multiplier > 0:
-            return (result_begin, result_end, self.multiplier * node_rs, 1)
-
-        # Special case: i:i+stride for a begin:end:stride range. The multiplier must be one:
-        # for a single-element access ``(re - rb + 1)`` is 1, so with a unit map stride the length
-        # test below is trivially true, and ``a*i`` starting at a zero map begin also passes the
-        # ``result_begin`` test. Returning the map range verbatim then drops the multiplier, which
-        # UNDER-approximates the write set (``C[2*i]`` over ``i=0:N`` became ``C[0:N]``).
+        # Special case: a contiguously tiled access, i.e. a per-iteration extent equal to the map stride
+        # (e.g. ``A[i:i+T]`` over ``i in [0:N:T]``, where ``re - rb + 1 == node_rs``). Consecutive tiles abut, so
+        # the image is the contiguous span from the first to the last visited tile. Unlike the old special case,
+        # the end is the *exact* image (``result_end`` is computed from the last visited index ``node_rlast``), which
+        # equals the map range exactly when the stride divides the extent and exposes the over-run otherwise.
         if self.multiplier == 1 and node_rb == result_begin and (re - rb + 1) == node_rs and rs == 1 and rt == 1:
-            return (node_rb, node_re, 1, 1)
+            return (result_begin, result_end, 1, 1)
 
         # Experimental
         # This should be using sympy.floor
@@ -1979,6 +1954,10 @@ def propagate_subset(
                     tmp_subset_rng.append(s)
             tmp_subset = subsets.Range(tmp_subset_rng)
 
+        # Dedicated clipped-tile case: tighten the propagated end of any dimension whose memlet end is a clipped
+        # tile ``Min(param + k, e2)`` that reaches the map's own end exactly on the last iteration.
+        tmp_subset = _tighten_clipped_tiles(subset, tmp_subset, params, rng)
+
         # Union edges as necessary
         if new_subset is None:
             new_subset = tmp_subset
@@ -2004,6 +1983,10 @@ def propagate_subset(
     # number of accesses times the size of the map range set (unbounded dynamic)
     new_memlet.volume = simplify(sum(m.volume for m in memlets) * functools.reduce(lambda a, b: a * b, rng.size(), 1))
     if any(m.dynamic for m in memlets):
+        new_memlet.dynamic = True
+    # The subset is propagated through the exact part of ``SymExpr`` range bounds, but ``Range.size`` counts the
+    # iterations of their over-approximation: the volume is then only an upper bound ("up to").
+    if isinstance(rng, subsets.Range) and any(_is_approximate(e) for dim in rng.ranges for e in dim):
         new_memlet.dynamic = True
     if symbolic.issymbolic(new_memlet.volume) and not set(map(str, new_memlet.volume.free_symbols)).issubset(
         map(str, defined_variables)
@@ -2046,8 +2029,128 @@ def _with_param_symbols(subset: subsets.Subset, params: list[symbolic.symbol]) -
 def _freesyms(expr) -> set:
     """
     Helper function that either returns free symbols for sympy expressions
-    or an empty set if constant.
+    (both parts of a ``SymExpr``) or an empty set if constant.
     """
+    if isinstance(expr, symbolic.SymExpr):
+        return _freesyms(expr.expr) | _freesyms(expr.approx)
     if isinstance(expr, sympy.Basic):
         return expr.free_symbols
     return set()
+
+
+def _exact(expr: sympy.Basic | symbolic.SymExpr | int) -> sympy.Basic | int:
+    """
+    Return the exact part of a ``SymExpr`` (any other expression is returned as-is).
+
+    Subsets propagate through the exact part: the over-approximation of a ``SymExpr`` may exceed the accessed
+    (and allocated) elements, e.g. the full tile ``i + T - 1`` of a clipped tile end ``Min(N - 1, i + T - 1)``.
+    """
+    if isinstance(expr, symbolic.SymExpr):
+        return expr.expr
+    return expr
+
+
+def _is_approximate(expr: sympy.Basic | symbolic.SymExpr | int) -> bool:
+    """Return True if ``expr`` is a ``SymExpr`` whose over-approximation differs from its exact part."""
+    return isinstance(expr, symbolic.SymExpr) and expr.expr != expr.approx
+
+
+def _plain(expr):
+    """Return the exact sympy expression for a range bound that may be a ``SymExpr``."""
+    return symbolic.pystr_to_symbolic(_exact(expr))
+
+
+def _clipped_tile_end(re_expr, params: list, rng: subsets.Subset):
+    """
+    If a memlet dimension's inclusive end is a clipped tile, return its exact propagated end, else ``None``.
+
+    A clipped tile has the end ``Min(e1, e2)`` (in either argument order, possibly with a parameter-free offset
+    added, e.g. the inclusive ``Min(i + T, N) - 1``) where ``e2`` is free of the map parameter, ``e1 = param + k``
+    with the parameter's coefficient equal to 1, ``k - (node_rs - 1)`` is provably nonnegative, and ``e2`` equals
+    the parameter's own map end ``node_re``. The last visited index exceeds ``node_re - node_rs``, so
+    ``last + k >= node_re`` whenever ``node_rs >= 1`` and ``k >= node_rs - 1``; the clip is therefore reached
+    exactly at ``e2`` on the last tile, and the propagated end is exactly ``e2`` (e.g. ``A[i:Min(i+T, N)]`` over
+    ``i in [0:N:T]`` propagates to ``A[0:N-1]``).
+
+    :param re_expr: The dimension's inclusive end expression.
+    :param params: The list of propagation parameter names.
+    :param rng: The propagation range (one dimension per parameter).
+    :return: The exact end expression ``e2``, or ``None`` if the dimension is not a matching clipped tile.
+    """
+    try:
+        ranges = rng.ranges
+    except AttributeError:
+        return None
+    if len(ranges) != len(params):
+        return None
+    param_index = {str(p): i for i, p in enumerate(params)}
+
+    re_expr = _plain(re_expr)
+    mins = [a for a in sympy.preorder_traversal(re_expr) if isinstance(a, sympy.Min)]
+    if len(mins) != 1:
+        return None
+    mn = mins[0]
+    if len(mn.args) != 2:
+        return None
+
+    # The end may be the Min plus a parameter-free offset (e.g. the inclusive ``Min(...) - 1``).
+    offset = sympy.expand(re_expr - mn)
+    if any(pn in set(map(str, offset.free_symbols)) for pn in param_index):
+        return None
+
+    a1, a2 = mn.args
+    for shifted, free in ((a1, a2), (a2, a1)):
+        shifted_params = [pn for pn in param_index if pn in set(map(str, shifted.free_symbols))]
+        if len(shifted_params) != 1:
+            continue
+        if any(pn in set(map(str, free.free_symbols)) for pn in param_index):
+            continue  # The free bound must not mention any parameter
+        pname = shifted_params[0]
+        p = symbolic.pystr_to_symbolic(pname)
+        k_shift = sympy.expand(shifted - p)
+        if pname in set(map(str, k_shift.free_symbols)):
+            continue  # Parameter coefficient must be exactly 1
+
+        node_rb, node_re, node_rs = ranges[param_index[pname]]
+        node_re, node_rs = _plain(node_re), _plain(node_rs)
+        k = sympy.expand(k_shift + offset)
+        slack = sympy.simplify(k - (node_rs - 1))
+        if not (slack == 0 or slack.is_nonnegative):
+            continue
+        e2 = sympy.expand(free + offset)
+        if symbolic.simplify(e2 - node_re) != 0:
+            continue
+        return e2
+    return None
+
+
+def _tighten_clipped_tiles(
+    orig_subset: subsets.Subset, prop_subset: subsets.Subset, params: list, rng: subsets.Subset
+) -> subsets.Subset:
+    """
+    Tighten the propagated end of every clipped-tile dimension to its exact value (see :func:`_clipped_tile_end`).
+
+    :param orig_subset: The memlet subset before propagation (used to detect the clipped-tile pattern).
+    :param prop_subset: The propagated subset to tighten.
+    :param params: The propagation parameter names.
+    :param rng: The propagation range.
+    :return: The propagated subset, with clipped-tile dimensions tightened.
+    """
+    if not isinstance(orig_subset, subsets.Range) or not isinstance(prop_subset, subsets.Range):
+        return prop_subset
+    if len(orig_subset.ranges) != len(prop_subset.ranges):
+        return prop_subset
+
+    new_ranges = list(prop_subset.ranges)
+    changed = False
+    for d, (_, re, _) in enumerate(orig_subset.ranges):
+        exact_end = _clipped_tile_end(re, params, rng)
+        if exact_end is None:
+            continue
+        pb, _, ps = new_ranges[d]
+        new_ranges[d] = (pb, exact_end, ps)
+        changed = True
+
+    if not changed:
+        return prop_subset
+    return subsets.Range(new_ranges)

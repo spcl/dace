@@ -223,11 +223,9 @@ def test_dealias_interstate_edge():
     sdfg.validate()
     stree = as_schedule_tree(sdfg)
     nodes = list(stree.preorder_traversal())[1:]
-    assert [type(n) for n in nodes] == [tn.StateIfScope, tn.GotoNode, tn.AssignNode, tn.StateLabel]
+    assert [type(n) for n in nodes] == [tn.IfScope, tn.AssignNode]
     assert "A[2]" in nodes[0].condition.as_string
-    assert "B[4]" in nodes[2].value.as_string
-    # The exit of the nested SDFG jumps to its end, not to the end of the program
-    assert nodes[1].target == nodes[3].name
+    assert "B[4]" in nodes[1].value.as_string
 
 
 def test_dealias_interstate_edge_scalar_connector():
@@ -256,11 +254,9 @@ def test_dealias_interstate_edge_scalar_connector():
     sdfg.validate()
     stree = as_schedule_tree(sdfg)
     nodes = list(stree.preorder_traversal())[1:]
-    assert [type(n) for n in nodes] == [tn.StateIfScope, tn.GotoNode, tn.AssignNode, tn.StateLabel]
+    assert [type(n) for n in nodes] == [tn.IfScope, tn.AssignNode]
     assert "(B[7] > 0)" in nodes[0].condition.as_string
-    assert nodes[2].value.as_string == "(A[3] + 1)"
-    # The exit of the nested SDFG jumps to its end, not to the end of the program
-    assert nodes[1].target == nodes[3].name
+    assert nodes[1].value.as_string == "(A[3] + 1)"
 
 
 def test_dealias_interstate_edge_scalar_connector_samearray():
@@ -288,11 +284,9 @@ def test_dealias_interstate_edge_scalar_connector_samearray():
     sdfg.validate()
     stree = as_schedule_tree(sdfg)
     nodes = list(stree.preorder_traversal())[1:]
-    assert [type(n) for n in nodes] == [tn.StateIfScope, tn.GotoNode, tn.AssignNode, tn.StateLabel]
+    assert [type(n) for n in nodes] == [tn.IfScope, tn.AssignNode]
     assert "(A[7] > 0)" in nodes[0].condition.as_string
-    assert nodes[2].value.as_string == "(A[3] + 1)"
-    # The exit of the nested SDFG jumps to its end, not to the end of the program
-    assert nodes[1].target == nodes[3].name
+    assert nodes[1].value.as_string == "(A[3] + 1)"
 
 
 def test_dealias_interstate_edge_scalar_connector_in_map():

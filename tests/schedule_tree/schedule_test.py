@@ -345,11 +345,11 @@ def test_gblock_labels():
     stree = as_schedule_tree(sdfg)
     assert len(stree.children) == 1 and isinstance(stree.children[0], tn.GBlock)
     labels = [child.name for child in stree.children[0].children if isinstance(child, tn.StateLabel)]
-    assert labels == ["start", "other", "loop"]
+    assert labels == ["start", "other", "loop", "__end_tester"]
     assert isinstance(stree.children[0].children[0], tn.StateLabel)
 
     gotos = {n.target for n in stree.preorder_traversal() if isinstance(n, tn.GotoNode)}
-    assert gotos == {"other", "loop"}
+    assert gotos == {"other", "loop", "__end_tester"}
 
 
 def test_consume_stream_input():

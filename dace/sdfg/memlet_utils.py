@@ -178,14 +178,22 @@ class MemletSet(set[Memlet]):
 
         return False
 
-    def union(self, *s: Iterable[Memlet]) -> "MemletSet":
+    def union(self, *s: "Memlet | Iterable[Memlet]") -> "MemletSet":
         """
-        Performs a set-union (with memlet union) over the given sets of memlets.
+        Performs a set-union (with memlet union) over the given memlets and/or sets of memlets.
+
+        Each argument may be a single :class:`~dace.memlet.Memlet` or an iterable of memlets (e.g. another
+        ``MemletSet``), mirroring :meth:`set.union` while remaining backwards compatible with callers that pass
+        individual memlets.
 
         :return: New memlet set containing the union of this set and the inputs.
         """
         newset = MemletSet(self)
-        newset.update(s)
+        for item in s:
+            if isinstance(item, Memlet):
+                newset.add(item)
+            else:
+                newset.update(item)
         return newset
 
 
