@@ -131,7 +131,9 @@ test_cases: dict[str, tuple[DaceProgram, int, int, dict[str, int], SymbolicType]
         1024,
         64,
         {"N": 128},
-        128.0 / (dace.symbol("Reduce_misses", positive=True) * 64.0 + 64.0),
+        # The unexpanded Reduce is estimated with compulsory misses: the 1024-byte
+        # input is ceiling(1024 / 64) = 16 lines, the 8-byte result 1 line.
+        128.0 / (17 * 64.0),
     ),
 }
 
@@ -147,11 +149,7 @@ def test_operational_intensity(test_name: str):
         sdfg.simplify()
     analyze_sdfg_op_in(sdfg, op_in_map, c * l, l, assumptions)
     res = op_in_map[get_uuid(sdfg)]
-    if test_name == "reduction_library_node":
-        # Symbolic result (depends on the opaque Reduce_misses symbol); compare expressions directly.
-        assert pystr_to_symbolic(correct) == res
-    else:
-        assert isclose(correct, res)
+    assert isclose(correct, res)
 
 
 _ASK_USER_LOOP_ITERS = 8
