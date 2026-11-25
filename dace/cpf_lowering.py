@@ -1643,6 +1643,18 @@ static inline void cpf_kernel_launch_check(gpuError_t err, const char *name, lon
     }
 }
 """,
+    "cpf_request_dynamic_shared_memory": """\
+//: A kernel that needs more dynamic shared memory than devices grant by default opts in before its launch; a device
+//: that cannot grant it ends the program, naming the kernel and the request.
+template <typename K>
+static inline void cpf_request_dynamic_shared_memory(K kernel, const char *name, long long bytes) {
+    const gpuError_t err = gpuFuncSetAttribute((const void *)kernel, gpuFuncAttributeMaxDynamicSharedMemorySize, (int)bytes);
+    if (err != gpuSuccess) {
+        fprintf(stderr, "%s requests %lld bytes of dynamic shared memory: %s\\n", name, bytes, gpuGetErrorString(err));
+        abort();
+    }
+}
+""",
     "cpf_narrow": """\
 //: A value of any arithmetic type as a 16-bit vendor float (``__hip_bfloat16`` / ``__nv_bfloat16``). An integer
 //: matches several of their converting constructors at once (int, short, float, double), so it goes through
@@ -1789,6 +1801,8 @@ GPU_ALIASES: dict[str, str] = {
     "gpuDeviceSynchronize": "hipDeviceSynchronize",
     "gpuEventSynchronize": "hipEventSynchronize",
     "gpuFree": "hipFree",
+    "gpuFuncAttributeMaxDynamicSharedMemorySize": "hipFuncAttributeMaxDynamicSharedMemorySize",
+    "gpuFuncSetAttribute": "hipFuncSetAttribute",
     "gpuFreeAsync": "hipFreeAsync",
     "gpuFreeHost": "hipHostFree",
     "gpuGetErrorString": "hipGetErrorString",
@@ -1817,6 +1831,7 @@ HIP_SPELLINGS: dict[str, str] = {
     "DACE_DFI": "__device__ __forceinline__",
     "DACE_GPU_CHECK": "cpf_gpu_check",
     "DACE_KERNEL_LAUNCH_CHECK": "cpf_kernel_launch_check",
+    "DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY": "cpf_request_dynamic_shared_memory",
     "DACE_CUB_SUM_OP": "::gpucub::Sum()",
     "DACE_CUB_MIN_OP": "::gpucub::Min()",
     "DACE_CUB_MAX_OP": "::gpucub::Max()",
