@@ -1253,27 +1253,74 @@ def read_before_written(
             earlier.append((var, start, stores))
         return stores
 
+    def first_trip_stores(region: ControlFlowRegion, block: ConditionalBlock, stored: set[Store]) -> set[Store]:
+        """What the first branch of ``block`` stores when ``region`` is a nested loop whose first trip takes that
+        branch: the body runs it unconditionally, nothing leaves an iteration early, and the stores name the same
+        elements every trip, so every later block of the walk runs after them (graupel's ``IF (k == kstart) vt = 0``
+        at the top of the sedimentation loop)."""
+        if region is loop or not isinstance(region, LoopRegion) or block.parent_graph is not region:
+            return set()
+        var, start = region.loop_variable, loop_analysis.get_init_assignment(region)
+        cond = block.branches[0][0]
+        if not var or start is None or cond is None:
+            return set()
+        test = symbolic.pystr_to_symbolic(cond.as_string)
+        names = {str(x): x for x in test.free_symbols}
+        if var not in names or test.subs(names[var], start) != sp.true:
+            return set()
+        if any(isinstance(b, (BreakBlock, ContinueBlock, ReturnBlock)) for b in region.all_control_flow_blocks()):
+            return set()
+        changed = changed_by(region)
+        if (set(names) - {var}) & changed:
+            return set()
+        return {
+            store
+            for store in stored
+            if isinstance(store, str) or (store[2] is None and not {str(x) for x in store[1].free_symbols} & changed)
+        }
+
     def forget(guarded: dict[str, tuple[set[str], set[str]]], names: set[str]) -> None:
         for key in [key for key, (reads, _) in guarded.items() if reads & names]:
             del guarded[key]
 
-    def scan(region: ControlFlowRegion, written: set[str], guarded: dict[str, tuple[set[str], set[str]]]) -> None:
+    def scan(
+        region: ControlFlowRegion,
+        written: set[str],
+        guarded: dict[str, tuple[set[str], set[str]]],
+        flags: dict[str, set[Store] | None] | None = None,
+    ) -> None:
         """Walk one pass through ``region``. ``guarded`` maps a condition to the names it reads and what a branch on
         it wrote earlier in this pass, while those names keep their value: a later branch on the same condition runs
         exactly when that one did (warpx's two ``if rz_modes:`` blocks, one filling ``a_re``, one reading it;
         velocity_tendencies' ``continue`` guard split into two conditionals). A branch body and a nested loop's body
         each walk a copy, so what they record stays theirs; a nested loop's copy has first lost what the loop
-        changes, since its later iterations see those changes."""
+        changes, since its later iterations see those changes.
+
+        ``flags`` maps a scalar flag to what this pass had stored when the flag was last set, or to ``None`` when it was
+        last set to a constant false: a branch that needs the flag true then holds those stores too (graupel's
+        ``if_cond = .false.; IF (...) THEN sig = ...; if_cond = .true.`` before ``IF (if_cond) ... IF (sig)``)."""
+        flags = {} if flags is None else flags
         for block in cfg_analysis.blockorder_topological_sort(region, recursive=False, ignore_nonstate_blocks=False):
-            if guarded:
-                for edge in region.in_edges(block):
-                    if edge.data.assignments:
+            single_entry = region.in_degree(block) == 1
+            for edge in region.in_edges(block):
+                if edge.data.assignments:
+                    if guarded:
                         forget(guarded, set(edge.data.assignments))
+                    for name, value in edge.data.assignments.items():
+                        if single_entry and edge.data.is_unconditional():
+                            flags[name] = None if value.strip() in FALSE_LITERALS else set(written)
+                        else:
+                            flags.pop(name, None)
             if flow_read:
                 carried.update(flow_reads(block) - {e[0] if isinstance(e, tuple) else e for e in written})
             if block not in relevant:
                 if guarded:
                     forget(guarded, changed_by(block))
+                if isinstance(block, SDFGState):
+                    set_flags(block, written, flags)
+                else:
+                    for name in changed_by(block):
+                        flags.pop(name, None)
                 continue
             if isinstance(block, SDFGState):
                 accessed = [dn for dn in block.data_nodes() if dn.data in candidates]
@@ -1298,8 +1345,11 @@ def read_before_written(
                     ):
                         carried.add(dn.data)
                 written |= stored
+                set_flags(block, written, flags)
             elif isinstance(block, ConditionalBlock):
                 per_branch = []
+                per_branch_flags = []
+                per_branch_guarded = []
                 recorded = {}
                 for position, (cond, body) in enumerate(block.branches):
                     key = None if cond is None else cond.as_string
@@ -1308,30 +1358,122 @@ def read_before_written(
                         branch_written |= guarded[key][1]
                     if cond is not None and earlier:
                         branch_written |= skips_first(cond.as_string)
-                    scan(body, branch_written, dict(guarded))
+                    if cond is not None and position == 0:
+                        for flag in true_flags(cond.as_string) & flags.keys():
+                            branch_written |= flags[flag] or set()
+                    branch_flags = dict(flags)
+                    branch_guarded = dict(guarded)
+                    scan(body, branch_written, branch_guarded, branch_flags)
                     per_branch.append(branch_written)
+                    per_branch_flags.append(branch_flags)
+                    per_branch_guarded.append(branch_guarded)
                     # An ``elif`` arm also needs the earlier conditions false: a later branch on its own can run without it
                     if key is not None and position == 0:
                         recorded[key] = ({str(name) for name in cond.get_free_symbols()}, branch_written)
+                exhaustive = any(cond is None for cond, branch in block.branches)
+                if exhaustive:
+                    merge_guards(guarded, per_branch_guarded, per_branch)
                 guarded.update(recorded)
+                if not exhaustive:
+                    per_branch_flags.append(flags)
+                merge_flags(flags, per_branch_flags)
                 if per_branch and any(cond is None for cond, _ in block.branches):
                     written |= set.intersection(*per_branch)
+                elif per_branch:
+                    written |= first_trip_stores(region, block, per_branch[0])
             elif isinstance(block, LoopRegion):
                 inner = dict(guarded)
                 forget(inner, changed_by(block))
+                for name in changed_by(block):
+                    flags.pop(name, None)
                 pushed = bool(iteration_stores(block, written, inner))
-                scan(block, written, inner)
+                scan(block, written, inner, dict(flags))
                 if pushed:
                     earlier.pop()
             elif isinstance(block, ControlFlowRegion):
                 # Straight-line: its walk is part of this pass and forgets as it goes.
-                scan(block, written, guarded)
+                scan(block, written, guarded, flags)
                 continue
             if guarded:
                 forget(guarded, changed_by(block))
 
     scan(loop, set(), {})
     return carried
+
+
+FALSE_LITERALS = ("False", "false", "0", "0.0")
+
+
+def true_flags(cond: str) -> set[str]:
+    """The names ``cond`` needs nonzero: the condition itself, or a conjunct, is ``f``, ``f != 0``, ``f == 1`` or
+    ``f == True``."""
+    test = symbolic.pystr_to_symbolic(cond)
+    names: set[str] = set()
+    for part in sp.And.make_args(test):
+        if isinstance(part, sp.Symbol):
+            names.add(str(part))
+        elif isinstance(part, sp.Ne) and part.rhs == 0 and isinstance(part.lhs, sp.Symbol):
+            names.add(str(part.lhs))
+        elif isinstance(part, sp.Eq) and part.rhs in (1, sp.true) and isinstance(part.lhs, sp.Symbol):
+            names.add(str(part.lhs))
+    return names
+
+
+def constant_false_write(state: SDFGState, dn: nodes.AccessNode) -> bool | None:
+    """For a scalar flag ``dn`` that ``state`` sets whole from one input-free tasklet: whether the value is a constant
+    false. ``None`` when the write is anything else (several writers, a dynamic memlet, a computed value from a
+    nested SDFG, a partial write), so the flag's meaning is lost."""
+    desc = state.sdfg.arrays[dn.data]
+    edges = [e for e in state.in_edges(dn) if not e.data.is_empty()]
+    if len(edges) != 1 or desc.total_size != 1 or edges[0].data.dynamic or edges[0].data.wcr is not None:
+        return None
+    src = edges[0].src
+    if not isinstance(src, nodes.Tasklet):
+        return None
+    if any(not e.data.is_empty() for e in state.in_edges(src)):
+        return False
+    code = src.code.as_string.strip()
+    if "=" not in code or "\n" in code:
+        return False
+    return code.split("=", 1)[1].strip().rstrip(";").strip() in FALSE_LITERALS
+
+
+def set_flags(state: SDFGState, written: set[Store], flags: dict[str, set[Store] | None]) -> None:
+    """Record in ``flags`` each flag ``state`` writes: ``None`` for a constant false, else what ``written`` holds now.
+    A write whose value cannot be told drops the flag."""
+    for dn in state.data_nodes():
+        if state.in_degree(dn) == 0 or not is_written(state, dn):
+            continue
+        verdict = constant_false_write(state, dn)
+        if verdict is None:
+            flags.pop(dn.data, None)
+        else:
+            flags[dn.data] = None if verdict else set(written)
+
+
+def merge_guards(
+    guarded: dict[str, tuple[set[str], set[Store]]],
+    paths: list[dict[str, tuple[set[str], set[Store]]]],
+    written: list[set[Store]],
+) -> None:
+    """``guarded`` after every arm of an exhaustive conditional: a condition an arm recorded keeps what each arm
+    guarantees once it is true, its own record there or else all that arm wrote (graupel's ``IF (t < tmelt)`` arm
+    stores ``ice_dep`` under ``IF (sig)``, the other arm stores it outright, so a later ``IF (sig)`` reads it)."""
+    for key in {key for path in paths for key in path if key not in guarded or path[key] is not guarded[key]}:
+        reads = next(path[key][0] for path in paths if key in path)
+        stores = [path[key][1] if key in path else arm for path, arm in zip(paths, written)]
+        guarded[key] = (reads, set.intersection(*stores))
+
+
+def merge_flags(flags: dict[str, set[Store] | None], paths: list[dict[str, set[Store] | None]]) -> None:
+    """``flags`` after paths meet: a flag keeps a meaning only when every path gives it one; a path where it is false
+    adds nothing, the others keep what they all stored."""
+    merged: dict[str, set[Store] | None] = {}
+    for name in set.intersection(*(set(p) for p in paths)) if paths else set():
+        stores = [p[name] for p in paths if p[name] is not None]
+        merged[name] = set.intersection(*stores) if stores else None
+    flags.clear()
+    flags.update(merged)
 
 
 def nested_blocks(region: ControlFlowRegion) -> Iterator[ControlFlowBlock]:
