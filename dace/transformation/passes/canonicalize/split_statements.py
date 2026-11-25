@@ -396,17 +396,59 @@ def write_subsets(body: Body, name: str) -> list[subsets.Subset]:
     return out
 
 
-def suppress_writes(body: SDFG, name: str) -> None:
-    """Delete the stores to ``name`` inside ``body``, keeping every load of it."""
+def remove_scope(state: SDFGState, entry: nodes.EntryNode) -> None:
+    """Remove the scope of ``entry`` whole, splicing the order it carried and the access nodes left isolated."""
+    xit = state.exit_node(entry)
+    preds = [e.src for e in state.in_edges(entry) if e.data.is_empty()]
+    succs = [e.dst for e in state.out_edges(xit) if e.data.is_empty()]
+    outer = dict.fromkeys([e.src for e in state.in_edges(entry)] + [e.dst for e in state.out_edges(xit)])
+    state.remove_nodes_from(state.scope_subgraph(entry).nodes())
+    for src in preds:
+        for dst in succs:
+            state.add_nedge(src, dst, Memlet())
+    for n in outer:
+        if isinstance(n, nodes.AccessNode) and state.degree(n) == 0:
+            state.remove_node(n)
+
+
+def cut_store(state: SDFGState, edge: ValueEdge) -> None:
+    """Remove the store ``edge`` with the dataflow feeding only it; a scope left storing nothing goes whole."""
     from dace.sdfg import utils as sdutil
 
+    src = edge.src
+    # ``remove_edge_and_dangling_path`` from a scope exit's out-edge would keep the IN_ edge without its OUT_ edge,
+    # and from an edge into the exit it removes an emptied exit but not its entry.
+    if isinstance(src, nodes.ExitNode):
+        if len(list(state.out_edges_by_connector(src, edge.src_conn))) > 1:
+            state.remove_edge(edge)
+        elif all(e is edge for e in value_edges(state.out_edges(src))):
+            remove_scope(state, state.entry_node(src))
+        else:
+            state.remove_edge(edge)
+            src.remove_out_connector(edge.src_conn)
+            inner = "IN_" + edge.src_conn[4:]
+            for e in list(state.in_edges_by_connector(src, inner)):
+                cut_store(state, e)
+            src.remove_in_connector(inner)
+    elif isinstance(edge.dst, nodes.ExitNode):
+        state.remove_edge(edge)
+        if edge.src_conn and not list(state.out_edges_by_connector(src, edge.src_conn)):
+            src.remove_out_connector(edge.src_conn)
+    else:
+        sdutil.remove_edge_and_dangling_path(state, edge)
+
+
+def suppress_writes(body: SDFG, name: str) -> None:
+    """Delete the stores to ``name`` inside ``body``, keeping every load of it."""
     for state in body.states():
         for node in [n for n in state.data_nodes() if n.data == name]:
             # Cutting one store's dangling path can take another access node of ``name`` with it (a copy between two).
             if node not in state.nodes():
                 continue
             for e in producer_edges(state, node):
-                sdutil.remove_edge_and_dangling_path(state, e)
+                # Removing a scope whole can take a later store of ``node`` with it
+                if e in state.in_edges(node):
+                    cut_store(state, e)
             if node in state.nodes() and state.degree(node) == 0:
                 state.remove_node(node)
 
@@ -427,7 +469,11 @@ def drop_dataless_access_nodes(body: SDFG) -> None:
                 # Only the EMPTY in-edges carry order worth keeping
                 preds = [e.src for e in state.in_edges(node) if e.data.is_empty()]
                 succs = [e.dst for e in state.out_edges(node)]
-                state.remove_node(node)
+                for e in producer_edges(state, node):
+                    if e in state.in_edges(node):
+                        cut_store(state, e)
+                if node in state.nodes():
+                    state.remove_node(node)
                 for src in preds:
                     for dst in succs:
                         state.add_nedge(src, dst, Memlet())
