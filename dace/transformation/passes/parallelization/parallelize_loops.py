@@ -454,10 +454,14 @@ class ParallelizeLoops(ppl.Pass):
             if xform.solver_facts is not None:
                 facts.extend(xform.solver_facts.used)
             return True
-        vouched = xform.contract_arrays
+        vouched, vouched_reads = xform.contract_arrays, xform.contract_reads
         used: list[array_facts.ArrayFact] = []
         try:
-            while xform.last_refusal is not None and xform.last_refusal.kind is Refusal.NON_UNIQUE_WRITE:
+            # A conditional write is refused as dynamic when its index is not the iterator's: the same proof settles it
+            while xform.last_refusal is not None and xform.last_refusal.kind in (
+                Refusal.NON_UNIQUE_WRITE,
+                Refusal.DYNAMIC_WRITE,
+            ):
                 name = xform.last_refusal.container
                 if name is None or name in xform.contract_arrays:
                     return False
@@ -465,7 +469,9 @@ class ParallelizeLoops(ppl.Pass):
                 if proof is None:
                     return False
                 used += [f for f in proof if f not in used]
+                # The proof also holds that the loop reads only the elements it stores (``reads_own_slots``)
                 xform.contract_arrays = xform.contract_arrays | {name}
+                xform.contract_reads = xform.contract_reads | {name}
                 if xform.probe(self.permissive):
                     # The contract's disjointness is a Z3 proof
                     xform.used_solver = True
@@ -475,7 +481,7 @@ class ParallelizeLoops(ppl.Pass):
                     return True
             return False
         finally:
-            xform.contract_arrays = vouched
+            xform.contract_arrays, xform.contract_reads = vouched, vouched_reads
 
     def accepts(
         self,

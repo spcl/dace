@@ -20,6 +20,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
+import numpy as np
 import sympy
 
 from dace import data as dt
@@ -624,10 +625,24 @@ def extreme(value: Any, ranges: list[tuple[str, Any, Any]], upper: bool) -> Any 
     return value
 
 
-def stored_value(state: SDFGState, edge: Any) -> Any | None:
+#: The conditional expressions a tasklet's right-hand side spells a select with: ``(condition, then, else)``.
+SELECTS = (symbolic.IfExpr, symbolic.ITE)
+
+
+def integer_polynomial(value: Any, clamps: bool) -> bool:
+    """Whether ``value`` is a polynomial with integer constants, or (``clamps``) a ``Min``, ``Max`` or select of such."""
+    if clamps and isinstance(value, (sympy.Min, sympy.Max)):
+        return all(integer_polynomial(a, clamps) for a in value.args)
+    if clamps and isinstance(value, SELECTS):
+        return all(integer_polynomial(a, clamps) for a in value.args[1:])
+    return value.is_polynomial() and all(number.is_Integer for number in value.atoms(sympy.Number))
+
+
+def stored_value(state: SDFGState, edge: Any, clamps: bool = False) -> Any | None:
     """What ``edge`` stores, when it is the same integer polynomial every time: a constant fill, or the expression a
     tasklet without inputs (or a nested SDFG's one store, see :func:`nested_store`) assigns. A stored float would be
-    truncated, a ``Mod`` or ``floor`` has no slope."""
+    truncated, a ``Mod`` or ``floor`` has no slope. With ``clamps``, a ``Min``, ``Max`` or select of polynomials
+    also counts."""
     node, inner = producer(state, edge)
     if node is None or edge.data.wcr is not None or inner.data.wcr is not None:
         return None
@@ -640,9 +655,22 @@ def stored_value(state: SDFGState, edge: Any) -> Any | None:
     else:
         text = assignment_value(node) if isinstance(node, nodes.Tasklet) and not node.in_connectors else None
         value = None if text is None else symbolic.pystr_to_symbolic(text)
-    if not isinstance(value, sympy.Expr) or not value.is_polynomial():
+    return value if isinstance(value, sympy.Expr) and integer_polynomial(value, clamps) else None
+
+
+def clamped_range(value: Any, ranges: list[tuple[str, Any, Any]]) -> tuple[Any, Any] | None:
+    """The smallest and largest value of ``value``, a polynomial or a ``Min``, ``Max`` or select of them, while each of
+    ``ranges`` ranges over its bounds (:func:`extreme`); None unless every polynomial in it is affine."""
+    if not isinstance(value, (sympy.Min, sympy.Max, *SELECTS)):
+        lo, hi = extreme(value, ranges, False), extreme(value, ranges, True)
+        return None if lo is None or hi is None else (lo, hi)
+    select = isinstance(value, SELECTS)
+    parts = [clamped_range(a, ranges) for a in (value.args[1:] if select else value.args)]
+    if None in parts:
         return None
-    return value if all(number.is_Integer for number in value.atoms(sympy.Number)) else None
+    # A select takes either branch; Min and Max are monotone in each argument
+    low, high = (sympy.Min, sympy.Max) if select else (type(value), type(value))
+    return low(*(p[0] for p in parts)), high(*(p[1] for p in parts))
 
 
 def scope_ranges(sdfg: SDFG, state: SDFGState, node: nodes.Node) -> list[tuple[str, Any, Any]] | None:
@@ -672,13 +700,12 @@ def scope_ranges(sdfg: SDFG, state: SDFGState, node: nodes.Node) -> list[tuple[s
 def store_bounds(sdfg: SDFG, state: SDFGState, edge: Any, invariant: set[str]) -> tuple[Any, Any] | None:
     """``(lo, hi)`` of every value ``edge`` stores (:func:`stored_value`), affine in the enclosing map parameters and
     loop iterators (:func:`scope_ranges`), at their extremes; None unless both read only ``invariant`` names."""
-    value = stored_value(state, edge)
+    value = stored_value(state, edge, clamps=True)
     ranges = None if value is None else scope_ranges(sdfg, state, producer(state, edge)[0])
-    if ranges is None:
+    bounds = None if ranges is None else clamped_range(value, ranges)
+    if bounds is None or any(b.atoms(symbolic.Subscript) for b in bounds):
         return None
-    lo, hi = extreme(value, ranges, False), extreme(value, ranges, True)
-    if lo is None or hi is None or lo.atoms(symbolic.Subscript) or hi.atoms(symbolic.Subscript):
-        return None
+    lo, hi = bounds
     return (lo, hi) if {str(s) for b in (lo, hi) for s in b.free_symbols} <= invariant else None
 
 
@@ -815,15 +842,28 @@ def loop_bindings(loop: LoopRegion) -> tuple[dict[str, Any], Counter]:
     return bindings, assigned
 
 
+def stored_subsets(state: SDFGState, edge: Any) -> list[subsets.Subset]:
+    """What the store ``edge`` really writes: the accesses of the nested SDFG behind a map exit (one box each), else the
+    subset of ``edge``."""
+    from dace.transformation.interstate.loop_to_map import exact_accesses  # avoid an import loop
+
+    return exact_accesses(state, edge) or [edge.data.subset]
+
+
 def write_bounds(
-    loop: LoopRegion, state: SDFGState, edge: Any, bindings: dict[str, Any], assigned: Counter
+    loop: LoopRegion,
+    state: SDFGState,
+    edge: Any,
+    bindings: dict[str, Any],
+    assigned: Counter,
+    subset: subsets.Subset,
 ) -> tuple[list[tuple[Any, Any]], Any] | None:
-    """``(box, guard)`` of one store, ``box`` its ``(lo, hi)`` per dimension, over the iterator and names ``loop``
-    does not assign, else ``None``."""
+    """``(box, guard)`` of the store of ``subset`` through ``edge``, ``box`` its ``(lo, hi)`` per dimension, over the
+    iterator and names ``loop`` does not assign, else ``None``."""
     if edge.data.wcr is not None or enclosing_loops(state, loop):
         return None
     box = []
-    for rb, re_, _ in edge.data.subset.ndrange():
+    for rb, re_, stride in subset.ndrange():
         lo = bound_expression(symbolic.pystr_to_symbolic(str(rb)), bindings, assigned)
         hi = bound_expression(symbolic.pystr_to_symbolic(str(re_)), bindings, assigned)
         if lo is None or hi is None:
@@ -868,14 +908,17 @@ def reads_own_slots(loop: LoopRegion, name: str, edges: list[tuple[SDFGState, An
     """Whether every read of ``name`` in ``loop`` is at the subset of one of its stores ``edges``: once no two
     iterations store into one element, such a read sees only its own iteration's element (``out[p[i]] = f(out[p[i]])``).
     A read in an interstate edge or a header has no access node to compare, and refuses."""
-    slots = {str(e.data.get_dst_subset(e, st)) for st, e in edges}
+    from dace.transformation.interstate.loop_to_map import exact_accesses  # avoid an import loop
+
+    slots = {str(subset) for st, e in edges for subset in stored_subsets(st, e)}
     for st in states_of(loop):
         for dn in st.data_nodes():
             if dn.data != name:
                 continue
             for e in st.out_edges(dn):
-                if e.data is not None and not e.data.is_empty() and str(e.data.get_src_subset(e, st)) not in slots:
-                    return False
+                if e.data is not None and not e.data.is_empty():
+                    if any(str(x) not in slots for x in exact_accesses(st, e) or [e.data.get_src_subset(e, st)]):
+                        return False
     arrays = loop.sdfg.arrays
     if any(m.data == name for e in loop.all_interstate_edges() for m in e.data.get_read_memlets(arrays)):
         return False
@@ -905,33 +948,35 @@ def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[A
     bindings, assigned = loop_bindings(loop)
     stores = []
     for state, edge in edges:
-        store = write_bounds(loop, state, edge, bindings, assigned)
-        if store is None or len(store[0]) != edges[0][1].data.subset.dims():
-            return None
-        stores.append(store)
+        for subset in stored_subsets(state, edge):
+            store = write_bounds(loop, state, edge, bindings, assigned, subset)
+            if store is None or len(store[0]) != edges[0][1].data.subset.dims():
+                return None
+            stores.append(store)
     exprs = [e for box, guard in stores for e in [*(x for lh in box for x in lh), guard] if e is not None]
     exprs += list(bounds[:2])
     arrays = {str(a.args[0]) for e in exprs for a in e.atoms(symbolic.Subscript)}
     if not arrays or arrays & set(written):
         return None
-    facts = facts_at(sdfg, loop, sorted(arrays))
-    if not facts:
+    # A table of compile-time constants (``FoldConstantTables``) is read as it is, not as an array with facts
+    tables = {
+        n: tuple(int(v) for v in sdfg.constants[n])
+        for n in sorted(arrays)
+        if n in sdfg.constants and np.ndim(sdfg.constants[n]) == 1 and sdfg.arrays[n].dtype in dtypes.INTEGER_TYPES
+    }
+    facts = facts_at(sdfg, loop, sorted(arrays - tables.keys()))
+    if not facts and not tables:
         return None
     start, end, step = bounds
     with canon_stats.timed("z3", sdfg):
         for x, first in enumerate(stores):
             for second in stores[x:]:
-                if prove_disjoint_under_facts(first, second, loop.loop_variable, start, end, step, facts) is not True:
+                if (
+                    prove_disjoint_under_facts(first, second, loop.loop_variable, start, end, step, facts, tables)
+                    is not True
+                ):
                     return None
     return facts
-
-
-def selects(term: Any, found: dict[str, list[Any]]) -> None:
-    """Collect every ``Select(array, index)`` in ``term`` by array name."""
-    if required(z3).is_select(term):
-        found.setdefault(str(term.arg(0)), []).append(term.arg(1))
-    for child in term.children():
-        selects(child, found)
 
 
 def fact_axioms(facts: list[ArrayFact], arrays: dict[str, Any], terms: list[Any], sym_cache: dict[str, Any]) -> list:
@@ -939,7 +984,7 @@ def fact_axioms(facts: list[ArrayFact], arrays: dict[str, Any], terms: list[Any]
     z = required(z3)
     reads: dict[str, list[Any]] = {}
     for term in terms:
-        selects(term, reads)
+        smt_dependence.selects(term, reads)
     axioms = []
     for fact in facts:
         if fact.array not in reads:
@@ -995,9 +1040,11 @@ def prove_disjoint_under_facts(
     end: Any,
     step: Any,
     facts: list[ArrayFact],
+    tables: dict[str, tuple[int, ...]] | None = None,
 ) -> bool | None:
     """Whether a store ``first`` of one iteration and a store ``second`` of another, each ``(box, guard)`` and each
-    passing its guard, write disjoint boxes, given ``facts`` about the arrays they and the loop bounds read."""
+    passing its guard, write disjoint boxes, given ``facts`` about the arrays they and the loop bounds read and the
+    ``tables`` of constants they read, which hold exactly their values."""
     z = required(z3)
     sym_cache: dict[str, Any] = {}
     arrays: dict[str, Any] = {}
@@ -1019,6 +1066,13 @@ def prove_disjoint_under_facts(
     conds = [c for c in (c1, c2) if c is not True]
     terms = [x for lh in d1 + d2 for x in lh] + conds + list(b1) + list(b2)
     axioms = fact_axioms(facts, arrays, terms, sym_cache)
+    reads: dict[str, list[Any]] = {}
+    for term in terms:
+        smt_dependence.selects(term, reads)
+    for name, values in (tables or {}).items():
+        table = smt_dependence.table_term(values)
+        for x in reads.get(name, ()):
+            axioms += [0 <= x, x < len(values), z.Select(arrays[name], x) == z.Select(table, x)]
     overlap = z.And(*(z.And(lo1 <= hi2, lo2 <= hi1) for (lo1, hi1), (lo2, hi2) in zip(d1, d2)))
     antecedent = z.And(i1 != i2, *b1, *b2, *conds, *axioms)
     return smt_dependence.prove_unsat(antecedent, z.Not(overlap))

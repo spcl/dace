@@ -6,6 +6,7 @@ import re
 from collections.abc import Iterator
 from typing import Any, NamedTuple
 
+import numpy as np
 import sympy
 
 from dace import SDFG, data, dtypes, symbolic, symbolic_facts
@@ -25,12 +26,14 @@ from dace.sdfg.state import (
     ControlFlowRegion,
     LoopRegion,
     SDFGState,
+    SymbolResolver,
 )
 from dace.subsets import Range, Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
-from dace.transformation.interstate.loop_to_map import LoopRefusal, Refusal
-from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
+from dace.transformation.interstate.loop_to_map import LoopRefusal, Refusal, loop_varying_symbols
+from dace.transformation.passes.analysis import array_facts, canon_stats, loop_analysis, smt_dependence
+from dace.transformation.passes.parallelization.facts import SolverFacts
 
 # Three classes, named by the first word of every loop hint: ``parallel`` and ``sequential`` are settled and need no
 # further dependence reasoning, ``unknown`` is the only open one.
@@ -818,6 +821,19 @@ def fixed_symbols(loop: LoopRegion) -> set[str]:
     return set(loop.sdfg.symbols) - assigned - {r.loop_variable for r in loops} - set(loop.sdfg.constants)
 
 
+def outer_containers(sdfg: SDFG, name: str) -> list[nodes.AccessNode] | None:
+    """The access nodes every caller of ``sdfg`` binds its argument ``name`` to, ``None`` unless each one is an access
+    node (``sdfg`` is the top SDFG, or the binding is not a plain container)."""
+    node, state = sdfg.parent_nsdfg_node, sdfg.parent
+    if node is None or not isinstance(state, SDFGState) or node not in state.nodes():
+        return None
+    outer = [state.memlet_path(e)[0].src for e in state.in_edges(node) if e.dst_conn == name]
+    outer += [state.memlet_path(e)[-1].dst for e in state.out_edges(node) if e.src_conn == name]
+    if not outer or not all(isinstance(n, nodes.AccessNode) for n in outer):
+        return None
+    return outer
+
+
 def is_scratch(sdfg: SDFG, name: str) -> bool:
     """Whether container ``name`` of ``sdfg`` is scratch: a transient here, or an argument of a nested SDFG that every
     caller binds to scratch."""
@@ -826,14 +842,28 @@ def is_scratch(sdfg: SDFG, name: str) -> bool:
         return False
     if desc.transient:
         return True
-    node, state = sdfg.parent_nsdfg_node, sdfg.parent
-    if node is None or not isinstance(state, SDFGState) or node not in state.nodes():
+    outer = outer_containers(sdfg, name)
+    return outer is not None and all(is_scratch(sdfg.parent.sdfg, n.data) for n in outer)
+
+
+def is_free_input(sdfg: SDFG, name: str) -> bool:
+    """Whether container ``name`` of ``sdfg`` is input the program never computes: not a transient, not written in
+    ``sdfg``, and, as an argument of a nested SDFG, bound by every caller to such a container."""
+    desc = sdfg.arrays.get(name)
+    if desc is None or desc.transient or array_facts.writes(sdfg, name):
         return False
-    outer = [state.memlet_path(e)[0].src for e in state.in_edges(node) if e.dst_conn == name]
-    outer += [state.memlet_path(e)[-1].dst for e in state.out_edges(node) if e.src_conn == name]
-    if not outer or not all(isinstance(n, nodes.AccessNode) for n in outer):
-        return False
-    return all(is_scratch(state.sdfg, n.data) for n in outer)
+    if sdfg.parent_nsdfg_node is None:
+        return True
+    outer = outer_containers(sdfg, name)
+    return outer is not None and all(is_free_input(sdfg.parent.sdfg, n.data) for n in outer)
+
+
+class Search(NamedTuple):
+    """What the witness search found: the label of a witnessed dependence, else the computed values the one conflict it
+    found rests on, if any."""
+
+    label: str | None = None
+    blocker: str | None = None
 
 
 def declared_conditions(loop: LoopRegion, traps: list[tuple[str, set[str]]]) -> smt_dependence.Guard:
@@ -853,10 +883,16 @@ def declared_conditions(loop: LoopRegion, traps: list[tuple[str, set[str]]]) -> 
 def witnessed_carrying_access(loop: LoopRegion, traps: list[tuple[str, set[str]]] | None = None) -> str | None:
     """``RAW on A[k, j] (witness: N=3, k=0 and k=1)`` when the solver finds two iterations of ``loop`` that touch one
     element of an argument array, choosing values for array sizes only; a parameter the caller fixes may appear
-    when the conflict holds for every in-bounds value of it."""
+    when the conflict holds for every in-bounds value of it, and so may an array the program fills before the loop,
+    when it holds for every content its range allows."""
+    return witness_search(loop, traps).label
+
+
+def witness_search(loop: LoopRegion, traps: list[tuple[str, set[str]]] | None = None) -> Search:
+    """:func:`witnessed_carrying_access`, with the values a refused conflict rests on."""
     counter = loop_range(loop, {}) if loop.loop_variable else None
     if counter is None:
-        return None
+        return Search()
     # The loops around ``loop`` in its SDFG, up to the first branch: below a branch the loop need not run at all.
     outer = []
     block = loop.parent_graph
@@ -879,6 +915,13 @@ def witnessed_carrying_access(loop: LoopRegion, traps: list[tuple[str, set[str]]
     sizes = size_symbols(loop.sdfg)
     fixed = fixed_symbols(loop) - sizes
     declared = declared_conditions(loop, traps or [])
+    read = OrderedSet(name for site in sites if site.guard for name in guard_arrays(site.guard))
+    tables = {name: tuple(int(v) for v in loop.sdfg.constants[name]) for name in read if name in loop.sdfg.constants}
+    computed = frozenset(name for name in read if name not in tables and not is_free_input(loop.sdfg, name))
+    facts = (
+        SolverFacts(loop, SymbolResolver().facts_at(loop), loop_varying_symbols(loop)) if computed or fixed else None
+    )
+    blocker = None
     pairs = [(w, o) for w in sites if w.access.write for o in sites if o.access.array == w.access.array]
     pairs.sort(key=lambda pair: pair[1].access.write)
     for write, other in pairs:
@@ -909,18 +952,23 @@ def witnessed_carrying_access(loop: LoopRegion, traps: list[tuple[str, set[str]]
                     kills=kills,
                     guards=(first.guard, second.guard),
                     assumptions=declared,
+                    tables=tables,
+                    computed=computed,
+                    facts=facts,
                 )
-            if found is not None:
-                return conflict_label(first, second, found, counter[0])
-    return None
+            if isinstance(found, smt_dependence.NeedsComputed):
+                blocker = blocker or found.values
+            elif found is not None:
+                return Search(conflict_label(first, second, found, counter[0]))
+    return Search(blocker=blocker)
 
 
 def input_guard(loop: LoopRegion, guard: smt_dependence.Guard | None) -> smt_dependence.Guard | None:
-    """``guard`` when every array it reads is integer input nothing under ``loop`` writes, so a witness may choose its
-    elements; else ``None``."""
+    """``guard`` when every array it reads is integer data nothing under ``loop`` writes and that the witness search can
+    take as it is: input the witness may choose, a table of the SDFG's constants, or (one-dimensional) an array the
+    program fills before ``loop``; else ``None``."""
     if not guard:
         return guard
-    read = {str(e.args[0]) for term in guard for e in as_basic(term[0]).atoms(symbolic.Subscript)}
     written = {
         node.data
         for block in loop.all_control_flow_blocks()
@@ -928,12 +976,21 @@ def input_guard(loop: LoopRegion, guard: smt_dependence.Guard | None) -> smt_dep
         for node in block.data_nodes()
         if block.in_degree(node) > 0
     }
-    for name in read:
+    for name in guard_arrays(guard):
         desc = loop.sdfg.arrays.get(name)
         # A solver integer is a value of an integer or boolean element, not always of a float one
         if name in written or desc is None or desc.dtype not in dtypes.INTEGER_TYPES:
             return None
+        if name in loop.sdfg.constants:
+            if np.ndim(loop.sdfg.constants[name]) != 1:
+                return None
+        elif len(desc.shape) != 1 and not is_free_input(loop.sdfg, name):
+            return None
     return guard
+
+
+def guard_arrays(guard: smt_dependence.Guard) -> OrderedSet[str]:
+    return OrderedSet(str(e.args[0]) for term in guard for e in as_basic(term[0]).atoms(symbolic.Subscript))
 
 
 def flows_into(read: Site, write: Site) -> bool:
@@ -1057,10 +1114,20 @@ def loop_hint(loop: LoopRegion, session: Any = None, traps: list[tuple[str, set[
     required = order_requirement(reason)
     if required is not None:
         return required
-    access = proof_of_carry(loop, reason, traps)
+    searched = witness_search(loop, traps)
+    access = proof_of_carry(loop, reason, searched.label)
     if access is not None:
         return SEQUENTIAL_PROVEN.format(reason=proven_reason(access)) + carrier_note(loop, access)
+    if searched.blocker is not None:
+        return unproven_hint(loop, f"{computed_value_reason(searched.blocker)}; {UNSHOWN_TAIL}")
     return unproven_hint(loop, unproven_reason(reason, loop))
+
+
+def computed_value_reason(values: str) -> str:
+    return (
+        f"the only conflict the solver found needs {values}, a value computed before the loop that the solver could "
+        "not show is reachable"
+    )
 
 
 def unproven_hint(loop: LoopRegion, reason: str) -> str:
@@ -1080,7 +1147,7 @@ def recurrence_before_rewrite(loop: LoopRegion) -> str | None:
     reason = refusal_reason(loop)
     if reason is None or isinstance(reason, str):
         return None
-    found = re.match(r"(RAW|WAR|WAW) on (\w+)\[", proof_of_carry(loop, reason) or "")
+    found = re.match(r"(RAW|WAR|WAW) on (\w+)\[", proof_of_carry(loop, reason, witnessed_carrying_access(loop)) or "")
     if found is None:
         return None
     meaning = CONFLICT_MEANING[found.group(1)]
@@ -1220,12 +1287,9 @@ def carrier_note(loop: LoopRegion, access: str) -> str:
     return f"; {text} carr{'ies' if len(found) == 1 else 'y'} the values from one iteration to the next"
 
 
-def proof_of_carry(
-    loop: LoopRegion, reason: LoopRefusal, traps: list[tuple[str, set[str]]] | None = None
-) -> str | None:
-    """The access that proves ``loop`` carries a dependence, or ``None``: a solver witness, else a constant distance or
-    a carried symbol ``LoopToMap`` named."""
-    witnessed = witnessed_carrying_access(loop, traps)
+def proof_of_carry(loop: LoopRegion, reason: LoopRefusal, witnessed: str | None) -> str | None:
+    """The access that proves ``loop`` carries a dependence, or ``None``: the solver ``witnessed`` (its
+    :func:`witness_search` label), else a constant distance or a carried symbol ``LoopToMap`` named."""
     if witnessed is not None:
         return witnessed
     # The element-level proof also names the direction: LoopToMap's "read-after-write conflict" is
