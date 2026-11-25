@@ -354,6 +354,8 @@ RENDERABLE_BY_NODE_DEVICE: dict[str, tuple[str, ...]] = {
     "FindFirst": ("CUDA",),
     "Reduce": ("pure",),
     "Scan": ("CUDA",),
+    # Its host lowering sorts the device keys on the host; the CUDA one is CUB's radix sort.
+    "IntegerSort": ("CUDA",),
     # Its host lowering runs the OpenMP check over the index array, a device pointer here.
     "ScatterConflictCheck": ("CUDA",),
     "StateScan": ("CUDA",),

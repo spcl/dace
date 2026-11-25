@@ -4021,6 +4021,7 @@ HIP_DEVICE_INLINE_DEFINITIONS: dict[str, str] = {
     "struct ScanTag {};\n"
     "struct DetectFlagTag {};\n"
     "struct DetectOwnerTag {};\n"
+    "struct SortTag {};\n"
     "struct cpf_scratch_block {\n"
     "    void *ptr = nullptr;\n"
     "    size_t capacity = 0;\n"
@@ -4526,6 +4527,7 @@ HIP_CTYPE_RENAMES: dict[str, str] = {
     "dace::cub::DetectFlagTag": "DetectFlagTag",
     **{f"dace::cub::{name}": name for name in ("ArgMaxOp", "ArgMinOp", "ArgPairOp", "IdentityXf", "AbsXf")},
     "dace::cub::DetectOwnerTag": "DetectOwnerTag",
+    "dace::cub::SortTag": "SortTag",
     # The toolkit's own bfloat16, which ``dace::bfloat16`` IS in a device build (``dace/types.h``): two bytes, the
     # bit layout of HB's ``__npb_bf16`` (``uint16_t``) storage, so a pointer to either crosses the C ABI alike.
     "dace::bfloat16": "__hip_bfloat16",
@@ -4540,10 +4542,10 @@ CUDA_CTYPE_RENAMES: dict[str, str] = {**HIP_CTYPE_RENAMES, "dace::bfloat16": "__
 #:
 #: ``CUDA`` declares the toolkit as a CMake package. A device dialect is BUILT by that toolkit's
 #: compiler, so the package is there by construction, and there is nothing to find and nothing to
-#: link. ``ScanScratch`` and ``DetectScratch`` pre-allocate and release the CUB scratch pool;
+#: link. ``ScanScratch``, ``DetectScratch`` and ``SortScratch`` pre-allocate and release the CUB scratch pool;
 #: :data:`HIP_DEVICE_INLINE_DEFINITIONS`'s ``get_scratch`` allocates on first use and frees at
 #: static destruction, so both halves of that handshake are inside the unit.
-DEVICE_PROVIDED_ENVIRONMENTS: frozenset[str] = frozenset({"CUDA", "ScanScratch", "DetectScratch"})
+DEVICE_PROVIDED_ENVIRONMENTS: frozenset[str] = frozenset({"CUDA", "ScanScratch", "DetectScratch", "SortScratch"})
 
 
 class VendorLibrary(NamedTuple):
