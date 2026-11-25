@@ -235,6 +235,10 @@ class Reason(enum.Enum):
     THREAD_BLOCK = "thread block"
     #: ``unknown``: a branch condition reads a container the loop writes.
     GUARD_READS_WRITTEN = "the guard "
+    #: ``unknown``: the index of the read that may conflict is a symbol the loop assigns.
+    ASSIGNED_INDEX = "the index "
+    #: ``unknown``: the test saw the read that may conflict only as a range it could bound.
+    RANGE_READ = "the test could only bound the read "
     #: ``unknown``: the solver used up its resource budget before it found a conflict or showed there is none.
     BUDGET_EXPIRED = "the solver ran out of its budget before it found a conflict or showed there is none"
 

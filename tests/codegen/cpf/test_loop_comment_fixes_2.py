@@ -3,9 +3,13 @@
 
 Each test renders a few-line program the way the bench does and checks the line the finding is about."""
 
+from unittest import mock
+
 import dace
 from dace.codegen import cpf_summary
 from dace.codegen.cpf import render
+from dace.cpf_lowering import Reason
+from dace.transformation.passes.analysis import smt_dependence
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from tests.codegen.cpf.conftest import render_gpu
@@ -334,6 +338,47 @@ def test_an_unknown_loop_under_a_guard_on_written_data_names_the_guard():
         assert "reads aa, which this loop writes" in line and "(outside the analyzable domain)" in line, line
 
 
+S = dace.symbol("S")
+
+
+@dace.program
+def modular_rows(a: dace.float64[N, N]):
+    for i in range(1, N):
+        for j in range(N):
+            a[i, j] = a[i - 1, (j * S) % N] + 1.0
+
+
+@dace.program
+def indirect_read(a: dace.float64[N], idx: dace.int64[N]):
+    for i in range(N):
+        a[i] = a[idx[i]] + 1.0
+
+
+def unknown_lines(code: str) -> list[str]:
+    return [line.strip() for line in code.splitlines() if line.strip().startswith("// unknown")]
+
+
+def test_an_unknown_loop_names_a_read_it_could_only_bound():
+    """An unknown loop whose read the test saw only as the range ``a[i - 1, 0:N]`` said nothing of why."""
+    (line,) = unknown_lines(bench_c(modular_rows, "cpf_review2_range_read"))
+    assert line.startswith("// unknown -- the test could only bound the read a[i - 1, 0:N]: "), line
+    assert "found no two iterations that meet on one element" in line, line
+
+
+def test_an_unknown_loop_names_an_index_it_assigns():
+    """An unknown loop that reads ``a[sym0]``, ``sym0 = idx[i]``, did not say the loop assigns the index."""
+    (line,) = unknown_lines(bench_c(indirect_read, "cpf_review2_assigned_index"))
+    assert line.startswith("// unknown -- the index sym0 of a[sym0] is assigned in the loop (sym0 = idx[i])"), line
+
+
+def test_an_unknown_loop_says_when_the_solver_ran_out_of_budget():
+    """A witness query z3 gave up on read as if the test had answered it."""
+    original = smt_dependence.bounded_solver
+    with mock.patch.object(smt_dependence, "bounded_solver", autospec=True, side_effect=lambda rlimit=0: original(1)):
+        (line,) = unknown_lines(bench_c(indirect_read, "cpf_review2_budget"))
+    assert line.startswith("// unknown -- " + Reason.BUDGET_EXPIRED.value + "; the index sym0"), line
+
+
 if __name__ == "__main__":
     test_a_grid_stride_reduction_kernel_says_reduction_and_grid_stride()
     test_a_block_per_row_kernel_has_one_line_per_kernel_and_per_thread_block()
@@ -356,3 +401,6 @@ if __name__ == "__main__":
     test_the_closing_line_names_fallback_arms_and_units_without_loops()
     test_a_row_recurrence_read_through_a_map_scalar_is_proven()
     test_an_unknown_loop_under_a_guard_on_written_data_names_the_guard()
+    test_an_unknown_loop_names_a_read_it_could_only_bound()
+    test_an_unknown_loop_names_an_index_it_assigns()
+    test_an_unknown_loop_says_when_the_solver_ran_out_of_budget()

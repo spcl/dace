@@ -320,11 +320,12 @@ def unproven_reason(refusal: LoopRefusal, loop: LoopRegion | None = None) -> str
             f"iterations never overlap; parallel if they are disjoint; {later_wins}"
         )
     if kind is Refusal.CARRIED_DEPENDENCE:
-        return (
+        unshown = (
             f"the loop reads {read} and also writes {container}: the dependence test could not show that an "
             "earlier iteration never writes an element this read touches; parallel if none does; otherwise that read "
             "must see the earlier iteration's value, so keep the order"
         )
+        return blocked_read(refusal, loop, read) + unshown
     if kind is Refusal.CARRIED_SYMBOL:
         return (
             f"{carried_symbol_text(refusal)} may carry a value from one iteration to the next (a branch may skip "
@@ -337,6 +338,30 @@ def unproven_reason(refusal: LoopRefusal, loop: LoopRegion | None = None) -> str
             "otherwise the read after the loop sees whichever iteration finished last"
         )
     return unexamined_reason(refusal, written)
+
+
+def blocked_read(refusal: LoopRefusal, loop: LoopRegion | None, read: str) -> str:
+    """What keeps the solver from the one read of a carried-dependence refusal, as an opening of the reason, or ``""``:
+    an index the loop assigns (:attr:`Reason.ASSIGNED_INDEX`), or a read the test saw only as a range
+    (:attr:`Reason.RANGE_READ`)."""
+    if not refusal.reads or loop is None:
+        return ""
+    subset = refusal.reads[0]
+    assigned = {
+        name: value
+        for edge in loop.all_interstate_edges()
+        for name, value in edge.data.assignments.items()
+        if name != loop.loop_variable
+    }
+    for name in free_names(subset):
+        if name in assigned:
+            return f"{Reason.ASSIGNED_INDEX.value}{name} of {read} is assigned in the loop ({name} = {assigned[name]}), a value the solver does not model; "
+    if any(begin != end for begin, end, unused_step in subset.ndrange()):
+        return (
+            f"{Reason.RANGE_READ.value}{read}: no single element of it is an index the solver can model (an indirect, "
+            "modular or data-dependent index), so it found no two iterations that meet on one element; "
+        )
+    return ""
 
 
 def unexamined_reason(refusal: LoopRefusal, written: str) -> str:
