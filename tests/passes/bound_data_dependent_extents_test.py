@@ -37,6 +37,19 @@ def test_an_in_bounds_access_of_a_literal_array_gives_a_capacity_and_keeps_the_s
     assert has_literal_capacity(sdfg.arrays["vals"])
 
 
+def test_a_truth_value_assigned_beside_the_extent_bounds_nothing_and_does_not_crash():
+    """QE vexx_bp_k_gpu assigns branch flags (``sym68 = upf_tvanp[nt] != 0``) on the edges that size its buffers. A
+    flag's value is a relation, not a number: taken as ``flag <= (a != 0)`` it made the fact solver raise
+    "unsupported operand type(s) for -: 'symbol' and 'Unequality'" in offload_to_gpu."""
+    sdfg = table_copy(5)
+    sdfg.add_symbol("flag", dace.bool_)
+    first = sdfg.start_block
+    edge = sdfg.out_edges(first)[0]
+    edge.data.assignments["flag"] = "m != 0"
+    assert set_capacities(sdfg, {"n", "flag"}) == 1
+    assert sdfg.arrays["vals"].total_size == 5
+
+
 def test_an_access_of_a_symbolic_array_gives_no_capacity():
     sdfg = table_copy(None)
     assert set_capacities(sdfg, {"n"}) == 0

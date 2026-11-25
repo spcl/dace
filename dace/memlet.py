@@ -661,6 +661,20 @@ class Memlet:
         """Returns a set of symbols used in this edge's properties."""
         return self.used_symbols(all_symbols=True)
 
+    def subset_containers(self) -> set[str]:
+        """The containers this memlet's subsets read through a ``Subscript`` (``off`` in ``B[i + off[0]]``).
+
+        :attr:`free_symbols` does not report them: a ``Subscript``'s container is a data access, not a symbol. A
+        pass that moves or prunes containers by what the memlets name must ask for these too.
+        """
+        names: set[str] = set()
+        for sub in (self.subset, self.other_subset):
+            if isinstance(sub, subsets.Range):
+                for dim in sub.ranges:
+                    for bound in dim:
+                        names |= symbolic.arrays(bound.expr if isinstance(bound, symbolic.SymExpr) else bound)
+        return names
+
     def get_free_symbols_by_indices(self, indices_src: list[int], indices_dst: list[int]) -> set[str]:
         """
         Returns set of free symbols used in this edges properties but only taking certain indices of the src and dst

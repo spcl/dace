@@ -483,6 +483,48 @@ def test_a_symbol_assigned_only_under_a_branch_proves_no_carried_dependence():
     assert not [line for line in rendered if line.startswith(f"// {PROVEN_PREFIX}")], rendered
 
 
+def counter_sdfg(name: str, guarded: bool) -> dace.SDFG:
+    """QE vexx_bp_k_gpu's ``ijh = ijh + 1``: ``a[i] = s`` then ``s = s + 1``. With ``guarded`` the increment runs only
+    when ``b[i] > 0``; without, a branch beside it (``a[i] = 0`` when ``b[i] > 0``) does not skip it."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [N], dace.int64)
+    sdfg.add_symbol("s", dace.int64)
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion("count", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"s": "0"}))
+    use = loop.add_state("use", is_start_block=True)
+    put = use.add_tasklet("put", {}, {"out"}, "out = s")
+    use.add_edge(put, "out", use.add_write("a"), None, dace.Memlet("a[i]"))
+    pick = ConditionalBlock("pick")
+    loop.add_node(pick)
+    taken = ControlFlowRegion("taken", sdfg=sdfg)
+    pick.add_branch(CodeBlock("b[i] > 0"), taken)
+    first = taken.add_state("first", is_start_block=True)
+    after = loop.add_state("after")
+    loop.add_edge(use, pick, dace.InterstateEdge())
+    if guarded:
+        taken.add_edge(first, taken.add_state("second"), dace.InterstateEdge(assignments={"s": "s + 1"}))
+        loop.add_edge(pick, after, dace.InterstateEdge())
+    else:
+        zero = first.add_tasklet("zero", {}, {"out"}, "out = 0")
+        first.add_edge(zero, "out", first.add_write("a"), None, dace.Memlet("a[i]"))
+        loop.add_edge(pick, after, dace.InterstateEdge(assignments={"s": "s + 1"}))
+    return sdfg
+
+
+@pytest.mark.parametrize("guarded", [False, True])
+def test_a_counter_is_a_proven_carry_never_unknown(guarded: bool):
+    """A counter reads its own last value, so every iteration that runs it hands it on: proven sequential, with the
+    counter named, whether or not a branch decides which iterations run it. vexx's ``ijh = ijh + 1`` loops were
+    ``unknown`` because any branch in the body counted as one that may skip the increment."""
+    rendered = comment_lines(named(counter_sdfg(f"cpf_kind_counter_{int(guarded)}", guarded)))
+    proven = [line for line in rendered if line.startswith(f"// {PROVEN_PREFIX}")]
+    assert proven and "s = s + 1" in proven[0], rendered
+    assert not [line for line in rendered if line.startswith("// unknown")], rendered
+
+
 def test_a_while_loop_is_sequential_and_says_why():
     """A while loop has no iteration variable to split the work by, and each test of its condition reads what the
     previous iteration computed, so it is ``sequential`` with that reason, never an open ``unknown``."""

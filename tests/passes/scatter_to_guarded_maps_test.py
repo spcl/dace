@@ -1106,3 +1106,81 @@ def test_a_transient_scattered_through_an_index_of_an_index_is_guarded_on_both()
         out = np.zeros(n)
         sdfg(c=c, nl=nl.astype(np.int64), igk=igk.astype(np.int64), out=out, N=n)
         assert np.allclose(out, 2.0 * expected)
+
+
+@dace.program
+def column_updated_in_place(x: dace.float64[N, N], ib: dace.int64[N], out: dace.float64[N, N]):
+    buf = np.ones((N, N), dtype=np.float64)
+    for i in range(N):
+        c = ib[i]
+        buf[:, c] = buf[:, c] * x[:, i]
+    out[:] = buf
+
+
+def test_a_transient_column_updated_in_place_through_an_index_is_guarded():
+    """vexx_bp_k_gpu's ``big_result_d(:, ibnd)``, ``ibnd = ibands(i)``: the loop reads the transient only in the column
+    it writes, so distinct ``ibnd`` keep every iteration to its own column. The read made it "state the loop consults"
+    and the loop stayed unproven."""
+    sdfg = column_updated_in_place.to_sdfg(simplify=True)
+    assert "ib" in set(detect_scatter_idx_arrays(sdfg))
+    canonicalize(sdfg)
+    n = 12
+    x = np.random.default_rng(1).random((n, n))
+    for ib in (_make_permutation(n, 3), np.zeros(n, np.int64)):
+        expected = np.ones((n, n))
+        for i in range(n):
+            expected[:, ib[i]] *= x[:, i]
+        out = np.zeros((n, n))
+        sdfg(x=x, ib=ib.astype(np.int64), out=out, N=n)
+        assert np.allclose(out, expected)
+
+
+@dace.program
+def shifted_chained_scatter(c: dace.float64[N], nl: dace.int64[N], igk: dace.int64[N], out: dace.float64[N]):
+    for i in range(N):
+        out[nl[igk[i] - 1] - 1] = c[i]
+
+
+def test_a_scatter_through_a_shifted_index_of_an_index_is_guarded_on_both():
+    """vexx_bp_k_gpu's ``temppsic_d(dfftt%nl(igk_exx(j))) = ...``: Fortran's 1-based ``nl(igk(j))`` lowers to
+    ``nl[igk_j - 1]``, a shifted inner index that is as injective as ``nl[igk_j]``. It was left an unproven loop."""
+    sdfg = shifted_chained_scatter.to_sdfg(simplify=True)
+    assert {"nl", "igk"} <= set(detect_scatter_idx_arrays(sdfg))
+    canonicalize(sdfg)
+    n = 16
+    c = np.random.default_rng(0).random(n)
+    for nl, igk in ((_make_permutation(n, 1), _make_permutation(n, 2)), (np.zeros(n, np.int64), np.arange(n))):
+        expected = np.zeros(n)
+        for i in range(n):
+            expected[nl[igk[i]]] = c[i]
+        out = np.zeros(n)
+        sdfg(c=c, nl=(nl + 1).astype(np.int64), igk=(igk + 1).astype(np.int64), out=out, N=n)
+        assert np.allclose(out, expected)
+
+
+@dace.program
+def two_planes_through_a_shifted_chain(
+    c: dace.float64[N], d: dace.float64[N], nl: dace.int64[N], igk: dace.int64[N], out: dace.float64[N, 2]
+):
+    for i in range(N):
+        out[nl[igk[i] - 1] - 1, 0] = c[i]
+        out[nl[igk[i] - 1] - 1, 1] = d[i]
+
+
+def test_two_planes_of_one_shifted_chain_are_guarded_on_both():
+    """vexx_bp_k_gpu's non-collinear ``temppsic_nc_d(nl(igk(j)), 1)`` and ``(.., 2)``: two stores apart by a constant
+    plane never meet, so the index chain alone decides. The second slot made the loop no scatter."""
+    sdfg = two_planes_through_a_shifted_chain.to_sdfg(simplify=True)
+    assert {"nl", "igk"} <= set(detect_scatter_idx_arrays(sdfg))
+    canonicalize(sdfg)
+    n = 16
+    rng = np.random.default_rng(2)
+    c, d = rng.random(n), rng.random(n)
+    for nl, igk in ((_make_permutation(n, 1), _make_permutation(n, 2)), (np.zeros(n, np.int64), np.arange(n))):
+        expected = np.zeros((n, 2))
+        for i in range(n):
+            expected[nl[igk[i]], 0] = c[i]
+            expected[nl[igk[i]], 1] = d[i]
+        out = np.zeros((n, 2))
+        sdfg(c=c, d=d, nl=(nl + 1).astype(np.int64), igk=(igk + 1).astype(np.int64), out=out, N=n)
+        assert np.allclose(out, expected)

@@ -2714,6 +2714,20 @@ class Subscript(DaceFunction):
         return Subscript(*(a.subs(*args, **kwargs) for a in self.args))
 
 
+def subscript_str(expr: Subscript, printer) -> str:
+    """``a[i]`` under sympy's string printer, which spelled a ``Subscript`` inside a larger expression as a call,
+    ``Max(j, Subscript(off, 0))``: written back as code (an interstate assignment), that is a call to an undefined
+    ``Subscript``. DaCe's own printers keep their handling (C indexing, serialization)."""
+    if isinstance(printer, (DaceSympyPrinter, DaceSympySerializer)):
+        return printer._print_Function(expr)
+    indices = ", ".join(printer._print(a) for a in expr.args[1:])
+    return f"{printer._print(expr.args[0])}[{indices}]"
+
+
+# sympy's printers ask an expression for its ``_sympystr`` before their own by-class lookup.
+Subscript._sympystr = subscript_str
+
+
 def recombined_fraction(arg):
     """``arg`` as ``(numerator, integer denominator)`` when it is a sum of fractions sharing a
     denominator, else ``None``.
@@ -3486,6 +3500,8 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         "right_shift": right_shift,
         "ITE": ITE,
         "Mod": sympy.Mod,
+        # Else an undefined function of that name: its container counts as a free symbol and prints as a call.
+        "Subscript": Subscript,
         "id": sympy.Symbol("id"),
         "diag": sympy.Symbol("diag"),
         "jn": sympy.Symbol("jn"),

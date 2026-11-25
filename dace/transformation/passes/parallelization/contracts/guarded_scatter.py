@@ -586,7 +586,7 @@ def _scatter_idx_targets_for_loop(
     dim_nodes_by_arr: dict[str, list[ast.AST]] = {}
     outside: set[str] | None = None
     read: set[str] = set()
-    slots: dict[str, str] = {}
+    slots: dict[str, list[subsets.Subset]] = {}
     for state in region.states():
         for node in state.data_nodes():
             if not is_written(state, node):
@@ -602,10 +602,18 @@ def _scatter_idx_targets_for_loop(
                     read = {n.data for st in region.states() for n in st.data_nodes() if is_read(st, n)} | {
                         m.data for e in region.all_interstate_edges() for m in e.data.get_read_memlets(sdfg.arrays)
                     }
-                if node.data not in outside or node.data in read:
+                if node.data not in outside:
                     continue
             for e in state.in_edges(node):
                 if e.data is None or e.data.subset is None or not indirect_write_needs_injectivity(e.data):
+                    continue
+                # A transient the loop reads only inside the slot it writes (QE vexx's column ``big_result_d[:, ibnd -
+                # 1]``, updated in place) is still a scatter target: distinct slots keep each iteration to its own.
+                if (
+                    desc.transient
+                    and node.data in read
+                    and not reads_within_slot(region, sdfg, node.data, e.data.subset, bindings.keys() | chained.keys())
+                ):
                     continue
                 # A span between two loaded bounds overlaps others although the bounds are distinct: no guard here
                 # asks for that.
@@ -637,8 +645,16 @@ def _scatter_idx_targets_for_loop(
                 if not slot_follows_index(e.data.subset, bindings.keys() | chained.keys()):
                     return {}
                 # Each store is checked alone, so a second slot of one target can meet the first in another iteration
-                if found and slots.setdefault(node.data, str(e.data.subset)) != str(e.data.subset):
-                    return {}
+                # A second slot apart from the first by a constant (QE vexx's ``temppsic_nc_d[nl - 1, 0, ..]`` and
+                # ``[nl - 1, 1, ..]``) never meets it, whatever the index.
+                if found:
+                    seen = slots.setdefault(node.data, [])
+                    if any(
+                        str(other) != str(e.data.subset) and not apart_by_constant(other, e.data.subset)
+                        for other in seen
+                    ):
+                        return {}
+                    seen.append(e.data.subset)
                 for arr, dim_nodes in found.items():
                     loop_arrays.setdefault(arr, set()).add(node.data)
                     if dim_nodes is not None:
@@ -669,6 +685,46 @@ def _scatter_idx_targets_for_loop(
         if index_slice is not None or one_dim:
             result[arr] = (tgts, index_slice)
     return result
+
+
+def apart_by_constant(first: subsets.Subset, second: subsets.Subset) -> bool:
+    """Whether two point slots differ in some dimension that each fixes to a different integer."""
+    if len(first) != len(second):
+        return False
+    for (b1, e1, step1), (b2, e2, step2) in zip(first.ndrange(), second.ndrange()):
+        b1, e1, b2, e2 = (symbolic.pystr_to_symbolic(x) for x in (b1, e1, b2, e2))
+        if b1 == e1 and b2 == e2 and b1.is_Integer and b2.is_Integer and b1 != b2:
+            return True
+    return False
+
+
+def reads_within_slot(region: LoopRegion, sdfg: SDFG, name: str, slot: subsets.Subset, names: set[str]) -> bool:
+    """Whether every read of ``name`` in ``region`` stays inside ``slot``: in each dimension ``slot`` picks by a loaded
+    index of ``names``, the read names that same point. An interstate-edge read, or a slot no loaded index picks,
+    says nothing of which iteration's element it reads."""
+    if any(m.data == name for e in region.all_interstate_edges() for m in e.data.get_read_memlets(sdfg.arrays)):
+        return False
+    picked = [
+        dim
+        for dim, (begin, end, step) in enumerate(slot.ndrange())
+        if begin == end and not names.isdisjoint(str(sym) for sym in symbolic.pystr_to_symbolic(begin).free_symbols)
+    ]
+    if not picked:
+        return False
+    for state in region.states():
+        for node in state.data_nodes():
+            if node.data != name:
+                continue
+            for edge in state.out_edges(node):
+                if edge.data.is_empty():
+                    continue
+                subset = edge.data.src_subset if edge.data.src_subset is not None else edge.data.subset
+                if subset is None or len(subset) != len(slot):
+                    return False
+                ranges = subset.ndrange()
+                if any(ranges[dim][0] != ranges[dim][1] or ranges[dim][0] != slot.ndrange()[dim][0] for dim in picked):
+                    return False
+    return True
 
 
 def slot_follows_index(subset: subsets.Subset, names: set[str]) -> bool:
@@ -1287,9 +1343,10 @@ def chained_bindings(
     region: LoopRegion, sdfg: SDFG, bindings: dict[str, tuple[str, list[ast.AST]]]
 ) -> dict[str, tuple[str, str]]:
     """``sym -> (outer, inner)`` for each ``sym := outer[inner]`` of ``region``'s interstate edges where ``outer`` is a
-    1-D array and ``inner`` a symbol ``bindings`` binds to ``idx[f(loop_var)]`` (vloc_psi_k_acc's
-    ``psic[nl[igk[i]]]``): the slot is injective when ``idx`` is over the loop and ``outer`` is over all of it."""
+    1-D array and ``inner`` a symbol ``bindings`` binds to ``idx[f(loop_var)]``, read through an injective affine
+    index (vloc_psi_k_acc's ``psic[nl[igk[i]]]``, vexx's ``nl[igk_j - 1]``): the slot is injective when ``idx`` is over the loop and ``outer`` is over all of it."""
     chained: dict[str, tuple[str, str]] = {}
+    varying = region_assigned_symbols(region) | {region.loop_variable}
     for e in region.all_interstate_edges():
         for lhs, rhs in (e.data.assignments or {}).items():
             if lhs in bindings:
@@ -1305,8 +1362,14 @@ def chained_bindings(
             desc = sdfg.arrays.get(tree.value.id)
             if not isinstance(desc, data.Array) or len(desc.shape) != 1:
                 continue
-            if isinstance(tree.slice, ast.Name) and tree.slice.id in bindings:
-                chained[lhs] = (tree.value.id, tree.slice.id)
+            # The inner index may be shifted or scaled (Fortran's ``nl(igk(j))`` lowers to ``nl[igk_j - 1]``): an
+            # injective affine map of a distinct value stays distinct, if nothing else in it changes per iteration.
+            names = {n.id for n in ast.walk(tree.slice) if isinstance(n, ast.Name)}
+            inner = sorted(names & bindings.keys())
+            if len(inner) != 1 or not names.isdisjoint(varying - {inner[0]}):
+                continue
+            if value_is_injective_affine(astutils.unparse(tree.slice), inner[0]):
+                chained[lhs] = (tree.value.id, inner[0])
     return chained
 
 

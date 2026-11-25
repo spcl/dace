@@ -1169,11 +1169,15 @@ def read_before_written(
                 continue
             subset = widened(state, dn, subset)
             if fixed_subset(subset) and not any(part.free_symbols & moving for part in parts):
-                if not subsets_cover(parts, subset, symbolic.Facts.none()):
+                # Under the ranges of the loops around the read: QE vexx's ``aux2(1)`` is inside the block fill
+                # ``aux2[0:Min(256, ngm - 256*iblock + 256)]`` only because ``iblock`` stays within the block count.
+                if not subsets_cover(parts, subset, resolver.facts_at(state)):
                     return False
             elif not any(same_slot(part, subset) for part in parts):
                 return False
         return True
+
+    resolver = SymbolResolver()
 
     def changed_by(block: ControlFlowBlock) -> set[str]:
         """The names ``block`` can change: containers it writes (any written access node, no memlet analysis),
@@ -1526,6 +1530,25 @@ def observable_from(
                         frontier.append(reached.data)
     read_by_control_flow = control_flow_reads(loop, ctx)
     return not seen.isdisjoint(read_by_control_flow)
+
+
+def owns_slot(subset: subsets.Subset, itervar: str, varying: set[str]) -> bool:
+    """Whether ``subset`` confines a dimension to a slot that moves with ``itervar`` by at least its width, and with
+    nothing else that varies in the loop (``tmp[i]``, ``tmp[n*i : n*i + n]``): no two iterations then share an
+    element."""
+    for begin, end, _ in subset.ndrange():
+        begin, end = symbolic.pystr_to_symbolic(begin), symbolic.pystr_to_symbolic(end)
+        names = {str(s) for s in begin.free_symbols | end.free_symbols}
+        if itervar not in names or names & varying:
+            continue
+        (iterator,) = {s for s in begin.free_symbols | end.free_symbols if str(s) == itervar}
+        slope, width = sp.diff(begin, iterator), sp.expand(end - begin)
+        if iterator in width.free_symbols:
+            continue
+        step = slope if slope.is_positive else -slope if slope.is_negative else None
+        if step is not None and (step - width - 1).is_nonnegative:
+            return True
+    return False
 
 
 def loop_varying_symbols(loop: ControlFlowRegion) -> set[str]:
@@ -3363,23 +3386,19 @@ class LoopLift:
         if itervar in (str(s) for s in desc.free_symbols):
             # If the shape or strides of the array depend on the iteration variable, then the array is thread-local.
             return True
+        # Shared only when every access stays in its own iteration's slot (``tmp[i]``). An access that merely mentions
+        # the iterator can still overlap another iteration's: vexx's block buffer ``aux1[0:min(256, ngm - 256*i)]``
+        # starts at 0 in every block, and sharing it raced (the analysis exempted it as private to each iteration).
+        varying = loop_varying_symbols(self.loop) - {itervar}
+        accessed: list[subsets.Subset] = []
         for state in states:
             for node in state.data_nodes():
-                if node.data != name:
-                    continue
-                for e in state.out_edges(node):
-                    src_subset = e.data.get_src_subset(e, state)
-                    # itersym in the subset → not thread-local. Assumes the loop is a valid Map
-                    # (all edges carrying the array depend on itersym consistently).
-                    if src_subset and itervar in src_subset.free_symbols:
-                        return False
-                for e in state.in_edges(node):
-                    dst_subset = e.data.get_dst_subset(e, state)
-                    # itersym in the subset → not thread-local. Assumes the loop is a valid Map
-                    # (all edges carrying the array depend on itersym consistently).
-                    if dst_subset and itervar in dst_subset.free_symbols:
-                        return False
-        return True
+                if node.data == name:
+                    accessed += [e.data.get_src_subset(e, state) for e in state.out_edges(node)]
+                    accessed += [e.data.get_dst_subset(e, state) for e in state.in_edges(node)]
+        # An empty memlet orders, it accesses nothing
+        accessed = [subset for subset in accessed if subset is not None]
+        return not accessed or not all(owns_slot(subset, itervar, varying) for subset in accessed)
 
     def lift_in(self, graph: ControlFlowRegion, sdfg: sd.SDFG) -> None:
         """:meth:`rewrite` of :attr:`loop` in ``graph`` of ``sdfg``."""
@@ -3408,6 +3427,10 @@ class LoopLift:
             rset, wset = state.read_and_write_sets()
             read_set |= rset
             write_set |= wset
+            # And arrays a memlet subset reads (``B[i + off[0]]``): no access node names them, so the nest lost them --
+            # QE vexx_bp_k_gpu after symbol propagation: ``rhoc_d[ir, jbnd - Max(jstart_0, ... + all_start[wegrp])]``
+            # left ``all_start`` a free symbol of the nest that nothing maps.
+            read_set |= {s for e in state.edges() for s in e.data.subset_containers() if s in sdfg.arrays}
             # Add to write set also scalars between tasklets
             for src_node in state.nodes():
                 if not isinstance(src_node, nodes.Tasklet):

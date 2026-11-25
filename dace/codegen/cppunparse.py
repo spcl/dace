@@ -1700,6 +1700,18 @@ class CPPUnparser:
     def _Call(self, t: ast.Call):
         if cpf_lowering.standalone_c() and self.c_decltype_complex(t):
             return
+        # ``z.real()`` / ``z.imag()``, the ``std::complex`` member spelling a tasklet may carry (dace-fortran's
+        # ``DBLE(z)``): C has no members on ``double _Complex``, so it is the ``re`` / ``im`` accessor (``creal``).
+        if (
+            cpf_lowering.standalone_c()
+            and isinstance(t.func, ast.Attribute)
+            and t.func.attr in ("real", "imag")
+            and not t.args
+            and not t.keywords
+        ):
+            accessor = ast.Name(id="re" if t.func.attr == "real" else "im", ctx=ast.Load())
+            self.dispatch(ast.copy_location(ast.Call(func=accessor, args=[t.func.value], keywords=[]), t))
+            return
         # Special cases for sympy functions
         if isinstance(t.func, ast.Name):
             if t.func.id in self.modulo_calls and len(t.args) == 2 and not t.keywords:

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import NamedTuple, Optional
 
 import numpy
+import sympy
 from pygments.lexers import CppLexer
 from pygments.token import Token
 
@@ -281,7 +282,7 @@ class IndexAccess(NamedTuple):
 
 
 def format_index_access(
-    ptrname: str, fnname: str, indices: list[str], extra: list[str], kept: tuple[int, ...] | None = None
+    ptrname: str, fnname: str, indices: list[str | sympy.Basic], extra: list[str], kept: tuple[int, ...] | None = None
 ) -> str:
     """C++ ``ptr[fn(idx.., extra..)]`` access through a registered ``<array>_idx`` index function, passing the
     indices at ``kept`` (all of them when ``None``)."""
@@ -1403,6 +1404,8 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
         indices = self._index_list(node.slice)
         if len(indices) != info.ndim:
             return None
+        # An index that reads a container (``A[i + off[0]]``) names it as the generated code does.
+        indices = [cpp.containers_by_pointer(self.sdfg, symbolic.pystr_to_symbolic(ix), self.codegen) for ix in indices]
         return format_index_access(info.ptrname, info.fnname, indices, info.extra, info.kept)
 
     def visit_Assign(self, node: ast.Assign) -> ast.AST:

@@ -115,7 +115,9 @@ class PruneConnectors(pm.SingleStateTransformation):
             for inner_state in nsdfg.sdfg.states():
                 for e in inner_state.edges():
                     if e.data is not None:
-                        symbolic_uses |= {str(s) for s in e.data.free_symbols}
+                        # ``free_symbols`` leaves out a Subscript's container (``src`` in ``dst[src[i]]``); QE
+                        # vexx_bp_k_gpu lost ``all_start`` from ``rhoc_d[.., jbnd - Max(.., all_start[wegrp])]``.
+                        symbolic_uses |= {str(s) for s in e.data.free_symbols} | e.data.subset_containers()
                 for n in inner_state.nodes():
                     symbolic_uses |= {str(s) for s in n.free_symbols}
             for e in nsdfg.sdfg.all_interstate_edges():

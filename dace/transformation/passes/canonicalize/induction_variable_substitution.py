@@ -823,6 +823,10 @@ def derived_definition(
         return None  # depends on another loop-carried symbol -> substitute that first (fixed point)
     if any(oe is not e and sym in (oe.data.assignments or {}) for oe in loop.all_interstate_edges()):
         return None  # sym written elsewhere (incl. a NESTED loop, s141) -> not a clean single definition
+    # A container's shape (a view sized per iteration, QE vexx's ``prhoc_d(1:nrxxs*jcurr)``) is not inside the loop,
+    # so inlining ``sym`` into the body leaves the descriptor naming a symbol nothing assigns any more.
+    if any(sym in {str(s) for s in desc.free_symbols} for desc in sdfg.arrays.values()):
+        return None
     return sym, rhs_expr
 
 

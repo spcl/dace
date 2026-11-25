@@ -195,7 +195,10 @@ def one_value_per_path(sdfg: SDFG) -> tuple[dict[str, Interval], dict[str, Any],
             if found is not None:
                 ranges[name] = found
         elif not {str(s) for s in parsed(assigned[0][1]).free_symbols} & sdfg.arrays.keys():
-            values[name] = parsed(assigned[0][1])
+            value = parsed(assigned[0][1])
+            # A truth value (a branch flag ``f = a != 0``) bounds no extent, and as a side of a relation it is no number
+            if not isinstance(value, sympy.logic.boolalg.Boolean):
+                values[name] = value
     return ranges, values, single
 
 

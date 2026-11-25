@@ -22,6 +22,7 @@ from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutils
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import is_written
+from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as passes
 from dace.transformation.transformation import explicit_cf_compatible
@@ -888,6 +889,37 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: dict[str, str]):
         )
 
 
+class TruncatingIntegerDivision(ast.NodeTransformer):
+    """Spells a tasklet's ``a / b`` on two integers as the truncation C computes.
+
+    A tasklet's ``/`` on integers is C's, which truncates toward zero; an interstate assignment reads ``/`` as true
+    division, so a promoted ``nb = (n + 255) / 256`` became the fraction ``n/256 + 255/256`` once a pass parsed it
+    (vexx's block count turned a loop bound into ``ngm/256 + 511/256``). The dividend minus its C remainder is an exact
+    multiple of the divisor, where flooring and truncating agree.
+    """
+
+    def __init__(self, types: dict[str, dtypes.typeclass]) -> None:
+        self.types = types
+
+    def is_integer(self, node: ast.expr) -> bool:
+        dtype = infer_expr_type(astutils.unparse(node), self.types)
+        return isinstance(dtype, dtypes.typeclass) and np.issubdtype(dtype.type, np.integer)
+
+    def visit_BinOp(self, node: ast.BinOp) -> ast.expr:
+        self.generic_visit(node)
+        if not (isinstance(node.op, ast.Div) and self.is_integer(node.left) and self.is_integer(node.right)):
+            return node
+        remainder = ast.Call(func=ast.Name(id="CMod", ctx=ast.Load()), args=[node.left, node.right], keywords=[])
+        exact = ast.BinOp(left=node.left, op=ast.Sub(), right=remainder)
+        call = ast.Call(func=ast.Name(id="int_floor", ctx=ast.Load()), args=[exact, node.right], keywords=[])
+        return ast.copy_location(call, node)
+
+
+def truncate_integer_divisions(code: str, types: dict[str, dtypes.typeclass]) -> str:
+    """``code`` (a Python expression) with every ``/`` between two integers spelled as C's truncation."""
+    return astutils.unparse(TruncatingIntegerDivision(types).visit(ast.parse(code, mode="eval")).body)
+
+
 def translate_cpp_tasklet_to_python(code: str):
     newcode: str = ""
     newcode = re.findall(r".*?=\s*(.*);", code)[0]
@@ -982,6 +1014,8 @@ class ScalarToSymbolPromotion(passes.Pass):
                         newcode = astutils.unparse(input.code.code[0].value)
                     elif input.language is dtypes.Language.CPP:
                         newcode = translate_cpp_tasklet_to_python(input.code.as_string.strip())
+                    connector_types = {e.dst_conn: sdfg.arrays[e.data.data].dtype for e in new_state.in_edges(input)}
+                    newcode = truncate_integer_divisions(newcode, {**sdfg.symbols, **connector_types})
 
                     # Replace tasklet inputs with incoming edges
                     for e in new_state.in_edges(input):

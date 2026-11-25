@@ -182,6 +182,16 @@ def read_after(sdfg: SDFG, loop: LoopRegion, name: str) -> bool:
     return any(name in b.free_symbols for b in blocks) or any(name in e.data.free_symbols for e in edges)
 
 
+def rename_descriptors(sdfg: SDFG, accesses: Iterable[nodes.AccessNode], repl: dict[str, str]) -> None:
+    """Rename ``repl``'s iterators in the descriptors the scope accesses. A view sized by a map parameter (QE vexx's
+    ``prhoc_d``, sized by the band map's ``_loop_it_59``) kept the old name while the scope's memlets and nested
+    SDFGs took the new one."""
+    for name in OrderedSet(n.data for n in accesses):
+        desc = sdfg.arrays[name]
+        if not repl.keys().isdisjoint(str(s) for s in desc.free_symbols):
+            replace_properties_dict(desc, repl)
+
+
 def bare_name(value: object) -> str | None:
     text = str(value)
     return text if text.isidentifier() else None
@@ -298,10 +308,7 @@ class FunctionRenamer:
             rename_cpp_code((n for state in loop.states() for n in state.nodes()), repl)
             loop.replace_meta_accesses(repl)
             loop.replace_dict(repl)
-            for name in OrderedSet(n.data for state in loop.states() for n in state.data_nodes()):
-                desc = sdfg.arrays[name]
-                if old in {str(s) for s in desc.free_symbols}:
-                    replace_properties_dict(desc, repl)
+            rename_descriptors(sdfg, (n for state in loop.states() for n in state.data_nodes()), repl)
         for state in loop.states():
             rename_strings(StateSubgraphView(state, state.nodes()), repl)
 
@@ -344,6 +351,7 @@ class FunctionRenamer:
             with symbolic.serialization_symbol_dtypes({own[p]: declared[p] for p in own if p in declared}, True):
                 rename_cpp_code(subgraph.nodes(), own)
                 replace_dict(subgraph, own)
+                rename_descriptors(self.sdfg, subgraph.data_nodes(), own)
             rename_strings(subgraph, own)
 
     def hoist_bounds(self) -> None:
@@ -487,6 +495,7 @@ def rename_scope(sdfg: SDFG, scope: LoopRegion | tuple[SDFGState, nodes.MapEntry
         with symbolic.serialization_symbol_dtypes({new: declared[old] for old, new in repl.items()}, True):
             rename_cpp_code(subgraph.nodes(), repl)
             replace_dict(subgraph, repl)
+            rename_descriptors(sdfg, subgraph.data_nodes(), repl)
         rename_strings(subgraph, repl)
         holders = [n for n in subgraph.nodes() if isinstance(n, nodes.MapEntry)]
     for holder in holders:
