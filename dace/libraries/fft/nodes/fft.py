@@ -15,7 +15,6 @@ from dace import transformation as xf
 from dace.codegen.common import sym2cpp
 from dace.frontend.python.replacements.utils import normalize_axes
 from dace.libraries import hip_dialect
-from dace.libraries.blas.environments.intel_mkl import IntelMKL
 from dace.libraries.fft import environments as env
 from dace.sdfg import utils as sdutil
 
@@ -346,8 +345,7 @@ def fftw3_call(transform: FFTTransform, threaded: bool | None = None) -> nodes.T
         else "(long long)(reinterpret_cast<uintptr_t>(__in) % 64), (long long)(reinterpret_cast<uintptr_t>(__out) % 64)"
     )
     sign = f"{'FFTW_BACKWARD' if transform.inverse else 'FFTW_FORWARD'}, " if kind == "dft" else ""
-    # FFTW's threads library is a companion a program may unload under the planner it registered into; MKL's
-    # interface threads inside MKL
+    # Unloading a program would unmap FFTW's threads library under the solvers it registered in libfftw3 (MKL has none)
     pin = (
         f"static const int __threads_pinned = dace::fft::PinLibraryOf(reinterpret_cast<void *>(&{prefix}_init_threads));"
         " (void)__threads_pinned;\n"
@@ -392,7 +390,7 @@ def fftw3_call(transform: FFTTransform, threaded: bool | None = None) -> nodes.T
     )
 
 
-class GpuFftLayout(NamedTuple):
+class GPUFFTLayout(NamedTuple):
     """One ``MakePlanMany`` plan: the lengths in plan order, each side's embed, element stride and batch
     distance, and the batch count.
     """
@@ -407,7 +405,7 @@ class GpuFftLayout(NamedTuple):
     batch: symbolic.SymbolicType
 
 
-def gpu_fft_layout(transform: FFTTransform) -> GpuFftLayout | None:
+def gpu_fft_layout(transform: FFTTransform) -> GPUFFTLayout | None:
     """``transform`` as one ``MakePlanMany`` plan.
 
     Each side's transformed axes must be one dense block under one element stride and its other axes one block under
@@ -437,7 +435,7 @@ def gpu_fft_layout(transform: FFTTransform) -> GpuFftLayout | None:
             return None
         batch_order, (idist, odist) = batched
         batch = functools.reduce(operator.mul, (src.shape[a] for a in batch_order), 1)
-    return GpuFftLayout(
+    return GPUFFTLayout(
         [lengths[a] for a in order],
         [src.shape[a] for a in order],
         istride,
@@ -576,7 +574,7 @@ for node_type, cuda_expansion in ((FFT, cuFFTFFTExpansion), (IFFT, cuFFTIFFTExpa
 class ExpandMKL(xf.ExpandTransformation):
     """MKL backend: the FFTW3 expansion's code against MKL's FFTW3 interface, whose planner always threads."""
 
-    environments = [IntelMKL, env.MKLFFTW3]
+    environments = [env.MKLFFTW3]
 
     @staticmethod
     def expansion(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:

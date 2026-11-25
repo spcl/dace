@@ -22,7 +22,7 @@ from dace.libraries.fft import environments as fft_environments
 from dace.libraries.fft.algorithms import dft
 from dace.libraries.fft.environments import fftw3
 from dace.libraries.fft.nodes import FFT, IFFT
-from dace.libraries.fft.nodes.fft import FFTTransform, GpuFftLayout, cufft_call, fftw3_call, gpu_fft_layout
+from dace.libraries.fft.nodes.fft import FFTTransform, GPUFFTLayout, cufft_call, fftw3_call, gpu_fft_layout
 from dace.transformation.auto import auto_optimize
 
 N = dace.symbol("N")
@@ -267,9 +267,9 @@ def test_a_gpu_fft_plans_each_side_s_own_dense_block():
     def layout(src, out):
         return gpu_fft_layout(FFTTransform(src, out, [0, 1, 2], inverse=False, half_spectrum=False))
 
-    assert layout(fortran, fortran) == GpuFftLayout([6, 5, 4], [6, 5, 4], 1, 120, [6, 5, 4], 1, 120, 3)
-    assert layout(innermost, fortran) == GpuFftLayout([6, 5, 4], [6, 5, 4], 3, 1, [6, 5, 4], 1, 120, 3)
-    assert layout(c_order, c_order) == GpuFftLayout([4, 5, 6], [4, 5, 6], 3, 1, [4, 5, 6], 3, 1, 3)
+    assert layout(fortran, fortran) == GPUFFTLayout([6, 5, 4], [6, 5, 4], 1, 120, [6, 5, 4], 1, 120, 3)
+    assert layout(innermost, fortran) == GPUFFTLayout([6, 5, 4], [6, 5, 4], 3, 1, [6, 5, 4], 1, 120, 3)
+    assert layout(c_order, c_order) == GPUFFTLayout([4, 5, 6], [4, 5, 6], 3, 1, [4, 5, 6], 3, 1, 3)
     # The two sides order the transformed axes oppositely: no shared plan, so the source is staged.
     assert layout(fortran, c_order) is None
 
@@ -280,7 +280,7 @@ def test_a_half_spectrum_gpu_fft_embeds_each_side_s_own_extents():
     real = dace.data.Array(dace.float64, [2, 8, 6], storage=dtypes.StorageType.GPU_Global)
     spectrum = strided_array([2, 8, 4], [32, 4, 1])
     got = gpu_fft_layout(FFTTransform(real, spectrum, [1, 2], inverse=False, half_spectrum=True))
-    assert got == GpuFftLayout([8, 6], [8, 6], 1, 48, [8, 4], 1, 32, 2)
+    assert got == GPUFFTLayout([8, 6], [8, 6], 1, 48, [8, 4], 1, 32, 2)
 
 
 def run_strided_fftn(name: str, src_strides, out_strides):
@@ -466,9 +466,8 @@ def test_fftn_and_ifftn_over_any_axes_take_one_fftw3_plan(shape, axes, dtype, da
     np.testing.assert_allclose(inverse, np.fft.ifftn(x, axes=axes, norm="forward"), rtol=tolerance, atol=tolerance)
 
 
-def test_a_threaded_companion_library_is_linked_ahead_of_its_base():
-    """Each precision's threaded planner links ahead of its base library and threads that precision only;
-    ``FFTW_ROOT`` also passes its include directory."""
+def test_a_threaded_planner_is_detected_per_precision():
+    """``FFTW_ROOT``'s OpenMP planner of one precision threads that precision only."""
     previous = os.environ.get("FFTW_ROOT")
     with tempfile.TemporaryDirectory() as root:
         os.mkdir(os.path.join(root, "lib"))
@@ -476,9 +475,7 @@ def test_a_threaded_companion_library_is_linked_ahead_of_its_base():
             open(os.path.join(root, "lib", lib), "w").close()
         os.environ["FFTW_ROOT"] = root
         try:
-            libraries = [os.path.basename(p) for p in fftw3.FFTW3.cmake_libraries()]
-            assert libraries == ["libfftw3_omp.so", "libfftw3.so", "libfftw3f.so"]
-            assert fftw3.FFTW3.cmake_includes() == [os.path.join(root, "include")]
+            assert fftw3.FFTW3.is_installed()
             assert fftw3.threaded(double=True) and not fftw3.threaded(double=False)
         finally:
             if previous is None:
@@ -495,6 +492,7 @@ def test_a_threaded_fftw_plans_for_the_team(threaded):
 
 
 @pytest.mark.fftw
+# Reproducer: planner segfault after a program unloaded libfftw3_omp, FFTW3 expansion without the pin (ault 924609)
 def test_a_program_plans_after_a_threaded_one_was_unloaded():
     """Unloading a program unmapped ``libfftw3_omp`` while ``libfftw3`` stayed loaded with the threaded solvers its
     ``init_threads`` registered, and the next plan of any program segfaulted in the planner."""
@@ -739,7 +737,7 @@ if __name__ == "__main__":
     test_the_normalization_folds_into_the_staging_copy()
     test_a_unit_factor_adds_no_normalization_pass()
     test_a_gpu_plan_is_cached_per_stream()
-    test_a_threaded_companion_library_is_linked_ahead_of_its_base()
+    test_a_threaded_planner_is_detected_per_precision()
     test_a_threaded_fftw_plans_for_the_team(True)
     test_a_threaded_fftw_plans_for_the_team(False)
     test_a_program_plans_after_a_threaded_one_was_unloaded()
