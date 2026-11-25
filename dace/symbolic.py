@@ -1315,6 +1315,11 @@ class OR(sympy.Function):
     def _eval_is_boolean(self):
         return True
 
+    def _eval_derivative(self, s):
+        # A truth value is piecewise constant. Without this, SymPy's default would differentiate
+        # the (relational) arguments, which have no derivative.
+        return sympy.S.Zero
+
 
 class AND(sympy.Function):
     @classmethod
@@ -1332,6 +1337,11 @@ class AND(sympy.Function):
     def _eval_is_boolean(self):
         return True
 
+    def _eval_derivative(self, s):
+        # A truth value is piecewise constant. Without this, SymPy's default would differentiate
+        # the (relational) arguments, which have no derivative.
+        return sympy.S.Zero
+
 
 class IfExpr(sympy.Function):
     @classmethod
@@ -1346,6 +1356,12 @@ class IfExpr(sympy.Function):
         """
         if x.is_Boolean:
             return y if x else z
+
+    def _eval_derivative(self, s):
+        # Like ``sympy.Piecewise``: differentiate the values and keep the condition. The default
+        # would also differentiate the (relational) condition, which has no derivative.
+        cond, true_value, false_value = self.args
+        return IfExpr(cond, true_value.diff(s), false_value.diff(s))
 
     def _eval_is_real(self):
         if self.args[1].is_real is True and self.args[2].is_real is True:
