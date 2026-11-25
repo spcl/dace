@@ -140,9 +140,23 @@ class PruneConnectors(pm.SingleStateTransformation):
         else:
             nsdfg_state = state
 
+        # Read before the pruning: an access node inside the scope whose only reader goes would end inside it
+        read = (
+            [e.src for conn in prune_in for e in nsdfg_state.in_edges_by_connector(nsdfg, conn)]
+            if scope is not None
+            else []
+        )
         for conn in prune_in:
             for e in nsdfg_state.in_edges_by_connector(nsdfg, conn):
                 nsdfg_state.remove_memlet_path(e, remove_orphans=True)
+        for node in read:
+            if (
+                isinstance(node, nodes.AccessNode)
+                and node in nsdfg_state.nodes()
+                and nsdfg_state.out_degree(node) == 0
+                and nsdfg_state.in_degree(node) > 0
+            ):
+                nsdfg_state.add_nedge(node, nsdfg_state.exit_node(scope), Memlet())
 
         # The node's only tie to its scope may be the edge just removed
         if scope is not None and nsdfg_state.in_degree(nsdfg) == 0:
