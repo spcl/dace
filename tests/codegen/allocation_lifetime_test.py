@@ -688,6 +688,54 @@ def test_dominator_tree_matches_the_transitive_closure():
     assert dom.dominates(first, last) and postdom.dominates(last, first) and not dom.dominates(left, last)
 
 
+def two_branches_sdfg(name: str, resize: bool = False) -> dace.SDFG:
+    """``t`` is sized by ``n``, 0 on entry (Fortran's unallocated extent), which the first conditional assigns before
+    it fills ``t``; a later conditional reads ``t`` (and, with ``resize``, first assigns ``n`` anew)."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("N", [1], dace.int64)
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_array("t", ["n"], dace.float64, transient=True)
+    previous = sdfg.add_state("first", is_start_block=True)
+    arms = []
+    for label in ("fill", "read"):
+        branches = ConditionalBlock(label)
+        sdfg.add_node(branches)
+        sdfg.add_edge(previous, branches, dace.InterstateEdge(assignments={"n": "0"} if label == "fill" else None))
+        arm = ControlFlowRegion(f"{label}_arm", sdfg=sdfg)
+        branches.add_branch(dace.properties.CodeBlock("A[0] > 0"), arm)
+        arms.append(arm)
+        previous = sdfg.add_state_after(branches, f"after_{label}")
+    size = arms[0].add_state("size", is_start_block=True)
+    write = arms[0].add_state("write")
+    arms[0].add_edge(size, write, dace.InterstateEdge(assignments={"n": "N[0]"}))
+    write.add_mapped_tasklet("fill", {"i": "0:n"}, {}, "o = i", {"o": dace.Memlet("t[i]")}, external_edges=True)
+    read = arms[1].add_state("read", is_start_block=True)
+    if resize:
+        read = arms[1].add_state_after(read, "read_resized", assignments={"n": "N[0] + 1"})
+    read.add_nedge(read.add_read("t"), read.add_write("A"), dace.Memlet("t[n - 1]", other_subset="3"))
+    return sdfg
+
+
+def test_a_transient_sized_in_one_branch_and_read_in_a_later_one_is_allocated_after_its_size():
+    """The allocation of ``t`` follows the assignment of ``n`` in the first branch, not the state ahead of it."""
+    sdfg = two_branches_sdfg("late_size_allocation")
+    code = sdfg.generate_code()[0].clean_code
+    allocation = re.search(r"\bt = (new|dace::aligned_new_array)", code)
+    assert allocation and code.index("n = N[0]") < allocation.start(), code
+
+    for taken in (True, False):
+        A = np.array([1.0 if taken else -1.0, 0.0, 0.0, 0.0])
+        sdfg(A=A, N=np.array([1 << 20], dtype=np.int64))
+        assert A[3] == ((1 << 20) - 1 if taken else 0.0)
+
+
+def test_a_transient_resized_after_its_first_use_is_refused():
+    """``n`` changes between the fill and the read of ``t``: that needs a reallocation, which codegen refuses."""
+    with pytest.raises(NotImplementedError, match="sized at 2 places"):
+        two_branches_sdfg("resized_allocation", resize=True).generate_code()
+
+
 def test_container_read_only_from_tasklet_code():
     """``t`` is read by the code of a tasklet in a later state, with no access node there."""
     sdfg = dace.SDFG("container_read_only_from_code")
@@ -748,5 +796,7 @@ if __name__ == "__main__":
     test_multisize()
     test_a_view_does_not_reallocate_the_array_it_views()
     test_dominator_tree_matches_the_transitive_closure()
+    test_a_transient_sized_in_one_branch_and_read_in_a_later_one_is_allocated_after_its_size()
+    test_a_transient_resized_after_its_first_use_is_refused()
     test_container_read_only_from_tasklet_code()
     test_view_first_read_by_an_interstate_edge()
