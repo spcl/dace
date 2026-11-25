@@ -141,5 +141,28 @@ def test_a_min_or_max_of_one_kind_widens_to_the_wider_type(call, a_type, b_type,
     assert out[0] == expected[call.lower().startswith("max")]
 
 
+def test_min_and_max_are_constant_expressions():
+    # The ``<array>_idx`` helpers are constexpr, and a stride may take a Max (ICON's
+    # ``nlev - Max(3, nrdmax - 2)``): GCC 11 rejects the helper unless Max is constexpr too
+    sdfg = SDFG("minmax_constexpr")
+    sdfg.add_array("out", [2], dace.int64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet(
+        "fold",
+        {},
+        {"lo", "hi"},
+        "constexpr int64_t a = Min(int64_t(3), int64_t(5));\n"
+        "constexpr int64_t b = Max(int64_t(3), int64_t(5));\n"
+        "lo = a;\nhi = b;",
+        language=dace.Language.CPP,
+    )
+    write = state.add_write("out")
+    state.add_edge(tasklet, "lo", write, None, dace.Memlet("out[0]"))
+    state.add_edge(tasklet, "hi", write, None, dace.Memlet("out[1]"))
+    out = np.zeros(2, dtype=np.int64)
+    sdfg(out=out)
+    assert list(out) == [3, 5]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
