@@ -190,13 +190,13 @@ def add_twiddle_state(
     name = sdfg.add_transient(f"__twiddle{axis}", [length], element, storage=storage, find_new_name=True)[0]
     real = real_of(element).to_string()
     sign = "" if inverse else "-"
+    angle = f"{2.0 * math.pi!r} * float64(__m) / float64({dace.symbolic.symstr(length)})"
     state = sdfg.add_state_after(after, f"twiddle_axis{axis}")
     state.add_mapped_tasklet(
         "twiddle",
         {"__m": f"0:{dace.symbolic.symstr(length)}"},
         {},
-        f"angle = {2.0 * math.pi!r} * float64(__m) / float64({dace.symbolic.symstr(length)})\n"
-        f"o = dace.{element.to_string()}({real}(math.cos(angle)), {real}({sign}math.sin(angle)))",
+        f"o = dace.{element.to_string()}({real}(math.cos({angle})), {real}({sign}math.sin({angle})))",
         {"o": dace.Memlet(data=name, subset="__m")},
         external_edges=True,
     )
@@ -208,7 +208,7 @@ def add_dft_axis_state(
 ) -> dace.SDFGState:
     """Appends a batched 1-D DFT of ``src`` along ``axis`` into ``dst``, scaled by ``factor``.
 
-    Each output element sums its input line in its own tasklet, so no complex atomics are needed.
+    Each output element sums its input line in a sequential inner map.
 
     :param shape: The shape of both arrays.
     :param axis: The transformed axis; the others are batch dimensions.
@@ -221,8 +221,6 @@ def add_dft_axis_state(
     length = dace.symbolic.symstr(shape[axis])
     element = sdfg.arrays[dst].dtype
     real = real_of(element).to_string()
-    line = [f"__i{d}" for d in range(ndim)]
-    line[axis] = f"0:{length}"
     # A FLOATING factor in the element's precision: ``1/(M*N)`` over integer symbols is C integer division, i.e. zero,
     # and ``complex64 * double`` has no operator.
     scale = "" if is_unit(factor) else f" * {real}({dace.symbolic.symstr(in_floating_point(factor))})"
@@ -234,24 +232,45 @@ def add_dft_axis_state(
             return add_copy_state(sdfg, after, f"dft_axis{axis}", src, dst, ", ".join(ranges.values()))
         return add_elementwise_state(sdfg, after, f"dft_axis{axis}", src, dst, ranges, index, index, f"o = i{scale}")
     twiddles, after = add_twiddle_state(sdfg, after, shape[axis], axis, element, inverse, sdfg.arrays[dst].storage)
-    # The exponent is reduced modulo the length, as an FFT's twiddle factors are: one table entry per residue
-    code = f"""
-total = dace.{element.to_string()}(0)
-for __n in range({length}):
-    total += tw[(__i{axis} * __n) % ({length})] * inp[__n]
-o = total{scale}
-"""
+    # Each output sums its line in a sequential inner map into its own accumulator, so no complex atomics are needed.
+    # The exponent is reduced modulo the length, as an FFT's twiddle factors are: one table entry per residue.
+    acc = sdfg.add_scalar("__dft_sum", element, transient=True, find_new_name=True)[0]
+    term_line = [f"__i{d}" for d in range(ndim)]
+    term_line[axis] = "__n"
     state = sdfg.add_state_after(after, f"dft_axis{axis}")
-    state.add_mapped_tasklet(
-        "dft",
-        index_ranges(shape, "__i"),
-        {
-            "inp": dace.Memlet(data=src, subset=", ".join(line)),
-            "tw": dace.Memlet.from_array(twiddles, sdfg.arrays[twiddles]),
-        },
-        code,
-        {"o": dace.Memlet(data=dst, subset=index)},
-        external_edges=True,
+    outer_entry, outer_exit = state.add_map(f"dft_axis{axis}", index_ranges(shape, "__i"))
+    inner_entry, inner_exit = state.add_map(
+        f"dft_axis{axis}_terms", {"__n": f"0:{length}"}, schedule=dace.ScheduleType.Sequential
+    )
+    zero = state.add_tasklet("dft_zero", {}, {"o"}, f"o = dace.{element.to_string()}(0)")
+    term = state.add_tasklet("dft_term", {"tw", "inp"}, {"o"}, "o = tw * inp")
+    scale_sum = state.add_tasklet("dft_scale", {"i"}, {"o"}, f"o = i{scale}")
+    zeroed, summed = state.add_access(acc), state.add_access(acc)
+    state.add_nedge(outer_entry, zero, dace.Memlet())
+    state.add_edge(zero, "o", zeroed, None, dace.Memlet(data=acc, subset="0"))
+    state.add_nedge(zeroed, inner_entry, dace.Memlet())
+    state.add_memlet_path(
+        state.add_read(src),
+        outer_entry,
+        inner_entry,
+        term,
+        dst_conn="inp",
+        memlet=dace.Memlet(data=src, subset=", ".join(term_line)),
+    )
+    state.add_memlet_path(
+        state.add_read(twiddles),
+        outer_entry,
+        inner_entry,
+        term,
+        dst_conn="tw",
+        memlet=dace.Memlet(data=twiddles, subset=f"(__i{axis} * __n) % ({length})"),
+    )
+    state.add_memlet_path(
+        term, inner_exit, summed, src_conn="o", memlet=dace.Memlet(data=acc, subset="0", wcr="lambda a, b: a + b")
+    )
+    state.add_edge(summed, None, scale_sum, "i", dace.Memlet(data=acc, subset="0"))
+    state.add_memlet_path(
+        scale_sum, outer_exit, state.add_write(dst), src_conn="o", memlet=dace.Memlet(data=dst, subset=index)
     )
     return state
 

@@ -9,6 +9,7 @@ import numpy as np
 import dace
 from dace import data, dtypes, subsets, symbolic
 from dace.codegen.common import sym2cpp
+from dace.libraries.standard.nodes.fill import node as fill
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 
@@ -492,3 +493,42 @@ def in_place_call(
         tasklet, f"_{target}", call_state.add_write(target), None, dace.Memlet.from_array(target, nsdfg.arrays[target])
     )
     return nsdfg
+
+
+def add_nested_mapped_tasklet(
+    state: "dace.SDFGState",
+    label: str,
+    outer: dict[str, str],
+    inner: dict[str, str],
+    inputs: dict[str, "dace.Memlet"],
+    code: str,
+    outputs: dict[str, "dace.Memlet"],
+) -> None:
+    """``add_mapped_tasklet`` over ``inner`` nested in a map over ``outer``, whose parameters ``inner``'s ranges may
+    name: a map over a triangle."""
+    outer_entry, outer_exit = state.add_map(label, outer)
+    inner_entry, inner_exit = state.add_map(f"{label}_inner", inner)
+    tasklet = state.add_tasklet(label, set(inputs), set(outputs), code)
+    if not inputs:
+        state.add_nedge(outer_entry, inner_entry, dace.Memlet())
+        state.add_nedge(inner_entry, tasklet, dace.Memlet())
+    for connector, memlet in inputs.items():
+        state.add_memlet_path(
+            state.add_read(memlet.data), outer_entry, inner_entry, tasklet, dst_conn=connector, memlet=memlet
+        )
+    for connector, memlet in outputs.items():
+        state.add_memlet_path(
+            tasklet, inner_exit, outer_exit, state.add_write(memlet.data), src_conn=connector, memlet=memlet
+        )
+
+
+def add_fill(state: "dace.SDFGState", name: str, value=0) -> None:
+    """Writes ``value`` to all of ``name`` with a Fill library node."""
+    sdfg = state.sdfg
+    state.add_edge(
+        fill.FillLibraryNode(f"fill_{name}", value=value),
+        fill.FillLibraryNode.OUTPUT_CONNECTOR_NAME,
+        state.add_write(name),
+        None,
+        dace.Memlet.from_array(name, sdfg.arrays[name]),
+    )

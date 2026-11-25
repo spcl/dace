@@ -6,7 +6,7 @@ from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import blas_helpers, gpu_dialect, vendor
 from dace.libraries.blas.blas_helpers import operand
-from dace.libraries.blas.nodes.symv import symmetric_element
+from dace.libraries.blas.nodes.symv import stored_and_mirrored
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
@@ -22,34 +22,36 @@ class ExpandSymmPure(ExpandTransformation):
         m, n = sdfg.arrays["_Cin"].shape
         init = sdfg.add_state(f"{node.label}_init")
         # As in BLAS, beta == 0 does not read C, so NaN there does not reach the result
-        zero = blas_helpers.is_literal_scale(node, "beta", node.beta, 0)
         alpha, alpha_inputs = blas_helpers.scale_term(node, "alpha", node.alpha)
         beta, beta_inputs = blas_helpers.scale_term(node, "beta", node.beta)
-        init.add_mapped_tasklet(
-            "scale_c",
-            {"__i": f"0:{m}", "__j": f"0:{n}"},
-            {} if zero else {"__c": dace.Memlet("_Cin[__i, __j]"), **beta_inputs},
-            "__out = 0" if zero else f"__out = {beta} * __c",
-            {"__out": dace.Memlet("_Cout[__i, __j]")},
-            external_edges=True,
-        )
-        # Left: C += alpha * A[i, k] * B[k, j]; right: C += alpha * B[i, k] * A[k, j]
+        if blas_helpers.is_literal_scale(node, "beta", node.beta, 0):
+            blas_helpers.add_fill(init, "_Cout")
+        else:
+            init.add_mapped_tasklet(
+                "scale_c",
+                {"__i": f"0:{m}", "__j": f"0:{n}"},
+                {"__c": dace.Memlet("_Cin[__i, __j]"), **beta_inputs},
+                f"__out = {beta} * __c",
+                {"__out": dace.Memlet("_Cout[__i, __j]")},
+                external_edges=True,
+            )
+        # Left: C += alpha * A[i, k] * B[k, j], k a column of A; right: C += alpha * B[i, k] * A[k, j], k a row of A.
+        # The stored triangle's elements are read in place, the others at their mirror.
         row, col = ("__k", "__j") if node.side else ("__i", "__k")
         b = "_B[__i, __k]" if node.side else "_B[__k, __j]"
-        product = sdfg.add_state_after(init, f"{node.label}_product")
-        product.add_mapped_tasklet(
-            "symm",
-            {"__i": f"0:{m}", "__j": f"0:{n}", "__k": f"0:{n if node.side else m}"},
-            {
-                "__a": dace.Memlet(f"_A[{row}, {col}]"),
-                "__mirror": dace.Memlet(f"_A[{col}, {row}]"),
-                "__b": dace.Memlet(b),
-                **alpha_inputs,
-            },
-            f"__out = {alpha} * (__a if {symmetric_element(node.uplo, row, col)} else __mirror) * __b",
-            {"__out": dace.Memlet("_Cout[__i, __j]", wcr="lambda a, b: a + b")},
-            external_edges=True,
-        )
+        ranges = stored_and_mirrored(node.uplo, node.side, "__j" if node.side else "__i", n if node.side else m)
+        after = init
+        for ranged, a in zip(ranges, (f"_A[{row}, {col}]", f"_A[{col}, {row}]")):
+            after = sdfg.add_state_after(after, f"{node.label}_product")
+            blas_helpers.add_nested_mapped_tasklet(
+                after,
+                "symm",
+                {"__i": f"0:{m}", "__j": f"0:{n}"},
+                {"__k": ranged},
+                {"__a": dace.Memlet(a), "__b": dace.Memlet(b), **alpha_inputs},
+                f"__out = {alpha} * __a * __b",
+                {"__out": dace.Memlet("_Cout[__i, __j]", wcr="lambda a, b: a + b")},
+            )
         return sdfg
 
 

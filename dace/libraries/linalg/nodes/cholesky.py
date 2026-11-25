@@ -6,6 +6,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace import Memlet
 from dace.libraries import hip_dialect
+from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import Potrf, environments
 from dace.libraries.linalg.nodes.transpose import Transpose
@@ -33,21 +34,10 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     potrf_node = Potrf("potrf", lower=node.lower)
     potrf_node.implementation = implementation
 
-    _, me, mx = state.add_mapped_tasklet(
-        "_uzero_",
-        dict(__i=f"0:{out_shape[0]}", __j=f"0:{out_shape[1]}"),
-        dict(_inp=Memlet.simple("_b", "__i, __j")),
-        f"_out = 0 if {'__i < __j' if node.lower else '__i > __j'} else _inp",
-        dict(_out=Memlet.simple("_b", "__i, __j")),
-        external_edges=True,
-    )
-
     ain = state.add_read("_a")
     if implementation in hip_dialect.GPU_SOLVER_BLAS:
         binout1 = state.add_access("_bt")
         binout2 = state.add_access("_bt")
-        binout3 = state.in_edges(me)[0].src
-        bout = state.out_edges(mx)[0].dst
         transpose_ain = Transpose("AT", dtype=dtype)
         transpose_ain.implementation = hip_dialect.GPU_SOLVER_BLAS[implementation]
         state.add_edge(ain, None, transpose_ain, "_inp", Memlet.from_array(*ain_arr))
@@ -55,12 +45,24 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
         transpose_out = Transpose("BT", dtype=dtype)
         transpose_out.implementation = hip_dialect.GPU_SOLVER_BLAS[implementation]
         state.add_edge(binout2, None, transpose_out, "_inp", Memlet.from_array(*binout_arr))
-        state.add_edge(transpose_out, "_out", binout3, None, Memlet.from_array(*bout_arr))
+        state.add_edge(transpose_out, "_out", state.add_write("_b"), None, Memlet.from_array(*bout_arr))
     else:
         binout1 = state.add_access("_b")
-        binout2 = state.in_edges(me)[0].src
-        binout3 = state.out_edges(mx)[0].dst
+        binout2 = state.add_access("_b")
         state.add_nedge(ain, binout1, Memlet.from_array(*ain_arr))
+
+    # POTRF leaves the other triangle as it was: a map over that strict triangle writes its zeros
+    n = out_shape[0]
+    zero = sdfg.add_state_after(state, f"{node.label}_zero_triangle")
+    blas_helpers.add_nested_mapped_tasklet(
+        zero,
+        "_zero_",
+        dict(__i=f"0:{n}"),
+        dict(__j=f"__i + 1:{n}" if node.lower else "0:__i"),
+        {},
+        "_out = 0",
+        {"_out": Memlet.simple("_b", "__i, __j")},
+    )
 
     info = state.add_write("_info")
 

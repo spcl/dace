@@ -13,6 +13,7 @@ from dace.frontend.python.common import StringLiteral
 from dace.frontend.python.replacements.array_creation_dace import promote_size_scalars_in_shape
 from dace.frontend.python.replacements.array_manipulation import _numpy_roll as numpy_roll
 from dace.frontend.python.replacements.utils import ProgramVisitor
+from dace.libraries.standard.nodes.fill import node as fill
 
 BACKWARD = StringLiteral("backward")
 
@@ -63,21 +64,22 @@ def crop_or_zero_pad(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, s
     """
     desc = sdfg.arrays[a]
     name = pv.add_temp_transient(shape, desc.dtype, storage=desc.storage)[0]
-    index = ", ".join(f"__i{d}" for d in range(len(shape)))
-    padded = [d for d, (new, old) in enumerate(zip(shape, desc.shape)) if symbolic.equal(new, old) is not True]
-    inside = " and ".join(f"__i{d} < {symbolic.symstr(desc.shape[d])}" for d in padded)
-    # The whole-array connector squeezes unit dimensions, so the read names only the others
-    kept = ", ".join(f"__i{d}" for d, old in enumerate(desc.shape) if not symbolic.equal_valued(1, old))
-    read = f"i[{kept}]" if kept else "i"
-    exit_node = state.add_mapped_tasklet(
-        "resize",
-        {f"__i{d}": f"0:{symbolic.symstr(extent)}" for d, extent in enumerate(shape)},
-        {"i": Memlet.from_array(a, desc)},
-        f"o = {read} if {inside} else 0" if inside else f"o = {read}",
-        {"o": Memlet(data=name, subset=index)},
-        external_edges=True,
-    )[2]
-    return state.out_edges(exit_node)[0].dst
+    padded = any(symbolic.equal(sp.Min(new, old), new) is not True for new, old in zip(shape, desc.shape))
+    overlap = ", ".join(f"0:{symbolic.symstr(sp.Min(new, old))}" for new, old in zip(shape, desc.shape))
+    if padded:
+        # The padding is zero: a fill of the whole copy in a state before the overlap is copied over it
+        zero = state.parent_graph.add_state_before(state, f"{name}_zero")
+        zeros = fill.FillLibraryNode("resize_zero", value=0)
+        zero.add_edge(
+            zeros,
+            fill.FillLibraryNode.OUTPUT_CONNECTOR_NAME,
+            zero.add_write(name),
+            None,
+            Memlet.from_array(name, sdfg.arrays[name]),
+        )
+    written = state.add_write(name)
+    state.add_nedge(state.add_read(a), written, Memlet(data=a, subset=overlap, other_subset=overlap))
+    return written
 
 
 def add_fft_node(
@@ -305,15 +307,21 @@ def add_fft_frequencies(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, n, d, 
     count = sp.floor(n / 2) + 1 if half_spectrum else n
     name = pv.add_temp_transient([count], dtypes.float64)[0]
     length = symbolic.symstr(n)
-    index = "__i" if half_spectrum else f"(__i if __i < ({length} + 1) // 2 else __i - {length})"
-    state.add_mapped_tasklet(
-        "frequencies",
-        {"__i": f"0:{symbolic.symstr(count)}"},
-        {},
-        f"o = float64({index}) / ({float(d)!r} * float64({length}))",
-        {"o": Memlet(data=name, subset="__i")},
-        external_edges=True,
-    )
+    # numpy's order: the non-negative frequencies, then the negative ones, each half its own map
+    spacing = f"({float(d)!r} * float64({length}))"
+    halves = [("0", symbolic.symstr(count), "__i")]
+    if not half_spectrum:
+        middle = symbolic.symstr(symbolic.int_floor(n + 1, 2))
+        halves = [("0", middle, "__i"), (middle, length, f"__i - {length}")]
+    for start, stop, index in halves:
+        state.add_mapped_tasklet(
+            "frequencies",
+            {"__i": f"{start}:{stop}"},
+            {},
+            f"o = float64({index}) / {spacing}",
+            {"o": Memlet(data=name, subset="__i")},
+            external_edges=True,
+        )
     return name
 
 
