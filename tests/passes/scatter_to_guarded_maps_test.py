@@ -1106,3 +1106,26 @@ def test_a_transient_scattered_through_an_index_of_an_index_is_guarded_on_both()
         out = np.zeros(n)
         sdfg(c=c, nl=nl.astype(np.int64), igk=igk.astype(np.int64), out=out, N=n)
         assert np.allclose(out, 2.0 * expected)
+
+
+@dace.program
+def shifted_chained_scatter(c: dace.float64[N], nl: dace.int64[N], igk: dace.int64[N], out: dace.float64[N]):
+    for i in range(N):
+        out[nl[igk[i] - 1] - 1] = c[i]
+
+
+def test_a_scatter_through_a_shifted_index_of_an_index_is_guarded_on_both():
+    """vexx_bp_k_gpu's ``temppsic_d(dfftt%nl(igk_exx(j))) = ...``: Fortran's 1-based ``nl(igk(j))`` lowers to
+    ``nl[igk_j - 1]``, a shifted inner index that is as injective as ``nl[igk_j]``. It was left an unproven loop."""
+    sdfg = shifted_chained_scatter.to_sdfg(simplify=True)
+    assert {"nl", "igk"} <= set(detect_scatter_idx_arrays(sdfg))
+    canonicalize(sdfg)
+    n = 16
+    c = np.random.default_rng(0).random(n)
+    for nl, igk in ((_make_permutation(n, 1), _make_permutation(n, 2)), (np.zeros(n, np.int64), np.arange(n))):
+        expected = np.zeros(n)
+        for i in range(n):
+            expected[nl[igk[i]]] = c[i]
+        out = np.zeros(n)
+        sdfg(c=c, nl=(nl + 1).astype(np.int64), igk=(igk + 1).astype(np.int64), out=out, N=n)
+        assert np.allclose(out, expected)

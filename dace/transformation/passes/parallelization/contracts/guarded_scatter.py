@@ -1287,9 +1287,10 @@ def chained_bindings(
     region: LoopRegion, sdfg: SDFG, bindings: dict[str, tuple[str, list[ast.AST]]]
 ) -> dict[str, tuple[str, str]]:
     """``sym -> (outer, inner)`` for each ``sym := outer[inner]`` of ``region``'s interstate edges where ``outer`` is a
-    1-D array and ``inner`` a symbol ``bindings`` binds to ``idx[f(loop_var)]`` (vloc_psi_k_acc's
-    ``psic[nl[igk[i]]]``): the slot is injective when ``idx`` is over the loop and ``outer`` is over all of it."""
+    1-D array and ``inner`` a symbol ``bindings`` binds to ``idx[f(loop_var)]``, read through an injective affine
+    index (vloc_psi_k_acc's ``psic[nl[igk[i]]]``, vexx's ``nl[igk_j - 1]``): the slot is injective when ``idx`` is over the loop and ``outer`` is over all of it."""
     chained: dict[str, tuple[str, str]] = {}
+    varying = region_assigned_symbols(region) | {region.loop_variable}
     for e in region.all_interstate_edges():
         for lhs, rhs in (e.data.assignments or {}).items():
             if lhs in bindings:
@@ -1305,8 +1306,14 @@ def chained_bindings(
             desc = sdfg.arrays.get(tree.value.id)
             if not isinstance(desc, data.Array) or len(desc.shape) != 1:
                 continue
-            if isinstance(tree.slice, ast.Name) and tree.slice.id in bindings:
-                chained[lhs] = (tree.value.id, tree.slice.id)
+            # The inner index may be shifted or scaled (Fortran's ``nl(igk(j))`` lowers to ``nl[igk_j - 1]``): an
+            # injective affine map of a distinct value stays distinct, if nothing else in it changes per iteration.
+            names = {n.id for n in ast.walk(tree.slice) if isinstance(n, ast.Name)}
+            inner = sorted(names & bindings.keys())
+            if len(inner) != 1 or not names.isdisjoint(varying - {inner[0]}):
+                continue
+            if value_is_injective_affine(astutils.unparse(tree.slice), inner[0]):
+                chained[lhs] = (tree.value.id, inner[0])
     return chained
 
 
