@@ -1033,15 +1033,17 @@ def test_a_scratch_the_kernel_sizes_stays_where_it_is():
     sdfg.validate()
 
 
-def test_a_scratch_sized_by_the_kernel_parameter_stays_where_it_is():
-    """``buf[i + 1]`` in kernel ``i`` has no size before the launch."""
+def test_a_scratch_sized_by_the_kernel_parameter_is_one_slice_of_its_largest_size():
+    """``buf[i + 1]`` in kernel ``i`` over ``0:128`` stayed a per-thread heap array; each thread now owns one slice of
+    a global ``128 x 128`` buffer, sized by the largest ``i + 1`` before the launch."""
     sdfg = kernel_with_internal_transient()
     sdfg.arrays["buf"].set_shape(new_shape=[dace.symbol("i", dace.int64) + 1])
     sdfg.arrays["buf"].storage = REGISTER
 
-    assert lift(sdfg) is None
+    assert lift(sdfg) == 1
 
-    assert sdfg.arrays["buf"].storage == REGISTER
+    assert sdfg.arrays["buf"].storage == GLOBAL and [str(d) for d in sdfg.arrays["buf"].shape] == ["128", "128"]
+    sdfg.validate()
 
 
 @pytest.mark.gpu
@@ -1514,7 +1516,7 @@ if __name__ == "__main__":
     test_code_generation_moves_a_symbolic_scratch_out_of_the_kernel("flat")
     test_code_generation_moves_a_symbolic_scratch_out_of_the_kernel("nested")
     test_a_scratch_the_kernel_sizes_stays_where_it_is()
-    test_a_scratch_sized_by_the_kernel_parameter_stays_where_it_is()
+    test_a_scratch_sized_by_the_kernel_parameter_is_one_slice_of_its_largest_size()
     test_a_symbolic_per_thread_array_moved_by_code_generation_computes_the_right_values()
     test_a_kernel_level_access_above_a_per_thread_scratch_is_refused()
     test_an_extent_a_thread_reads_is_sized_by_its_maximum_over_the_kernel()

@@ -127,6 +127,25 @@ def make_levels(sdfg: SDFG, state: SDFGState, entries: list[nodes.MapEntry]) -> 
     return levels
 
 
+def bound_by_levels(desc: dt.Array, levels: list[Level]) -> None:
+    """Size every extent of ``desc`` that grows (shrinks) with a parameter of ``levels`` by that parameter's last
+    (first) value, so one slice per iteration holds what any iteration needs (``tmp[i + 1]`` under ``map[0:N]``
+    takes ``N``). An extent that neither grows nor shrinks keeps the parameter, and the lift then refuses it."""
+    shape = [symbolic.pystr_to_symbolic(extent) for extent in desc.shape]
+    # Innermost first: an inner range that names an outer parameter is bounded in turn by the outer level
+    for level in reversed(levels):
+        rng = level.entry.map.range
+        for param, first, last in zip(level.entry.map.params, rng.min_element(), rng.max_element(), strict=True):
+            for k, extent in enumerate(shape):
+                found = next((s for s in extent.free_symbols if str(s) == param), None)
+                slope = sympy.diff(extent, found) if found is not None else None
+                if slope is not None and slope.is_nonnegative:
+                    shape[k] = extent.subs(found, last)
+                elif slope is not None and slope.is_nonpositive:
+                    shape[k] = extent.subs(found, first)
+    desc.set_shape(shape)
+
+
 def level_prefix(levels: list[Level], chain: list[nodes.MapEntry]) -> Prefix:
     """Leading subset of an access inside ``chain``: its own iteration of a level it is in, the whole level otherwise."""
     prefix: Prefix = []
@@ -631,6 +650,7 @@ def plan_hops(plan: LiftPlan, inner: dt.Array, kernel_sdfg: SDFG) -> bool:
         sdict = state.scope_dict()
         entries = enclosing_entries(sdict, sdict[node], kernel if state.sdfg is kernel_sdfg else None)
         levels = make_levels(state.sdfg, state, slicing(entries))
+        bound_by_levels(outer, levels)
         shape, offset = prepend_levels(outer, [level.entry for level in reversed(levels)])
         outer.set_shape(shape, offset=offset)
         outer.transient = False
@@ -700,6 +720,7 @@ def plan_lift(name: str, owner: SDFG, kernel: Scope, coalesced: bool) -> LiftPla
             for d in desc.shape
         ]
     )
+    bound_by_levels(sized, levels)
     plan = LiftPlan(
         name,
         owner,
@@ -994,6 +1015,17 @@ class MoveArrayOutOfKernel(ppl.Pass):
                 handled += 1
                 continue
             plan = self.plan_or_refuse(name, owner, kernels)
+            if (
+                plan is None
+                and desc.storage == dtypes.StorageType.Register
+                and desc.storage.force
+                and symbolic.issymbolic(desc.total_size, owner.constants)
+            ):
+                # A forced register array of symbolic size would be a per-thread VLA, which no GPU compiler takes.
+                raise ValueError(
+                    f"Per-thread buffer '{name}' of symbolic size {desc.total_size} in a GPU kernel cannot be given "
+                    "one slice of a global buffer allocated before the launch, and a GPU thread has no stack VLA"
+                )
             if plan is None:
                 continue
             desc.storage = dtypes.StorageType.GPU_Global
