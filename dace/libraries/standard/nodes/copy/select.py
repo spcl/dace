@@ -34,6 +34,15 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     # A 0-D map crashes memlet propagation, so single-element copies use Tasklet/MemcpyCUDA1D.
     single_elt = in_subset.num_elements_exact() == 1 and out_subset.num_elements_exact() == 1
 
+    # A cast is not a byte move, so no memcpy variant can carry it. On one side of the CPU/GPU
+    # boundary a tasklet casts; across it from host code, the bytes move first and the GPU casts.
+    if inp.dtype != out.dtype:
+        if not is_devicelevel_gpu(parent_state.sdfg, parent_state, node) and _is_cross_cpu_gpu(
+            inp.storage, out.storage, node, parent_state
+        ):
+            return "CastOnDevice"
+        return "Tasklet" if single_elt else "MappedTasklet"
+
     # GPU_Shared: SharedMemoryCollective, unless thread-level (Register endpoint or in a map).
     # TODO: replace dace::CopyND with a vectorized 128-bit collective load.
     if inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared:

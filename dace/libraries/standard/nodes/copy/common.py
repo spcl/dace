@@ -291,13 +291,30 @@ def _make_mapped_tasklet_expansion(
         f"{node.label}_tasklet",
         map_rng,
         inputs,
-        f"{inner_out} = {inner_in}",
+        copy_assignment_code(inp, out, inner_in, inner_out),
         outputs,
         schedule=schedule,
         external_edges=True,
     )
+    # Bandwidth-bound: 256 threads a block keep the memory pipeline full where the 32-thread default does not
+    if schedule == dtypes.ScheduleType.GPU_Device:
+        map_entry.map.gpu_block_size = [256, 1, 1]
 
     return ctx.sdfg
+
+
+def copy_assignment_code(inp: data.Data, out: data.Data, in_conn: str, out_conn: str) -> str:
+    """The tasklet body for one element of a copy: an assignment, or a CAST when the copy changes
+    dtype.
+
+    Written out as ``dace.<dtype>(...)`` rather than left to C++'s implicit conversion so the
+    narrowing is visible in the graph and in the emitted code.
+    """
+    if inp.dtype == out.dtype:
+        return f"{out_conn} = {in_conn}"
+    name = out.dtype.to_string()
+    cast = name if out.dtype in (dtypes.bool, dtypes.bool_) else f"dace.{name}"
+    return f"{out_conn} = {cast}({in_conn})"
 
 
 def _memcpy_kind(inp: data.Data, out: data.Data) -> str:
