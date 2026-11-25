@@ -478,6 +478,25 @@ def test_gemm_cublas_gpu():
         pytest.skip("cuBLAS build/run unavailable: %s" % e)
 
 
+@restores_implementation
+def test_decltype_of_an_inlined_connector_stays_a_value_type():
+    """dace-fortran's zgemv with a literal complex ``alpha``: ``decltype(_in)(0.5, 2.0)`` builds a complex of
+    ``_in``'s type; inlined to ``a[...]``, ``decltype`` names a reference and the cast does not compile."""
+    _set_impl(EXPERIMENTAL)
+    sdfg = dace.SDFG("decltype_inline")
+    sdfg.add_array("a", [4], dace.complex128)
+    sdfg.add_array("b", [4], dace.complex128)
+    st = sdfg.add_state("main")
+    me, mx = st.add_map("m", dict(i="0:4"))
+    t = st.add_tasklet("scale", {"_in"}, {"_out"}, "_out = decltype(_in)(0.5, 2.0) * _in;", language=dace.Language.CPP)
+    st.add_memlet_path(st.add_access("a"), me, t, dst_conn="_in", memlet=dace.Memlet("a[i]"))
+    st.add_memlet_path(t, mx, st.add_access("b"), src_conn="_out", memlet=dace.Memlet("b[i]"))
+    a = np.arange(4) + 1j * np.arange(4, 8)
+    b = np.zeros(4, dtype=np.complex128)
+    sdfg(a=a, b=b)
+    np.testing.assert_allclose(b, (0.5 + 2.0j) * a)
+
+
 if __name__ == "__main__":
     test_cpp_ternary_scalar_inline()
     test_cpp_body_declaration_blocks_inlining()
@@ -488,4 +507,5 @@ if __name__ == "__main__":
     test_gemm_openblas_pointers()
     test_gemm_cublas_gpu()
     test_offset_pointer_connector_is_parenthesized_before_subscript()
+    test_decltype_of_an_inlined_connector_stays_a_value_type()
     print("ok")

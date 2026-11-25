@@ -728,6 +728,10 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         inline = self._cpp_inline.get(id(node)) or {}
         if not inline:
             return body
+        # ``decltype(_in)`` names a value type, ``decltype(a[i])`` a reference: ``decltype(_in)(re, im)`` must stay a cast
+        body = re.sub(
+            r"\bdecltype\(\s*(%s)\s*\)" % "|".join(map(re.escape, inline)), r"std::decay_t<decltype(\1)>", body
+        )
         out: list[str] = []
         for tok_type, value in CppLexer().get_tokens(body):
             if tok_type in Token.Name and value in inline:
