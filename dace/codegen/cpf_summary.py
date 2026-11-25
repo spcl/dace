@@ -29,7 +29,11 @@ LOOP_PRAGMA = re.compile(
 LOOP_HEAD = re.compile(r"^\s*for \((?:[\w:<>]+\s+)*\**(\w+)\s*=")
 WHILE_HEAD = re.compile(r"^\s*(?:while|do)\b")
 CALL_HEAD = re.compile(r"^\s*(?:[\w:<>*]+\s+)*(\w+)\s*\(")
-FUNCTION_HEAD = re.compile(r"^[A-Za-z_][\w\s:<>*,&\"]*?\b(\w+)\s*\([^;]*$")
+#: A function's head: its name is the last word before ``(``, past the attributes that take arguments
+#: (``__launch_bounds__(512)``); a ``__global__`` one is a GPU kernel.
+FUNCTION_HEAD = re.compile(
+    r"^(?=[A-Za-z_])(__global__\b)?(?:[\w\s:<>*,&\"]|\b__\w+__\([^()]*\))*?\b(?!__\w+__\()(\w+)\s*\([^;]*$"
+)
 NESTED_LOOPS = re.compile(r"the (\d+) nested loops over .* are all parallel")
 #: One ``<op> into <target>`` of a reduction comment, which lists one per accumulator.
 FOLD = re.compile(r"(\S+) into (\w+)")
@@ -80,7 +84,7 @@ def loops_of(code: str) -> list[Loop]:
         stripped = line.strip()
         head = FUNCTION_HEAD.match(line)
         if head is not None:
-            function = head.group(1)
+            function = function_of(head)
         classed = CLASS_LINE.match(line) or LIBRARY_LINE.match(line)
         if classed is not None:
             label = label or (LoopClass(classed.group(1)), classed.group(2))
@@ -156,7 +160,14 @@ def construct_of(lines: list[str], index: int, function: str) -> str:
             return title
     if not function:
         return "the code above"
+    if function.startswith("kernel "):
+        return function
     return f"{'helper' if function.startswith('cpf_') else 'function'} {function}"
+
+
+def function_of(head: re.Match) -> str:
+    """The name of the function :data:`FUNCTION_HEAD` matched, ``kernel <name>`` for a GPU kernel."""
+    return f"kernel {head.group(2)}" if head.group(1) else head.group(2)
 
 
 def bounds_of(line: str) -> tuple[str, str]:
@@ -253,7 +264,7 @@ def comment_every_loop(code: str, kinds: bool = False) -> str:
         stripped = line.strip()
         head = FUNCTION_HEAD.match(line)
         if head is not None:
-            function, parents = head.group(1), []
+            function, parents = function_of(head), []
         classed = CLASS_LINE.match(line) or LIBRARY_LINE.match(line) or (KIND_LINE.match(line) if kinds else None)
         if classed is not None:
             # A thread team's or a one-trip block's comment is not a loop's: the loop inside gets its own.
