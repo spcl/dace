@@ -127,6 +127,49 @@ def test_a_copy_ordering_the_overwrite_through_the_snapshot_stays():
     assert FoldScalarReadCopies().apply_pass(sdfg, {}) is None
 
 
+def test_a_copy_ordering_the_overwrite_through_an_order_tasklet_in_a_map_stays():
+    """TSVC s1251: inside a map, the snapshot orders the overwrite of ``A[i]`` only through an empty tasklet
+    (InlineSDFG's stand-in for an ordering access node); the tasklet writes nothing, yet it carries the order."""
+    sdfg = dace.SDFG("copy_ordering_through_an_order_tasklet")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("body", {"i": "0:N"})
+    s = state.add_access("s")
+    state.add_memlet_path(state.add_read("A"), entry, s, memlet=dace.Memlet("A[i]"))
+    use = state.add_tasklet("use", {"x"}, {"y"}, "y = x")
+    state.add_edge(s, None, use, "x", dace.Memlet("s[0]"))
+    state.add_memlet_path(use, exit_, state.add_write("B"), src_conn="y", memlet=dace.Memlet("B[i]"))
+    order = state.add_tasklet("A_order", {}, {}, "")
+    clobber = state.add_tasklet("clobber", {}, {"z"}, "z = 7.0")
+    state.add_nedge(s, order, dace.Memlet())
+    state.add_nedge(order, clobber, dace.Memlet())
+    state.add_memlet_path(clobber, exit_, state.add_write("A"), src_conn="z", memlet=dace.Memlet("A[i]"))
+    sdfg.validate()
+    assert FoldScalarReadCopies().apply_pass(sdfg, {}) is None
+
+
+def test_a_writer_only_the_dropped_ordering_edge_kept_in_its_map_stays_in_it():
+    sdfg = dace.SDFG("writer_kept_in_its_map")
+    sdfg.add_array("A", [2 * N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("body", {"i": "0:N"})
+    s = state.add_access("s")
+    state.add_memlet_path(state.add_read("A"), entry, s, memlet=dace.Memlet("A[2 * i]"))
+    use = state.add_tasklet("use", {"x"}, {"y"}, "y = x")
+    state.add_edge(s, None, use, "x", dace.Memlet("s[0]"))
+    state.add_memlet_path(use, exit_, state.add_write("B"), src_conn="y", memlet=dace.Memlet("B[i]"))
+    other = state.add_tasklet("other", {}, {"z"}, "z = 7.0")
+    state.add_nedge(s, other, dace.Memlet())
+    state.add_memlet_path(other, exit_, state.add_write("A"), src_conn="z", memlet=dace.Memlet("A[2 * i + 1]"))
+    assert FoldScalarReadCopies().apply_pass(sdfg, {}) == 1
+    assert state.entry_node(other) is entry
+    sdfg.validate()
+
+
 def test_a_copy_whose_writer_follows_the_read_folds():
     sdfg = copy_beside_a_writer(ordered=True)
     assert FoldScalarReadCopies().apply_pass(sdfg, {}) == 1
@@ -312,6 +355,8 @@ if __name__ == "__main__":
     test_a_copy_out_of_the_node_its_writer_fills_folds()
     test_a_copy_beside_an_unordered_writer_stays()
     test_a_copy_ordering_the_overwrite_through_the_snapshot_stays()
+    test_a_copy_ordering_the_overwrite_through_an_order_tasklet_in_a_map_stays()
+    test_a_writer_only_the_dropped_ordering_edge_kept_in_its_map_stays_in_it()
     test_a_copy_whose_writer_follows_the_read_folds()
     test_a_scalar_read_again_in_another_state_stays()
     test_a_scalar_a_branch_condition_reads_stays()

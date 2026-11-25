@@ -14,6 +14,7 @@ import ast
 
 import pytest
 
+import dace
 from dace.codegen import cppunparse
 
 
@@ -52,6 +53,29 @@ def test_a_three_argument_call_is_not_a_conditional_write():
     """``ITE`` is the blend and stays a function call; only the two-argument ``IT`` is a
     statement."""
     assert "if (" not in _unparse("_o = ITE(_c, _t, _e)")
+
+
+def test_a_local_the_readable_generator_writes_directly_is_guarded():
+    """CloudSC's nested BranchNormalization: ``IT`` writes a transient the readable CPU generator names directly."""
+    N = dace.symbol("N")
+    sdfg = dace.SDFG("it_into_a_local")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("C", [N], dace.bool_)
+    sdfg.add_array("tmp", [1], dace.float64, transient=True)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("m", {"i": "0:N"})
+    masked = state.add_tasklet("masked", {"_c": None, "_new": None}, {"_o": None}, "_o = IT(_c, _new)")
+    state.add_memlet_path(state.add_read("C"), entry, masked, dst_conn="_c", memlet=dace.Memlet("C[i]"))
+    state.add_memlet_path(state.add_read("A"), entry, masked, dst_conn="_new", memlet=dace.Memlet("A[i]"))
+    tmp = state.add_access("tmp")
+    state.add_edge(masked, "_o", tmp, None, dace.Memlet("tmp[0]"))
+    copy = state.add_tasklet("copy", {"x": None}, {"y": None}, "y = x")
+    state.add_edge(tmp, None, copy, "x", dace.Memlet("tmp[0]"))
+    state.add_memlet_path(copy, exit_, state.add_write("A"), src_conn="y", memlet=dace.Memlet("A[i]"))
+    with dace.config.set_temporary("compiler", "cpu", "implementation", value="experimental_readable"):
+        code = sdfg.generate_code()[0].clean_code
+    assert "IT(" not in code
+    assert "if (C[" in code
 
 
 if __name__ == "__main__":

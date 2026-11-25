@@ -11,6 +11,7 @@ from dace.codegen import cpf
 from dace.sdfg.utils import specialize_symbols
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
+from dace.transformation.passes.cpu_specialization.demote_level_maps import block_params
 
 N = dace.symbol("N")
 
@@ -203,7 +204,27 @@ def test_a_block_map_the_caller_made_sequential_matches_numpy():
     run_on_gpu(offloaded(sdfg), 3, nblks=3)
 
 
+def test_a_block_index_read_through_an_approximated_bound_is_found():
+    # A device map's memlets carry SymExpr bounds (exact value, approximation) once offloaded
+    sdfg = dace.SDFG("approximated_bound")
+    sdfg.add_array("A", [NB, K], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("blocks", {"jb": "0:NB"})
+    tasklet = state.add_tasklet("t", {"a"}, set(), "pass")
+    bound = symbolic.SymExpr("jb", "0")
+    state.add_memlet_path(
+        state.add_read("A"),
+        entry,
+        tasklet,
+        dst_conn="a",
+        memlet=dace.Memlet(data="A", subset=dace.subsets.Range([(bound, bound, 1), (0, K - 1, 1)])),
+    )
+    state.add_nedge(tasklet, exit_, dace.Memlet())
+    assert block_params(state, entry, {"NB"}) == {"jb": {"NB"}}
+
+
 if __name__ == "__main__":
+    test_a_block_index_read_through_an_approximated_bound_is_found()
     test_a_block_dimension_of_a_merged_map_is_split_out_as_a_host_map_around_the_kernel()
     test_a_block_dimension_of_undeclared_scale_stays_in_the_grid()
     test_a_split_block_dimension_matches_numpy()

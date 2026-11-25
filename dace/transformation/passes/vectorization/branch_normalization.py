@@ -19,6 +19,8 @@ import numpy
 
 import dace
 from dace import properties, subsets, symbolic
+from dace import utils as dace_utils
+from dace.codegen.cppunparse import CONDITIONAL_WRITE_FUNC
 from dace.frontend.operations import detect_reduction_type
 from dace.memlet import Memlet
 from dace.optionals import required
@@ -925,6 +927,47 @@ class BranchNormalization(ppl.Pass):
                         sdfg, state, arr_name, write_an, in_edge, cond_text, cond_array_name, cond_producer, masked
                     )
 
+    @staticmethod
+    def guard_conditional_write(
+        state: dace.SDFGState,
+        in_edge: MultiConnectorEdge[Memlet],
+        cond_text: str,
+        cond_array_name: str | None,
+        cond_producer: dace.nodes.AccessNode | None,
+        write_subset: subsets.Subset,
+    ) -> bool:
+        """Whether ``in_edge`` is the masked write ``_o = IT(c, v)`` of an inner arm, now ``_o = IT((cond) and (c), v)``.
+
+        Redirected into a fresh scratch, the inner write would leave the scratch unset where ``c`` fails, and the outer
+        gate would store that unset value (CloudSC's ``zacust`` under ``jk > ncldtop`` and ``zlfinalsum < eps``)."""
+        writer = in_edge.src
+        if not in_edge.data.dynamic or not isinstance(writer, dace.nodes.Tasklet):
+            return False
+        if writer.code.language != dace.dtypes.Language.Python:
+            return False
+        body = ast.parse(writer.code.as_string).body
+        if len(body) != 1 or not isinstance(body[0], ast.Assign):
+            return False
+        value = body[0].value
+        if not (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id == CONDITIONAL_WRITE_FUNC
+            and len(value.args) == 2
+        ):
+            return False
+        outer = cond_text
+        if cond_array_name is not None:
+            outer = dace_utils.find_new_name("_c_outer", [*writer.in_connectors, *writer.out_connectors])
+            writer.add_in_connector(outer)
+            cond_access = cond_producer if cond_producer is not None else state.add_access(cond_array_name)
+            cond_subset = "0" if state.sdfg.arrays[cond_array_name].total_size == 1 else write_subset
+            state.add_edge(cond_access, None, writer, outer, dace.Memlet(expr=f"{cond_array_name}[{cond_subset}]"))
+        inner, written = (ast.unparse(arg) for arg in value.args)
+        target = ast.unparse(body[0].targets[0])
+        writer.code = CodeBlock(f"{target} = {CONDITIONAL_WRITE_FUNC}(({outer}) and ({inner}), {written})")
+        return True
+
     def _gate_one_write(
         self,
         sdfg: dace.SDFG,
@@ -951,6 +994,8 @@ class BranchNormalization(ppl.Pass):
             # A Python literal for the tasklet: a numpy scalar would print as ``np.float64(0.0)``
             identity = numpy.asarray(identity).item()
             masked = False
+        elif self.guard_conditional_write(state, in_edge, cond_text, cond_array_name, cond_producer, write_subset):
+            return
 
         # 1-element scratch ``__bn_<arr>_new`` holds this element's value.
         tmp_name, _ = sdfg.add_array(
