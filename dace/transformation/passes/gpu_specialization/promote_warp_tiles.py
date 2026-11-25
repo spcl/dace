@@ -154,9 +154,9 @@ class PromoteWarpTiles(ppl.Pass):
                 continue
             node.map.schedule = dtypes.ScheduleType.GPU_ThreadBlock
             # One class line per loop: the loop's own, with how it is spread after its reason
-            first, _, notes = (node.specialization_hint or "").partition("\n")
+            first, *notes = (node.specialization_hint or "").split("\n")
             if first.startswith(LoopClass.PARALLEL.prefix):
-                hints, rest = [first + WARP_TILE_NOTE], [notes] if notes else []
+                hints, rest = [first + WARP_TILE_NOTE], notes
             else:
                 hints, rest = [WARP_TILE_HINT], [node.specialization_hint] if node.specialization_hint else []
             if steps_inside_a_loop(sdfg, state, node):
