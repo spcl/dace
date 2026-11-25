@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A column kernel (a level loop around maps over the columns) runs one block per kernel iteration and one lane per
 column, with no barrier between its column maps. The structural checks need no GPU; the numeric ones run on the
-device, at a column count above the lane cap so that lanes take more than one column."""
+device."""
 
 import numpy as np
 import pytest
@@ -52,6 +52,19 @@ def column_map_leaks_a_scalar(t: dace.float64[KLON, KLEV, NB], out: dace.float64
             out[jk, jb] = s
 
 
+@dace.program
+def species_columns(t: dace.float64[KLON, KLEV, NB], out: dace.float64[KLON, KLEV, NB]):
+    for jb in dace.map[0:NB]:
+        acc = np.zeros((KLON, 5), dtype=np.float64)
+        for jk in range(KLEV):
+            for jl in dace.map[0:KLON]:
+                for s in range(5):
+                    if t[jl, jk, jb] > 0.2 * s:
+                        acc[jl, s] = acc[jl, s] + t[jl, jk, jb]
+            for jl in dace.map[0:KLON]:
+                out[jl, jk, jb] = acc[jl, 0] - acc[jl, 4]
+
+
 def offloaded(program) -> dace.SDFG:
     sdfg = program.to_sdfg(simplify=True)
     sdfg.apply_gpu_transformations()
@@ -87,10 +100,9 @@ def test_a_level_loop_over_column_maps_runs_one_lane_per_column_without_barriers
     ]
     assert len(column_maps) == 3  # the zero fill and the two column maps
     assert barriers(sdfg) == 0
-    # The column buffer is one per block, outside the kernel
+    # Each lane's copy of the column buffer is its own column alone
     acc = [nested.arrays["acc"] for nested in sdfg.all_sdfgs_recursive() if "acc" in nested.arrays]
-    assert all(desc.storage == dtypes.StorageType.GPU_Global for desc in acc)
-    assert any(desc.transient and str(desc.shape[0]) == "NB" for desc in acc)
+    assert acc and all(tuple(desc.shape) == (1,) and desc.storage != dtypes.StorageType.GPU_Global for desc in acc)
 
 
 def test_a_read_of_another_lanes_column_is_fenced_by_barriers():
@@ -98,6 +110,9 @@ def test_a_read_of_another_lanes_column_is_fenced_by_barriers():
     assert ColumnLaneKernels().apply_pass(sdfg, {}) == 1
     sdfg.validate()
     assert barriers(sdfg) == 2
+    # The lanes share the buffer whose columns they read across: one per block, outside the kernel
+    acc = [nested.arrays["acc"] for nested in sdfg.all_sdfgs_recursive() if "acc" in nested.arrays]
+    assert all(desc.storage == dtypes.StorageType.GPU_Global for desc in acc)
 
 
 def test_a_scalar_a_column_map_leaves_for_later_code_keeps_the_kernel_untiled():
@@ -106,9 +121,25 @@ def test_a_scalar_a_column_map_leaves_for_later_code_keeps_the_kernel_untiled():
     assert not lane_maps(sdfg)
 
 
+def test_a_column_buffer_with_a_species_axis_keeps_only_the_species_per_lane():
+    sdfg = offloaded(species_columns)
+    assert ColumnLaneKernels().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert barriers(sdfg) == 0
+    acc = [nested.arrays["acc"] for nested in sdfg.all_sdfgs_recursive() if "acc" in nested.arrays]
+    assert acc and all(tuple(desc.shape) == (5,) for desc in acc)
+
+
 def reference(program, t: np.ndarray, q: np.ndarray) -> np.ndarray:
-    acc = np.zeros((t.shape[0], t.shape[2]))
     out = np.zeros_like(t)
+    if program is species_columns:
+        acc = np.zeros((t.shape[0], 5, t.shape[2]))
+        for jk in range(t.shape[1]):
+            for s in range(5):
+                acc[:, s, :] += np.where(t[:, jk, :] > 0.2 * s, t[:, jk, :], 0.0)
+            out[:, jk, :] = acc[:, 0, :] - acc[:, 4, :]
+        return out
+    acc = np.zeros((t.shape[0], t.shape[2]))
     for jk in range(1, t.shape[1]):
         if program is column_physics:
             acc += t[:, jk, :] * q[:, jk - 1, :]
@@ -120,8 +151,8 @@ def reference(program, t: np.ndarray, q: np.ndarray) -> np.ndarray:
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("program", [column_physics, last_column_feeds_all])
-@pytest.mark.parametrize("klon", [37, 300])
+@pytest.mark.parametrize("program", [column_physics, last_column_feeds_all, species_columns])
+@pytest.mark.parametrize("klon", [37, 128])
 def test_column_lanes_match_numpy_on_the_gpu(program, klon: int):
     sdfg = offloaded(program)
     assert ColumnLaneKernels().apply_pass(sdfg, {}) == 1
@@ -139,6 +170,7 @@ if __name__ == "__main__":
     test_a_level_loop_over_column_maps_runs_one_lane_per_column_without_barriers()
     test_a_read_of_another_lanes_column_is_fenced_by_barriers()
     test_a_scalar_a_column_map_leaves_for_later_code_keeps_the_kernel_untiled()
-    for program in (column_physics, last_column_feeds_all):
-        for klon in (37, 300):
+    test_a_column_buffer_with_a_species_axis_keeps_only_the_species_per_lane()
+    for program in (column_physics, last_column_feeds_all, species_columns):
+        for klon in (37, 128):
             test_column_lanes_match_numpy_on_the_gpu(program, klon)

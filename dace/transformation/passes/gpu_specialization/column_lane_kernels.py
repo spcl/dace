@@ -9,28 +9,32 @@ loop inside it and every map over the columns a serial loop in that thread::
             map jl (Sequential): a[jl] = ...      # the whole block of columns, serially
             map jl (Sequential): b[jl] = a[jl] ...
 
-This pass gives the kernel one thread per column instead. A ``GPU_ThreadBlock`` lane map of ``__tid`` wraps the kernel
-body, and lane ``t`` runs column ``t`` (``t + B``, ... when the block of ``B`` lanes is narrower than the columns) of
-every map over the columns, the column maps. What runs outside them, the level loop included, runs on every lane::
+This pass gives the kernel one thread per column instead. A ``GPU_ThreadBlock`` lane map of ``__tid`` over the
+columns wraps the kernel body (the block is NPROMA threads), and lane ``t`` runs column ``t`` of every map over the
+columns, the column maps. What runs outside them, the level loop included, runs on every lane::
 
     GPU_Device map jb:
-        GPU_ThreadBlock map __tid:
+        GPU_ThreadBlock map __tid = 0 : klon:
             for jk in levels:
-                map jl = __tid + 1 : klon + 1 : B: a[jl] = ...
-                map jl = __tid + 1 : klon + 1 : B: b[jl] = a[jl] ...
+                map jl = __tid + 1: a = ...
+                map jl = __tid + 1: b = a ...
 
 The lanes need no barrier when no lane reads what another wrote: every container the kernel writes is reached
 along its column dimension at the lane's own column (``a[jl - 1]`` in a map starting at ``jl = 1``), or over all
-columns by a node that works element by element (a fill, a copy, the memlet of a scope), which then fills each
-lane's columns only. Code outside the column maps writes only per-thread containers, so every lane computes the same
-values in it, and the conditions of the control flow around the barriers are the same on every lane. A kernel that
-breaks any of this is left to :class:`~dace.transformation.passes.gpu_specialization.block_tile_kernels.
-BlockTileKernels`; so is a kernel without a sequential loop around its column maps, which is the shape that pass
-serves.
+columns by a node that works element by element (a fill, a copy, the memlet of a scope), which then fills the lane's
+column only. Code outside the column maps writes only per-thread containers, so every lane computes the same values
+in it, and the conditions of the control flow around the barriers are the same on every lane. A read of another
+lane's column in that code is fenced by barriers. A kernel that breaks any of this is left to
+:class:`~dace.transformation.passes.gpu_specialization.block_tile_kernels.BlockTileKernels`; so is a kernel without a
+sequential loop around its column maps, which is the shape that pass serves.
 
-The column buffers the kernel allocates per thread (``zsolqa(klon, 5, 5)``) are one per block once the lanes share
-them: they move out of the kernel, one slice per block, the columns innermost, so adjacent lanes touch adjacent
-elements.
+A column buffer the kernel allocates per thread (``zsolqa(klon, 5, 5)``) loses its column dimension: each lane's copy
+is its own column (``zsolqa(5, 5)``), in registers when small, and code generation gives a larger one a per-thread
+slice of device memory, the threads innermost. A buffer whose columns lanes read across is shared instead: one copy per
+block, outside the kernel, the columns innermost.
+
+shortcut: one lane per column, so a block of more columns than a block holds threads (1024, fewer at high register
+counts) fails at launch; split such blocks before the kernel if a caller needs them.
 """
 
 import ast
@@ -49,8 +53,6 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.warp_tiling import bind_lane_symbol
 from dace.transformation.passes.gpu_specialization.block_tile_kernels import barrier, is_kernel, lane_strided_hint
 
-#: The most lanes a block gets: a kernel at 255 registers per thread still launches with this many.
-MAX_LANES = 256
 #: What the lane map of a column kernel is, for a CPF reader.
 COLUMN_LANES_HINT = (
     "parallel -- column lanes: the threads of the one thread block that runs each iteration of the kernel loop, one "
@@ -205,6 +207,7 @@ class LanePlan:
         self.copies: list[tuple[SDFGState, Any]] = []
         self.fences: OrderedSet = OrderedSet()
         self.temporaries: OrderedSet = OrderedSet()
+        self.cross_lane: OrderedSet = OrderedSet()
         self.buffers: OrderedSet = OrderedSet()
 
 
@@ -266,6 +269,7 @@ def check_shared_edge(state: SDFGState, edge, region: Region, written: OrderedSe
             check_shared_write(sdfg, edge.dst.data, state, region)
             if dims[0] is not None:
                 plan.fences.add(state)
+                plan.cross_lane.add((sdfg, edge.src.data))
             return
         if None in dims or not all(full_columns(s, d, region.extent) for s, d in zip(subsets, dims)):
             raise Refused(f"a copy in {state.label} moves '{edge.data.data}' across columns")
@@ -281,6 +285,7 @@ def check_shared_edge(state: SDFGState, edge, region: Region, written: OrderedSe
         # Every lane reads the same columns once the lanes that write them are done
         if isinstance(edge.src, nodes.AccessNode):
             plan.fences.add(state)
+            plan.cross_lane.add((sdfg, edge.src.data))
             return
         raise Refused(f"'{name}' is reached across the lanes' columns in {state.label}: {edge.data.subset}")
     if isinstance(edge.src, FillLibraryNode):
@@ -506,12 +511,6 @@ def wrap_in_lanes(state: SDFGState, kernel: nodes.MapEntry, lanes) -> nodes.MapE
     return lane_entry
 
 
-def stride_column(subset: Range, dim: int, lanes) -> None:
-    """``subset``'s columns along ``dim`` become the lane's: ``__tid``, ``__tid + lanes``, ..."""
-    begin, end, step = subset[dim]
-    subset[dim] = (begin + LANE, end, lanes)
-
-
 def fence(state: SDFGState) -> None:
     """Barriers around ``state``, which reads columns other lanes write: the writes finish before it, and its reads
     before the next writes. The control flow around it is the same on every lane, so every lane reaches both."""
@@ -522,31 +521,193 @@ def fence(state: SDFGState) -> None:
 
 
 def apply_lanes(state: SDFGState, kernel: nodes.MapEntry, region: Region, plan: LanePlan) -> None:
-    # As few blocks of columns as fit MAX_LANES lanes, split evenly: every lane runs, and the launch knows the width
-    lanes = symbolic.int_ceil(region.extent, symbolic.int_ceil(region.extent, MAX_LANES))
-    lift_buffers(state, kernel, plan.buffers)
+    lanes = region.extent
+    lifted = OrderedSet()
+    for owner, name in plan.buffers:
+        dim = column_dims(owner.arrays[name], region.extent)[0]
+        try:
+            Contraction(owner, name, dim, apply=False, cross_lane=plan.cross_lane).run()
+        except Refused:
+            lifted.add((owner, name))
+            continue
+        Contraction(owner, name, dim, apply=True, cross_lane=plan.cross_lane).run()
+    lift_buffers(state, kernel, lifted)
     wrap_in_lanes(state, kernel, lanes)
     top = state.sdfg
     users: OrderedSet = OrderedSet()
     for st, entry, axis in region.column_maps:
-        begin, end, step = entry.map.range[axis]
-        entry.map.range[axis] = (begin + LANE, end, lanes)
+        begin = entry.map.range[axis][0]
+        entry.map.range[axis] = (begin + LANE, begin + LANE, 1)
         entry.specialization_hint = lane_strided_hint(st, entry, COLUMN_STRIDED)
         users.add(st.sdfg)
-    # The lift put a block dimension in front of a moved buffer's columns, so they are looked up again
-    for st, edge in plan.fills:
-        stride_column(edge.data.subset, column_dims(st.sdfg.arrays[edge.data.data], region.extent)[0], lanes)
-        users.add(st.sdfg)
-    for st, edge in plan.copies:
+    # A contracted buffer has no columns left; the lift put a block dimension in front of a moved one's
+    for st, edge in plan.fills + plan.copies:
         for node, subset in ((edge.src, edge.data.src_subset), (edge.dst, edge.data.dst_subset)):
-            stride_column(subset, column_dims(st.sdfg.arrays[node.data], region.extent)[0], lanes)
+            dims = column_dims(st.sdfg.arrays[node.data], region.extent) if isinstance(node, nodes.AccessNode) else []
+            if dims and subset is not None:
+                subset[dims[0]] = (LANE, LANE, 1)
         users.add(st.sdfg)
     for st in plan.fences:
         fence(st)
     for sdfg in users:
         bind_lane_symbol(sdfg, top)
     kernel.map.gpu_block_size = None
-    kernel.map.gpu_launch_bounds = str(MAX_LANES)
+
+
+def drop_index(index: list, dim: int) -> list:
+    return [part for i, part in enumerate(index) if i != dim]
+
+
+class Contraction:
+    """Drop the column dimension of a per-thread column buffer: every lane reaches only its own column, so each lane's
+    copy is that column alone. With ``apply`` unset it only checks that every access can follow (raising
+    :class:`Refused`); set, it rewrites the descriptor, every memlet, the subscripts in tasklet code and in the
+    control flow, and the nested SDFGs the buffer is passed into."""
+
+    def __init__(
+        self, owner: SDFG, name: str, dim: int, apply: bool, cross_lane: OrderedSet, done: OrderedSet | None = None
+    ) -> None:
+        self.owner, self.name, self.dim, self.apply, self.cross_lane = owner, name, dim, apply, cross_lane
+        # A container reached through an input and an output connector of one nested SDFG is contracted once
+        self.done = OrderedSet() if done is None else done
+
+    def run(self) -> None:
+        if (self.owner, self.name) in self.done:
+            return
+        self.done.add((self.owner, self.name))
+        if (self.owner, self.name) in self.cross_lane:
+            raise Refused(f"lanes read each other's columns of '{self.name}'")
+        desc = self.owner.arrays[self.name]
+        rank = len(desc.shape)
+        shape, strides, total = contracted_layout(desc, self.dim)
+        for state in self.owner.states():
+            for edge in state.edges():
+                self.memlet(state, edge, rank)
+            for node in state.nodes():
+                if isinstance(node, nodes.Tasklet):
+                    self.tasklet(state, node, rank)
+        self.control_flow(rank)
+        if self.apply:
+            desc.set_shape(shape, strides=strides, total_size=total)
+
+    def memlet(self, state: SDFGState, edge, rank: int) -> None:
+        memlet = edge.data
+        if memlet.is_empty():
+            return
+        sides = []
+        if memlet.data == self.name:
+            sides.append("subset")
+        ends = [n for n in (edge.src, edge.dst) if isinstance(n, nodes.AccessNode) and n.data == self.name]
+        # The other subset names this container too unless the edge copies from or to another one
+        others = [
+            n
+            for n in (edge.src, edge.dst)
+            if isinstance(n, nodes.AccessNode) and n.data not in (self.name, memlet.data)
+        ]
+        if memlet.data == self.name and memlet.other_subset is not None and not others:
+            sides.append("other_subset")
+        elif memlet.data != self.name and ends:
+            if memlet.other_subset is None:
+                raise Refused(f"a copy reaches '{self.name}' at an implicit subset")
+            sides.append("other_subset")
+        for side in sides:
+            subset = getattr(memlet, side)
+            if subset is None or len(subset) != rank:
+                raise Refused(f"'{self.name}' is reached with a subset of another rank: {subset}")
+            if self.apply:
+                kept = drop_index(subset.ndrange(), self.dim) or [(0, 0, 1)]
+                setattr(memlet, side, Range(kept))
+        if memlet.data == self.name:
+            for node, conn in ((edge.src, edge.src_conn), (edge.dst, edge.dst_conn)):
+                if isinstance(node, nodes.NestedSDFG) and conn is not None:
+                    self.nested(node, conn, rank)
+
+    def nested(self, node: nodes.NestedSDFG, conn: str, rank: int) -> None:
+        inner = node.sdfg.arrays[conn]
+        if (node.sdfg, conn) in self.done or len(inner.shape) == rank:
+            Contraction(node.sdfg, conn, self.dim, self.apply, self.cross_lane, self.done).run()
+            return
+        raise Refused(f"nested SDFG {node.label} holds '{self.name}' in rank {len(inner.shape)}, not {rank}")
+
+    def tasklet(self, state: SDFGState, node: nodes.Tasklet, rank: int) -> None:
+        conns = [
+            conn
+            for edge, conn in [(e, e.dst_conn) for e in state.in_edges(node)]
+            + [(e, e.src_conn) for e in state.out_edges(node)]
+            if conn is not None and not edge.data.is_empty() and edge.data.data == self.name
+        ]
+        for conn in conns:
+            if f"{conn}[" not in node.code.as_string:
+                continue
+            if node.language != dtypes.Language.Python:
+                raise Refused(f"tasklet {node.label} subscripts '{conn}' in {node.language.name}")
+            rewritten = self.rewrite(node.code.as_string, conn, rank)
+            if self.apply:
+                node.code = properties.CodeBlock(rewritten, node.language)
+
+    def control_flow(self, rank: int) -> None:
+        for edge in self.owner.all_interstate_edges():
+            if self.name not in edge.data.read_symbols():
+                continue
+            condition = self.rewrite(edge.data.condition.as_string, self.name, rank)
+            assignments = {k: self.rewrite(v, self.name, rank) for k, v in edge.data.assignments.items()}
+            if self.apply:
+                edge.data.condition = properties.CodeBlock(condition)
+                edge.data.assignments = assignments
+        for cfg in self.owner.all_control_flow_regions():
+            if isinstance(cfg, LoopRegion):
+                for attr in ("loop_condition", "init_statement", "update_statement"):
+                    code = getattr(cfg, attr)
+                    if code is not None and self.name in code.get_free_symbols():
+                        raise Refused(f"loop {cfg.label} reads '{self.name}' in its header")
+            elif isinstance(cfg, ConditionalBlock):
+                for i, (condition, branch) in enumerate(cfg.branches):
+                    if condition is not None and self.name in condition.get_free_symbols():
+                        rewritten = self.rewrite(condition.as_string, self.name, rank)
+                        if self.apply:
+                            cfg.branches[i] = (properties.CodeBlock(rewritten), branch)
+
+    def rewrite(self, code: str, name: str, rank: int) -> str:
+        """``code`` with the column index dropped from every subscript of ``name``."""
+        dim = self.dim
+
+        class Drop(ast.NodeTransformer):
+            def visit_Name(self, node: ast.Name) -> ast.AST:
+                if node.id == name:
+                    raise Refused(f"'{name}' is read whole in: {code}")
+                return node
+
+            def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
+                if not (isinstance(node.value, ast.Name) and node.value.id == name):
+                    self.generic_visit(node)
+                    return node
+                node.slice = self.visit(node.slice)
+                parts = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+                if len(parts) != rank:
+                    raise Refused(f"'{name}' is subscripted in rank {len(parts)}, not {rank}: {code}")
+                kept = drop_index(parts, dim) or [ast.Constant(0)]
+                node.slice = kept[0] if len(kept) == 1 else ast.Tuple(kept, ast.Load())
+                return node
+
+        return ast.unparse(Drop().visit(ast.parse(code)))
+
+
+def contracted_layout(desc: data.Array, dim: int) -> tuple[list, list, Any]:
+    """Shape, packed strides and size of ``desc`` without dimension ``dim``, the other dimensions in their order."""
+    if desc.is_packed_fortran_strides():
+        order = list(range(len(desc.shape)))
+    elif desc.is_packed_c_strides():
+        order = list(reversed(range(len(desc.shape))))
+    else:
+        raise Refused(f"cannot contract {desc}: only packed C or Fortran strides are")
+    keep = [i for i in range(len(desc.shape)) if i != dim]
+    if not keep:
+        return [1], [1], 1
+    shape = [desc.shape[i] for i in keep]
+    clone = desc.clone()
+    clone.set_shape(shape)
+    strides, total = clone.strides_from_layout(*[keep.index(i) for i in order if i != dim])
+    return shape, list(strides), total
 
 
 @properties.make_properties
