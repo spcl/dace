@@ -371,6 +371,46 @@ def note_forks(code: str) -> str:
     return "\n".join(out) + ("\n" if code.endswith("\n") else "")
 
 
+#: A device copy of the host unit: ``<vendor>MemcpyAsync(dst, src, bytes, <vendor>MemcpyDeviceToHost, stream)``.
+DEVICE_COPY = re.compile(r"MemcpyAsync\(\(?([^,()]+)\)?, \(?([^,()]+)\)?, [^;]*Memcpy(DeviceToHost|HostToDevice)\b")
+#: A line between a host loop's copies and its comment that keeps them together: a stream wait.
+STREAM_WAIT = re.compile(r"StreamSynchronize\(")
+
+
+def note_host_loops(code: str) -> str:
+    """``code`` (a GPU rendering's host unit) with, under the class line of each loop the device copies of its arrays
+    lead into, that the loop runs on the host after those device-to-host copies, and which arrays go back after it:
+    the cost of a loop no kernel runs, which the copies around it show only to a reader who matches the names."""
+    lines = code.splitlines()
+    out: list[str] = []
+    for index, line in enumerate(lines):
+        out.append(line)
+        if CLASS_LINE.match(line) is None:
+            continue
+        before, n = [], index - 1
+        while n >= 0 and (DEVICE_COPY.search(lines[n]) or STREAM_WAIT.search(lines[n])):
+            copy = DEVICE_COPY.search(lines[n])
+            if copy is not None and copy.group(3) == "DeviceToHost":
+                before.insert(0, copy.group(2).strip())
+            n -= 1
+        if not before:
+            continue
+        head = next((m for m in range(index + 1, len(lines)) if not holds_label(lines[m].strip())), None)
+        after = []
+        if head is not None and ANY_LOOP_HEAD.match(lines[head]):
+            end = head + len(loop_body(lines, head).splitlines()) + 1
+            for m in range(end, len(lines)):
+                copy = DEVICE_COPY.search(lines[m])
+                if copy is None or copy.group(3) != "HostToDevice":
+                    break
+                after.append(copy.group(1).strip())
+        back = f"; then copies {', '.join(after)} back to the device" if after else ""
+        out.append(
+            f"{line[: indent_of(line)]}// runs on the host, after device-to-host copies of {', '.join(before)}{back}"
+        )
+    return "\n".join(out) + ("\n" if code.endswith("\n") else "")
+
+
 BLAS_COMMENT = re.compile(r"^\s*// (?:BLAS|LAPACK)\b")
 VENDOR_CALL = re.compile(r"\b(?:cblas|LAPACKE)_\w+\s*\(")
 SINGLE_THREAD = (

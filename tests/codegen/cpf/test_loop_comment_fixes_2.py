@@ -126,6 +126,29 @@ def test_a_fallback_arm_that_sums_into_one_element_says_it_is_a_reduction():
     assert line.endswith("parallel with reduction(+:a[0]) if a different rounding is acceptable"), line
 
 
+@dace.program
+def scatter(a: dace.float64[N], idx: dace.int64[N], b: dace.float64[N]):
+    for i in range(N):
+        b[idx[i]] = a[i] * 2.0
+
+
+def test_a_scatter_guard_says_what_its_flag_is_and_names_the_scattered_element():
+    """Finding 8: ``if (tmp <= 0)`` did not say what ``tmp`` is, and the fallback wrote ``b[b_slice_0]``."""
+    lines = [line.strip() for line in bench_c(scatter, "cpf_review2_scatter").splitlines()]
+    guarded = next(line for line in lines if line.startswith("// parallel -- guarded by if (tmp <= 0)"))
+    fallback = next(line for line in lines if line.startswith("// sequential -- the else arm of if (tmp <= 0)"))
+    for line in (guarded, fallback):
+        assert "where tmp is 1 when idx holds a value twice" in line, line
+    assert "(the loop then writes b[idx[i]])" in fallback, fallback
+
+
+def test_a_gpu_fallback_arm_says_it_runs_on_the_host_and_what_it_copies():
+    """Finding 8 (GPU): the fallback loop runs on the host between device copies, which its comment did not say."""
+    host = render_gpu(scatter, "cpf_review2_scatter_gpu", "cuda").code
+    (note,) = [line.strip() for line in host.splitlines() if "// runs on the host" in line]
+    assert note == "// runs on the host, after device-to-host copies of idx, a, b; then copies b back to the device"
+
+
 if __name__ == "__main__":
     test_a_grid_stride_reduction_kernel_says_reduction_and_grid_stride()
     test_a_block_per_row_kernel_has_one_line_per_kernel_and_per_thread_block()
@@ -134,3 +157,5 @@ if __name__ == "__main__":
     test_a_simd_loop_says_vectorized_not_not_parallelized()
     test_a_time_loop_names_the_flow_dependence_alike_on_cpu_and_gpu()
     test_a_fallback_arm_that_sums_into_one_element_says_it_is_a_reduction()
+    test_a_scatter_guard_says_what_its_flag_is_and_names_the_scattered_element()
+    test_a_gpu_fallback_arm_says_it_runs_on_the_host_and_what_it_copies()

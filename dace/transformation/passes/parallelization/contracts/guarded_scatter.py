@@ -291,7 +291,8 @@ class ScatterToGuardedMaps(ppl.Pass):
                 # counts alone decide the branch -- the per-array symbols below are empty here.
                 cond = " + ".join(joint_dup_syms[id(loop)]) + " > 0"
                 anchor = joint_anchors.get(id(loop), loop)
-                _wrap_loop_in_dispatcher(required(anchor).parent_graph, loop, cond, anchor)
+                meaning = guard_meaning(joint_dup_syms[id(loop)], "two iterations write the same element")
+                _wrap_loop_in_dispatcher(required(anchor).parent_graph, loop, cond, anchor, meaning)
                 continue
 
             if self.emit_unparallelized_else_branch and (dup_count_syms or sliced_dup_syms):
@@ -310,7 +311,9 @@ class ScatterToGuardedMaps(ppl.Pass):
                 loop_idx_syms += [sliced_dup_syms[(id(loop), i)] for i in loop_idx if (id(loop), i) in sliced_dup_syms]
                 if loop_idx_syms:
                     cond = " + ".join(loop_idx_syms) + " > 0"
-                    _wrap_loop_in_dispatcher(parent, loop, cond)
+                    guarded = [i for i in loop_idx if i in dup_count_syms or (id(loop), i) in sliced_dup_syms]
+                    meaning = guard_meaning(loop_idx_syms, f"{' or '.join(guarded)} holds a value twice")
+                    _wrap_loop_in_dispatcher(parent, loop, cond, meaning=meaning)
                     continue
 
             ParallelizeLoops(propagate=False).parallelize_loop(sdfg, loop, proven=True)
@@ -1706,8 +1709,14 @@ def privatize_clone_local_transients(owner_sdfg: SDFG, loop: LoopRegion, clone: 
         clone.replace_dict(repl)
 
 
+def guard_meaning(symbols: list[str], fact: str) -> str:
+    """What the scatter guard's ``symbols`` are, for the class lines of the two arms they decide."""
+    which = symbols[0] if len(symbols) == 1 else f"each of {', '.join(symbols)}"
+    return f", where {which} is 1 when {fact}, as the scatter conflict check above sets it"
+
+
 def _wrap_loop_in_dispatcher(
-    parent, loop: LoopRegion, condition_expr: str, block: ControlFlowBlock | None = None
+    parent, loop: LoopRegion, condition_expr: str, block: ControlFlowBlock | None = None, meaning: str = ""
 ) -> None:
     """Replace ``loop`` in ``parent`` with a ``ConditionalBlock`` that picks
     between a sequential clone (taken when ``condition_expr`` is true -- the
@@ -1728,6 +1737,7 @@ def _wrap_loop_in_dispatcher(
     :param block: The block of ``parent`` to clone and dispatch on, when it is not ``loop`` itself
         but a state holding the map nest ``loop`` sits in (a guard hoisted out of a trivial map
         wrapper, see :func:`joint_guard_plan`). ``loop`` is still the one lifted and pinned.
+    :param meaning: What the guard's symbols are (:func:`guard_meaning`), for the arms' class lines.
     """
     block = loop if block is None else block
     if block not in parent.nodes():
@@ -1770,7 +1780,7 @@ def _wrap_loop_in_dispatcher(
         root.reset_cfg_list()
     ParallelizeLoops(propagate=False).parallelize_loop(root, loop, proven=True)  # ScatterToGuardedMaps propagates once
     # The parallel arm is the else branch, so it runs under the negated guard.
-    label_arms(par_branch, seq_branch, f"not ({condition_expr})")
+    label_arms(par_branch, seq_branch, f"not ({condition_expr})", meaning=meaning)
 
 
 __all__ = [

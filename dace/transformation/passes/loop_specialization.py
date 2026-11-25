@@ -31,7 +31,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegio
 GUARDED = (
     LoopClass.PARALLEL.prefix
     + Reason.GUARDED.value
-    + "{guard}) ({frequency}): when it holds, no iteration writes an element another iteration reads or writes"
+    + "{guard}) ({frequency}){meaning}: when it holds, no iteration writes an element another iteration reads or writes"
 )
 #: The class line of the sequential arm a guard falls back to: the original loop, for the inputs the guard rejects.
 #: The negation is simplified (``inc == 0``, never ``not (not ...)``, review #10), the arm says why it keeps the
@@ -39,7 +39,8 @@ GUARDED = (
 #: (:func:`fallback_effect`), empty when that is not known.
 GUARD_FALLBACK = (
     LoopClass.SEQUENTIAL.prefix
-    + "the else arm of if ({guard}), taken when {negated}{effect}: two iterations may then touch the same element, so "
+    + "the else arm of if ({guard}), taken when {negated}{meaning}{effect}: two iterations may then touch the same "
+    "element, so "
     "this arm keeps the order"
 )
 
@@ -47,7 +48,8 @@ GUARD_FALLBACK = (
 #: order the arm keeps only for its rounding. ``{effect}`` as in :data:`GUARD_FALLBACK`.
 GUARD_FALLBACK_REDUCTION = (
     LoopClass.SEQUENTIAL.prefix
-    + "the else arm of if ({guard}), taken when {negated}{effect}: a reduction, kept in order here because the order "
+    + "the else arm of if ({guard}), taken when {negated}{meaning}{effect}: a reduction, kept in order here because the "
+    "order "
     "of the {noun} fixes its floating-point rounding; parallel with reduction({op}:{element}) if a different rounding "
     "is acceptable"
 )
@@ -85,17 +87,21 @@ def label_arm(node, kind: str) -> None:
 
 
 def label_arms(
-    par_region: ControlFlowRegion, seq_region: ControlFlowRegion, guard: str, labels: tuple[str, str] | None = None
+    par_region: ControlFlowRegion,
+    seq_region: ControlFlowRegion,
+    guard: str,
+    labels: tuple[str, str] | None = None,
+    meaning: str = "",
 ) -> None:
     """Name ``guard``, the condition the parallel arm runs under, on that arm's outermost maps and on the pinned
     loops of the sequential arm. ``labels``, when given, are the two arms' class lines in place of the generic
-    :data:`GUARDED` and :data:`GUARD_FALLBACK`."""
+    :data:`GUARDED` and :data:`GUARD_FALLBACK`; ``meaning`` (``, where ...``) says what the guard's symbols are."""
     if labels is None:
         negated = condition_text(f"not ({guard})")
         loops = [r for r in seq_region.all_control_flow_regions() if isinstance(r, LoopRegion) and r.pinned_sequential]
         labels = (
-            GUARDED.format(guard=condition_text(guard), frequency=test_frequency(par_region)),
-            fallback_line(guard, negated, loops[0] if loops else None),
+            GUARDED.format(guard=condition_text(guard), frequency=test_frequency(par_region), meaning=meaning),
+            fallback_line(guard, negated, loops[0] if loops else None, meaning),
         )
     for block in par_region.all_control_flow_blocks():
         if isinstance(block, SDFGState):
@@ -131,7 +137,7 @@ ACCUMULATIONS = {ast.Add: "a sum", ast.Sub: "a difference", ast.Mult: "a product
 ACCUMULATION_OPERATORS = {"a sum": "+", "a difference": "-", "a product": "*"}
 
 
-def fallback_line(guard: str, negated: str, loop: LoopRegion | None) -> str:
+def fallback_line(guard: str, negated: str, loop: LoopRegion | None, meaning: str = "") -> str:
     """The class line of a guard's fallback arm: :data:`GUARD_FALLBACK_REDUCTION` when ``loop`` then accumulates into one
     floating-point element that no iteration indexes apart, else :data:`GUARD_FALLBACK`."""
     effect, kind, element = fallback_effect(loop, negated) if loop is not None else ("", "", None)
@@ -139,12 +145,13 @@ def fallback_line(guard: str, negated: str, loop: LoopRegion | None) -> str:
         return GUARD_FALLBACK_REDUCTION.format(
             guard=condition_text(guard),
             negated=negated,
+            meaning=meaning,
             effect=effect,
             noun=kind.split(" ", 1)[1],
             op=ACCUMULATION_OPERATORS[kind],
             element=element,
         )
-    return GUARD_FALLBACK.format(guard=condition_text(guard), negated=negated, effect=effect)
+    return GUARD_FALLBACK.format(guard=condition_text(guard), negated=negated, meaning=meaning, effect=effect)
 
 
 def fallback_effect(loop: LoopRegion, negated: str) -> tuple[str, str, str | None]:
@@ -172,6 +179,13 @@ def fallback_effect(loop: LoopRegion, negated: str) -> tuple[str, str, str | Non
             target = written[0].data
             where = copy.deepcopy(target.subset)
             where.replace(equalities)
+            # A symbol the body assigns from an index array reads as that read: ``b[idx[i]]``, not ``b[sym0]``
+            where.replace(
+                {
+                    symbolic.symbol(name): symbolic.pystr_to_symbolic(value)
+                    for name, value in body_assignments(loop).items()
+                }
+            )
             kind = accumulation(node, state, target)
             if not kind:
                 return f" (the loop then writes {target.data}[{where}])", "", None
@@ -180,6 +194,15 @@ def fallback_effect(loop: LoopRegion, negated: str) -> tuple[str, str, str | Non
             element = f"{target.data}[{where}]" if point and floating else None
             return f" (the loop then makes {kind} into {target.data}[{where}])", kind, element
     return "", "", None
+
+
+def body_assignments(loop: LoopRegion) -> dict[str, str]:
+    """The symbols the interstate edges inside ``loop`` assign, each to the one value it gets."""
+    found: dict[str, list[str]] = {}
+    for edge in loop.all_interstate_edges():
+        for name, value in edge.data.assignments.items():
+            found.setdefault(name, []).append(value)
+    return {name: values[0] for name, values in found.items() if len(set(values)) == 1}
 
 
 def accumulation(node: nodes.Tasklet, state: SDFGState, target: Memlet) -> str:
