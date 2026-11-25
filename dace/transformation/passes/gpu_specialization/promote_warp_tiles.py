@@ -45,6 +45,7 @@ import sympy
 
 import dace
 from dace import SDFG, dtypes, properties
+from dace.cpf_lowering import LoopClass
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
@@ -58,6 +59,8 @@ WITHIN_A_BLOCK = (
 
 #: What a promoted warp-tile map is, for a CPF reader; any hint the producer left follows it.
 WARP_TILE_HINT = "parallel -- warp tile: independent iterations, spread over the threads of the block"
+#: What a promoted warp-tile map that carries its loop's class line adds to it.
+WARP_TILE_NOTE = "; warp tile: spread over the threads of the block"
 #: Added when a sequential loop re-enters the warp tile.
 WARP_TILE_BARRIER_HINT = "block barrier after the map: the enclosing loop reruns it"
 
@@ -150,13 +153,16 @@ class PromoteWarpTiles(ppl.Pass):
             if not promotable(sdfg, state, node):
                 continue
             node.map.schedule = dtypes.ScheduleType.GPU_ThreadBlock
-            hints = [WARP_TILE_HINT]
+            # One class line per loop: the loop's own, with how it is spread after its reason
+            first, _, notes = (node.specialization_hint or "").partition("\n")
+            if first.startswith(LoopClass.PARALLEL.prefix):
+                hints, rest = [first + WARP_TILE_NOTE], [notes] if notes else []
+            else:
+                hints, rest = [WARP_TILE_HINT], [node.specialization_hint] if node.specialization_hint else []
             if steps_inside_a_loop(sdfg, state, node):
                 add_block_barrier(state, node)
                 hints.append(WARP_TILE_BARRIER_HINT)
-            node.specialization_hint = "\n".join(
-                hints + ([node.specialization_hint] if node.specialization_hint else [])
-            )
+            node.specialization_hint = "\n".join(hints + rest)
             promoted += 1
         return promoted or None
 

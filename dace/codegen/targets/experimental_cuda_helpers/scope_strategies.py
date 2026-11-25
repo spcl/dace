@@ -29,7 +29,6 @@ from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 from dace.transformation import helpers
 from dace.transformation.dataflow.add_threadblock_map import product
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import parallel_hint
-from dace.transformation.passes.gpu_specialization.block_tile_kernels import BLOCK_TILE_HINT
 
 
 def emit_dim_index_definitions(
@@ -197,9 +196,17 @@ def kernel_hint(state: SDFGState, entry: nodes.MapEntry, block_dims: list) -> st
         first = parallel_hint(state, entry, [])
     threads = sym2cpp(product(block_dims))
     inner = [child for child in state.scope_children()[entry] if isinstance(child, nodes.MapEntry)]
-    lanes = next((child for child in inner if child.specialization_hint == BLOCK_TILE_HINT), None)
-    block = next((child for child in inner if child.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock), None)
-    if lanes is not None:
+    # A thread-block map the kernel map strip-mines: the two split one loop, a thread per iteration
+    block = next(
+        (
+            child
+            for child in inner
+            if child.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+            and str(child.map.range[0][0]) == entry.map.params[-1]
+        ),
+        None,
+    )
+    if block is None and threads_inside(state, entry):
         mapping = (
             f"one thread block per iteration of {', '.join(entry.map.params)} (the launch grid), its {threads} "
             "threads split the work of that iteration"
@@ -215,6 +222,19 @@ def kernel_hint(state: SDFGState, entry: nodes.MapEntry, block_dims: list) -> st
             "threads, trailing threads masked"
         )
     return "\n".join(filter(None, (f"{first}{cpf_lowering.KERNEL_MAPPING}{mapping}", notes)))
+
+
+def threads_inside(state: SDFGState, entry: nodes.MapEntry) -> bool:
+    """Whether a map under the kernel ``entry`` (through nested SDFGs too) spreads over the threads of a block."""
+    for node in state.scope_subgraph(entry, include_entry=False, include_exit=False).nodes():
+        if isinstance(node, nodes.MapEntry) and node.map.schedule in dtypes.GPU_THREAD_SCHEDULES:
+            return True
+        if isinstance(node, nodes.NestedSDFG) and any(
+            isinstance(inner, nodes.MapEntry) and inner.map.schedule in dtypes.GPU_THREAD_SCHEDULES
+            for inner, unused_parent in node.sdfg.all_nodes_recursive()
+        ):
+            return True
+    return False
 
 
 #: How a thread-block map spreads its iterations, appended to the class line of the program loop it runs.

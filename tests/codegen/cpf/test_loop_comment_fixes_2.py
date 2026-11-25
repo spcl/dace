@@ -204,6 +204,44 @@ def test_an_inline_fused_scan_names_the_scan_not_the_kernel_function():
     assert "// parallel -- implementation loop of scan: vectorized (omp simd)" in labels, labels
 
 
+def test_a_carried_counter_is_named_without_a_stray_space():
+    """LLR40 compact_threshold_pack: ``proven dependence : run = run + ...`` had a space before the colon."""
+    L = dace.symbol("L", dtype=dace.int64, positive=True)
+
+    @dace.program
+    def pack(src: dace.float64[L], weight: dace.float64[L], packed: dace.float64[L], out_count: dace.int64[1]):
+        n = 0
+        for i in range(L):
+            if src[i] > 0.0:
+                packed[n] = src[i] * weight[i]
+                n = n + 1
+        out_count[0] = n
+
+    rendering = render_gpu(pack, "cpf_review2_pack", "cuda")
+    code = rendering.code + rendering.device_code
+    assert "proven dependence :" not in code, code
+    assert "// sequential -- proven dependence: the counter " in code, code
+
+
+def test_a_promoted_warp_tile_keeps_one_class_line_and_its_kernel_runs_a_block_per_tile():
+    """LLR40 wf_triangular: ``warp tile`` stacked a second class line on the wavefront step, and the kernel said one
+    GPU thread per tile column."""
+    L = dace.symbol("L", dtype=dace.int64, positive=True)
+
+    @dace.program
+    def triangular(a: dace.float64[L, L]):
+        for i in range(1, L):
+            for j in range(i, L):
+                a[i, j] = (a[i, j] + a[i - 1, j] + a[i, j - 1]) / 3.0
+
+    device = render_gpu(triangular, "cpf_review2_triangular", "cuda").device_code
+    assert "// parallel -- warp tile" not in device, device
+    step = next(line for line in device.splitlines() if "// parallel -- one wavefront step" in line)
+    assert "; warp tile: spread over the threads of the block" in step, step
+    kernel = comment_above(device, "__global__")[0]
+    assert "kernel: one thread block per iteration of j" in kernel, kernel
+
+
 if __name__ == "__main__":
     test_a_grid_stride_reduction_kernel_says_reduction_and_grid_stride()
     test_a_block_per_row_kernel_has_one_line_per_kernel_and_per_thread_block()
@@ -217,3 +255,5 @@ if __name__ == "__main__":
     test_an_array_section_reduction_says_each_thread_holds_a_copy()
     test_a_fork_note_simplifies_its_trip_counts_and_bounds_a_moving_one()
     test_an_inline_fused_scan_names_the_scan_not_the_kernel_function()
+    test_a_carried_counter_is_named_without_a_stray_space()
+    test_a_promoted_warp_tile_keeps_one_class_line_and_its_kernel_runs_a_block_per_tile()

@@ -82,7 +82,7 @@ MAP_DIMENSIONS = "the {count} nested loops over {params} are all parallel"
 
 #: A loop whose carried dependence was proven.
 PROVEN_PREFIX = LoopClass.SEQUENTIAL.prefix + "proven dependence"
-SEQUENTIAL_PROVEN = PROVEN_PREFIX + " {reason}"
+SEQUENTIAL_PROVEN = PROVEN_PREFIX + "{reason}"
 
 #: A loop the dependence test declined to answer, or never examined.
 UNKNOWN = LoopClass.UNKNOWN.prefix + "{reason}"
@@ -205,7 +205,7 @@ def proven_reason(access: str) -> str:
     if found is None:
         return f": {access}"
     kind, element, example = found.groups()
-    return f"on {element}: {CONFLICT_MEANING[kind]}{example or ''}"
+    return f" on {element}: {CONFLICT_MEANING[kind]}{example or ''}"
 
 
 def carrying_access(refusal: LoopRefusal | str) -> str:
@@ -216,9 +216,14 @@ def carrying_access(refusal: LoopRefusal | str) -> str:
     if refusal.kind is Refusal.CARRIED_DEPENDENCE and refusal.container is not None and refusal.reads:
         return f"RAW on {refusal.container}[{refusal.reads[0]}]"
     if refusal.kind is Refusal.CARRIED_SYMBOL:
-        return f"{carried_symbol_text(refusal)} carries a value from one iteration to the next"
+        text = carried_symbol_text(refusal)
+        counter = "the counter " if COUNTER_UPDATE.match(text) is not None else ""
+        return f"{counter}{text} carries a value from one iteration to the next"
     return refusal.message
 
+
+#: A carried symbol's assignment that adds to or subtracts from its own previous value: a counter.
+COUNTER_UPDATE = re.compile(r"^\(?(\w+) = \(?\1 [+-] ")
 
 #: ``LoopToMap``'s message for a symbol an iteration assigns from its own previous value.
 SELF_RECURRENT = re.compile(r"\(assignment (.+)\)$")
