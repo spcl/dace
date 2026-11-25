@@ -273,7 +273,7 @@ def test_a_unit_whose_only_loop_is_a_helper_is_proven():
         "    for (int64_t i = 0; i < n; ++i) {\n    }\n}\n"
     )
     header = cpf_summary.with_summary(code, ("// head",)).splitlines()[1:3]
-    assert header[0].startswith(CLOSING) and header[1] == "// cpf: proven: all", header
+    assert header[0] == cpf_summary.CLOSING_NO_LOOPS and header[1] == "// cpf: proven: all", header
 
 
 def test_a_unit_without_a_versioned_loop_has_no_guarded_line():
