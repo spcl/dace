@@ -1,10 +1,11 @@
 // Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 //
 // A batch of 1-D DFTs by ONE thread block, for an FFT library node inside a GPU kernel. A power-of-two length runs
-// an iterative radix-2 Cooley-Tukey transform in the output (copy, bit-reversal by swaps, then log2(n) butterfly
-// stages), which is race-free in place too (``in`` and ``out`` the same elements, as a kernel's IFFT of a row into
-// itself). Any other length runs a direct DFT, which reads every input for every output: in place (``InPlace``) it
-// first stages each line in shared memory. The lowering refuses operands that share memory any other way.
+// an iterative radix-2 Cooley-Tukey transform in the output (bit-reversed scatter, then log2(n) butterfly stages);
+// any other length a direct DFT. The radix-2 transform may run in place (``in`` and ``out`` the same lines, as a
+// kernel's IFFT of a row into itself): it copies the input into the output and permutes it there by swaps, so no
+// thread reads an element another thread has already overwritten. The direct DFT is out of place and needs no
+// scratch.
 
 #pragma once
 
@@ -29,50 +30,13 @@ DACE_DFI C twiddle(long long r, long long n, bool inverse) {
 
 /// ``out[line(l) + k*os] = scale * sum_j in[in_line(l) + j*is] * w^(jk)`` for ``lines`` lines of length ``n``.
 /// Every thread of the block must call it with the same arguments; ``lanes`` threads share the work.
-/// Shared-memory bytes that stage one line of an in-place direct DFT.
-constexpr int kInPlaceStageBytes = 32 * 1024;
-
-/// ``out[line(l) + k*os] = scale * sum_j src[j] * w^(jk)`` for line ``l``'s outputs ``k`` this thread owns.
-template <typename C, typename Src>
-DACE_DFI void dft_line(Src src, C* out_line_ptr, long long n, long long os, bool inverse, typename C::value_type scale,
-                       long long tid, long long lanes) {
-  using T = typename C::value_type;
-  for (long long k = tid; k < n; k += lanes) {
-    C acc(T(0));
-    long long r = 0;  // j*k mod n, stepped instead of multiplied
-    for (long long j = 0; j < n; ++j) {
-      acc += C(src(j)) * twiddle<C>(r, n, inverse);
-      r += k;
-      if (r >= n) r -= n;
-    }
-    out_line_ptr[k * os] = acc * scale;
-  }
-}
-
-template <typename C, bool InPlace, typename In, typename InLine, typename OutLine>
+template <typename C, typename In, typename InLine, typename OutLine>
 __device__ void transform(const In* in, C* out, long long n, long long lines, long long is,
                           long long os, InLine in_line, OutLine out_line, bool inverse,
                           typename C::value_type scale, long long lanes) {
   using T = typename C::value_type;
   const long long tid = threadIdx.x;
   if (n <= 0 || lines <= 0) return;
-  if ((n & (n - 1)) != 0 && InPlace) {
-    if constexpr (InPlace) {
-      __shared__ alignas(16) unsigned char stage_bytes[kInPlaceStageBytes];
-      C* stage = reinterpret_cast<C*>(stage_bytes);
-      if (n * (long long)sizeof(C) > kInPlaceStageBytes) {
-        if (tid == 0) printf("dace::block_fft: an in-place DFT of %lld points exceeds the shared stage\n", n);
-        __trap();
-      }
-      for (long long l = 0; l < lines; ++l) {
-        for (long long j = tid; j < n; j += lanes) stage[j] = C(in[in_line(l) + j * is]);
-        __syncthreads();
-        dft_line<C>([&](long long j) { return stage[j]; }, out + out_line(l), n, os, inverse, scale, tid, lanes);
-        __syncthreads();
-      }
-    }
-    return;
-  }
   if ((n & (n - 1)) != 0) {
     for (long long t = tid; t < lines * n; t += lanes) {
       const long long l = t / n, k = t % n;

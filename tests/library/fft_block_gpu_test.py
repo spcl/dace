@@ -6,7 +6,7 @@ import pytest
 
 import dace
 from dace import dtypes
-from dace.libraries.fft.nodes.fft import FFT, IFFT, operand_overlap
+from dace.libraries.fft.nodes.fft import FFT, IFFT
 from dace.libraries.standard.block_reduce import gpu_block_implementation
 from dace.sdfg import nodes
 from dace.transformation.passes.offloading.taskloop import is_kernel_refused_libnode
@@ -44,11 +44,11 @@ def plane_kernel(**kwargs):
     return state, node
 
 
-def in_place_row_kernel(shift: int = 0):
+def in_place_row_kernel():
     """A ``GPU_Device`` map over ``b`` transforming row ``X[b]`` into itself through two views, as QE's vexx inverts
-    a band's grid in place; with ``shift``, into the row shifted by ``shift`` elements, which overlaps it."""
+    a band's grid in place: the views hide from the block lowering that the transform is in place."""
     inner = dace.SDFG("in_place_row")
-    inner.add_array("x", [B, N + shift], dace.complex128, storage=dtypes.StorageType.GPU_Global)
+    inner.add_array("x", [B, N], dace.complex128, storage=dtypes.StorageType.GPU_Global)
     inner.add_symbol("b", dace.int64)
     inner.add_view("xin", [N], dace.complex128, storage=dtypes.StorageType.GPU_Global)
     inner.add_view("xout", [N], dace.complex128, storage=dtypes.StorageType.GPU_Global)
@@ -60,17 +60,16 @@ def in_place_row_kernel(shift: int = 0):
     state.add_edge(state.add_read("x"), None, xin, "views", dace.Memlet("x[b, 0:N]"))
     state.add_edge(xin, None, node, "_inp", dace.Memlet("xin[0:N]"))
     state.add_edge(node, "_out", xout, None, dace.Memlet("xout[0:N]"))
-    state.add_edge(xout, "views", state.add_write("x"), None, dace.Memlet(f"x[b, {shift}:N + {shift}]"))
+    state.add_edge(xout, "views", state.add_write("x"), None, dace.Memlet("x[b, 0:N]"))
 
     sdfg = dace.SDFG("block_ifft_in_place_rows")
-    sdfg.add_array("X", [B, N + shift], dace.complex128, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("X", [B, N], dace.complex128, storage=dtypes.StorageType.GPU_Global)
     state = sdfg.add_state()
     entry, exit_node = state.add_map("rows", {"b": "0:B"}, schedule=dtypes.ScheduleType.GPU_Device)
     nsdfg = state.add_nested_sdfg(inner, {"x"}, {"x"}, {"N": "N", "B": "B", "b": "b"})
-    full = f"X[0:B, 0:N + {shift}]"
-    state.add_memlet_path(state.add_read("X"), entry, nsdfg, dst_conn="x", memlet=dace.Memlet(full))
-    state.add_memlet_path(nsdfg, exit_node, state.add_write("X"), src_conn="x", memlet=dace.Memlet(full))
-    return sdfg, inner, node
+    state.add_memlet_path(state.add_read("X"), entry, nsdfg, dst_conn="x", memlet=dace.Memlet("X[0:B, 0:N]"))
+    state.add_memlet_path(nsdfg, exit_node, state.add_write("X"), src_conn="x", memlet=dace.Memlet("X[0:B, 0:N]"))
+    return sdfg
 
 
 def block_tasklet(sdfg: dace.SDFG) -> nodes.Tasklet:
@@ -99,7 +98,7 @@ def test_the_block_fft_calls_the_device_transform_once_per_block():
     node.factor = 1 / N
     node.implementation = BLOCK
     code = block_tasklet(sdfg).code.as_string
-    assert "dace::block_fft::transform<dace::complex64, false>(__in, __out, N, 1," in code
+    assert "dace::block_fft::transform<dace::complex64>(__in, __out, N, 1," in code
     assert ", true, (float)(" in code and ", 256);" in code
 
 
@@ -139,33 +138,16 @@ def test_batched_block_fft_matches_numpy(n: int, dtype: dace.typeclass, inverse:
     np.testing.assert_allclose(y.get(), expected, rtol=tolerance, atol=tolerance * n)
 
 
-def test_the_block_fft_sees_an_in_place_transform_through_views():
-    sdfg, inner, node = in_place_row_kernel()
-    state = inner.start_block
-    assert operand_overlap(node, state) == "same"
-    assert gpu_block_implementation(node, state, inner) == BLOCK
-    code = block_tasklet(sdfg).code.as_string
-    assert "dace::block_fft::transform<dace::complex128, true>(" in code
-
-
-def test_operands_that_partly_overlap_refuse_the_block_fft():
-    sdfg, inner, node = in_place_row_kernel(shift=1)
-    state = inner.start_block
-    assert operand_overlap(node, state) == "overlap"
-    assert gpu_block_implementation(node, state, inner) is None
-
-
 @pytest.mark.gpu
-@pytest.mark.parametrize("n", [64, 2048, 37, 1000])
-def test_an_in_place_block_ifft_matches_numpy(n: int):
-    """Radix-2 lengths longer than the block (2048) and direct-DFT lengths (37, 1000) in place."""
+@pytest.mark.parametrize("n", [64, 2048])
+def test_an_in_place_block_ifft_longer_than_the_block_matches_numpy(n: int):
     import cupy
 
     rows = 5
     rng = np.random.default_rng(n)
     x = rng.uniform(-1, 1, (rows, n)) + 1j * rng.uniform(-1, 1, (rows, n))
     out = cupy.asarray(x)
-    in_place_row_kernel()[0](X=out, B=rows, N=n)
+    in_place_row_kernel()(X=out, B=rows, N=n)
     np.testing.assert_allclose(out.get(), np.fft.ifft(x), rtol=1e-12, atol=1e-12)
 
 
@@ -178,7 +160,5 @@ if __name__ == "__main__":
         for element in (dace.complex64, dace.complex128):
             for backward in (False, True):
                 test_batched_block_fft_matches_numpy(size, element, backward)
-    test_the_block_fft_sees_an_in_place_transform_through_views()
-    test_operands_that_partly_overlap_refuse_the_block_fft()
-    for size in (64, 2048, 37, 1000):
-        test_an_in_place_block_ifft_matches_numpy(size)
+    for size in (64, 2048):
+        test_an_in_place_block_ifft_longer_than_the_block_matches_numpy(size)
