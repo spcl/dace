@@ -23,6 +23,7 @@ from ordered_set import OrderedSet
 from dace import SDFG, SDFGState, dtypes, properties, subsets, symbolic, utils
 from dace import data as dt
 from dace.config import Config
+from dace.libraries.standard.nodes.reduce import Reduce
 from dace.memlet import Memlet
 from dace.sdfg import dealias, is_devicelevel_gpu, nodes, propagation
 from dace.sdfg.graph import MultiConnectorEdge
@@ -223,7 +224,18 @@ def needs_prefix(tasklet: nodes.Tasklet, name: str) -> bool:
 
 def prefix_memlet(edge: MultiConnectorEdge, name: str, prefix: Prefix) -> None:
     memlet = edge.data
+    # The axes a reduction folds count the dimensions of what it reads, which now start with the kernel's
+    if memlet.data == name and isinstance(edge.dst, Reduce) and edge.dst.axes is not None:
+        edge.dst.axes = [axis + len(prefix) for axis in edge.dst.axes]
     if memlet.data == name:
+        # A copy naming one side only reaches the start of the other; stated now, the other side's lift (a later
+        # call) must not size it from this subset once it has gained the prefix
+        if (
+            memlet.other_subset is None
+            and isinstance(edge.src, nodes.AccessNode)
+            and isinstance(edge.dst, nodes.AccessNode)
+        ):
+            memlet.other_subset = subsets.Range([(0, size - 1, 1) for size in memlet.subset.size()])
         memlet.subset = subsets.Range(prefix + memlet.subset.ndrange())
     elif isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == name:
         # A copy naming its source and no destination writes the start of the array

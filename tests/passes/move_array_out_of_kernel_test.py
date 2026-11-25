@@ -92,6 +92,49 @@ def kernel_with_internal_transient(shape=(1024,), storage=GLOBAL) -> dace.SDFG:
     return sdfg
 
 
+def kernel_copying_one_buffer_into_another() -> dace.SDFG:
+    """``b = a`` in a ``GPU_Device`` map, the copy naming only ``a``: it writes the start of ``b``."""
+    sdfg = dace.SDFG("copy_between_lifts")
+    sdfg.add_array("A", [128], dace.float64, storage=GLOBAL)
+    sdfg.add_transient("a", [NX], dace.float64, storage=REGISTER)
+    sdfg.add_transient("b", [NX], dace.float64, storage=REGISTER)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("kernel", dict(i="0:128"), schedule=GPU_DEVICE)
+    a, b = state.add_access("a"), state.add_access("b")
+    produce = state.add_tasklet("produce", {}, {"o": None}, "o = 1.0")
+    state.add_edge(me, None, produce, None, dace.Memlet())
+    state.add_edge(produce, "o", a, None, dace.Memlet("a[0]"))
+    state.add_edge(a, None, b, None, dace.Memlet("a[0:NX]"))
+    consume = state.add_tasklet("consume", {"x": None}, {"o": None}, "o = x")
+    state.add_edge(b, None, consume, "x", dace.Memlet("b[0]"))
+    state.add_memlet_path(consume, mx, state.add_write("A"), src_conn="o", memlet=dace.Memlet("A[i]"))
+    sdfg.validate()
+    return sdfg
+
+
+def kernel_summing_a_buffer() -> tuple[dace.SDFG, dace.SDFGState]:
+    """``s = sum(a)`` in a ``GPU_Device`` map, a ``Reduce`` over the buffer ``a`` the kernel allocates per thread."""
+    sdfg = dace.SDFG("sum_a_lift")
+    sdfg.add_array("A", [128], dace.float64, storage=GLOBAL)
+    sdfg.add_transient("a", [NX], dace.float64, storage=REGISTER)
+    sdfg.add_transient("s", [1], dace.float64, storage=REGISTER)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("kernel", dict(i="0:128"), schedule=GPU_DEVICE)
+    a = state.add_access("a")
+    produce = state.add_tasklet("produce", {}, {"o": None}, "o = 1.0")
+    state.add_edge(me, None, produce, None, dace.Memlet())
+    state.add_edge(produce, "o", a, None, dace.Memlet("a[0]"))
+    reduction = state.add_reduce("lambda x, y: x + y", [0], 0)
+    total = state.add_access("s")
+    state.add_edge(a, None, reduction, None, dace.Memlet("a[0:NX]"))
+    state.add_edge(reduction, None, total, None, dace.Memlet("s[0]"))
+    consume = state.add_tasklet("consume", {"x": None}, {"o": None}, "o = x")
+    state.add_edge(total, None, consume, "x", dace.Memlet("s[0]"))
+    state.add_memlet_path(consume, mx, state.add_write("A"), src_conn="o", memlet=dace.Memlet("A[i]"))
+    sdfg.validate()
+    return sdfg, state
+
+
 def transient_body() -> dace.SDFG:
     """Nested body writing ``a_out[i]`` of a 128-element array through its own ``buf[1024]`` transient."""
     inner = dace.SDFG("inner")
@@ -188,6 +231,35 @@ def test_a_small_transient_outliving_the_invocation_is_lifted_not_demoted(lifeti
     assert sdfg.arrays["buf"].storage == GLOBAL and tuple(sdfg.arrays["buf"].shape) == (128, 8)
     assert sdfg.arrays["buf"].lifetime == lifetime
     sdfg.validate()
+
+
+def test_a_copy_between_two_lifted_buffers_names_both_ranks_once():
+    sdfg = kernel_copying_one_buffer_into_another()
+    sut = MoveArrayOutOfKernel()
+    sut.raise_on_unsupported = False  # the lifted buffers are GPU_Global, whose copy in a kernel the pass reports
+
+    sut.apply_pass(sdfg, {})
+
+    copy = next(
+        e
+        for st in sdfg.states()
+        for e in st.edges()
+        if e.src_conn is None
+        and e.dst_conn is None
+        and isinstance(e.src, dace.nodes.AccessNode)
+        and isinstance(e.dst, dace.nodes.AccessNode)
+    )
+    assert len(copy.data.src_subset) == len(copy.data.dst_subset) == 2
+    assert copy.data.src_subset.size() == copy.data.dst_subset.size()
+
+
+def test_a_reduction_over_a_lifted_buffer_counts_the_kernel_dimension_in_its_axes():
+    sdfg, state = kernel_summing_a_buffer()
+
+    lift(sdfg)
+
+    reduction = next(n for n in state.nodes() if isinstance(n, dace.nodes.LibraryNode))
+    assert reduction.axes == [1]
 
 
 def test_a_reference_is_not_moved():
