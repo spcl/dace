@@ -240,7 +240,10 @@ def hull_copy_is_safe(node: "CopyLibraryNode", parent_state: dace.SDFGState) -> 
     """
     sdfg = parent_state.sdfg
     _, inp, in_subset, _, out, out_subset = node.validate(sdfg, parent_state, allow_cross_storage=True)
-    out_name = next(e.dst.data for e in parent_state.out_edges(node) if e.src_conn == OUTPUT_CONNECTOR_NAME)
+    # Inside a scope, other iterations write the elements between this iteration's rows: the span would clobber them.
+    if parent_state.entry_node(node) is not None:
+        return False
+    out_name = next(e.data.data for e in parent_state.out_edges(node) if e.src_conn == OUTPUT_CONNECTOR_NAME)
     in_shape, in_strides = collapse_shape_and_strides(in_subset, inp.strides)
     out_shape, out_strides = collapse_shape_and_strides(out_subset, out.strides)
     facts = sdfg.facts()
