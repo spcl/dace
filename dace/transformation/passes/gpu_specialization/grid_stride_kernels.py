@@ -41,10 +41,12 @@ the tiling matches, and which supplies the block extent this pass keeps rather t
 
 from typing import Any
 
-from dace import SDFG, dtypes, properties, symbolic
+from dace import SDFG, cpf_lowering, dtypes, properties, symbolic
+from dace.cpf_lowering import LoopClass
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.canonicalize.annotate_loop_kinds import parallel_hint
 from dace.transformation.passes.gpu_specialization.resident_blocks import DeviceLimits, device_limits
 from dace.transformation.passes.iteration_domain import loop_trip_count
 
@@ -161,6 +163,37 @@ def grid_is_known_small(entry: nodes.MapEntry, resident: int) -> bool:
     return blocks is not None and blocks <= resident
 
 
+def spread_note(hint: str | None, state: SDFGState, entry: nodes.MapEntry, how: str) -> str:
+    """``entry``'s class line (``hint``'s, else the one its accesses give it) and notes, with how a grid-strided kernel
+    shares its iterations out: the loop is run in parallel, so it takes no ``not parallelized`` note."""
+    first, newline, notes = (hint or "").partition("\n")
+    if not first.startswith(LoopClass.PARALLEL.prefix):
+        first, newline, notes = parallel_hint(state, entry, []), "\n", "\n".join(filter(None, (first, notes)))
+    return f"{first.split(cpf_lowering.NOT_PARALLELIZED)[0]}{cpf_lowering.SPREAD_OVER_THREADS}{how}{newline}{notes}"
+
+
+def note_grid_stride(state: SDFGState, outer: nodes.MapEntry, inner: nodes.MapEntry, blocks: int, threads: int) -> None:
+    """Say on the kernel :class:`GPUGridStridedTiling` made of ``(outer, inner)``, and on the two loops it left inside,
+    how the grid shares the iterations out. The tiling's gate is a contended accumulator, so the kernel reduces."""
+    lanes = state.entry_node(outer)
+    kernel = state.entry_node(lanes)
+    block, thread, tile = kernel.map.params[0], lanes.map.params[0], outer.map.params[0]
+    mapping = (
+        f"grid-stride reduction, at most {blocks} blocks of {threads} threads (the blocks the device holds at once); "
+        f"block {block} takes tiles {block}, {block} + G, ... of {threads} iterations (G = the grid's blocks), thread "
+        f"{thread} takes iteration {tile} + {thread} of each tile; each block folds its threads' partials "
+        "(gpucub::BlockReduce) and adds them with one atomic"
+    )
+    line = f"{parallel_hint(state, kernel, [])}{cpf_lowering.KERNEL_MAPPING}{mapping}"
+    kernel.specialization_hint = "\n".join(filter(None, (line, kernel.specialization_hint)))
+    outer.specialization_hint = spread_note(
+        outer.specialization_hint, state, outer, f"grid-stride, block {block} takes every G-th tile from tile {block}"
+    )
+    inner.specialization_hint = spread_note(
+        inner.specialization_hint, state, inner, f"thread {thread} takes iteration {tile} + {thread} of each tile"
+    )
+
+
 @properties.make_properties
 class GridStrideKernels(ppl.Pass):
     """Grid-stride the oversized kernels; hint the launch-bound ones."""
@@ -243,6 +276,7 @@ class GridStrideKernels(ppl.Pass):
         if not GPUGridStridedTiling.can_be_applied_to(owner, options=options, **where):
             return 0
         GPUGridStridedTiling.apply_to(owner, options=options, save=False, **where)
+        note_grid_stride(state, entry, inner, resident, block_dim)
         return 1
 
     def hint_persistent(self, sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry) -> int:
