@@ -106,27 +106,38 @@ def foldable(
     resolver = resolver or SymbolResolver()
     # An empty edge out of the snapshot orders the read before a later overwrite of the source: only an overwrite of
     # other elements, under the ranges of the loops around the state, lets the scalar go (:func:`fold` drops the edge)
-    if not all(writes_apart(state, edge.dst, root.data, subset, resolver) for edge in ordered):
+    # Nodes that run once the consumers have read: an ordering edge to them carries no order the read needs
+    done = set.intersection(*(reachable(state, consumer_end(state, edge.dst)) for edge in consumers))
+    done.update(edge.dst for edge in consumers)
+    if not all(writes_apart(state, edge.dst, root.data, subset, resolver, done) for edge in ordered):
         return None
     if not source_stable_for_consumers(state, copy, root, source, consumers, subset, resolver):
         return None
     return Memlet(data=root.data, subset=subset)
 
 
-def writes_apart(state: SDFGState, node: nodes.Node, name: str, read: subsets.Subset, resolver: SymbolResolver) -> bool:
-    """Whether everything ``node`` writes of ``name`` provably lies apart from ``read``, under the facts at ``state``."""
+def writes_apart(
+    state: SDFGState, node: nodes.Node, name: str, read: subsets.Subset, resolver: SymbolResolver, done: set[nodes.Node]
+) -> bool:
+    """Whether everything ``node`` writes of ``name``, and every node it orders that is not in ``done``, provably lies
+    apart from ``read``, under the facts at ``state``: an empty tasklet writes nothing, yet orders what follows it."""
     if not isinstance(node, nodes.Tasklet):
         return False
     facts = resolver.facts_at(state)
-    for edge in state.out_edges(node):
-        if edge.data.is_empty():
+    for writer in [node, *reachable(state, node)]:
+        if writer in done or isinstance(writer, (nodes.AccessNode, nodes.EntryNode, nodes.ExitNode)):
             continue
-        written = state.memlet_path(edge)[-1].dst
-        if not isinstance(written, nodes.AccessNode) or written.data != name:
-            continue
-        target = edge.data.dst_subset if edge.data.data != name else edge.data.subset
-        if target is None or subsets.intersects(read, target, facts) != symbolic.Truth.FALSE:
+        if not isinstance(writer, nodes.Tasklet):
             return False
+        for edge in state.out_edges(writer):
+            if edge.data.is_empty():
+                continue
+            written = state.memlet_path(edge)[-1].dst
+            if not isinstance(written, nodes.AccessNode) or written.data != name:
+                continue
+            target = edge.data.dst_subset if edge.data.data != name else edge.data.subset
+            if target is None or subsets.intersects(read, target, facts) != symbolic.Truth.FALSE:
+                return False
     return True
 
 
@@ -174,9 +185,13 @@ def fold(state: SDFGState, copy: Any, read: Memlet) -> None:
     """Connect every consumer of the copy's scalar to the copy's source, then drop the scalar (and the ordering edges
     :func:`foldable` found unnecessary)."""
     scalar = copy.dst
+    entry = state.entry_node(scalar)
     for edge in list(state.out_edges(scalar)):
         if edge.data.is_empty():
             state.remove_edge(edge)
+            # A node the dropped edge alone kept inside the scope stays inside it
+            if entry is not None and state.in_degree(edge.dst) == 0:
+                state.add_nedge(entry, edge.dst, Memlet())
             continue
         memlet = Memlet.from_memlet(read)
         if isinstance(edge.dst, nodes.EntryNode):
