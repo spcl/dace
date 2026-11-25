@@ -129,6 +129,17 @@ def preceding_chain(block: ControlFlowBlock) -> tuple[list[ControlFlowBlock], bo
         current = owner if isinstance(owner, ConditionalBlock) else region
 
 
+def inner_iterators(state: SDFGState, stop: ControlFlowRegion) -> set[str]:
+    """The iterators of the loops other than ``stop`` that enclose ``state`` below ``stop``."""
+    names: set[str] = set()
+    region = state.parent_graph
+    while region is not None and region is not stop:
+        if isinstance(region, LoopRegion):
+            names.add(region.loop_variable)
+        region = region.parent_graph
+    return names
+
+
 def enclosing_loops(state: SDFGState, stop: ControlFlowRegion) -> bool:
     """Whether a loop other than ``stop`` encloses ``state`` below ``stop``."""
     region = state.parent_graph
@@ -860,7 +871,7 @@ def write_bounds(
 ) -> tuple[list[tuple[Any, Any]], Any] | None:
     """``(box, guard)`` of the store of ``subset`` through ``edge``, ``box`` its ``(lo, hi)`` per dimension, over the
     iterator and names ``loop`` does not assign, else ``None``."""
-    if edge.data.wcr is not None or enclosing_loops(state, loop):
+    if edge.data.wcr is not None:
         return None
     box = []
     for rb, re_, stride in subset.ndrange():
@@ -870,10 +881,19 @@ def write_bounds(
             return None
         box.append((lo, hi))
     guard = collect_enclosing_conditions(state, stop=loop)
-    if guard == UNGUARDED:
-        return box, None
-    guard = bound_expression(guard, bindings, assigned)
-    return None if guard is None else (box, guard)
+    if guard != UNGUARDED:
+        guard = bound_expression(guard, bindings, assigned)
+        if guard is None:
+            return None
+    # An inner loop repeats the access at the same place: the store is the same box in every one of its iterations
+    # unless its index or branch names the inner iterator
+    inner = inner_iterators(state, loop)
+    named = {str(x) for lo, hi in box for x in (*lo.free_symbols, *hi.free_symbols)}
+    if guard != UNGUARDED:
+        named |= {str(x) for x in guard.free_symbols}
+    if inner & named:
+        return None
+    return (box, None) if guard == UNGUARDED else (box, guard)
 
 
 def resolved_range(loop: LoopRegion) -> tuple[Any, Any, Any] | None:
@@ -904,37 +924,46 @@ def resolved_range(loop: LoopRegion) -> tuple[Any, Any, Any] | None:
     return start.subs(mapping), end.subs(mapping), step
 
 
-def reads_own_slots(loop: LoopRegion, name: str, edges: list[tuple[SDFGState, Any]]) -> bool:
-    """Whether every read of ``name`` in ``loop`` is at the subset of one of its stores ``edges``: once no two
-    iterations store into one element, such a read sees only its own iteration's element (``out[p[i]] = f(out[p[i]])``).
-    A read in an interstate edge or a header has no access node to compare, and refuses."""
+def read_bounds(
+    loop: LoopRegion, name: str, bindings: dict[str, Any], assigned: Counter
+) -> list[tuple[list[tuple[Any, Any]], Any]] | None:
+    """``(box, guard)`` of every read of ``name`` in ``loop``, as :func:`write_bounds` gives them for stores; ``None`` if
+    one cannot be written over the iterator and names ``loop`` does not assign, or a read sits in an interstate edge or
+    a header, which has no access node to bound."""
+    arrays = loop.sdfg.arrays
+    if any(m.data == name for e in loop.all_interstate_edges() for m in e.data.get_read_memlets(arrays)):
+        return None
+    headers = [loop, *(b for b in loop.all_control_flow_blocks() if isinstance(b, (LoopRegion, ConditionalBlock)))]
+    if any(m.data == name for b in headers for m in b.get_meta_read_memlets()):
+        return None
     from dace.transformation.interstate.loop_to_map import exact_accesses  # avoid an import loop
 
-    slots = {str(subset) for st, e in edges for subset in stored_subsets(st, e)}
+    found = []
     for st in states_of(loop):
         for dn in st.data_nodes():
             if dn.data != name:
                 continue
             for e in st.out_edges(dn):
-                if e.data is not None and not e.data.is_empty():
-                    if any(str(x) not in slots for x in exact_accesses(st, e) or [e.data.get_src_subset(e, st)]):
-                        return False
-    arrays = loop.sdfg.arrays
-    if any(m.data == name for e in loop.all_interstate_edges() for m in e.data.get_read_memlets(arrays)):
-        return False
-    headers = [loop, *(b for b in loop.all_control_flow_blocks() if isinstance(b, (LoopRegion, ConditionalBlock)))]
-    return not any(m.data == name for b in headers for m in b.get_meta_read_memlets())
+                if e.data is None or e.data.is_empty():
+                    continue
+                for subset in exact_accesses(st, e) or [e.data.get_src_subset(e, st)]:
+                    read = None if subset is None else write_bounds(loop, st, e, bindings, assigned, subset)
+                    if read is None:
+                        return None
+                    found.append(read)
+    return found
 
 
 def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[ArrayFact] | None:
     """The facts under which the solver proves that no two iterations of ``loop`` store into one element of
-    ``name``, which the loop reads only at the elements it stores (:func:`reads_own_slots`); ``None`` if there are
+    ``name``, whose reads of other iterations' stores the solver also excludes (:func:`read_bounds`); ``None`` if there are
     none.
 
     A store's subset may name symbols the loop binds once per iteration from arrays it does not write
     (``row = perm[r]``); they are replaced by their values, as are the names the loop's bounds read
     (:func:`resolved_range`). The branch conditions guarding a store are kept for both iterations, and every array
-    read gets the facts known of it on entry to ``loop`` (:func:`facts_at`).
+    read gets the facts known of it on entry to ``loop`` (:func:`facts_at`). Every read of ``name``
+    is shown clear of the stores of the other iterations in the same way.
     """
     if not smt_dependence.has_z3():
         return None
@@ -943,7 +972,7 @@ def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[A
         return None
     reads, written = loop.read_and_write_sets()
     edges = write_edges(loop, name)
-    if not edges or (name in reads and not reads_own_slots(loop, name, edges)):
+    if not edges:
         return None
     bindings, assigned = loop_bindings(loop)
     stores = []
@@ -953,10 +982,15 @@ def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[A
             if store is None or len(store[0]) != edges[0][1].data.subset.dims():
                 return None
             stores.append(store)
-    exprs = [e for box, guard in stores for e in [*(x for lh in box for x in lh), guard] if e is not None]
+    # A read meets a store of another iteration unless the solver shows its box clear of it under both guards: a read at
+    # the very subset a store writes is no proof, since another iteration may read it without storing
+    seen = read_bounds(loop, name, bindings, assigned) if name in reads else []
+    if seen is None:
+        return None
+    exprs = [e for box, guard in stores + seen for e in [*(x for lh in box for x in lh), guard] if e is not None]
     exprs += list(bounds[:2])
     arrays = {str(a.args[0]) for e in exprs for a in e.atoms(symbolic.Subscript)}
-    if not arrays or arrays & set(written):
+    if arrays & set(written):
         return None
     # A table of compile-time constants (``FoldConstantTables``) is read as it is, not as an array with facts
     tables = {
@@ -965,17 +999,16 @@ def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[A
         if n in sdfg.constants and np.ndim(sdfg.constants[n]) == 1 and sdfg.arrays[n].dtype in dtypes.INTEGER_TYPES
     }
     facts = facts_at(sdfg, loop, sorted(arrays - tables.keys()))
-    if not facts and not tables:
-        return None
     start, end, step = bounds
+    pairs = [(first, second) for x, first in enumerate(stores) for second in stores[x:]]
+    pairs += [(read, store) for read in seen for store in stores]
     with canon_stats.timed("z3", sdfg):
-        for x, first in enumerate(stores):
-            for second in stores[x:]:
-                if (
-                    prove_disjoint_under_facts(first, second, loop.loop_variable, start, end, step, facts, tables)
-                    is not True
-                ):
-                    return None
+        for first, second in pairs:
+            if (
+                prove_disjoint_under_facts(first, second, loop.loop_variable, start, end, step, facts, tables)
+                is not True
+            ):
+                return None
     return facts
 
 

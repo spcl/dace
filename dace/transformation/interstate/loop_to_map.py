@@ -803,7 +803,10 @@ def write_refusal(
             if dst_subset and 0 < len(moving) < dst_subset.dims():
                 dst_subset = subsets.Range(moving)
             with canon_stats.timed("z3", sdfg):
-                guard = sp.true if lift is None else write_guard(state, lift.loop, itersym, varying)
+                # A write unique only through its branch needs the loop to read the container nowhere: another iteration
+                # reading the stored element would see it, which the shared-subset read test assumes it does not
+                lone = lift is not None and dn.data not in lift.loop.read_and_write_sets()[0]
+                guard = write_guard(state, lift.loop, itersym, varying) if lone else sp.true
                 injective = smt_proves_injective_write(dst_subset, itersym, start, end, step, verdicts, facts, guard)
             if not injective:
                 return (
