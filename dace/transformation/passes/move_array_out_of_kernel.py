@@ -222,7 +222,16 @@ def needs_prefix(tasklet: nodes.Tasklet, name: str) -> bool:
     return True
 
 
-def prefix_memlet(edge: MultiConnectorEdge, name: str, prefix: Prefix) -> None:
+def start_of(subset: subsets.Range, other: dt.Data) -> subsets.Range | None:
+    """The elements of ``subset``'s size from the start of ``other``, in ``other``'s rank (a row of a matrix reaches
+    a vector without its unit dimension); ``None`` where dropping the unit dimensions does not reach that rank."""
+    window = subsets.Range([(0, size - 1, 1) for size in subset.size()])
+    if len(window) != len(other.shape):
+        window.squeeze(offset=False)
+    return window if len(window) == len(other.shape) else None
+
+
+def prefix_memlet(state: SDFGState, edge: MultiConnectorEdge, name: str, prefix: Prefix) -> None:
     memlet = edge.data
     # The axes a reduction folds count the dimensions of what it reads, which now start with the kernel's
     if memlet.data == name and isinstance(edge.dst, Reduce) and edge.dst.axes is not None:
@@ -235,7 +244,7 @@ def prefix_memlet(edge: MultiConnectorEdge, name: str, prefix: Prefix) -> None:
             and isinstance(edge.src, nodes.AccessNode)
             and isinstance(edge.dst, nodes.AccessNode)
         ):
-            memlet.other_subset = subsets.Range([(0, size - 1, 1) for size in memlet.subset.size()])
+            memlet.other_subset = start_of(memlet.subset, state.sdfg.arrays[edge.dst.data])
         memlet.subset = subsets.Range(prefix + memlet.subset.ndrange())
     elif isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == name:
         # A copy naming its source and no destination writes the start of the array
@@ -847,7 +856,7 @@ def move_array(plan: LiftPlan) -> None:
     restride_nests(plan.owner, plan.name, own_strides, list(plan.layout.strides[-len(own_strides) :]))
     scopes: dict[SDFGState, dict[nodes.EntryNode, None]] = {}
     for state, edge, prefix, scope in plan.edits:
-        prefix_memlet(edge, plan.name, prefix)
+        prefix_memlet(state, edge, plan.name, prefix)
         if scope is not None:
             scopes.setdefault(state, {})[scope] = None
     for tasklet, point in plan.tasklets:
