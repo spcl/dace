@@ -802,6 +802,10 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: dict[str, str]):
             # The node goes; what an ordering edge held behind it, its readers still wait for
             if state.in_degree(node):
                 state.keep_order_through([node])
+            # ... and so does a store it fed, which becomes a tasklet below: ``keep_order_through`` sees a sink nothing
+            # reads and skips it, and the read the ordering edge put first (``z_index = z[i]`` before ``z[i] = w``) would
+            # race the store
+            held = [e.src for e in state.in_edges(node) if e.data.is_empty()]
             for out_edge in state.out_edges(node):
                 if out_edge.data.is_empty():
                     continue
@@ -824,6 +828,9 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: dict[str, str]):
                         state.add_edge(
                             t, "__out", dst, e.dst_conn, mm.Memlet(data=dst.data, subset=e.data.dst_subset, volume=1)
                         )
+                        for src in held:
+                            if src in state and state.entry_node(src) is state.entry_node(dst):
+                                state.add_nedge(src, t, mm.Memlet())
                         # Reassign destination for check below
                         dst = t
                     elif isinstance(dst, nodes.NestedSDFG):
