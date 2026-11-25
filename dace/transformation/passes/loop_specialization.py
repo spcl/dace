@@ -43,6 +43,15 @@ GUARD_FALLBACK = (
     "this arm keeps the order"
 )
 
+#: The class line of a fallback arm whose loop then accumulates into one floating-point element: a reduction, whose
+#: order the arm keeps only for its rounding. ``{effect}`` as in :data:`GUARD_FALLBACK`.
+GUARD_FALLBACK_REDUCTION = (
+    LoopClass.SEQUENTIAL.prefix
+    + "the else arm of if ({guard}), taken when {negated}{effect}: a reduction, kept in order here because the order "
+    "of the {noun} fixes its floating-point rounding; parallel with reduction({op}:{element}) if a different rounding "
+    "is acceptable"
+)
+
 RELATION_OPERATORS = {"==", "!=", "<", "<=", ">", ">="}
 
 
@@ -86,11 +95,7 @@ def label_arms(
         loops = [r for r in seq_region.all_control_flow_regions() if isinstance(r, LoopRegion) and r.pinned_sequential]
         labels = (
             GUARDED.format(guard=condition_text(guard), frequency=test_frequency(par_region)),
-            GUARD_FALLBACK.format(
-                guard=condition_text(guard),
-                negated=negated,
-                effect=fallback_effect(loops[0], negated) if loops else "",
-            ),
+            fallback_line(guard, negated, loops[0] if loops else None),
         )
     for block in par_region.all_control_flow_blocks():
         if isinstance(block, SDFGState):
@@ -122,11 +127,31 @@ def test_frequency(region: ControlFlowRegion) -> str:
 
 
 ACCUMULATIONS = {ast.Add: "a sum", ast.Sub: "a difference", ast.Mult: "a product"}
+#: The reduction clause operator of each accumulation.
+ACCUMULATION_OPERATORS = {"a sum": "+", "a difference": "-", "a product": "*"}
 
 
-def fallback_effect(loop: LoopRegion, negated: str) -> str:
-    """What ``loop`` does where ``negated`` holds, for the class line of a guard's fallback arm: ``a sum into a[0]`` for
-    ``a[i * inc] = a[i * inc] + b[i]`` under ``inc == 0``, or ``""`` when no single write says it."""
+def fallback_line(guard: str, negated: str, loop: LoopRegion | None) -> str:
+    """The class line of a guard's fallback arm: :data:`GUARD_FALLBACK_REDUCTION` when ``loop`` then accumulates into one
+    floating-point element that no iteration indexes apart, else :data:`GUARD_FALLBACK`."""
+    effect, kind, element = fallback_effect(loop, negated) if loop is not None else ("", "", None)
+    if kind and element is not None:
+        return GUARD_FALLBACK_REDUCTION.format(
+            guard=condition_text(guard),
+            negated=negated,
+            effect=effect,
+            noun=kind.split(" ", 1)[1],
+            op=ACCUMULATION_OPERATORS[kind],
+            element=element,
+        )
+    return GUARD_FALLBACK.format(guard=condition_text(guard), negated=negated, effect=effect)
+
+
+def fallback_effect(loop: LoopRegion, negated: str) -> tuple[str, str, str | None]:
+    """What ``loop`` does where ``negated`` holds, for the class line of a guard's fallback arm: `` (the loop then makes
+    a sum into a[0])`` for ``a[i * inc] = a[i * inc] + b[i]`` under ``inc == 0``, or ``""`` when no single write says
+    it; then the accumulation (``a sum``, ``""`` for none) and, when it goes to one floating-point element the loop's
+    counter does not index, that element (``a[0]``), else ``None``."""
     try:
         facts = symbolic.pystr_to_symbolic(negated)
         equalities = {
@@ -134,7 +159,7 @@ def fallback_effect(loop: LoopRegion, negated: str) -> str:
         }
     except Exception:  # pylint: disable=broad-exception-caught
         # A comment must not fail the specialization that asked for it
-        return ""
+        return "", "", None
     for state in loop.states():
         for node in state.nodes():
             if not isinstance(node, nodes.Tasklet):
@@ -148,12 +173,13 @@ def fallback_effect(loop: LoopRegion, negated: str) -> str:
             where = copy.deepcopy(target.subset)
             where.replace(equalities)
             kind = accumulation(node, state, target)
-            return (
-                f" (the loop then makes {kind} into {target.data}[{where}])"
-                if kind
-                else f" (the loop then writes {target.data}[{where}])"
-            )
-    return ""
+            if not kind:
+                return f" (the loop then writes {target.data}[{where}])", "", None
+            point = where.num_elements() == 1 and loop.loop_variable not in {str(s) for s in where.free_symbols}
+            floating = state.sdfg.arrays[target.data].dtype in (dtypes.float16, dtypes.float32, dtypes.float64)
+            element = f"{target.data}[{where}]" if point and floating else None
+            return f" (the loop then makes {kind} into {target.data}[{where}])", kind, element
+    return "", "", None
 
 
 def accumulation(node: nodes.Tasklet, state: SDFGState, target: Memlet) -> str:
@@ -369,6 +395,7 @@ def specialize_loop_under_relations(
 __all__ = [
     "GUARDED",
     "GUARD_FALLBACK",
+    "GUARD_FALLBACK_REDUCTION",
     "evaluate_before",
     "invariant_host",
     "label_arms",

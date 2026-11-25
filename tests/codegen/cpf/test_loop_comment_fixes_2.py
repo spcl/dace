@@ -110,6 +110,22 @@ def test_a_time_loop_names_the_flow_dependence_alike_on_cpu_and_gpu():
         assert line.startswith(flow), line
 
 
+def test_a_fallback_arm_that_sums_into_one_element_says_it_is_a_reduction():
+    """Finding 7: the ``inc == 0`` arm said only that it keeps the order, hiding the reduction."""
+    inc = dace.symbol("inc")
+
+    @dace.program
+    def strided(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(N):
+            a[i * inc] = a[i * inc] + b[i]
+
+    (line,) = [
+        line.strip() for line in bench_c(strided, "cpf_review2_guard").splitlines() if "// sequential --" in line
+    ]
+    assert "(the loop then makes a sum into a[0]): a reduction, kept in order here because" in line, line
+    assert line.endswith("parallel with reduction(+:a[0]) if a different rounding is acceptable"), line
+
+
 if __name__ == "__main__":
     test_a_grid_stride_reduction_kernel_says_reduction_and_grid_stride()
     test_a_block_per_row_kernel_has_one_line_per_kernel_and_per_thread_block()
@@ -117,3 +133,4 @@ if __name__ == "__main__":
     test_a_kernel_library_loop_names_the_kernel_not_its_launch_bounds()
     test_a_simd_loop_says_vectorized_not_not_parallelized()
     test_a_time_loop_names_the_flow_dependence_alike_on_cpu_and_gpu()
+    test_a_fallback_arm_that_sums_into_one_element_says_it_is_a_reduction()
