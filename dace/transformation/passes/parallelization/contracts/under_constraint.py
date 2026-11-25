@@ -42,7 +42,7 @@ from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_expr
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.loop_specialization import (
@@ -126,8 +126,10 @@ class ParallelizeUnderConstraint(ppl.Pass):
                 if parent is None or loop not in parent.nodes():
                     continue
                 refusal = None if refusals is None else refusals.get(loop)
-                if self.version_carried_distance(loop, owner, refusal) or self.version_segment_writes(
-                    loop, sd, owner, refusal, checks
+                if (
+                    self.version_carried_distance(loop, owner, refusal)
+                    or self.version_segment_writes(loop, sd, owner, refusal, checks)
+                    or self.version_invariant_branch(loop, owner, refusal)
                 ):
                     facts = ScopeFacts(sd)
                     specialized += 1
@@ -161,6 +163,47 @@ class ParallelizeUnderConstraint(ppl.Pass):
                 facts = ScopeFacts(sd)
                 specialized += 1
         return specialized or None
+
+    def version_invariant_branch(self, loop: LoopRegion, owner: SDFG, refusal) -> bool:
+        """Version ``loop`` on the condition of the one branch that stores the container it was refused on, when the
+        loop does not change that condition: ``if (!cond) { the loop without the branch, parallel } else { loop }``
+        (CloudSC's ``IF (LAERICESED .AND. JM == NCLDQI) ZVQX(NCLDQI) = ...`` in the column loop).
+
+        :param refusal: Why :class:`ParallelizeLoops` kept ``loop`` a loop, or ``None`` when no record exists.
+        :returns: Whether ``loop`` was versioned.
+        """
+        from dace.transformation.interstate.loop_to_map import LoopToMap, Refusal
+        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
+
+        if refusal is None:
+            # Cheap structural filter first: a loop without a one-branch conditional is never a candidate
+            if not any(
+                isinstance(block, ConditionalBlock) and len(block.branches) == 1
+                for block in loop.all_control_flow_blocks()
+            ):
+                return False
+            probe = LoopToMap()
+            if ParallelizeLoops().accepts(loop, probe):
+                return False
+            refusal = probe.last_refusal
+        if refusal is None or refusal.kind is not Refusal.NON_UNIQUE_WRITE or not refusal.container:
+            return False
+        found = invariant_branch_storing(loop, refusal.container)
+        if found is None:
+            return False
+        position, condition = found
+        probe = LoopToMap()
+        probe.contract_arrays = probe.contract_reads = frozenset({refusal.container})
+        if not ParallelizeLoops().accepts(loop, probe):
+            return False
+
+        def parallelize(par_loop: LoopRegion, par_region: ControlFlowRegion, own: SDFG) -> None:
+            # The clone runs only where the branch does not: it stores nothing there
+            drop_block(list(par_loop.all_control_flow_blocks())[position])
+            ParallelizeLoops().parallelize_loop(own, par_loop, proven=True)
+
+        specialize_loop_under_condition(loop, f"not ({condition})", parallelize, owner)
+        return True
 
     def version_carried_distance(self, loop: LoopRegion, owner: SDFG, refusal) -> bool:
         """Version ``loop`` on its :class:`CarriedDistance`, the test evaluated once before the outermost loop that
@@ -576,3 +619,52 @@ def nondecreasing_check(sdfg: SDFG, before: LoopRegion, pointer: str, low: str, 
 
 
 __all__ = ["CarriedDistance", "ParallelizeUnderConstraint", "carried_distance", "segment_write"]
+
+
+def invariant_branch_storing(loop: LoopRegion, container: str) -> tuple[int, str] | None:
+    """The position in ``loop.all_control_flow_blocks()`` of the one-branch conditional of ``loop`` that holds every
+    store to ``container`` in the loop, and its condition; ``None`` unless the loop leaves that condition unchanged:
+    no symbol it reads varies in the loop and no container it reads is written there."""
+    from dace.transformation.interstate.loop_to_map import loop_varying_symbols
+
+    blocks = list(loop.all_control_flow_blocks())
+    holders = [
+        block
+        for block in blocks
+        if isinstance(block, SDFGState)
+        and any(dn.data == container and block.in_degree(dn) > 0 for dn in block.data_nodes())
+    ]
+    if not holders:
+        return None
+    guards = set()
+    for state in holders:
+        region = state.parent_graph
+        while region is not loop and not isinstance(region, ConditionalBlock):
+            region = region.parent_graph
+        if region is loop:
+            return None
+        guards.add(region)
+    if len(guards) != 1:
+        return None
+    guard = guards.pop()
+    if len(guard.branches) != 1 or guard.branches[0][0] is None:
+        return None
+    condition = guard.branches[0][0]
+    names = {str(name) for name in condition.get_free_symbols()}
+    written = {
+        dn.data for block in blocks if isinstance(block, SDFGState) for dn in block.data_nodes() if block.in_degree(dn)
+    }
+    if names & (loop_varying_symbols(loop) | {loop.loop_variable} | written):
+        return None
+    return blocks.index(guard), condition.as_string
+
+
+def drop_block(block) -> None:
+    """Replace ``block`` with an empty state on the same edges."""
+    graph = block.parent_graph
+    state = graph.add_state(f"{block.label}_dropped", is_start_block=graph.start_block is block)
+    for edge in graph.in_edges(block):
+        graph.add_edge(edge.src, state, edge.data)
+    for edge in graph.out_edges(block):
+        graph.add_edge(state, edge.dst, edge.data)
+    graph.remove_node(block)
