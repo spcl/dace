@@ -6,12 +6,12 @@ a library call the next state copies into ``A[i]`` (the frontend's write-back of
 from collections.abc import Iterator
 from typing import Any
 
-from dace import SDFG, Memlet, data, dtypes, properties, symbolic
+from dace import SDFG, Memlet, data, dtypes, properties, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.scope import is_devicelevel_gpu
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
@@ -69,7 +69,14 @@ def reads_in_place(sdfg: SDFG, state: SDFGState, consumer: nodes.Node, storage: 
     return (storage in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES) == on_device
 
 
-def foldable(sdfg: SDFG, state: SDFGState, copy: Any, counts: dict[str, int], scopes: bool = False) -> Memlet | None:
+def foldable(
+    sdfg: SDFG,
+    state: SDFGState,
+    copy: Any,
+    counts: dict[str, int],
+    scopes: bool = False,
+    resolver: SymbolResolver | None = None,
+) -> Memlet | None:
     """The direct read of the source element if the copy edge ``copy`` may be folded, else ``None``."""
     scalar = copy.dst
     desc = sdfg.arrays[scalar.data]
@@ -77,12 +84,10 @@ def foldable(sdfg: SDFG, state: SDFGState, copy: Any, counts: dict[str, int], sc
         return None
     if state.in_degree(scalar) != 1 or copy.data.wcr is not None or copy.data.is_empty():
         return None
-    consumers = state.out_edges(scalar)
+    ordered = [edge for edge in state.out_edges(scalar) if edge.data.is_empty()]
+    consumers = [edge for edge in state.out_edges(scalar) if not edge.data.is_empty()]
     kinds = (nodes.Tasklet, nodes.EntryNode) if scopes else nodes.Tasklet
     if not consumers or not all(isinstance(edge.dst, kinds) and read_by_tasklets(state, edge) for edge in consumers):
-        return None
-    # An empty edge out of the snapshot orders the read before a later overwrite of the source
-    if any(edge.data.is_empty() for edge in consumers):
         return None
     root = state.memlet_path(copy)[0].src
     if not isinstance(root, nodes.AccessNode) or root.data == scalar.data:
@@ -98,13 +103,41 @@ def foldable(sdfg: SDFG, state: SDFGState, copy: Any, counts: dict[str, int], sc
     subset = copy.data.subset if copy.data.data == root.data else copy.data.other_subset
     if subset is None or symbolic.equal(subset.num_elements(), 1) is not True:
         return None
-    if not source_stable_for_consumers(state, copy, root, source, consumers):
+    resolver = resolver or SymbolResolver()
+    # An empty edge out of the snapshot orders the read before a later overwrite of the source: only an overwrite of
+    # other elements, under the ranges of the loops around the state, lets the scalar go (:func:`fold` drops the edge)
+    if not all(writes_apart(state, edge.dst, root.data, subset, resolver) for edge in ordered):
+        return None
+    if not source_stable_for_consumers(state, copy, root, source, consumers, subset, resolver):
         return None
     return Memlet(data=root.data, subset=subset)
 
 
+def writes_apart(state: SDFGState, node: nodes.Node, name: str, read: subsets.Subset, resolver: SymbolResolver) -> bool:
+    """Whether everything ``node`` writes of ``name`` provably lies apart from ``read``, under the facts at ``state``."""
+    if not isinstance(node, nodes.Tasklet):
+        return False
+    facts = resolver.facts_at(state)
+    for edge in state.out_edges(node):
+        if edge.data.is_empty():
+            continue
+        written = state.memlet_path(edge)[-1].dst
+        if not isinstance(written, nodes.AccessNode) or written.data != name:
+            continue
+        target = edge.data.dst_subset if edge.data.data != name else edge.data.subset
+        if target is None or subsets.intersects(read, target, facts) != symbolic.Truth.FALSE:
+            return False
+    return True
+
+
 def source_stable_for_consumers(
-    state: SDFGState, copy: Any, root: nodes.AccessNode, source: data.Data, consumers: list
+    state: SDFGState,
+    copy: Any,
+    root: nodes.AccessNode,
+    source: data.Data,
+    consumers: list,
+    read: subsets.Subset | None = None,
+    resolver: SymbolResolver | None = None,
 ) -> bool:
     """Whether every write of the copy's source lands before the copy or after all its consumers."""
     # The source node's own writes land before the copy reads it.
@@ -112,17 +145,39 @@ def source_stable_for_consumers(
     # A write inside a consuming scope is neither: its other iterations would read the overwritten element
     after = set.intersection(*(reachable(state, consumer_end(state, edge.dst)) for edge in consumers))
     viewed = sdutil.get_last_view_node(state, root).data if isinstance(source, data.View) else root.data
-    if any(writer not in before and writer not in after for writer in writers(state, viewed)):
+    if any(
+        writer not in before and writer not in after and not written_apart(state, writer, read, resolver)
+        for writer in writers(state, viewed)
+    ):
         return False
     # A scope writing the source overwrites the element its other iterations read
     ends = [consumer_end(state, edge.dst) for edge in consumers if isinstance(edge.dst, nodes.EntryNode)]
     return not any(e.data.data in (root.data, viewed) for end in ends for e in state.out_edges(end))
 
 
+def written_apart(
+    state: SDFGState, writer: nodes.Node, read: subsets.Subset | None, resolver: SymbolResolver | None
+) -> bool:
+    """Whether every write into ``writer`` lies provably apart from ``read``, under the facts at ``state``."""
+    if read is None or resolver is None or not isinstance(writer, nodes.AccessNode):
+        return False
+    facts = resolver.facts_at(state)
+    edges = [edge for edge in state.in_edges(writer) if not edge.data.is_empty()]
+    return bool(edges) and all(
+        (target := edge.data.get_dst_subset(edge, state)) is not None
+        and subsets.intersects(read, target, facts) == symbolic.Truth.FALSE
+        for edge in edges
+    )
+
+
 def fold(state: SDFGState, copy: Any, read: Memlet) -> None:
-    """Connect every consumer of the copy's scalar to the copy's source, then drop the scalar."""
+    """Connect every consumer of the copy's scalar to the copy's source, then drop the scalar (and the ordering edges
+    :func:`foldable` found unnecessary)."""
     scalar = copy.dst
     for edge in list(state.out_edges(scalar)):
+        if edge.data.is_empty():
+            state.remove_edge(edge)
+            continue
         memlet = Memlet.from_memlet(read)
         if isinstance(edge.dst, nodes.EntryNode):
             memlet = edge.data
@@ -152,7 +207,9 @@ def element_copy(sdfg: SDFG, state: SDFGState, scalar: nodes.AccessNode) -> Any 
     return target
 
 
-def foldable_write(sdfg: SDFG, state: SDFGState, produce: Any, counts: dict[str, int]) -> Any | None:
+def foldable_write(
+    sdfg: SDFG, state: SDFGState, produce: Any, counts: dict[str, int], resolver: SymbolResolver | None = None
+) -> Any | None:
     """The copy edge out of the result scalar ``produce`` fills, if the scalar may be folded away."""
     scalar = produce.dst
     desc = sdfg.arrays[scalar.data]
@@ -166,9 +223,30 @@ def foldable_write(sdfg: SDFG, state: SDFGState, produce: Any, counts: dict[str,
     before = reachable(state, produce.src, forward=False)
     after = reachable(state, target.dst)
     accessors = [node for node in state.data_nodes() if node.data == target.dst.data and node is not target.dst]
-    if any(node not in before and node not in after for node in accessors):
+    written = write_subset(target)
+    resolver = resolver or SymbolResolver()
+    if any(
+        node not in before and node not in after and not touches_apart(state, node, written, resolver)
+        for node in accessors
+    ):
         return None
     return target
+
+
+def touches_apart(
+    state: SDFGState, node: nodes.AccessNode, other: subsets.Subset | None, resolver: SymbolResolver
+) -> bool:
+    """Whether every element ``node`` reads or writes in ``state`` provably lies apart from ``other``, under the facts at
+    ``state`` (a read of row ``JN - 1`` beside a write of row ``4``, in a loop over ``JN = 1..4``)."""
+    if other is None:
+        return False
+    facts = resolver.facts_at(state)
+    edges = [edge for edge in [*state.in_edges(node), *state.out_edges(node)] if not edge.data.is_empty()]
+    for edge in edges:
+        touched = edge.data.get_dst_subset(edge, state) if edge.dst is node else edge.data.get_src_subset(edge, state)
+        if touched is None or subsets.intersects(other, touched, facts) != symbolic.Truth.FALSE:
+            return False
+    return True
 
 
 def write_subset(copy: Any) -> Any | None:
@@ -293,6 +371,7 @@ class FoldScalarReadCopies(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """:returns: the number of folded copies, or ``None`` if none."""
         folded = 0
+        resolver = SymbolResolver()
         for owner in sdfg.all_sdfgs_recursive():
             counts: dict[str, int] = {}
             for state in owner.states():
@@ -305,7 +384,7 @@ class FoldScalarReadCopies(ppl.Pass):
                 for copy in list(copy_edges(owner, state)):
                     if copy.dst not in state.nodes():
                         continue
-                    read = foldable(owner, state, copy, counts, self.scopes)
+                    read = foldable(owner, state, copy, counts, self.scopes, resolver)
                     if read is not None:
                         fold(state, copy, read)
                         counts[copy.dst.data] = 0
@@ -313,7 +392,7 @@ class FoldScalarReadCopies(ppl.Pass):
                         continue
                     if self.reads_only:
                         continue
-                    target = foldable_write(owner, state, copy, counts)
+                    target = foldable_write(owner, state, copy, counts, resolver)
                     if target is not None:
                         fold_write(state, copy, target)
                         counts[copy.dst.data] = 0
