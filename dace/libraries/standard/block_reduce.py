@@ -316,6 +316,24 @@ def in_kernel_block_implementation(
     return block if isinstance(kernel, nodes.MapEntry) and share_with_block(private, kernel, state) else None
 
 
+#: Implementation keys that pick a lowering at expansion, the in-kernel block collective included.
+DISPATCHING_IMPLEMENTATIONS = ("Auto", "specialize")
+
+
+def runs_whole_per_lane(node: nodes.LibraryNode, state: SDFGState) -> bool:
+    """Whether ``node`` inside a block-collective kernel runs whole on every lane: it has no block lowering it can take
+    there, its operands are small enough for one thread, or its implementation is pinned to another lowering."""
+    from dace.transformation.passes.offloading.taskloop import small_operands
+
+    block = gpu_block_implementation(node, state, state.sdfg)
+    pinned = node.implementation
+    return (
+        block is None
+        or small_operands(node, state)
+        or (pinned is not None and pinned != block and pinned not in DISPATCHING_IMPLEMENTATIONS)
+    )
+
+
 def accumulates_beside(node: nodes.LibraryNode, state: SDFGState) -> bool:
     """Whether the kernel around ``node`` accumulates anywhere but at ``node``: a block collective runs the kernel
     body on every lane of the block, so each lane would add, and each lane would rerun a library node beside it. A
@@ -348,9 +366,11 @@ def accumulates_beside(node: nodes.LibraryNode, state: SDFGState) -> bool:
                 return True
             # A library node with no block lowering runs whole on every lane, and its lowering may build its output
             # in steps (a GEMM zeroes its output, then adds into it): lanes repeating the steps race.
+            # So does one over small operands, which takes its one-thread lowering (``in_kernel_block_implementation``),
+            # and one pinned to another lowering (a MatMul's 8x8 Gemm set to ``pure``).
             if (
                 isinstance(inner, nodes.LibraryNode)
-                and gpu_block_implementation(inner, graph, graph.sdfg) is None
+                and runs_whole_per_lane(inner, graph)
                 and any(not edge.data.is_empty() for edge in graph.out_edges(inner))
             ):
                 return True

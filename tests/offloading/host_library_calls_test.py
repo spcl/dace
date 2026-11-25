@@ -58,6 +58,18 @@ def test_a_map_around_an_inverse_is_a_kernel():
     assert not {n.implementation for n in libraries} & {"OpenBLAS", "MKL", "cuSolverDn", "hipSolverDn"}
 
 
+# Reproducer: on V100 the block inverse shared its kernel with an 8x8 Gemm pinned to ``pure``, which every lane reran,
+# zeroing and accumulating C over each other (ault V100, host_library_calls 924645)
+def test_a_block_collective_never_shares_a_kernel_with_a_node_every_lane_reruns():
+    sdfg = gpu_final("host_library_calls_lanes")
+    implementations = {
+        type(n).__name__: n.implementation
+        for n, parent in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.LibraryNode)
+    }
+    assert not (implementations.get("Inv") == "CUDA (block)" and implementations.get("Gemm") == "pure")
+
+
 @pytest.mark.gpu
 def test_a_map_around_an_inverse_computes_what_numpy_computes():
     import cupy
@@ -118,6 +130,7 @@ def test_a_map_around_a_problem_sized_fft_computes_what_numpy_computes():
 
 if __name__ == "__main__":
     test_a_map_around_an_inverse_is_a_kernel()
+    test_a_block_collective_never_shares_a_kernel_with_a_node_every_lane_reruns()
     test_a_map_around_an_inverse_computes_what_numpy_computes()
     test_a_map_around_a_matrix_vector_product_is_a_kernel()
     test_a_kernel_around_a_matrix_vector_product_computes_what_numpy_computes()
