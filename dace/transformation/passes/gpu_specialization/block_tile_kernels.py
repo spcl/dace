@@ -50,7 +50,7 @@ from dace.transformation.passes.minimize_stride_permutation import (
 
 #: What a block-tiled kernel's lane map is, for a CPF reader.
 BLOCK_TILE_HINT = (
-    "parallel -- block tile: the lanes of the one thread block that runs each iteration of the kernel loop; "
+    f"{LoopClass.PARALLEL.prefix}{Reason.BLOCK_TILE.value}: the lanes of the one thread block that runs each iteration of the kernel loop; "
     "the lane-strided loops below split that iteration's work across them"
 )
 #: How the lanes of a block-tiled kernel share out a map strided across them, for a CPF reader.

@@ -1683,16 +1683,22 @@ REASON_LINE = re.compile(rf"// ({'|'.join(cls.value for cls in LoopClass)}) -- (
 
 
 def reason_table(code: str) -> list[str]:
-    """One aligned row of :data:`cpf_lowering.REASON_LEGEND` per (class, reason) ``code``'s loop comments use, under a
-    head row; none when no comment names a reason with a legend."""
+    """One aligned row of :data:`cpf_lowering.REASON_LEGEND` per (class, reason) ``code``'s loop comments use, and one
+    of :data:`cpf_lowering.SPREAD_LEGEND` per way they spread a loop over the GPU threads, under a head row; none when
+    no comment names a reason with a legend."""
     used = OrderedSet()
     for found in REASON_LINE.finditer(code):
-        reason = cpf_lowering.reason_of(found.group(2))
+        cls, text = found.groups()
+        reason = cpf_lowering.reason_of(text)
         if reason is not None:
-            used.add((found.group(1), reason))
+            used.add((cls, reason.value.strip(), *cpf_lowering.REASON_LEGEND[reason]))
+        spread = text.partition(cpf_lowering.SPREAD_OVER_THREADS)[2]
+        for opening, legend in cpf_lowering.SPREAD_LEGEND.items():
+            if spread.startswith(opening):
+                used.add((cls, f"{cpf_lowering.SPREAD_OVER_THREADS.strip('; ')} {opening}", *legend))
     if not used:
         return []
-    rows = [REASON_COLUMNS] + [(cls, reason.value.strip(), *cpf_lowering.REASON_LEGEND[reason]) for cls, reason in used]
+    rows = [REASON_COLUMNS, *used]
     widths = [max(len(row[column]) for row in rows) for column in range(len(REASON_COLUMNS) - 1)]
     return ["//   " + " | ".join([*(c.ljust(w) for c, w in zip(row, widths)), row[-1]]).rstrip() for row in rows]
 

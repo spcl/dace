@@ -233,6 +233,8 @@ class Reason(enum.Enum):
     IMPLEMENTATION = "implementation loop of "
     #: A GPU thread-block map that carries no program loop's line of its own: what its threads are.
     THREAD_BLOCK = "thread block"
+    #: A block-tiled kernel's lane map: the lanes of the thread block that runs one iteration of the kernel loop.
+    BLOCK_TILE = "block tile"
     WAVEFRONT_FRONT = "one wavefront step: "
     WAVEFRONT_COLUMN = "the tiles "
     # ``sequential``: an opening, or for a proven dependence the meaning of its kind, which follows the element
@@ -282,6 +284,15 @@ VECTORIZED_ONLY = "; vectorized (omp simd), not thread-parallel: "
 #: iterations the threads of a kernel share out by index (a grid-stride or lane-strided loop), followed by how: the
 #: loop is run in parallel, so it takes no :data:`NOT_PARALLELIZED` note.
 SPREAD_OVER_THREADS = "; spread over the GPU threads: "
+#: How a :data:`SPREAD_OVER_THREADS` note shares the loop out (the words that open it) -> its header legend row, as
+#: :data:`REASON_LEGEND`'s.
+SPREAD_LEGEND: dict[str, tuple[str, str]] = {
+    "lane-strided": (
+        "lane t of one thread block takes iterations t, t + B, ...",
+        "nothing; block size B is a tuning knob",
+    ),
+    "grid-stride": ("each resident block takes every G-th tile", "nothing; the grid G is the blocks resident at once"),
+}
 #: What a GPU kernel's comment appends to its class line: how the launch grid maps the loop's iterations to threads.
 KERNEL_MAPPING = "; kernel: "
 #: What a GPU thread-block map's comment appends to the class line of the program loop it runs.
@@ -325,6 +336,7 @@ REASON_LEGEND: dict[Reason, tuple[str, str]] = {
     Reason.INNER_TILE: ("loop inside one tile", "nothing; tile size is a tuning knob"),
     Reason.IMPLEMENTATION: ("loop a helper or library lowering wrote", "tune the call, not the loop"),
     Reason.THREAD_BLOCK: ("threads of one GPU thread block", "nothing; block size is a tuning knob"),
+    Reason.BLOCK_TILE: ("lanes of the one block that runs a kernel iteration", "nothing; block size is a tuning knob"),
     Reason.WAVEFRONT_FRONT: ("points of one wavefront step", "nothing; tile the front"),
     Reason.WAVEFRONT_COLUMN: ("tiles of one wavefront step", "nothing; tile size is a tuning knob"),
     Reason.PROVEN_FLOW: (

@@ -417,6 +417,14 @@ def test_a_loop_free_unit_explains_its_cpf_line_and_its_implementation_loops():
     assert code.index(cpf.CPF_LINES_LEGEND) < code.index("// cpf: proven: all"), code
 
 
+def test_block_tile_and_lane_strided_lines_have_table_rows():
+    """The SpMV device unit's ``block tile`` and ``lane-strided`` lines had no row in the reason table."""
+    device = render_gpu(spmv, "cpf_review3_spmv", "cuda").device_code
+    rows = table_rows(device)
+    assert ["parallel", Reason.BLOCK_TILE.value] in rows, device
+    assert ["parallel", "spread over the GPU threads: lane-strided"] in rows, device
+
+
 @pytest.mark.parametrize("reason", list(Reason), ids=[reason.name for reason in Reason])
 def test_every_reason_is_told_apart_and_has_a_legend_row(reason: Reason):
     """Each Reason member is found in a line that opens with it (or holds it after the element it names) and gets its
@@ -470,6 +478,7 @@ if __name__ == "__main__":
     test_an_unknown_loop_says_when_the_solver_ran_out_of_budget()
     test_the_header_legend_has_one_row_per_reason_the_unit_uses()
     test_a_loop_free_unit_explains_its_cpf_line_and_its_implementation_loops()
+    test_block_tile_and_lane_strided_lines_have_table_rows()
     for member in Reason:
         test_every_reason_is_told_apart_and_has_a_legend_row(member)
     test_the_summary_names_a_scans_blocked_code_as_one_scan()
