@@ -1328,14 +1328,14 @@ def late_allocation_block(
     :param last_block: The block whose exit frees ``desc``.
     :param desc: The descriptor to allocate.
     :param access_states: The states that access ``desc`` or read it on an adjacent edge.
-    :raises NotImplementedError: When the size is assigned at more than one place, after an access, or in a loop the
-                                 free does not run in: each would need a reallocation.
+    A size assigned after an access keeps ``alloc_block``, as before this placement existed.
+
+    :raises NotImplementedError: When the size changes between two accesses, or is assigned in a loop the free does
+                                 not run in: each would need a reallocation.
     """
     sizes = {str(sym) for sym in desc.free_symbols}
     region = alloc_block.parent_graph
-    while not any(last_block is block for block in region.nodes()):
-        if isinstance(last_block, SDFG):
-            return alloc_block
+    while not isinstance(last_block, SDFG) and not any(last_block is block for block in region.nodes()):
         last_block = last_block.parent_graph
 
     def accesses(graph: ControlFlowBlock) -> bool:
@@ -1343,7 +1343,9 @@ def late_allocation_block(
             graph in access_states if isinstance(graph, SDFGState) else any(s in access_states for s in graph.states())
         )
 
-    span = reachable(alloc_block, region.successors) & reachable(last_block, region.predecessors)
+    span = reachable(alloc_block, region.successors)
+    if not isinstance(last_block, SDFG):  # freed outside the region (a post-dominator past a loop): to its end
+        span &= reachable(last_block, region.predecessors)
     edges = [e for e in region.edges() if e.src in span and e.dst in span]
     edges += [e for b in span if isinstance(b, AbstractControlFlowRegion) for e in b.all_interstate_edges()]
 
@@ -1356,9 +1358,12 @@ def late_allocation_block(
             if isinstance(outer, ConditionalBlock):
                 graph, outer = outer, outer.parent_graph
             out_edges = outer.out_edges(graph)
-            if len(out_edges) != 1:
+            if len(out_edges) > 1:
                 raise NotImplementedError(f"No single block follows {graph} to allocate {desc} after its size")
-            graph, block = outer, out_edges[0].dst
+            # A sink (the last block of a loop body) is final once its parent region ends
+            graph, block = outer, out_edges[0].dst if out_edges else None
+        if block is None:
+            raise NotImplementedError(f"No block follows the assignment of the size of {desc} in {graph}")
         return allocation_block(block, desc, access_states)
 
     blocks = {sized_after(e) for e in edges if e.data.assignments.keys() & sizes}
@@ -1374,9 +1379,25 @@ def late_allocation_block(
         if isinstance(outer, LoopRegion):
             raise NotImplementedError(f"{desc} is sized in {outer}, which reallocates it per iteration")
         outer = outer.parent_graph
+    # Accessed before the assignment: the earlier accesses use the size in force at the dominating block, as before;
+    # accessed on both sides of a size that changes in between needs a reallocation
     if any(precedes(state, block) for state in access_states):
-        raise NotImplementedError(f"{desc} is accessed before it is sized at {block}: it would need a reallocation")
+        if len(blocks) > 1 and any(
+            block is state or precedes(block, state) or contains(block, state) for state in access_states
+        ):
+            raise NotImplementedError(f"{desc} is sized at {len(blocks)} places: it would need a reallocation")
+        return alloc_block
     return block
+
+
+def contains(block: ControlFlowBlock, state: SDFGState) -> bool:
+    """Whether ``state`` lies inside the region ``block``."""
+    graph = state.parent_graph
+    while graph is not None and not isinstance(graph, SDFG):
+        if graph is block:
+            return True
+        graph = graph.parent_graph
+    return False
 
 
 def precedes(first: ControlFlowBlock, block: ControlFlowBlock) -> bool:

@@ -733,7 +733,7 @@ def test_a_transient_sized_in_one_branch_and_read_in_a_later_one_is_allocated_af
 
 def test_a_transient_resized_after_its_first_use_is_refused():
     """``n`` changes between the fill and the read of ``t``: that needs a reallocation, which codegen refuses."""
-    with pytest.raises(NotImplementedError, match="accessed before it is sized"):
+    with pytest.raises(NotImplementedError, match="would need a reallocation"):
         two_branches_sdfg("resized_allocation", resize=True).generate_code()
 
 
