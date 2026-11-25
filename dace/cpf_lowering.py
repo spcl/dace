@@ -1645,6 +1645,19 @@ def bfloat16_overloads(vendor: str) -> str:
 #: lines of a 200-line form. The form is read by an agent under a token budget, so text it has no
 #: use for is not free.
 HIP_DEVICE_BLOCKS: dict[str, str] = {
+    "cpf_abort": """\
+//: Ends the program when a run-time check fails: abort() on the host; a kernel has no abort, so it traps, and the
+//: failed launch then ends the program on the host.
+__host__ __device__ inline void cpf_abort() {
+#if defined(__HIP_DEVICE_COMPILE__)
+    __builtin_trap();
+#elif defined(__CUDA_ARCH__)
+    __trap();
+#else
+    abort();
+#endif
+}
+""",
     "cpf_kernel_launch_check": """\
 //: A failed kernel launch ends the program, naming the kernel and its launch geometry.
 static inline void cpf_kernel_launch_check(gpuError_t err, const char *name, long long gx, long long gy, long long gz,
@@ -1839,6 +1852,7 @@ GPU_ALIASES: dict[str, str] = {
 #: attribute aliases as their attributes, the error checks as CPF's own functions, the cub operator
 #: names as the functor each one names, and each ``gpu*`` call as its HIP function.
 HIP_SPELLINGS: dict[str, str] = {
+    "DACE_ABORT": "cpf_abort",
     "DACE_HDFI": "__host__ __device__ __forceinline__",
     "DACE_HFI": "__host__ __forceinline__",
     "DACE_DFI": "__device__ __forceinline__",

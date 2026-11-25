@@ -1733,8 +1733,9 @@ class CPPUnparser:
                 return
             if t.func.id == "abort" and not t.args:
                 # C has no ``std::`` namespace; a standalone unit has the standard headers only. With the DaCe runtime
-                # headers, ``DACE_ABORT`` also traps inside a kernel, where ``std::abort`` is a host function.
-                if cpf_lowering.standalone():
+                # headers, ``DACE_ABORT`` also traps inside a kernel, where ``std::abort`` is a host function; a device
+                # unit respells it as its own ``cpf_abort``, which does the same.
+                if cpf_lowering.standalone() and not cpf_lowering.device():
                     self.write("abort()" if cpf_lowering.standalone_c() else "std::abort()")
                 else:
                     self.write("DACE_ABORT()")

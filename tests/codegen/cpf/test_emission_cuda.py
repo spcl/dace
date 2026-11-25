@@ -609,3 +609,50 @@ def test_a_blas_unit_called_three_times_computes_each_product(tmp_path: pathlib.
         ]
         entry(*arguments)
         np.testing.assert_allclose(cupy.asnumpy(device["C"]), host["A"] @ host["B"], rtol=1e-12, atol=1e-12)
+
+
+def guarded_kernel_sdfg(name: str) -> dace.SDFG:
+    """``b[i] = 2 * a[i]`` on the device, behind a run-time check ``a[i] >= 0`` that ends the program."""
+    from dace.sdfg.tasklet_utils import add_abort_guard
+
+    length = dace.symbol("N", dace.int64)
+    sdfg = dace.SDFG(name)
+    for array in ("a", "b"):
+        sdfg.add_array(array, [length], dace.float64, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("kernel", {"i": "0:N"}, schedule=dace.ScheduleType.GPU_Device)
+    guard = add_abort_guard(state, "nonnegative", "v < 0", {"v": None})
+    work = state.add_tasklet("twice", {"x"}, {"y"}, "y = x * 2.0")
+    read = state.add_read("a")
+    state.add_memlet_path(read, entry, guard, dst_conn="v", memlet=dace.Memlet("a[i]"))
+    state.add_memlet_path(read, entry, work, dst_conn="x", memlet=dace.Memlet("a[i]"))
+    state.add_edge(guard, None, work, None, dace.Memlet())
+    state.add_memlet_path(work, exit_, state.add_write("b"), src_conn="y", memlet=dace.Memlet("b[i]"))
+    return sdfg
+
+
+def test_a_check_inside_a_kernel_ends_the_program_through_the_host_device_abort():
+    """A run-time check inside a kernel printed ``abort()``, a host function nvcc refuses in device code
+    (SC40 warpx_field_gather: "calling a __host__ function("abort") from a __device__ function"). The device unit
+    calls ``cpf_abort``, which traps in a kernel and aborts on the host."""
+    rendering = render(guarded_kernel_sdfg("cpf_cuda_guarded_kernel"), language="cuda", check_compiles=False)
+
+    assert "cpf_abort();" in rendering.device_code
+    assert "__host__ __device__ inline void cpf_abort()" in rendering.device_code
+
+
+@pytest.mark.gpu
+def test_a_kernel_with_a_check_builds_with_nvcc_and_computes_what_numpy_computes(tmp_path: pathlib.Path):
+    require_gpu_backend("cuda")
+    import cupy  # Deferred: the optional GPU dependency, needed only where a GPU runs this test.
+
+    name = "cpf_cuda_guarded_kernel_run"
+    rendering = render(guarded_kernel_sdfg(name), language="cuda", check_compiles=False)
+    entry = ctypes.CDLL(str(nvcc_library(rendering, tmp_path, name)))[name]
+    entry.argtypes = entry_argtypes(rendering.sdfg)
+    host = np.random.default_rng(3).random(1000)
+    device = {"a": cupy.asarray(host), "b": cupy.zeros(1000)}
+
+    entry(*[ctypes.c_void_p(device[arg].data.ptr) if arg in device else 1000 for arg in rendering.sdfg.arglist()])
+
+    np.testing.assert_allclose(cupy.asnumpy(device["b"]), 2.0 * host, rtol=0, atol=0)

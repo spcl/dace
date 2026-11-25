@@ -675,7 +675,11 @@ def entry_preconditions(code: str) -> list[str]:
     found: OrderedSet[str] = OrderedSet()
     for n in range(heads[-1], len(lines) - 2):
         guard = ABORT_GUARD.match(lines[n])
-        if guard is not None and lines[n + 1].strip() in ("abort();", "std::abort();") and lines[n + 2].strip() == "}":
+        if (
+            guard is not None
+            and lines[n + 1].strip() in ("abort();", "std::abort();", "cpf_abort();")
+            and lines[n + 2].strip() == "}"
+        ):
             found.add(unwrapped(guard.group(1)))
     return list(found)
 
