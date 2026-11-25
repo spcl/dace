@@ -281,8 +281,8 @@ def test_non_floating_inputs_promote_as_numpy_does(implementation):
 
 
 def test_a_computed_length_reaches_fft_and_fftfreq():
-    """A length the program computes (``N % 16``) reaches the replacements as a one-element list, and the C++ tasklet of
-    ``fftfreq`` prints its ``Mod`` as ``py_mod``."""
+    """A length the program computes (``N % 16``) reaches the replacements as a one-element list, and the ``fftfreq``
+    tasklet computes its ``Mod`` as Python's (``py_mod``)."""
     N = dace.symbol("N")
 
     @dace.program

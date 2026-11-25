@@ -2,12 +2,13 @@
 """MKL's FFTW3 interface: the FFTW3 C API, declared by MKL's ``fftw/fftw3.h`` and served by ``libmkl_rt``."""
 
 import dace.library
+from dace.libraries.blas.environments.intel_mkl import IntelMKL
 from dace.libraries.fft.environments.plans import FFTPlans
 
 
 @dace.library.environment
 class MKLFFTW3:
-    """Headers of MKL's FFTW3 interface; include and link paths come with :class:`IntelMKL`, listed beside it."""
+    """Headers of MKL's FFTW3 interface; include and link paths come with :class:`IntelMKL`."""
 
     cmake_minimum_version = None
     cmake_packages: list[str] = []
@@ -23,4 +24,4 @@ class MKLFFTW3:
     state_fields = ["dace::fft::PlanCache<fftw_plan> fftw_plans;", "dace::fft::PlanCache<fftwf_plan> fftwf_plans;"]
     init_code = ""
     finalize_code = ""
-    dependencies = [FFTPlans]
+    dependencies = [IntelMKL, FFTPlans]

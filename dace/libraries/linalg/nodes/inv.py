@@ -11,6 +11,7 @@ from dace import Memlet
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import environments
 from dace.libraries.lapack.nodes import Getrf, Getri, Getrs
+from dace.libraries.standard.nodes.fill import node as fill
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -110,13 +111,22 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
         bin_name = "_aout"
         bout = state.add_access("_aout")
 
+    # The identity: a zero fill, then ones on the diagonal
+    zero = sdfg.add_state_before(state, f"{node.label}_zero")
+    zero_fill = fill.FillLibraryNode(f"{node.label}_zero", value=0)
+    zero.add_edge(
+        zero_fill,
+        fill.FillLibraryNode.OUTPUT_CONNECTOR_NAME,
+        zero.add_write(bin_name),
+        None,
+        Memlet.from_array(bin_name, sdfg.arrays[bin_name]),
+    )
     _, _, mx = state.add_mapped_tasklet(
         "_eye_",
-        dict(__i0=f"0:{n}", __i1=f"0:{n}"),
+        dict(__i=f"0:{n}"),
         {},
-        "_out = (__i0 == __i1) ? 1 : 0;",
-        dict(_out=Memlet.simple(bin_name, "__i0, __i1")),
-        language=dace.dtypes.Language.CPP,
+        "_out = 1",
+        dict(_out=Memlet.simple(bin_name, "__i, __i")),
         external_edges=True,
     )
     bin = state.out_edges(mx)[0].dst
