@@ -643,6 +643,47 @@ def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None, packed
     return sym2cpp(index)
 
 
+def containers_by_pointer(
+    sdfg: SDFG,
+    expr,
+    codegen: Optional["TargetCodeGenerator"] = None,
+    framecode: Optional["DaCeCodeGenerator"] = None,
+):
+    """``expr`` with each container it reads (``i + off[0]``) spelled as the generated code names it.
+
+    An index is printed by name, so a persistent container (``__state->__0_off``) came out as a bare ``off`` that
+    nothing declares: QE ``vexx_bp_k_gpu``'s host-staged ``ofsbeta_host`` inside ``deexx[.. + ofsbeta_host[k]]``.
+    """
+    if not isinstance(expr, sp.Basic):
+        return expr
+    renames = {}
+    for atom in expr.atoms(symbolic.Subscript):
+        name = str(atom.args[0])
+        desc = sdfg.arrays.get(name)
+        if desc is None or isinstance(desc, data.Scalar):
+            continue
+        if codegen is not None:
+            pointer = codegen.ptr(name, desc, sdfg)
+        else:
+            pointer = ptr(name, desc, sdfg, framecode=framecode)
+        if pointer != name:
+            renames[atom.args[0]] = sp.Symbol(pointer)
+    return expr.xreplace(renames) if renames else expr
+
+
+def subscripts_by_pointer(
+    sdfg: SDFG,
+    subset,
+    codegen: Optional["TargetCodeGenerator"] = None,
+    framecode: Optional["DaCeCodeGenerator"] = None,
+):
+    """``subset`` with every bound passed through :func:`containers_by_pointer`."""
+    if not isinstance(subset, subsets.Range):
+        return subset
+    ranges = [tuple(containers_by_pointer(sdfg, b, codegen, framecode) for b in dim) for dim in subset.ranges]
+    return subset if ranges == subset.ranges else subsets.Range(ranges)
+
+
 def cpp_array_expr(
     sdfg,
     memlet,
@@ -658,6 +699,7 @@ def cpp_array_expr(
 ):
     """Converts a Range object to a C++ array access string."""
     subset = memlet.subset if not use_other_subset else memlet.other_subset
+    subset = subscripts_by_pointer(sdfg, subset, codegen, framecode)
     s = subset if relative_offset else subsets.Range.from_indices(offset)
     o = offset if relative_offset else None
     desc = sdfg.arrays[memlet.data] if referenced_array is None else referenced_array
