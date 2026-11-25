@@ -172,7 +172,7 @@ def test_threadblock_map_keeps_its_own_type():
     assert _declaration(code, "j") == "int j = threadIdx.x;"
 
 
-def test_nested_device_map():
+def nested_device_map_code() -> str:
     sdfg = dace.SDFG("nested_device_index_type")
     sdfg.add_array("A", [N, N], dace.float64, storage=dace.StorageType.GPU_Global)
     state = sdfg.add_state()
@@ -185,9 +185,23 @@ def test_nested_device_map():
         tasklet, inner_exit, outer_exit, state.add_write("A"), src_conn="o", memlet=dace.Memlet("A[i, j]")
     )
 
-    code = _cuda_code(sdfg)
-    assert _declaration(code, "i") == "int64_t i = (static_cast<int64_t>(blockIdx.x) * 32 + threadIdx.x);"
-    assert _declaration(code, "j") == "int64_t j = static_cast<int64_t>(blockIdx.y);"
+    return _cuda_code(sdfg)
+
+
+@pytest.mark.old_gpu_codegen_only
+def test_nested_device_map():
+    code = nested_device_map_code()
+    # The inner map becomes a dimension of the kernel, as wide as it
+    assert _declaration(code, "b_i") == "int64_t b_i = static_cast<int64_t>(blockIdx.y);"
+    assert _declaration(code, "b_j") == "int64_t b_j = (32 * static_cast<int64_t>(blockIdx.x));"
+
+
+@pytest.mark.new_gpu_codegen_only
+def test_nested_device_map_is_lowered_to_one_two_dimensional_kernel_map():
+    code = nested_device_map_code()
+    assert _declaration(code, "b_i") == "int64_t b_i = static_cast<int64_t>(blockIdx.y);"
+    assert _declaration(code, "i") == "int64_t i = (threadIdx.y + b_i);"
+    assert _declaration(code, "j") == "int64_t j = (threadIdx.x + b_j);"
 
 
 def test_nested_sdfg_receives_wide_index():
@@ -206,31 +220,43 @@ def test_nested_sdfg_receives_wide_index():
     assert _declaration(code, "i") == "int64_t i = (threadIdx.x + b_i);"
 
 
+@pytest.mark.old_gpu_codegen_only
 def test_persistent_map():
     code = _cuda_code(_persistent(persistent_offset_indices.to_sdfg(simplify=False)))
+    # A grid-stride loop over the threads of the grid, from the 64-bit offset
     header = _declaration(code, "i")
-    assert header == "for (int64_t i = (O + (static_cast<int64_t>(blockIdx.x) * 32 + threadIdx.x));", header
-    assert "i += static_cast<int64_t>(gridDim.x) * 32" in code
+    assert header == "for (int64_t i = ((O + (__dace_blk * __dace_nthr)) + __dace_tid);", header
+    assert "i += (__dace_nblk * __dace_nthr)" in code
 
 
+@pytest.mark.old_gpu_codegen_only
 @pytest.mark.parametrize("step", [1, 2])
 def test_dynamic_map(step: int):
     code = _cuda_code(_spmv(step), dynamic_map_block_size="64,1,1")
-    # The scheduling state (two arrays of 32 * 32 indices per warp) fits in static shared memory
+    # The queue, its shared state (fine-grained: two lists of 32 * 32 indices per warp) and the batches of the
+    # dynamic map all take the 64-bit index type
     assert "__shared__ int64_t __dace_dynmap_state[4096];" in code
-    assert "int64_t __dace_dynmap_begin = 0, __dace_dynmap_end = 0;" in code
-    assert "dace::DynamicMap<true, 64, 32, int64_t>::schedule(" in code
-    if step != 1:
-        assert re.search(r"int64_t j = \w+ \+ 2 \* j_idx;", code)
+    assert "dace::DynamicMap<true, 64, 32, int64_t>::block_claim(" in code
+    if step == 1:
+        assert "for (int64_t j = __dace_dynmap_first_sym;" in code
+    else:
+        assert re.search(r"for \(int64_t j = \(\(2 \* __dace_dynmap_first_sym\) \+ \w+\);", code)
 
 
+@pytest.mark.old_gpu_codegen_only
 def test_dynamic_map_default_types():
+    # A name of its own: SymPy's cache shares a symbol with every module that declares ``M`` with another type
+    M32 = dace.symbol("M32", dace.int32)
 
     @dace.program
     def spmv32(
-        A_row: dace.uint32[M + 1], A_col: dace.uint32[M], A_val: dace.float32[M], x: dace.float32[M], b: dace.float32[M]
+        A_row: dace.uint32[M32 + 1],
+        A_col: dace.uint32[M32],
+        A_val: dace.float32[M32],
+        x: dace.float32[M32],
+        b: dace.float32[M32],
     ):
-        for i in dace.map[0:M]:
+        for i in dace.map[0:M32]:
             for j in dace.map[A_row[i] : A_row[i + 1]]:
                 b[i] += A_val[j] * x[A_col[j]]
 
@@ -241,14 +267,22 @@ def test_dynamic_map_default_types():
             node.map.schedule = dace.ScheduleType.GPU_ThreadBlock_Dynamic
     code = _cuda_code(sdfg)
     assert "__shared__ int __dace_dynmap_state[8192];" in code
-    assert "unsigned int __dace_dynmap_begin = 0, __dace_dynmap_end = 0;" in code
-    assert "dace::DynamicMap<true, 128>::schedule(" in code
+    assert "dace::DynamicMap<true, 128, 32, int>::block_claim(" in code
 
 
 def test_chiplet_distribution():
     code = _cuda_code(_one_dimensional(N), backend="hip", chiplet_number=6)
-    assert "((static_cast<int64_t>(blockIdx.x) % 6) * " in code
-    assert " + static_cast<int64_t>(blockIdx.x) / 6)" in code
+    block = "(static_cast<int64_t>(blockIdx.y) * static_cast<int64_t>(gridDim.x) + static_cast<int64_t>(blockIdx.x))"
+    assert f"(({block} % 6) * " in code
+    assert f" + {block} / 6)" in code
+
+
+@pytest.mark.parametrize("backend", ["cuda", "hip"])
+def test_grids_beyond_31_bits_of_threads_spread_over_rows_on_hip(backend: str):
+    """An AMD dispatch covers fewer than 2**31 blocks and 2**32 threads per grid dimension."""
+    code = _cuda_code(_one_dimensional(N), backend=backend)
+    split = "__dace_row, int_ceil(__dace_blocks, __dace_row), 1" in code
+    assert split == (backend == "hip")
 
 
 def test_configured_64bit_index_type_widens_registers():
@@ -289,6 +323,7 @@ def test_block_index_products_beyond_32_bits():
     assert np.array_equal(out, np.arange(size - tail, size, dtype=np.int64))
 
 
+@pytest.mark.old_gpu_codegen_only
 @pytest.mark.gpu
 def test_persistent_indices_beyond_32_bits():
     size, offset = 1000, 2**33 + 5
@@ -300,6 +335,7 @@ def test_persistent_indices_beyond_32_bits():
     assert np.array_equal(out, np.arange(size, dtype=np.int64) + offset)
 
 
+@pytest.mark.old_gpu_codegen_only
 @pytest.mark.gpu
 @pytest.mark.parametrize("fine_grained,block_size", [(True, 64), (True, 128), (False, 128)])
 def test_dynamic_map_with_64bit_row_pointers(fine_grained: bool, block_size: int):
@@ -331,16 +367,18 @@ if __name__ == "__main__":
     test_each_dimension_takes_its_own_type()
     test_threadblock_map_keeps_its_own_type()
     test_nested_device_map()
+    test_nested_device_map_is_lowered_to_one_two_dimensional_kernel_map()
     test_nested_sdfg_receives_wide_index()
     test_persistent_map()
-    test_dynamic_map(1)
-    test_dynamic_map(2)
+    for step in [1, 2]:
+        test_dynamic_map(step)
     test_dynamic_map_default_types()
     test_chiplet_distribution()
+    test_grids_beyond_31_bits_of_threads_spread_over_rows_on_hip("cuda")
+    test_grids_beyond_31_bits_of_threads_spread_over_rows_on_hip("hip")
     test_configured_64bit_index_type_widens_registers()
     test_indices_beyond_32_bits()
     test_block_index_products_beyond_32_bits()
     test_persistent_indices_beyond_32_bits()
-    test_dynamic_map_with_64bit_row_pointers(True, 64)
-    test_dynamic_map_with_64bit_row_pointers(True, 128)
-    test_dynamic_map_with_64bit_row_pointers(False, 128)
+    for fine_grained, block_size in [(True, 64), (True, 128), (False, 128)]:
+        test_dynamic_map_with_64bit_row_pointers(fine_grained, block_size)
