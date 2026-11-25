@@ -188,9 +188,11 @@ def test_a_fork_note_simplifies_its_trip_counts_and_bounds_a_moving_one():
 def test_an_inline_fused_scan_names_the_scan_not_the_kernel_function():
     """LLR40 tsvc_2_s323: the fused scan's loops said ``implementation loop of function <the kernel>``."""
 
+    L = dace.symbol("L", dtype=dace.int64, positive=True)
+
     @dace.program
-    def s323(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N], e: dace.float64[N]):
-        for i in range(1, N):
+    def s323(a: dace.float64[L], b: dace.float64[L], c: dace.float64[L], d: dace.float64[L], e: dace.float64[L]):
+        for i in range(1, L):
             a[i] = b[i - 1] + c[i] * d[i]
             b[i] = a[i] + c[i] * e[i]
 
