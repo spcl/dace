@@ -628,7 +628,7 @@ def test_a_map_a_library_expansion_leaves_is_labelled():
     state.add_edge(copy, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_write("dst"), None, dace.Memlet("dst[0:N]"))
     sdfg.validate()
     rendered = comment_lines(render(sdfg).code)
-    assert "// copy: write one buffer into another" in rendered, rendered
+    assert "// copy: src[0:N] into dst[0:N]" in rendered, rendered
     assert "// " + PARALLEL.splitlines()[0] in rendered, rendered
 
 

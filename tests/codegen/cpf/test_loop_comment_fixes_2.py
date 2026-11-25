@@ -242,6 +242,60 @@ def test_a_promoted_warp_tile_keeps_one_class_line_and_its_kernel_runs_a_block_p
     assert "kernel: one thread block per iteration of j" in kernel, kernel
 
 
+def test_a_launch_per_trip_note_gives_its_grid_in_blocks_of_threads():
+    """Finding 13: the per-trip launch note gave ``ceiling(N/256 - 1/128) x 256`` without a unit."""
+    code = render_gpu(time_stencil, "cpf_review2_stencil_launch", "cuda").code
+    assert "T launches per call, each of ceil((N - 2)/256) blocks of 256 threads" in code, code
+
+
+def test_a_copy_names_its_source_and_destination():
+    """Finding 14: the stencil copy said ``copy: write one buffer into another``."""
+    code = bench_c(time_stencil, "cpf_review2_stencil_copy")
+    assert "// copy: b[1:N - 1] into a[1:N - 1]" in code, code
+    assert "write one buffer into another" not in code, code
+
+
+@dace.program
+def early_exit(a: dace.float64[N], b: dace.float64[N]):
+    for i in range(N):
+        if a[i] < 0:
+            break
+        b[i] = a[i]
+
+
+def test_a_chunked_early_exit_says_its_blocks_are_searched_in_parallel():
+    """Finding 15: the chunked early-exit loop said only that iterations after the exit must not run."""
+    code = bench_c(early_exit, "cpf_review2_early")
+    (line,) = [line.strip() for line in code.splitlines() if "// sequential -- early exit (break)" in line]
+    assert "; blocks of " in line and "searched in parallel for the first exit (find-first)" in line, line
+
+
+@dace.program
+def max_reduce(a: dace.float64[N], r: dace.float64[1]):
+    for i in range(N):
+        r[0] = max(r[0], a[i])
+
+
+def test_a_reduction_call_names_its_operator_input_axis_and_output():
+    """Finding 16: the max-reduce call said ``reduction over the given axes with the given operator``."""
+    code = bench_c(max_reduce, "cpf_review2_maxred")
+    assert "// reduction: max of a[0:N] over axis 0 into r[0]" in code, code
+
+
+def test_the_closing_line_names_fallback_arms_and_units_without_loops():
+    """Finding 17: the closing line called a guard's fallback arm and a loop-free unit a proven recurrence."""
+    inc = dace.symbol("inc")
+
+    @dace.program
+    def strided_closing(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(N):
+            a[i * inc] = a[i * inc] + b[i]
+
+    assert cpf_summary.CLOSING_WITH_FALLBACKS in bench_c(strided_closing, "cpf_review2_closing_guard")
+    loop_free = bench_c(max_reduce, "cpf_review2_closing_library")
+    assert cpf_summary.CLOSING_NO_LOOPS in loop_free and cpf_summary.CLOSING not in loop_free, loop_free
+
+
 if __name__ == "__main__":
     test_a_grid_stride_reduction_kernel_says_reduction_and_grid_stride()
     test_a_block_per_row_kernel_has_one_line_per_kernel_and_per_thread_block()
@@ -257,3 +311,8 @@ if __name__ == "__main__":
     test_an_inline_fused_scan_names_the_scan_not_the_kernel_function()
     test_a_carried_counter_is_named_without_a_stray_space()
     test_a_promoted_warp_tile_keeps_one_class_line_and_its_kernel_runs_a_block_per_tile()
+    test_a_launch_per_trip_note_gives_its_grid_in_blocks_of_threads()
+    test_a_copy_names_its_source_and_destination()
+    test_a_chunked_early_exit_says_its_blocks_are_searched_in_parallel()
+    test_a_reduction_call_names_its_operator_input_axis_and_output()
+    test_the_closing_line_names_fallback_arms_and_units_without_loops()

@@ -56,9 +56,11 @@ from dace.codegen import codegen, cpf_compact, cpf_summary
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config, set_temporary
 from dace.cpf_lowering import LoopClass
+from dace.frontend.operations import detect_reduction_type
 from dace.libraries.blas.environments import openblas
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.fft.environments import fftw3
+from dace.libraries.standard.nodes.reduce import Reduce
 from dace.libraries.tileops.dispatch import FUNCTION_ISAS, ISA, isa_implementation, widest_function_isa
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.library import get_environment
@@ -75,7 +77,11 @@ from dace.transformation.dataflow.prune_connectors import PruneConnectors
 from dace.transformation.dataflow.tasklet_fusion import TaskletFusion
 from dace.transformation.dataflow.trivial_map_elimination import TrivialMapElimination
 from dace.transformation.passes.analysis.analysis import has_wcr_in_edge
-from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds, require_classes
+from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
+    REDUCTION_SYMBOLS,
+    AnnotateLoopKinds,
+    require_classes,
+)
 from dace.transformation.passes.canonicalize.finalize import blas_addresses
 from dace.transformation.passes.readable_names import ReadableNames
 from dace.transformation.passes.scalar_fission import AccessIndex, MustDefinition, SubsetAccesses, edge_subset
@@ -440,6 +446,24 @@ def description_of(node: nodes.LibraryNode | type[nodes.LibraryNode]) -> str | N
     return QUALIFIED_DESCRIPTIONS.get(qualified) or LIBRARY_NODE_DESCRIPTIONS.get(cls.__name__)
 
 
+def instance_description(node: nodes.LibraryNode, state: SDFGState) -> str | None:
+    """What this one library node computes, naming its containers, where the class's line would leave them out: a
+    copy's source and destination, a reduction's operator, input, axes and output. ``None`` for any other node."""
+    inputs = [e.data for e in state.in_edges(node) if not e.data.is_empty()]
+    outputs = [e.data for e in state.out_edges(node) if not e.data.is_empty()]
+    if len(inputs) != 1 or len(outputs) != 1:
+        return None
+    if type(node).__name__ == "CopyLibraryNode":
+        return f"copy: {inputs[0]} into {outputs[0]}"
+    if isinstance(node, Reduce) and node.wcr is not None:
+        kind = detect_reduction_type(node.wcr)
+        operator = REDUCTION_SYMBOLS.get(kind, kind.name.lower())
+        names = ", ".join(str(axis) for axis in node.axes or ())
+        axes = "every axis" if node.axes is None else ("axes " if len(node.axes) > 1 else "axis ") + names
+        return f"reduction: {operator} of {inputs[0]} over {axes} into {outputs[0]}"
+    return None
+
+
 def subtree_guids(node: nodes.Node, state: SDFGState) -> set[str]:
     """GUIDs of ``node`` and, if it is a nested SDFG, of every node inside it.
 
@@ -653,7 +677,7 @@ def force_renderable_expansions(sdfg: SDFG, provenance: dict[str, tuple[str, str
                 if selected != "CUDA":
                     schedule_host_level_device_node(node, state)
             if provenance is not None:
-                description = description_of(node)
+                description = instance_description(node, state) or description_of(node)
                 if description is not None:
                     # Recorded BEFORE the expansion: afterwards the node is gone from the graph, and
                     # with it any way to ask what it was.

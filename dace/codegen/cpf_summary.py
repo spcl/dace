@@ -65,6 +65,17 @@ CLOSING = (
     "come from memory traffic (layout, fusion, blocking) and from where the threads fork (once for a whole nest, or "
     "once per iteration of an enclosing sequential loop)."
 )
+#: :data:`CLOSING` for a unit whose sequential loops include the in-order arm of a guarded loop, which is no
+#: recurrence: it keeps the order only for the inputs its guard rejects.
+CLOSING_WITH_FALLBACKS = CLOSING.replace(
+    "either parallel or a proven recurrence",
+    "parallel, a proven recurrence, or the in-order fallback arm of a guarded loop (run only when its guard fails)",
+)
+#: :data:`CLOSING` for a unit without a loop: its work is in library calls (a BLAS call), with nothing to reorder.
+CLOSING_NO_LOOPS = (
+    "// No loop in this unit: its work is in the library calls below. Gains come from the call's own threading and "
+    "from memory traffic around it."
+)
 
 
 @dataclass(slots=True)
@@ -543,7 +554,12 @@ def summary_lines(loops: list[Loop]) -> list[str]:
     # Every loop is analyzed (a short one too; its trip count only decides whether to fork): only unknown loops are open.
     open_loops = [loop for loop in loops if loop.kind is LoopClass.UNKNOWN]
     if not open_loops:
-        lines += [CLOSING, "// cpf: proven: all"]
+        fallbacks = any(
+            loop.kind is LoopClass.SEQUENTIAL and reason_of(loop.reason) in (Reason.FALLBACK, Reason.CHECKED)
+            for loop in loops
+        )
+        closing = CLOSING_WITH_FALLBACKS if fallbacks else CLOSING if loops else CLOSING_NO_LOOPS
+        lines += [closing, "// cpf: proven: all"]
     else:
         lines.append(f"// cpf: proven: partial; open: {', '.join(dict.fromkeys(loop.name for loop in open_loops))}")
     # A versioned loop (``if (check) parallel else in order``) counts as proven; its parallel arms are listed apart

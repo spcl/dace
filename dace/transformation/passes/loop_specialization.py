@@ -39,7 +39,8 @@ GUARDED = (
 #: (:func:`fallback_effect`), empty when that is not known.
 GUARD_FALLBACK = (
     LoopClass.SEQUENTIAL.prefix
-    + "the else arm of if ({guard}), taken when {negated}{meaning}{effect}: two iterations may then touch the same "
+    + Reason.FALLBACK.value
+    + "{guard}), taken when {negated}{meaning}{effect}: two iterations may then touch the same "
     "element, so "
     "this arm keeps the order"
 )
@@ -48,7 +49,8 @@ GUARD_FALLBACK = (
 #: order the arm keeps only for its rounding. ``{effect}`` as in :data:`GUARD_FALLBACK`.
 GUARD_FALLBACK_REDUCTION = (
     LoopClass.SEQUENTIAL.prefix
-    + "the else arm of if ({guard}), taken when {negated}{meaning}{effect}: a reduction, kept in order here because the "
+    + Reason.FALLBACK.value
+    + "{guard}), taken when {negated}{meaning}{effect}: a reduction, kept in order here because the "
     "order "
     "of the {noun} fixes its floating-point rounding; parallel with reduction({op}:{element}) if a different rounding "
     "is acceptable"

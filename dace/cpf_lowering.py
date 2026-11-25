@@ -221,6 +221,8 @@ class Reason(enum.Enum):
     REDUCTION = "reduction"
     SCAN = "scan"
     GUARDED = "guarded by if ("
+    #: The in-order arm of a guarded loop, for the inputs its guard rejects.
+    FALLBACK = "the else arm of if ("
     CHECKED = "the runtime check found "
     SMALL_EXTENT = "small extent"
     THREAD_TEAM = "thread team"

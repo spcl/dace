@@ -32,8 +32,14 @@ from dace.transformation.passes.analysis.loop_analysis import (
     symbol_use_sites,
     symbol_used_outside,
 )
+from dace.transformation.passes.canonicalize.annotate_loop_kinds import EARLY_EXIT
 
 #: Recorded on every lifted node: the alternative the lift did not take.
+#: What the chunk loop of a lifted early exit adds to its class line: how its iterations run.
+CHUNKED_EXIT = (
+    "; blocks of {chunk} iterations, in order: each block is searched in parallel for the first exit (find-first), "
+    "then its iterations below the exit run in parallel, and no block after the exit runs"
+)
 FIND_FIRST_HINT = "find-first: chunked cancelling search; alt: one min-reduction (faster on a late or no hit)"
 
 
@@ -336,6 +342,7 @@ class LiftBreakToFindFirst(ppl.Pass):
                 update_expr=f"{chunk} = {chunk} + {self.chunk}",
                 sdfg=sdfg,
             )
+            container.specialization_hint = EARLY_EXIT.format(statement="break") + CHUNKED_EXIT.format(chunk=self.chunk)
             parent.add_node(container, is_start_block=parent.start_block is loop)
             for edge in list(parent.in_edges(loop)):
                 parent.add_edge(edge.src, container, edge.data)
