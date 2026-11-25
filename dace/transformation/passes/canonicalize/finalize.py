@@ -5,7 +5,7 @@ once, at codegen) and the storage of transients. ``canonicalize(s); finalize_for
 """
 
 import os
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 
 import sympy
 
@@ -52,7 +52,6 @@ from dace.transformation.passes.cpu_specialization.demote_level_maps import (
     demote_strided_level_maps,
     demote_uncoalesced_level_maps,
     small_maps,
-    small_names,
 )
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
 from dace.transformation.passes.cpu_specialization.if_convert_map_bodies import IfConvertParallelMapBodies
@@ -598,13 +597,9 @@ def unroll_short_loops(sdfg: SDFG) -> None:
     SymbolSSA().apply_pass(sdfg, {})
 
 
-def offload_to_gpu(sdfg: SDFG, validate: bool = False, tile_programs: bool = False, small: Iterable[str] = ()) -> None:
-    """Move a canonicalized SDFG onto the GPU, in place.
-
-    :param small: Symbols and containers whose values are small, besides ICON's ``nblks`` and block-index tables
-                  (:data:`SMALL_BY_DEFAULT`): a map over them stays a sequential host map around the kernels of its
-                  body (:func:`small_maps`).
-    """
+def offload_to_gpu(sdfg: SDFG, validate: bool = False, tile_programs: bool = False) -> None:
+    """Move a canonicalized SDFG onto the GPU, in place. A map the caller made ``Sequential`` around maps stays a host
+    loop, the maps inside it the kernels, and so does a map over a small extent (:func:`small_maps`)."""
     Config.set("compiler", "cuda", "max_concurrent_streams", value=-1)
     unroll_short_loops(sdfg)
     # Inside the function: a caller's passes since canonicalize leave the pipeline's own cleanup stale.
@@ -637,7 +632,7 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False, tile_programs: bool = Fal
     apply_gpu_storage(sdfg)
     # A map over a few blocks is no kernel: sequential before the offload, it stays a host map, and the maps in its
     # body are the kernels, each with a full grid.
-    for entry in small_maps(sdfg, small_names(sdfg, small)):
+    for entry in small_maps(sdfg):
         entry.map.schedule = dtypes.ScheduleType.Sequential
     # One validation for the whole offload, at the end.
     sdfg.apply_gpu_transformations(validate=False, simplify=False)

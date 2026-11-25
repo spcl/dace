@@ -24,13 +24,13 @@ one (:func:`plane_is_more_contiguous`), so the offload launches the plane maps, 
 once per level.
 """
 
-import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from typing import NamedTuple
 
 from dace import SDFG, dtypes, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.symbolic_facts import is_small_extent
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
@@ -277,42 +277,9 @@ def demote_uncoalesced_level_maps(sdfg: SDFG) -> int:
     return demote_level_maps(sdfg, plane_is_more_contiguous, relift_planeless=True)
 
 
-#: ICON's block counts and block-index tables (``p_patch_nblks_c``, ``p_patch_cells_end_block``): small by default.
-SMALL_BY_DEFAULT = re.compile(r"(^|_)nblks(_|$)|_(start|end)_block$")
-
-
-def small_names(sdfg: SDFG, declared: Iterable[str] = ()) -> set[str]:
-    """``declared`` (symbols and containers whose values are small), the ``SMALL`` symbols of ``sdfg``, the names
-    :data:`SMALL_BY_DEFAULT` matches, and every symbol whose every interstate assignment reads only such names, the
-    indices of an element read aside: ``i_endblk = end_block[k]`` is small when ``end_block`` is."""
-    known = sdfg.symbols.keys() | sdfg.arrays.keys()
-    small = set(declared) | set(sdfg.facts().small) | {name for name in known if SMALL_BY_DEFAULT.search(name)}
-    values: dict[str, list[str]] = {}
-    for edge in sdfg.all_interstate_edges():
-        for name, value in edge.data.assignments.items():
-            values.setdefault(name, []).append(value)
-    changed = bool(small)
-    while changed:
-        changed = False
-        for name, assigned in values.items():
-            if name not in small and all(read_names(value, known) <= small for value in assigned):
-                small.add(name)
-                changed = True
-    return small
-
-
-def read_names(value: str, known: set[str]) -> set[str]:
-    """The symbols and containers ``value`` reads, the subscripts of its element reads left out."""
-    while True:
-        stripped = re.sub(r"\[[^\[\]]*\]", "", value)
-        if stripped == value:
-            break
-        value = stripped
-    return set(re.findall(r"[A-Za-z_]\w*", value)) & known
-
-
 #: Why a map over a small extent runs sequentially on the host, for a CPF reader.
-SMALL_EXTENT_HINT = (
+SMALL_EXTENT_HINT = "parallel -- generated as sequential: small extent ({iterations} iterations)"
+SMALL_DIMENSION_HINT = (
     "parallel -- generated as sequential: small dimension ({names}), so the maps inside run as the GPU kernels"
 )
 
@@ -329,23 +296,28 @@ def holds_maps(state: SDFGState, entry: nodes.MapEntry) -> bool:
     return False
 
 
-def small_maps(sdfg: SDFG, small: set[str]) -> list[nodes.MapEntry]:
-    """The top-level maps of ``sdfg``'s own states that hold maps and whose every extent names only ``small`` symbols
-    (``jb`` over the blocks), each given the reason it will run sequentially: a GPU offload keeps them on the host and
-    launches the maps inside them, not a kernel of a few threads that walks whole columns. A small map with no map
-    inside stays the kernel: its blocks are all the parallelism there is."""
+def small_maps(sdfg: SDFG) -> list[nodes.MapEntry]:
+    """The top-level maps of ``sdfg``'s own states that hold maps and whose every extent is small
+    (:func:`~dace.symbolic_facts.is_small_extent`: a literal, or symbols declared ``SMALL``), each given the reason it
+    will run sequentially: a GPU offload keeps them on the host and launches the maps inside them, not a kernel of a
+    few threads that walks whole columns. A symbolic extent of default scale (CloudSC's ``NBLOCKS``) stays the grid,
+    and a small map with no map inside stays the kernel: its iterations are all the parallelism there is."""
+    facts = sdfg.facts()
     found = []
     for state in sdfg.states():
         for entry in state.scope_children()[None]:
             if not isinstance(entry, nodes.MapEntry) or not holds_maps(state, entry):
                 continue
-            extents = [
-                {str(s) for s in symbolic.pystr_to_symbolic(size).free_symbols} for size in entry.map.range.size()
-            ]
-            if all(names and names <= small for names in extents):
-                names = sorted(set().union(*extents))
-                entry.specialization_hint = SMALL_EXTENT_HINT.format(names=", ".join(names))
-                found.append(entry)
+            sizes = [symbolic.pystr_to_symbolic(size) for size in entry.map.range.size()]
+            if not all(is_small_extent(size, facts) for size in sizes):
+                continue
+            names = sorted({str(free) for size in sizes for free in size.free_symbols})
+            entry.specialization_hint = (
+                SMALL_DIMENSION_HINT.format(names=", ".join(names))
+                if names
+                else SMALL_EXTENT_HINT.format(iterations=entry.map.range.num_elements())
+            )
+            found.append(entry)
     return found
 
 
