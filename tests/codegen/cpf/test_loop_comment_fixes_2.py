@@ -413,6 +413,21 @@ def test_every_reason_is_told_apart_and_has_a_legend_row(reason: Reason):
     assert row.split(" | ")[2].strip() == cpf_lowering.REASON_LEGEND[reason][0], row
 
 
+@dace.program
+def k_shift(a: dace.float64[N + S]):
+    for i in range(N):
+        a[i] = a[i + S] + 1.0
+
+
+def test_the_summary_names_a_scans_blocked_code_as_one_scan():
+    """Finding 18: the header listed the scan's blocks as loops ``statement``, ``if()``, ``cpf_i``."""
+    header = [line for line in bench_c(k_shift, "cpf_review2_scan_names").splitlines() if line.startswith("//   ")]
+    (parallel,) = [line for line in header if line.startswith("//   parallel: ") and "proven;" not in line]
+    names = parallel.removeprefix("//   parallel: ").split(", ")
+    assert "scan" in names and not any(n.startswith(("statement", "if()", "cpf_")) for n in names), parallel
+    assert "//     scans: scan" in header, header
+
+
 if __name__ == "__main__":
     test_a_grid_stride_reduction_kernel_says_reduction_and_grid_stride()
     test_a_block_per_row_kernel_has_one_line_per_kernel_and_per_thread_block()
@@ -441,3 +456,4 @@ if __name__ == "__main__":
     test_the_header_legend_has_one_row_per_reason_the_unit_uses()
     for member in Reason:
         test_every_reason_is_told_apart_and_has_a_legend_row(member)
+    test_the_summary_names_a_scans_blocked_code_as_one_scan()

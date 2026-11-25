@@ -110,7 +110,13 @@ def loops_of(code: str) -> list[Loop]:
             continue
         name = loop_name(stripped)
         if label is not None:
-            if reason_of(label[1]) is Reason.DIMENSION and name:
+            if reason_of(label[1]) is Reason.SCAN and not name.startswith(LOOP_NAME_OF_HELPER) and name:
+                found.append(Loop(names.unique(name), label[0], label[1]))
+            elif reason_of(label[1]) is Reason.SCAN:
+                # A scan's blocked code: its comment names the scan, and an arm its runtime check picks is part of it
+                if Reason.CHECKED.value not in label[1]:
+                    found.append(Loop(names.unique("scan"), label[0], label[1]))
+            elif reason_of(label[1]) is Reason.DIMENSION and name:
                 names.unique(name)
             elif label[0] is not LoopClass.LIBRARY and reason_of(label[1]) not in (*NOT_A_LOOP, *ADDED_REASONS):
                 found.append(Loop(names.unique(name or call_name(stripped)), label[0], label[1]))
@@ -497,6 +503,10 @@ def note_blas_threads(code: str) -> str:
             waiting = False
         out.append(line)
     return "\n".join(out) + ("\n" if code.endswith("\n") else "")
+
+
+#: The counter prefix of the loops a ``cpf_`` helper or a scan's blocked code writes: no program loop's name.
+LOOP_NAME_OF_HELPER = "cpf_"
 
 
 def loop_name(line: str) -> str:
