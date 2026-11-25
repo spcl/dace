@@ -780,6 +780,24 @@ def test_a_heap_length_one_array_becomes_a_stack_scalar():
     assert _run(sdfg, 3.0) == 7.0
 
 
+def test_a_conditionally_written_output_keeps_its_value_when_the_branch_is_skipped():
+    """``if (x != x) y(1) = 0`` (dace-fortran's ieee_is_nan guard): the copy-out writes the staged scalar back on
+    every path, so a write-only output needs the copy-in too, or a skipped branch stores an uninitialized value."""
+
+    @dace.program
+    def guard(x: dace.float64, y: dace.float64[1]):
+        if x > 2.0:
+            y[0] = 0.0
+
+    sdfg = guard.to_sdfg(simplify=True)
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+    sdfg.validate()
+    for x, expected in ((1.0, 7.0), (3.0, 0.0)):
+        y = np.array([7.0])
+        sdfg(x=x, y=y)
+        assert y[0] == expected
+
+
 if __name__ == "__main__":
     test_default_scalarizes_transient_length_one_array()
     test_default_skips_signature_arrays()
@@ -823,3 +841,4 @@ if __name__ == "__main__":
     test_single_element_scratch_becomes_a_scalar()
     test_single_element_scratch_a_nested_sdfg_reads_becomes_a_scalar_on_both_sides()
     test_a_heap_length_one_array_becomes_a_stack_scalar()
+    test_a_conditionally_written_output_keeps_its_value_when_the_branch_is_skipped()

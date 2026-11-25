@@ -22,7 +22,8 @@ Staging one non-transient means:
 * the signature descriptor ``alpha`` (a length-1 ``Array``) is KEPT,
 * a fresh transient ``Scalar`` ``scal_alpha`` is introduced and every body reference to ``alpha`` is
   repointed to it,
-* a copy-IN ``scal_alpha = alpha[0]`` is prepended in a new start state (only if ``alpha`` is read),
+* a copy-IN ``scal_alpha = alpha[0]`` is prepended in a new start state (if ``alpha`` is read or written:
+  a write the body may skip must leave the caller's value for the copy-out),
 * a copy-OUT ``alpha[0] = scal_alpha`` is appended in a new sink state (only if ``alpha`` is written).
 
 The whole SDFG body then computes on the plain scalar while the signature is unchanged. The inverse
@@ -648,8 +649,9 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                 )
                 rename[arr_name] = arr_name
             elif stage_nontransients:
-                is_read = arr_name in is_read_set
+                # The copy-out writes the staged value back on every path: a write the body may skip needs the copy-in.
                 is_written = arr_name in is_written_set
+                is_read = is_written or arr_name in is_read_set
                 # The staged scalar is what the BODY accesses, and the copy edges below are the
                 # transfer; inheriting device storage makes every host reference to it invalid.
                 storage = arr.storage if arr_name in gpu_written_set else dtypes.StorageType.Default
@@ -805,8 +807,9 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                 )
                 rename[name] = name
             elif stage_nontransients:
-                is_read = name in is_read_set
+                # The copy-out writes the staged value back on every path: a write the body may skip needs the copy-in.
                 is_written = name in is_written_set
+                is_read = is_written or name in is_read_set
                 # ``find_new_name`` makes add_array return ``(name, desc)``; binding the tuple as the
                 # name leaves every rename target a tuple and the first Memlet built from it raises
                 # ``Invalid type "tuple" for property data``. The forward pass unpacks the same way.
