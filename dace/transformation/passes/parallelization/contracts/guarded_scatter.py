@@ -691,7 +691,7 @@ def apart_by_constant(first: subsets.Subset, second: subsets.Subset) -> bool:
     """Whether two point slots differ in some dimension that each fixes to a different integer."""
     if len(first) != len(second):
         return False
-    for (b1, e1, _), (b2, e2, _) in zip(first.ndrange(), second.ndrange()):
+    for (b1, e1, step1), (b2, e2, step2) in zip(first.ndrange(), second.ndrange()):
         b1, e1, b2, e2 = (symbolic.pystr_to_symbolic(x) for x in (b1, e1, b2, e2))
         if b1 == e1 and b2 == e2 and b1.is_Integer and b2.is_Integer and b1 != b2:
             return True
