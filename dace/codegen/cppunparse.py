@@ -1935,7 +1935,7 @@ def cppunparse(node, expr_semicolon=True, locals=None, defined_symbols=None, dat
     return strio.getvalue().strip()
 
 
-def cpp_assignment(target: str, value, defined_symbols=None) -> str:
+def cpp_assignment(target: str, value, defined_symbols=None, data_names=None) -> str:
     """A C++ statement assigning ``value`` to the already-rendered ``target`` expression.
 
     For callers that cannot go through :meth:`CPPUnparser._Assign` because the assignment target is
@@ -1948,8 +1948,10 @@ def cpp_assignment(target: str, value, defined_symbols=None) -> str:
     :param target: The assignment destination, already rendered as C++.
     :param value: The right-hand side, as a Python AST node.
     :param defined_symbols: Symbols with known types, forwarded to the unparser.
+    :param data_names: Operand texts with known types, forwarded to the unparser.
     :returns: The C++ statement, terminated with a semicolon.
     """
+    unparse_args = dict(expr_semicolon=False, defined_symbols=defined_symbols, data_names=data_names)
     if (
         isinstance(value, ast.Call)
         and isinstance(value.func, ast.Name)
@@ -1957,11 +1959,8 @@ def cpp_assignment(target: str, value, defined_symbols=None) -> str:
         and len(value.args) == 2
     ):
         cond, written = value.args
-        return (
-            f"if ({cppunparse(cond, expr_semicolon=False, defined_symbols=defined_symbols)}) "
-            f"{{ {target} = {cppunparse(written, expr_semicolon=False, defined_symbols=defined_symbols)}; }}"
-        )
-    return f"{target} = {cppunparse(value, expr_semicolon=False, defined_symbols=defined_symbols)};"
+        return f"if ({cppunparse(cond, **unparse_args)}) {{ {target} = {cppunparse(written, **unparse_args)}; }}"
+    return f"{target} = {cppunparse(value, **unparse_args)};"
 
 
 # Code can either be a string or a function

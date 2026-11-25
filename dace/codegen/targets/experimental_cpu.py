@@ -1418,13 +1418,10 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
         lhs = self._bare_access(target_node)
         if lhs is None:
             return self.generic_visit(node)
-        rhs = cppunparse.cppunparse(
-            value,
-            expr_semicolon=False,
-            defined_symbols={**self.defined_symbols, **self.operand_dtypes},
-            data_names=self.operand_dtypes,
+        # ``IT(c, v)`` is no C++ function: ``cpp_assignment`` lowers it to ``if (c) { lhs = v; }``
+        plain = cppunparse.cpp_assignment(
+            lhs, value, defined_symbols={**self.defined_symbols, **self.operand_dtypes}, data_names=self.operand_dtypes
         )
-        plain = "%s = %s;" % (lhs, rhs)
         return self._replace_assignment(ast.Name(id=plain), node)
 
     def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
