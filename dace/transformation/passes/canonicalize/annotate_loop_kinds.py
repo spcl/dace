@@ -431,6 +431,11 @@ def edge_accesses(
             (edge.src.data, memlet.get_src_subset(edge, state), False),
             (edge.dst.data, memlet.get_dst_subset(edge, state), True),
         ]
+    elif isinstance(edge.src, nodes.EntryNode) and isinstance(edge.dst, nodes.AccessNode):
+        # A map reads an element into a scalar of its body (``a_index = a[i - 1, j]``)
+        sides = [(state.memlet_path(edge)[0].src.data, memlet.get_src_subset(edge, state), False)]
+    elif isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.ExitNode):
+        sides = [(state.memlet_path(edge)[-1].dst.data, memlet.get_dst_subset(edge, state), True)]
     elif isinstance(edge.dst, nodes.Tasklet):
         sides = [(memlet.data, memlet.subset, False)]
     elif isinstance(edge.src, nodes.Tasklet):
@@ -706,7 +711,7 @@ def state_sites(
     ``terms`` as :func:`region_sites`."""
     terms = mapping if terms is None else terms
     for edge in state.edges():
-        scoped = edge.dst if isinstance(edge.dst, nodes.Tasklet) else edge.src
+        scoped = edge.dst if isinstance(edge.dst, nodes.Tasklet) or isinstance(edge.src, nodes.EntryNode) else edge.src
         inner = iters + map_ranges(state, scoped, mapping)
         copies = copy_sites(edge, state, arrays, mapping, inner, len(out))
         node = scoped if isinstance(scoped, nodes.Tasklet) else edge.dst
@@ -1146,15 +1151,15 @@ def written_before(write: Site, read: Site) -> bool:
     while block is not None and enclosing(block) is not None:
         above[id(enclosing(block))] = block
         block = enclosing(block)
-    block = read.state
-    while block is not None and enclosing(block) is not None:
-        region = enclosing(block)
+    block = read.node
+    region = read.state
+    while region is not None:
         if id(region) in above:
             first = above[id(region)]
             if isinstance(region, SDFGState):  # nodes of one state (a nested SDFG by its node): their dataflow order
                 first, block = (n.parent_nsdfg_node if isinstance(n, SDFG) else n for n in (first, block))
             return first is not None and first is not block and block in region.bfs_nodes(first)
-        block = region
+        block, region = region, enclosing(region)
     return False
 
 
@@ -1397,6 +1402,8 @@ def carrier_note(loop: LoopRegion, access: str) -> str:
     """``; x carries the values to the next iteration (x = y)`` for the carriers of ``loop`` other than the container
     ``access`` names, or ``""``."""
     named = re.search(r"on (\w+)\[", access) or re.search(r"on (\w+)", access)
+    if access.startswith("WAW"):  # an output conflict names no value handed on: the carrier still says which
+        named = None
     found = [(name, copy) for name, copy in carriers(loop).items() if named is None or name != named.group(1)]
     if not found:
         return ""
@@ -1408,7 +1415,8 @@ def proof_of_carry(loop: LoopRegion, reason: LoopRefusal, witnessed: str | None)
     """The access that proves ``loop`` carries a dependence, or ``None``: the solver ``witnessed`` (its
     :func:`witness_search` label), else a constant distance or a carried symbol ``LoopToMap`` named."""
     if witnessed is not None:
-        return witnessed
+        # An output conflict says less than a value handed on: a flow or anti dependence, when one is proven, wins
+        return (witnessed.startswith("WAW") and proven_carrying_access(loop)) or witnessed
     # The element-level proof also names the direction: LoopToMap's "read-after-write conflict" is
     # any read meeting a write, so its access alone reads as RAW for a read-ahead WAR too.
     access = proven_carrying_access(loop)

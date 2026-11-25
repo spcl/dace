@@ -296,6 +296,26 @@ def test_the_closing_line_names_fallback_arms_and_units_without_loops():
     assert cpf_summary.CLOSING_NO_LOOPS in loop_free and cpf_summary.CLOSING not in loop_free, loop_free
 
 
+L = dace.symbol("L", dtype=dace.int64, positive=True)
+
+
+@dace.program
+def diff_skew(a: dace.float64[L, L]):
+    for i in range(1, L):
+        for j in range(0, L - 1):
+            a[i, j] = (a[i, j] + a[i - 1, j] + a[i - 1, j + 1]) / 3.0
+
+
+def test_a_row_recurrence_read_through_a_map_scalar_is_proven():
+    """wf_diff_skew: the search saw only the map's merged read box ``a[i - 1:i + 1, 0:L]`` and left ``i`` unknown."""
+    flow = "// sequential -- proven dependence on a[i - 1, 0:L - 1]: an iteration reads what an earlier one wrote"
+    cpu = bench_c(diff_skew, "cpf_review2_skew_cpu")
+    gpu = render_gpu(diff_skew, "cpf_review2_skew_gpu", "cuda").code
+    for code in (cpu, gpu):
+        (line,) = [line.strip() for line in code.splitlines() if line.strip().startswith(("// sequential", "// unk"))]
+        assert line.startswith(flow), line
+
+
 if __name__ == "__main__":
     test_a_grid_stride_reduction_kernel_says_reduction_and_grid_stride()
     test_a_block_per_row_kernel_has_one_line_per_kernel_and_per_thread_block()
@@ -316,3 +336,4 @@ if __name__ == "__main__":
     test_a_chunked_early_exit_says_its_blocks_are_searched_in_parallel()
     test_a_reduction_call_names_its_operator_input_axis_and_output()
     test_the_closing_line_names_fallback_arms_and_units_without_loops()
+    test_a_row_recurrence_read_through_a_map_scalar_is_proven()
