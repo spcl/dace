@@ -52,13 +52,14 @@ typedef void *pyobject;
 // Sympy functions. The return type follows ``std::common_type`` (matching the lowercase ``min``/``max``
 // templates) so the result is never narrowed to the first argument's type; operand kinds must not mix
 // (``_dace_minmax_same_kind`` in math.h).
+// constexpr: the ``<array>_idx`` index helpers are constexpr, and a stride may take a Min or Max.
 template <typename U, typename... T>
-static DACE_HDFI typename std::common_type<U, T...>::type Min(U val, T... vals) {
+static DACE_CONSTEXPR DACE_HDFI typename std::common_type<U, T...>::type Min(U val, T... vals) {
   static_assert(_dace_minmax_same_kind<U, T...>::value, _DACE_MINMAX_MIXED_MSG);
   return min(val, vals...);
 }
 template <typename U, typename... T>
-static DACE_HDFI typename std::common_type<U, T...>::type Max(U val, T... vals) {
+static DACE_CONSTEXPR DACE_HDFI typename std::common_type<U, T...>::type Max(U val, T... vals) {
   static_assert(_dace_minmax_same_kind<U, T...>::value, _DACE_MINMAX_MIXED_MSG);
   return max(val, vals...);
 }

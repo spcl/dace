@@ -730,6 +730,48 @@ def test_pruning_an_output_keeps_an_access_node_the_body_reads():
     assert np.array_equal(C, A) and np.array_equal(D, np.full(4, 7.0))
 
 
+def test_pruning_an_input_keeps_the_access_node_it_read_inside_the_scope():
+    """An access node the map body writes, whose only reader was a pruned input, still reaches the map exit: a
+    dead end inside the scope made the scope's exit unreachable from it, and the experimental CUDA codegen took
+    the node for the scope's exit."""
+    inner = dace.SDFG("prune_unread_input_inner")
+    inner.add_array("inp", [4], dace.float64)
+    inner.add_array("unused", [1], dace.float64)
+    inner.add_array("res", [4], dace.float64)
+    inner.add_symbol("i", dace.int64)
+    body = inner.add_state()
+    copy_tasklet = body.add_tasklet("copy", {"x"}, {"y"}, "y = x")
+    body.add_edge(body.add_read("inp"), None, copy_tasklet, "x", dace.Memlet("inp[i]"))
+    body.add_edge(copy_tasklet, "y", body.add_write("res"), None, dace.Memlet("res[i]"))
+
+    sdfg = dace.SDFG("prune_unread_input")
+    for name in ("A", "C"):
+        sdfg.add_array(name, [4], dace.float64)
+    sdfg.add_scalar("t", dace.float64, transient=True)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("m", dict(i="0:4"))
+    nsdfg = state.add_nested_sdfg(inner, {"inp", "unused"}, {"res"}, symbol_mapping={"i": "i"})
+    read_a = state.add_read("A")
+    state.add_memlet_path(read_a, entry, nsdfg, dst_conn="inp", memlet=dace.Memlet("A[0:4]"))
+    double = state.add_tasklet("double", {"v"}, {"w"}, "w = 2 * v")
+    state.add_memlet_path(read_a, entry, double, dst_conn="v", memlet=dace.Memlet("A[i]"))
+    t = state.add_access("t")
+    state.add_edge(double, "w", t, None, dace.Memlet("t[0]"))
+    state.add_edge(t, None, nsdfg, "unused", dace.Memlet("t[0]"))
+    state.add_memlet_path(nsdfg, exit_node, state.add_write("C"), src_conn="res", memlet=dace.Memlet("C[0:4]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(PruneConnectors) == 1
+    assert "unused" not in nsdfg.in_connectors
+    entry = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry))
+    assert state.scope_subgraph(entry).sink_nodes() == [state.exit_node(entry)]
+    sdfg.validate()
+    A = np.arange(4, dtype=np.float64)
+    C = np.zeros(4)
+    sdfg(A=A, C=C)
+    assert np.array_equal(C, A)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--N", default=64)
@@ -752,3 +794,4 @@ if __name__ == "__main__":
     test_pruning_the_only_input_keeps_the_body_in_its_map()
     test_pruning_an_output_drops_its_write_back_through_an_access_node()
     test_pruning_an_output_keeps_an_access_node_the_body_reads()
+    test_pruning_an_input_keeps_the_access_node_it_read_inside_the_scope()

@@ -30,6 +30,7 @@ from typing import NamedTuple
 from dace import SDFG, dtypes, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.symbolic_facts import is_small_extent
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
@@ -274,6 +275,50 @@ def demote_uncoalesced_level_maps(sdfg: SDFG) -> int:
     :returns: how many maps were demoted.
     """
     return demote_level_maps(sdfg, plane_is_more_contiguous, relift_planeless=True)
+
+
+#: Why a map over a small extent runs sequentially on the host, for a CPF reader.
+SMALL_EXTENT_HINT = "parallel -- generated as sequential: small extent ({iterations} iterations)"
+SMALL_DIMENSION_HINT = (
+    "parallel -- generated as sequential: small dimension ({names}), so the maps inside run as the GPU kernels"
+)
+
+
+def holds_maps(state: SDFGState, entry: nodes.MapEntry) -> bool:
+    """Whether a map is in the scope of ``entry``, nested SDFGs included."""
+    for node in state.scope_subgraph(entry, include_entry=False, include_exit=False).nodes():
+        if isinstance(node, nodes.MapEntry):
+            return True
+        if isinstance(node, nodes.NestedSDFG) and any(
+            isinstance(inner, nodes.MapEntry) for inner, parent in node.sdfg.all_nodes_recursive()
+        ):
+            return True
+    return False
+
+
+def small_maps(sdfg: SDFG) -> list[nodes.MapEntry]:
+    """The top-level maps of ``sdfg``'s own states that hold maps and whose every extent is small
+    (:func:`~dace.symbolic_facts.is_small_extent`: a literal, or symbols declared ``SMALL``), each given the reason it
+    will run sequentially: a GPU offload keeps them on the host and launches the maps inside them, not a kernel of a
+    few threads that walks whole columns. A symbolic extent of default scale (CloudSC's ``NBLOCKS``) stays the grid,
+    and a small map with no map inside stays the kernel: its iterations are all the parallelism there is."""
+    facts = sdfg.facts()
+    found = []
+    for state in sdfg.states():
+        for entry in state.scope_children()[None]:
+            if not isinstance(entry, nodes.MapEntry) or not holds_maps(state, entry):
+                continue
+            sizes = [symbolic.pystr_to_symbolic(size) for size in entry.map.range.size()]
+            if not all(is_small_extent(size, facts) for size in sizes):
+                continue
+            names = sorted({str(free) for size in sizes for free in size.free_symbols})
+            entry.specialization_hint = (
+                SMALL_DIMENSION_HINT.format(names=", ".join(names))
+                if names
+                else SMALL_EXTENT_HINT.format(iterations=entry.map.range.num_elements())
+            )
+            found.append(entry)
+    return found
 
 
 def demote_level_maps(sdfg: SDFG, pays: Callable[[str, list[Plane]], bool], relift_planeless: bool = False) -> int:

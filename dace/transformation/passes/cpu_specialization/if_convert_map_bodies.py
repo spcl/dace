@@ -158,6 +158,8 @@ def if_convert(node: nodes.NestedSDFG, state: SDFGState) -> bool:
     kept.parent_sdfg = state.sdfg
     kept.parent_nsdfg_node = node
     node.sdfg = kept
+    # The copy and the SDFGs nested in it are new to the root's cfg_list, which cfg_id reads
+    state.sdfg.root_sdfg.reset_cfg_list()
     return False
 
 

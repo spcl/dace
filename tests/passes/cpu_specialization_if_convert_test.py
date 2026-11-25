@@ -10,6 +10,7 @@ from dace.sdfg.state import ConditionalBlock
 from dace.sdfg.tasklet_utils import integer_division
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
+from dace.transformation.passes.cpu_specialization.if_convert_map_bodies import if_convert
 
 N = dace.symbol("N", dace.int64)
 
@@ -73,6 +74,14 @@ def reference(a, b, c, d, e, x):
     return a, b, c
 
 
+@dace.program
+def guarded_loop(a: dace.float64[N], b: dace.float64[N]):
+    for i in dace.map[0:N]:
+        if b[i] > 0.5:
+            for j in range(4):
+                a[i] = a[i] + b[i]
+
+
 def canonical(program, name: str) -> dace.SDFG:
     sdfg = program.to_sdfg(simplify=True)
     sdfg.name = name
@@ -116,6 +125,20 @@ def test_an_integer_division_is_recognized():
     assert not integer_division(state, tasklet)
 
 
+def test_a_body_left_unconverted_is_listed_in_its_root():
+    """A branch around a loop stays: the body goes back to its copy, which the root's cfg_list must list, or the
+    transient-storage step after it fails on ``cfg_id`` (ICON velocity_tendencies on the CPU)."""
+    sdfg = guarded_loop.to_sdfg(simplify=True)
+    node, state = next(
+        (node, state)
+        for node, state in sdfg.all_nodes_recursive()
+        if isinstance(node, dace.nodes.NestedSDFG) and isinstance(state.entry_node(node), dace.nodes.MapEntry)
+    )
+    assert not if_convert(node, state)
+    listed = set(map(id, sdfg.cfg_list))
+    assert all(id(nested) in listed for nested in sdfg.all_sdfgs_recursive())
+
+
 def test_a_guarded_gather_keeps_its_branch():
     sdfg = canonical(guarded_gather, "ifconv_guarded_gather")
     assert conditionals(sdfg) == 1
@@ -141,5 +164,6 @@ def test_a_switch_whose_arms_read_their_own_arrays_keeps_its_branches():
 if __name__ == "__main__":
     test_nested_unequal_arms_become_selects_and_compute_the_reference()
     test_an_integer_division_is_recognized()
+    test_a_body_left_unconverted_is_listed_in_its_root()
     test_a_guarded_gather_keeps_its_branch()
     test_a_switch_whose_arms_read_their_own_arrays_keeps_its_branches()
