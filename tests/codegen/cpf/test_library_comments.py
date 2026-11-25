@@ -105,7 +105,9 @@ def test_reduction_rendering_names_the_library_node():
     sdfg = total.to_sdfg(simplify=True)
     sdfg.name = "cpf_comment_sum"
     code = render(sdfg).code
-    assert "// reduction over" in code, "the reduction rendered without naming the library node it came from"
+    assert "// reduction: + of x[0:N] over every axis into " in code, (
+        "the reduction rendered without naming the library node it came from"
+    )
 
 
 def test_a_description_is_written_once_per_node_not_once_per_tasklet():

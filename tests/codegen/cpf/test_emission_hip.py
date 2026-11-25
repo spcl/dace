@@ -111,11 +111,9 @@ def test_device_reduction_folds_without_a_runtime_functor():
 
 def test_each_gpu_scope_says_what_it_is_ahead_of_it():
     """A kernel and its thread block read as two plain brace blocks over ``blockIdx`` and ``threadIdx``;
-    the comment ahead of each says which level of the launch it is."""
-    from dace.codegen.targets.experimental_cuda_helpers.scope_strategies import (
-        KernelScopeGenerator,
-        ThreadBlockScopeGenerator,
-    )
+    the comment ahead of each states the loop's class and which level of the launch it is."""
+    from dace import cpf_lowering
+    from dace.codegen.targets.experimental_cuda_helpers import scope_strategies
 
     @dace.program
     def scale(a: dace.float64[N]):
@@ -125,9 +123,13 @@ def test_each_gpu_scope_says_what_it_is_ahead_of_it():
     code = render_gpu(scale, "cpf_hip_scope_hints").device_code
     lines = [line.strip() for line in code.splitlines()]
     kernel = next(index for index, line in enumerate(lines) if line.startswith("__global__"))
-    kernel_hint = ["// " + line for line in KernelScopeGenerator.SCOPE_HINT.splitlines()]
-    assert lines[kernel - len(kernel_hint) : kernel] == kernel_hint, code
-    assert "// " + ThreadBlockScopeGenerator.SCOPE_HINT.splitlines()[0] in lines[kernel:], code
+    above = kernel
+    while above > 0 and lines[above - 1].startswith("//"):
+        above -= 1
+    kernel_comment = lines[above:kernel]
+    assert kernel_comment and kernel_comment[0].startswith("// " + cpf_lowering.LoopClass.PARALLEL.prefix), code
+    assert cpf_lowering.KERNEL_MAPPING in kernel_comment[0], code
+    assert any(line.startswith("//") and scope_strategies.THREAD_BLOCK_MAPPING in line for line in lines[kernel:]), code
 
 
 def test_a_block_tiled_reduction_folds_without_a_runtime_functor():
