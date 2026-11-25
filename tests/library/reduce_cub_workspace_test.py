@@ -43,7 +43,7 @@ def generated_code_for(in_shape, axes, out_shape) -> str:
     rednode.implementation = "CUDA (device)"
 
     generated = sdfg.generate_code()
-    assert any(code.language == "cu" for code in generated), "the reduction did not lower to a CUDA file"
+    assert any(code.title == "CUDA" for code in generated), "the reduction did not lower to a CUDA file"
     return "\n".join(code.clean_code for code in generated)
 
 
@@ -77,7 +77,8 @@ def test_the_reduction_itself_reports_its_status(in_shape, axes, out_shape):
     assert re.search(r"cudaError_t __dace_reduce_\w+\(", code), (
         "the reduce helper returns void, so CUB's status is discarded at the only site that has it"
     )
-    call = re.search(r"^.*__dace_reduce_\w+\(_in, _out,.*$", code, re.MULTILINE)
+    # The call is the line that is not a declaration; the readable generator passes the arrays, not the connectors
+    call = re.search(r"^(?!.*Error_t).*__dace_reduce_\w+\(.*$", code, re.MULTILINE)
     assert call, "no call to the reduce helper was emitted"
     assert "DACE_GPU_CHECK" in call.group(0), f"the reduction call is unchecked: {call.group(0).strip()}"
 

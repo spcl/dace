@@ -342,7 +342,8 @@ def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, 
     if cuda:
         backend = get_gpu_backend()
         code = (
-            f"{backend}MemcpyAsync({out_conn}, {in_conn}, {nbytes}, {_memcpy_kind(inp, out)}, {CURRENT_STREAM_NAME});"
+            f"DACE_GPU_CHECK({backend}MemcpyAsync({out_conn}, {in_conn}, {nbytes}, {_memcpy_kind(inp, out)}, "
+            f"{CURRENT_STREAM_NAME}));"
         )
     else:
         code = (

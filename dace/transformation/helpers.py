@@ -1399,8 +1399,10 @@ def scope_tree_recursive(state: SDFGState, entry: nodes.EntryNode | None = None)
                     treenode.children.append(ntree)
 
         for child in treenode.children:
-            if hasattr(child, "state") and child.state != state:
-                traverse(child.state, child)
+            # A scope of this state holds nested SDFGs too
+            if not hasattr(child, "state"):
+                child.state = state
+            traverse(child.state, child)
 
     traverse(state, stree)
     return stree
@@ -1539,6 +1541,22 @@ def get_parent_map(state: SDFGState, node: nodes.Node | None = None) -> tuple[no
         curscope = cursdfg.parent_nsdfg_node
         cursdfg = cursdfg.parent_sdfg
     return None
+
+
+def get_parent_maps(state: SDFGState, node: nodes.Node) -> list[tuple[nodes.EntryNode, SDFGState]]:
+    """
+    Returns every scope enclosing the node, innermost first, continuing through enclosing nested SDFGs.
+
+    :param state: The state of the node.
+    :param node: The node to test.
+    :return: A list of (entry node, state) tuples, as get_parent_map returns them one at a time.
+    """
+    scopes = []
+    parent = get_parent_map(state, node)
+    while parent is not None:
+        scopes.append(parent)
+        parent = get_parent_map(parent[1], parent[0])
+    return scopes
 
 
 def redirect_edge(

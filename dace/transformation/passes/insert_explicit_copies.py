@@ -65,6 +65,51 @@ def _carry_write_ordering(state: SDFGState, written: nodes.AccessNode, libnode: 
         state.add_edge(edge.src, None, libnode, None, Memlet())
 
 
+def drop_scope_alias(state: SDFGState, edge, inner: nodes.AccessNode) -> bool:
+    """Remove ``inner``, a stage-in access node that only renames the container across the map entry.
+
+    The staging ``edge`` must be its sole producer; its consumers then read the map connector directly.
+    A consumer that is itself an access node would become a new staging copy, and one that is a scope exit (a copy
+    straight through the scope) would join the entry to the exit, so those shapes are left to the lift.
+
+    :returns: whether ``inner`` was removed.
+    """
+    consumers = list(state.out_edges(inner))
+    if (
+        state.in_degree(inner) != 1
+        or not consumers
+        or any(isinstance(e.dst, (nodes.AccessNode, nodes.ExitNode)) for e in consumers)
+    ):
+        return False
+    for e in consumers:
+        if e.data.is_empty():
+            state.add_nedge(edge.src, e.dst, Memlet())
+        else:
+            state.add_edge(edge.src, edge.src_conn, e.dst, e.dst_conn, copy.deepcopy(e.data))
+    state.remove_node(inner)
+    return True
+
+
+def drop_scope_exit_alias(state: SDFGState, edge, inner: nodes.AccessNode) -> bool:
+    """Remove ``inner``, a stage-out access node that only renames the container across the map exit.
+
+    The mirror of :func:`drop_scope_alias`: the staging ``edge`` into the exit must be the sole consumer of
+    ``inner`` and carry its single, non-empty producer on to the exit. A producer that is itself an access node
+    would become a new staging copy, so that shape is left to the lift.
+
+    :returns: whether ``inner`` was removed.
+    """
+    producers = list(state.in_edges(inner))
+    if state.out_degree(inner) != 1 or len(producers) != 1:
+        return False
+    producer = producers[0]
+    if producer.data.is_empty() or isinstance(producer.src, (nodes.AccessNode, nodes.MapEntry)):
+        return False
+    state.add_edge(producer.src, producer.src_conn, edge.dst, edge.dst_conn, copy.deepcopy(producer.data))
+    state.remove_node(inner)
+    return True
+
+
 def order_against_competing_writes(
     state: SDFGState,
     libnode: CopyLibraryNode,
@@ -205,6 +250,17 @@ class InsertExplicitCopies(ppl.Pass):
             src_subset = memlet.get_src_subset(edge, state)
             dst_subset = memlet.get_dst_subset(edge, state)
 
+            if src_node.data == dst_node.data:
+                # A self-copy naming one side is an identity: the other side is the same cells, not the whole
+                # array (an inlined body's write leaving its scope, ``a[i] -> a``). Cells copied onto themselves
+                # move nothing; only the ordering the edge carries remains.
+                src_subset = src_subset or dst_subset
+                dst_subset = dst_subset or src_subset
+                if src_subset is not None and src_subset == dst_subset:
+                    state.remove_edge(edge)
+                    state.add_nedge(src_node, dst_node, Memlet())
+                    continue
+
             # Derive any side the memlet omitted from the array shape (same-volume, different-shape).
             if src_subset is None:
                 src_subset = _derive_matching_dst_subset(dst_subset, src_desc)
@@ -292,6 +348,13 @@ class InsertExplicitCopies(ppl.Pass):
             outer = find_outer(state, edge)
         except RuntimeError:
             return False
+        # One container passing through the scope with one subset is one memory on both sides: nothing moves. A node
+        # that only renames it is dropped, so that no copy onto itself is emitted for it. One that cannot be dropped
+        # keeps the identity copy -- its absent far side must not be derived from the array, which would cover the
+        # whole of it from the slice one iteration owns.
+        identity = inner_node.data == outer.data and edge.data.other_subset is None
+        if identity and (drop_scope_alias if stage_in else drop_scope_exit_alias)(state, edge, inner_node):
+            return False
         outer_desc = sdfg.arrays[outer.data]
         if (
             outer_desc.storage not in self._STANDARD_STORAGES
@@ -315,7 +378,9 @@ class InsertExplicitCopies(ppl.Pass):
             inner_subset = outer_memlet.get_dst_subset(edge, state)
         else:
             inner_subset = outer_memlet.get_src_subset(edge, state)
-        if inner_subset is None or outer_memlet.other_subset is None:
+        if identity:
+            inner_subset = copy.deepcopy(outer_subset)
+        elif inner_subset is None or outer_memlet.other_subset is None:
             inner_subset = _derive_matching_dst_subset(outer_subset, inner_desc)
         else:
             inner_subset = copy.deepcopy(inner_subset)

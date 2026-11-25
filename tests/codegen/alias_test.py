@@ -1,6 +1,8 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests aliasing analysis."""
 
+import re
+
 import pytest
 
 import dace
@@ -19,7 +21,8 @@ def test_simple_program(may_alias):
     code = tester.to_sdfg().generate_code()[0]
 
     if may_alias:
-        assert code.clean_code.count("__restrict__") == 0
+        # A transient is a fresh allocation and may stay restricted; a may-alias argument may not
+        assert not re.search(r"__restrict__\s+[abc]\b", code.clean_code), code.clean_code
     else:
         assert code.clean_code.count("__restrict__") >= 3
 
@@ -38,7 +41,9 @@ def test_multi_nested():
     def tester(a: AliasedArray, b: dace.float64[20]):
         interim(a, b)
 
-    code = tester.to_sdfg(simplify=False).generate_code()[0]
+    # One function per nest is the legacy generator's; the readable one inlines the nests away
+    with dace.config.set_temporary("compiler", "cpu", "implementation", value="legacy"):
+        code = tester.to_sdfg(simplify=False).generate_code()[0]
 
     # Restrict keyword should show up once per aliased array, even if nested programs say otherwise
     assert code.clean_code.count("__restrict__") == 4  # = [__program, tester, interim, nested]

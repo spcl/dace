@@ -4,6 +4,7 @@
 import contextlib
 import json
 import os
+import re
 import sys
 import tempfile
 
@@ -15,6 +16,9 @@ from dace.codegen.targets.cpu import register_array_on_stack
 from dace.dtypes import AllocationLifetime, StorageType
 
 N = dace.symbol("N", dtype=dace.int64)
+
+#: A heap allocation of ``tmp``: plain ``new`` or, aligned, main's ``dace::aligned_new_array``.
+HEAP_ALLOC = re.compile(r"tmp = (?:new\b|dace::aligned_new_array<)")
 
 
 def register_scratch_sdfg(
@@ -44,7 +48,8 @@ def register_scratch_sdfg(
 
 
 def run_scratch(sdfg: dace.SDFG, size: int, **symbols):
-    a = np.random.rand(size)
+    rng = np.random.default_rng(42)
+    a = rng.random(size)
     b = np.zeros(size)
     sdfg(a=a, b=b, **symbols)
     np.testing.assert_allclose(b, a + 1.0, rtol=0, atol=0)
@@ -114,7 +119,7 @@ def test_a_symbolic_stack_array_is_a_variable_length_array():
     sdfg = register_scratch_sdfg("vla_stack", N, FORCED)
     code = sdfg.generate_code()[0].clean_code
     assert "double tmp[Max(1, N)];" in code, code
-    assert "double *tmp;" not in code, code
+    assert not HEAP_ALLOC.search(code), code
     run_scratch(sdfg, 32, N=32)
 
 
@@ -145,7 +150,7 @@ def test_an_auto_symbolic_register_array_stays_on_the_heap():
     sdfg = register_scratch_sdfg("vla_auto", N, AUTO)
     with pytest.warns(UserWarning, match="Variable-length array tmp"):
         code = sdfg.generate_code()[0].clean_code
-    assert "double *tmp;" in code, code
+    assert HEAP_ALLOC.search(code), code
     assert "double tmp[" not in code, code
 
 
@@ -153,7 +158,7 @@ def test_a_small_constant_register_array_stays_aligned_on_the_stack():
     sdfg = register_scratch_sdfg("stack_constant", 16, AUTO)
     code = sdfg.generate_code()[0].clean_code
     assert "double tmp[16]  DACE_ALIGN(64);" in code, code
-    assert "double *tmp;" not in code, code
+    assert not HEAP_ALLOC.search(code), code
     run_scratch(sdfg, 16)
 
 
@@ -164,7 +169,7 @@ def test_a_large_constant_register_array_moves_to_the_heap():
     ):
         code = sdfg.generate_code()[0].clean_code
         run_scratch(sdfg, 8193)
-    assert "double *tmp;" in code, code
+    assert HEAP_ALLOC.search(code), code
 
 
 def test_a_global_lifetime_keeps_a_symbolic_stack_array_on_the_heap():

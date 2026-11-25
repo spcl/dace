@@ -8,7 +8,7 @@ import re
 import threading
 import types
 from collections import Counter
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from functools import cache, lru_cache
 from typing import (
     TYPE_CHECKING,
@@ -285,6 +285,28 @@ class symbol(sympy.Symbol):
         def __neg__(self) -> sympy.Expr: ...
         def __pos__(self) -> sympy.Expr: ...
         # fmt: on
+
+
+#: A descriptor with shape ``(W_0, ONE, W_2)`` declares that dim 1 is a broadcast (size-1) dimension of a tile, which
+#: the tile library nodes address as replicated rather than collapse out. Final lowering substitutes ``ONE -> 1``.
+ONE = symbol("ONE", dtype=dtypes.int32, integer=True, positive=True)
+
+#: The marker's name -- the only part of :data:`ONE` that survives storage in an SDFG.
+ONE_NAME = "ONE"
+
+
+def has_one_marker(s) -> bool:
+    """Whether expression ``s`` carries the :data:`ONE` broadcast marker.
+
+    Matches on the symbol NAME, not on sympy object identity: a same-named ``ONE`` reparsed from a subset or shape
+    string carries no assumptions, so it is a different sympy object than :data:`ONE` and compares unequal.
+
+    :param s: A shape entry: Python int or sympy ``Basic``.
+    :returns: ``True`` iff a free symbol named ``ONE`` occurs in ``s``.
+    """
+    if not isinstance(s, sympy.Basic):
+        return False
+    return any(isinstance(fs, sympy.Symbol) and fs.name == ONE_NAME for fs in s.free_symbols)
 
 
 class UndefinedSymbol(symbol):
@@ -1642,25 +1664,30 @@ def sympy_divide_fix(expr):
 
     int_floor = sympy.Function("int_floor")
 
-    processed = 1
-    while processed > 0:
-        processed = 0
-        for candidate in nexpr.find(sympy.Mul):
-            for i, arg in enumerate(candidate.args):
-                if isinstance(arg, sympy.Number) and abs(arg) >= 1:
-                    continue
-                if isinstance(arg, sympy.Number) and (1 / arg) == int(1 / arg):
-                    ri = i
-                    break
-            else:
-                continue
-            nexpr = nexpr.subs(
-                candidate,
-                int_floor(sympy.Mul(*(candidate.args[:ri] + candidate.args[ri + 1 :])), int(1 / candidate.args[ri])),
-            )
-            processed += 1
+    # Rewrites each occurrence in place: ``subs`` would also rewrite an equal quotient inside an exponent
+    def rewrite(node):
+        if isinstance(node, sympy.Pow) and not node.exp.is_integer:
+            # The printer lowers a non-integer exponent's exact quotient itself
+            base = rewrite(node.base)
+            return node if base == node.base else node.func(base, node.exp)
+        args = tuple(rewrite(arg) for arg in node.args)
+        node = node if args == node.args else node.func(*args)
+        if not isinstance(node, sympy.Mul):
+            return node
+        # ``rest * (1/k)`` is the integer division ``rest / k``
+        ri = next(
+            (
+                i
+                for i, arg in enumerate(node.args)
+                if isinstance(arg, sympy.Number) and abs(arg) < 1 and 1 / arg == int(1 / arg)
+            ),
+            None,
+        )
+        if ri is None:
+            return node
+        return int_floor(sympy.Mul(*node.args[:ri], *node.args[ri + 1 :]), int(1 / node.args[ri]))
 
-    return nexpr
+    return rewrite(nexpr)
 
 
 @cache
@@ -2742,6 +2769,13 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return f"{self._print(expr.args[0])}{sep}{attribute}"
             # return f'{self._print(expr.args[0])}.{self._print(expr.args[1])}'
         if str(expr.func) == "Subscript":
+            # rank>=2 reparses as ast.Tuple downstream -> invalid std::make_tuple on a raw
+            # pointer; caller must lower the nested subscript to a flat index first.
+            if self.cpp_mode and len(expr.args) > 2:
+                raise NotImplementedError(
+                    "cpp_mode Subscript printing does not support rank>=2 indices "
+                    f"({expr}); lower the nested subscript to a flat index before printing."
+                )
             indices = ", ".join(self._print(a) for a in expr.args[1:])
             return f"{self._print(expr.args[0])}[{indices}]"
         # Operator-backed functions: the ``__``-prefixed variants (from the operators)
@@ -2824,13 +2858,15 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         base = self._print(expr.args[0])
         exponent = self._print(expr.args[1])
 
-        # Special case for square root
         if self.cpp_mode:
-            try:
-                if float(exponent) == 0.5:
-                    return f"dace::math::sqrt({base})"
-            except ValueError:
-                pass
+            # Decided on the exponent, not its text: ``Rational(1, 2)`` prints ``1/2``, which ``float()`` rejects
+            if expr.args[1] == sympy.Rational(1, 2) or (expr.args[1].is_Float and float(expr.args[1]) == 0.5):
+                return f"dace::math::sqrt({base})"
+            # A bare ``p/q`` exponent is C++ integer division: ``pow(x, 1/3)`` is ``pow(x, 0)``, ``pow(x, N/3)`` too
+            if not expr.args[1].is_integer:
+                num, den = sympy.fraction(sympy.together(expr.args[1]))
+                if den != 1:
+                    return f"dace::math::rational_pow({base}, {self._print(num)}, {self._print(den)})"
 
         # Special case for integer powers
         try:
@@ -2843,13 +2879,16 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             res = f"({base})"
             for _ in range(1, int_exp):
                 res += f" * ({base})"
+            if int_exp > 1:
+                # One operand: bare, ``x / N**2`` prints ``x/(N) * (N)``, which is ``x``
+                res = f"({res})"
 
             if negative:
                 res = f"reciprocal({res})"
             return res
         except ValueError:
             if self.cpp_mode:
-                return f"dace::math::pow({self._print(expr.args[0])}, {self._print(expr.args[1])})"
+                return f"dace::math::pow({base}, {exponent})"
             else:
                 return f"({self._print(expr.args[0])}) ** ({self._print(expr.args[1])})"
 
@@ -3052,6 +3091,20 @@ def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> tuple[sympy.Expr, sympy.Ex
             repldict[b_syms[name]] = a_syms[name]
         b = b.subs(repldict)
     return a, b
+
+
+def shapes_equal(shape_a: Sequence[Any], shape_b: Sequence[Any]) -> bool:
+    """True iff two shape / extent sequences agree, each dimension compared by NAME.
+
+    Shapes reach a check from different sources -- a descriptor a layout pass rebuilt against a
+    bound reparsed from a string -- so one name arrives as several sympy instances that raw ``==``
+    calls different. Comparing with ``!=`` then rejects shapes that match, with a self-refuting
+    message naming the same symbol on both sides. Ranks are compared first, so this is also the
+    length check.
+    """
+    if len(shape_a) != len(shape_b):
+        return False
+    return not any(inequal_symbols(a, b) for a, b in zip(shape_a, shape_b))
 
 
 def inequal_symbols(a: sympy.Expr | Any, b: sympy.Expr | Any) -> bool:
