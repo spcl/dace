@@ -10,7 +10,6 @@ import numpy as np
 import sympy
 
 import dace
-from dace.codegen.common import sym2cpp
 from dace.libraries.fft.nodes.fft import normalize_fft_axes
 
 
@@ -154,6 +153,20 @@ def add_elementwise_state(
     return state
 
 
+def add_copy_state(
+    sdfg: dace.SDFG, after: dace.SDFGState, label: str, src: str, dst: str, subset: str
+) -> dace.SDFGState:
+    """Appends a state copying ``subset`` of ``src`` into the same subset of ``dst``, a memlet between access nodes.
+
+    :return: The new state.
+    """
+    state = sdfg.add_state_after(after, label)
+    state.add_nedge(
+        state.add_read(src), state.add_write(dst), dace.Memlet(data=src, subset=subset, other_subset=subset)
+    )
+    return state
+
+
 def add_twiddle_state(
     sdfg: dace.SDFG,
     after: dace.SDFGState,
@@ -175,17 +188,16 @@ def add_twiddle_state(
     """
 
     name = sdfg.add_transient(f"__twiddle{axis}", [length], element, storage=storage, find_new_name=True)[0]
-    real = "float" if element == dace.complex64 else "double"
-    text = sym2cpp(length)
+    real = real_of(element).to_string()
+    sign = "" if inverse else "-"
     state = sdfg.add_state_after(after, f"twiddle_axis{axis}")
     state.add_mapped_tasklet(
         "twiddle",
         {"__m": f"0:{dace.symbolic.symstr(length)}"},
         {},
-        f"const double angle = {2.0 * math.pi!r} * double(__m) / double({text});\n"
-        f"o = {element.ctype}({real}(cos(angle)), {real}({'' if inverse else '-'}sin(angle)));",
+        f"angle = {2.0 * math.pi!r} * float64(__m) / float64({dace.symbolic.symstr(length)})\n"
+        f"o = dace.{element.to_string()}({real}(math.cos(angle)), {real}({sign}math.sin(angle)))",
         {"o": dace.Memlet(data=name, subset="__m")},
-        language=dace.Language.CPP,
         external_edges=True,
     )
     return name, state
@@ -206,31 +218,28 @@ def add_dft_axis_state(
     """
 
     ndim = len(shape)
-    length = sym2cpp(shape[axis])
+    length = dace.symbolic.symstr(shape[axis])
     element = sdfg.arrays[dst].dtype
-    real = "float" if element == dace.complex64 else "double"
+    real = real_of(element).to_string()
     line = [f"__i{d}" for d in range(ndim)]
-    line[axis] = f"0:{dace.symbolic.symstr(shape[axis])}"
-    # Divide by a FLOATING denominator: ``1/(M*N)`` over integer symbols is C integer division, i.e. zero. In the
-    # element's own precision: ``complex64 * double`` multiplies to zero.
-    scale = "" if is_unit(factor) else f"o *= {real}({sym2cpp(in_floating_point(factor))});"
+    line[axis] = f"0:{length}"
+    # A FLOATING factor in the element's precision: ``1/(M*N)`` over integer symbols is C integer division, i.e. zero,
+    # and ``complex64 * double`` has no operator.
+    scale = "" if is_unit(factor) else f" * {real}({dace.symbolic.symstr(in_floating_point(factor))})"
     index = ", ".join(f"__i{d}" for d in range(ndim))
     if dace.symbolic.equal_valued(1, shape[axis]):
-        # A one-point DFT is a scaled copy; its one-element memlets would make ``inp`` and ``tw`` values, not pointers
+        # A one-point DFT is a (scaled) copy
         ranges = index_ranges(shape, "__i")
-        code = f"o = i;\n{scale}"
-        return add_elementwise_state(
-            sdfg, after, f"dft_axis{axis}", src, dst, ranges, index, index, code, language=dace.Language.CPP
-        )
+        if not scale:
+            return add_copy_state(sdfg, after, f"dft_axis{axis}", src, dst, ", ".join(ranges.values()))
+        return add_elementwise_state(sdfg, after, f"dft_axis{axis}", src, dst, ranges, index, index, f"o = i{scale}")
     twiddles, after = add_twiddle_state(sdfg, after, shape[axis], axis, element, inverse, sdfg.arrays[dst].storage)
     # The exponent is reduced modulo the length, as an FFT's twiddle factors are: one table entry per residue
     code = f"""
-{element.ctype} sum({real}(0), {real}(0));
-for (long long __n = 0; __n < {length}; ++__n) {{
-    sum += tw[(__i{axis} * __n) % {length}] * inp[__n * ({sym2cpp(sdfg.arrays[src].strides[axis])})];
-}}
-o = sum;
-{scale}
+total = dace.{element.to_string()}(0)
+for __n in range({length}):
+    total += tw[(__i{axis} * __n) % ({length})] * inp[__n]
+o = total{scale}
 """
     state = sdfg.add_state_after(after, f"dft_axis{axis}")
     state.add_mapped_tasklet(
@@ -242,7 +251,6 @@ o = sum;
         },
         code,
         {"o": dace.Memlet(data=dst, subset=index)},
-        language=dace.Language.CPP,
         external_edges=True,
     )
     return state
@@ -318,17 +326,8 @@ def dft_nd_sdfg(indesc, outdesc, factor, inverse, axes, half_spectrum=False, nam
     if not inverse:
         sdfg.add_transient("__spectrum", indesc.shape, complex_type, storage=storage)
         state = add_dft_passes(sdfg, state, "__ping", "__spectrum", indesc.shape, axes, inverse, factor)
-        out_index = ", ".join(f"__c{d}" for d in range(ndim))
-        add_elementwise_state(
-            sdfg,
-            state,
-            "keep_half",
-            "__spectrum",
-            "_out",
-            index_ranges(outdesc.shape, "__c"),
-            out_index,
-            out_index,
-            "o = i",
+        add_copy_state(
+            sdfg, state, "keep_half", "__spectrum", "_out", ", ".join(index_ranges(outdesc.shape, "__c").values())
         )
         return sdfg
     # Inverse: the axes before the last one are complex transforms over the half spectrum.
@@ -345,9 +344,7 @@ def dft_nd_sdfg(indesc, outdesc, factor, inverse, axes, half_spectrum=False, nam
     ranges = index_ranges(outdesc.shape, "__c")
     index = [f"__c{d}" for d in range(ndim)]
     ranges[f"__c{last}"] = f"0:{kept}"
-    state = add_elementwise_state(
-        sdfg, state, "positive_frequencies", half, "__spectrum", ranges, ", ".join(index), ", ".join(index), "o = i"
-    )
+    state = add_copy_state(sdfg, state, "positive_frequencies", half, "__spectrum", ", ".join(ranges.values()))
     ranges[f"__c{last}"] = f"{kept}:{length}"
     mirrored = list(index)
     mirrored[last] = f"{dace.symbolic.symstr(length)} - __c{last}"
@@ -360,8 +357,7 @@ def dft_nd_sdfg(indesc, outdesc, factor, inverse, axes, half_spectrum=False, nam
         ranges,
         ", ".join(mirrored),
         ", ".join(index),
-        f"o = {complex_type.ctype}(i.real(), -i.imag());",
-        dace.Language.CPP,
+        f"o = dace.{complex_type.to_string()}(i.real, -i.imag)",
     )
     sdfg.add_transient("__signal", outdesc.shape, complex_type, storage=storage)
     state = add_dft_passes(sdfg, state, "__spectrum", "__signal", outdesc.shape, [last], inverse, factor)
@@ -374,7 +370,6 @@ def dft_nd_sdfg(indesc, outdesc, factor, inverse, axes, half_spectrum=False, nam
         index_ranges(outdesc.shape, "__c"),
         ", ".join(index),
         ", ".join(index),
-        "o = i.real();",
-        dace.Language.CPP,
+        "o = i.real",
     )
     return sdfg

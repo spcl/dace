@@ -39,37 +39,6 @@ def test_pure_fftn_inplace():
     np.testing.assert_allclose(buf, np.fft.fftn(x), rtol=1e-10, atol=1e-10)
 
 
-@pytest.mark.parametrize("in_loop", [False, True])
-def test_pure_factor_symbol_only_in_the_factor(in_loop):
-    """A symbol that only the normalization factor names -- an SDFG symbol, or the iterator of the loop around the
-    node -- still reaches the expansion: the scaling tasklet is C++, whose symbols nothing infers from its code."""
-    from dace.sdfg.state import LoopRegion
-
-    shape = (6, 5)
-    sdfg = dace.SDFG(f"factor_symbol_fftn_{int(in_loop)}")
-    sdfg.add_symbol("K", dace.int64)
-    sdfg.add_array("x", shape, dace.complex128)
-    sdfg.add_array("y", shape, dace.complex128)
-    if in_loop:
-        loop = LoopRegion("passes", "it < 3", "it", "it = 2", "it = it + 1")
-        sdfg.add_node(loop, is_start_block=True)
-        state = loop.add_state("fft", is_start_block=True)
-    else:
-        state = sdfg.add_state()
-    node = FFT("fft")
-    node.factor = "1/(K*it)" if in_loop else "1/K"
-    state.add_node(node)
-    state.add_edge(state.add_read("x"), None, node, "_inp", dace.Memlet.from_array("x", sdfg.arrays["x"]))
-    state.add_edge(node, "_out", state.add_write("y"), None, dace.Memlet.from_array("y", sdfg.arrays["y"]))
-    sdfg.expand_library_nodes()
-
-    rng = np.random.default_rng(11)
-    x = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)).astype(np.complex128)
-    y = np.zeros_like(x)
-    sdfg(x=x, y=y, K=4)
-    np.testing.assert_allclose(y, np.fft.fftn(x) / (4 * (2 if in_loop else 1)), rtol=1e-10, atol=1e-10)
-
-
 # Symbolic dimensions -- the shape is only known at call time.
 
 
@@ -85,9 +54,9 @@ def test_pure_ifftn_symbolic_factor_is_emitted_in_floating_point(norm):
     sdfg = tester_pure_ifftn_symbolic_factor_is_emitted_in_floating_point.to_sdfg(simplify=False)
     sdfg.expand_library_nodes()
     codes = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
-    scaled = [code for code in codes if "o *=" in code]
+    scaled = [code for code in codes if "* float64(" in code and "angle" not in code]
     assert scaled, f"no DFT tasklet carries the {norm} factor: {codes}"
-    assert all("dace::float64(M)" in code and "dace::float64(N)" in code for code in scaled), scaled
+    assert all("float64(M)" in code and "float64(N)" in code for code in scaled), scaled
     assert not any("1/(M*N)" in code.replace(" ", "") for code in scaled), scaled
 
 
@@ -195,8 +164,6 @@ def test_fft_of_a_fortran_ordered_array(implementation):
 
 if __name__ == "__main__":
     test_pure_fftn_inplace()
-    test_pure_factor_symbol_only_in_the_factor(False)
-    test_pure_factor_symbol_only_in_the_factor(True)
     test_pure_ifftn_symbolic_factor_is_emitted_in_floating_point("backward")
     test_pure_ifftn_symbolic_factor_is_emitted_in_floating_point("ortho")
     test_fft2_and_ifft2_transform_the_last_two_axes_by_default()

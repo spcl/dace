@@ -1,8 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """FFTW3 environment: ``libfftw3`` (double) and ``libfftw3f`` (single), each with its OpenMP planner when installed.
 
-The libraries come from ``$FFTW_ROOT`` (``include`` and ``lib`` / ``lib64`` under it) when set, else from the loader,
-as for OpenBLAS.
+``fftw3.cmake`` links them: the CMake package's target, else pkg-config, under ``$FFTW_ROOT`` when set. Python finds
+the same libraries (``lib`` / ``lib64`` under ``$FFTW_ROOT``, else the loader's search) to tell whether FFTW3 and its
+OpenMP planner are installed, which picks the expansion and whether it threads.
 """
 
 import ctypes.util
@@ -13,7 +14,7 @@ import os
 import dace.library
 from dace.libraries.fft.environments.plans import FFTPlans
 
-#: Each precision's OpenMP planner links ahead of its base library, so it shares the program's team.
+#: Each precision's OpenMP planner and base library.
 LIBRARIES = ("fftw3_omp", "fftw3", "fftw3f_omp", "fftw3f")
 
 
@@ -53,10 +54,12 @@ def threaded(double: bool) -> bool:
 class FFTW3:
     cmake_minimum_version = "3.6"
     cmake_packages: list[str] = []
+    cmake_includes: list[str] = []
+    cmake_libraries: list[str] = []
     cmake_variables: dict[str, str] = {}
     cmake_compile_flags: list[str] = []
     cmake_link_flags: list[str] = []
-    cmake_files: list[str] = []
+    cmake_files = ["fftw3"]
 
     # The state struct, whose plan caches name fftw_plan, is also written into a GPU backend file
     headers = {"frame": ["fftw3.h", "omp.h"], "cuda": ["fftw3.h"]}
@@ -64,16 +67,6 @@ class FFTW3:
     init_code = ""
     finalize_code = ""
     dependencies = [FFTPlans]
-
-    @staticmethod
-    def cmake_includes():
-        root = os.environ.get("FFTW_ROOT")
-        return [os.path.join(root, "include")] if root else []
-
-    @staticmethod
-    def cmake_libraries():
-        """Both precisions as far as the install provides them; the codegen picks one by the operand type."""
-        return list(libraries())
 
     @staticmethod
     def is_installed():
