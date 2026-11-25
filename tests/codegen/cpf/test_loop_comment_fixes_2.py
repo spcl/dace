@@ -149,6 +149,20 @@ def test_a_gpu_fallback_arm_says_it_runs_on_the_host_and_what_it_copies():
     assert note == "// runs on the host, after device-to-host copies of idx, a, b; then copies b back to the device"
 
 
+def test_an_array_section_reduction_says_each_thread_holds_a_copy():
+    """Finding 9: ``reduction(+:h[0:M])`` gives every thread M elements, which the comment did not say."""
+
+    @dace.program
+    def hist(a: dace.float64[N], idx: dace.int64[N], h: dace.float64[M]):
+        for i in range(N):
+            h[idx[i]] += a[i]
+
+    code = bench_c(hist, "cpf_review2_hist")
+    (line,) = [line for line in comment_above(code, "reduction(+:h[0:M])") if "parallel --" in line]
+    assert "each thread holds a private copy of the M elements h[0:M]" in line, line
+    assert "alt: omp atomic updates of h" in line, line
+
+
 if __name__ == "__main__":
     test_a_grid_stride_reduction_kernel_says_reduction_and_grid_stride()
     test_a_block_per_row_kernel_has_one_line_per_kernel_and_per_thread_block()
@@ -159,3 +173,4 @@ if __name__ == "__main__":
     test_a_fallback_arm_that_sums_into_one_element_says_it_is_a_reduction()
     test_a_scatter_guard_says_what_its_flag_is_and_names_the_scattered_element()
     test_a_gpu_fallback_arm_says_it_runs_on_the_host_and_what_it_copies()
+    test_an_array_section_reduction_says_each_thread_holds_a_copy()

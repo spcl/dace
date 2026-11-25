@@ -55,6 +55,24 @@ from dace.utils import find_new_name
 
 #: The pragma of a loop whose iterations run as vector lanes of one thread.
 SIMD_PRAGMA = re.compile(r"^\s*#pragma omp simd\b", re.MULTILINE)
+#: An array section of a thread pragma's ``reduction`` clause: ``reduction(+:h[0:M])`` -> ``h``, ``0``, ``M``.
+REDUCED_SECTION = re.compile(r"#pragma omp parallel\b.*?\breduction\([^:]+:\s*(\w+)\[([^:\]]+):([^\]]+)\]")
+
+
+def with_private_copies(text: str, header: CodeIOStream) -> str:
+    """``text`` with, on its class line, what the thread pragma's array-section reduction costs: OpenMP gives every
+    thread a private copy of the section and combines them after the loop, which an agent weighs against atomics."""
+    sections = REDUCED_SECTION.findall(header.getvalue())
+    if not sections or not text.startswith(LoopClass.PARALLEL.prefix):
+        return text
+    first, newline, notes = text.partition("\n")
+    for name, start, length in sections:
+        first += (
+            f"; each thread holds a private copy of the {length} elements {name}[{start}:{length}], combined into "
+            f"{name} after the loop; alt: omp atomic updates of {name}, where a copy per thread does not fit in memory"
+        )
+    return f"{first}{newline}{notes}"
+
 
 # ``<array>_idx`` / symbolic ``<array>_size`` qualifier: host+device callable, inlined, constexpr.
 INDEX_FUNCTION_QUALIFIER = "static DACE_HDFI constexpr"
@@ -472,7 +490,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         header = CodeIOStream()
         super()._generate_MapEntry(sdfg, cfg, dfg, state_id, node, function_stream, header)
         simd = SIMD_PRAGMA.search(header.getvalue()) is not None
-        hint = cpf_lowering.hint_comment(self.with_not_parallelized(sdfg, cfg.state(state_id), node, text, simd))
+        text = with_private_copies(self.with_not_parallelized(sdfg, cfg.state(state_id), node, text, simd), header)
+        hint = cpf_lowering.hint_comment(text)
         if hint:
             callsite_stream.write(hint.rstrip("\n"), cfg, state_id, node)
         callsite_stream.write(header.getvalue(), cfg, state_id, node)
