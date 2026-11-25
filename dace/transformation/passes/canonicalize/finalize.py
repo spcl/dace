@@ -355,6 +355,8 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     ShrinkMapLocalTransients().apply_pass(sdfg, {})
     # single_element: ShrinkMapLocalTransients leaves (1, ..., 1) boxes, which are scalars as much as a (1,) array.
     ConvertLengthOneArraysToScalars(recursive=True, single_element=True).apply_pass(sdfg, {})
+    if device == dtypes.DeviceType.GPU:
+        place_kernel_buffers_on_device(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
     move_small_arrays_to_stack(sdfg)
     made_persistent = make_transients_persistent(sdfg, device)
@@ -402,6 +404,53 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
         # Host loops of a device program allocate per iteration as on the CPU: their register arrays go on the stack.
         force_registers(sdfg, host_only=True)
         pool_gpu_transients(sdfg)
+
+
+def is_kernel_scope(node: nodes.Node) -> bool:
+    return isinstance(node, (nodes.MapEntry, nodes.MapExit)) and node.map.schedule in dtypes.GPU_SCHEDULES
+
+
+def place_kernel_buffers_on_device(sdfg: SDFG) -> list[str]:
+    """Move to device memory every host transient array that only kernels and copies touch: one a kernel writes or
+    reads at its boundary while the access node sits in host code, as in the body of a map over a few blocks that
+    runs sequentially on the host and launches the maps inside it (a buffer MapFusion leaves between such a kernel
+    and the copy out of it). Left on the host, the kernel writes host memory (SC40 CUDA icon_velocity_tendencies:
+    an illegal memory access). An array host code also reads or writes (a tasklet, a library node) stays.
+
+    :returns: the moved arrays, as ``<sdfg name>.<array>``."""
+    moved = []
+    host_storages = (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap)
+    for nested in sdfg.all_sdfgs_recursive():
+        kernel_touched: OrderedSet = OrderedSet()
+        host_touched: OrderedSet = OrderedSet()
+        for state in nested.states():
+            for node in state.data_nodes():
+                desc = nested.arrays[node.data]
+                if (
+                    not desc.transient
+                    or type(desc) is not dt.Array
+                    or desc.storage not in host_storages
+                    or is_devicelevel_gpu(nested, state, node)
+                ):
+                    continue
+                for edge in (*state.in_edges(node), *state.out_edges(node)):
+                    if edge.data.is_empty():
+                        continue
+                    if is_kernel_scope(edge.dst if edge.src is node else edge.src):
+                        kernel_touched.add(node.data)
+                        continue
+                    # Through the host scopes around it, to the node at the far end of the memlet path
+                    path = state.memlet_path(edge)
+                    far = path[-1].dst if edge.src is node else path[0].src
+                    if is_devicelevel_gpu(nested, state, far):
+                        kernel_touched.add(node.data)
+                    elif not isinstance(far, nodes.AccessNode):
+                        host_touched.add(node.data)
+        for name in kernel_touched:
+            if name not in host_touched:
+                nested.arrays[name].storage = dtypes.StorageType.GPU_Global
+                moved.append(f"{nested.name}.{name}")
+    return moved
 
 
 def pool_gpu_transients(sdfg: SDFG) -> int:
