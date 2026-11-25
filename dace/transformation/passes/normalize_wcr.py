@@ -74,25 +74,25 @@ from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.privatize_scatter_reduction import is_data_dependent_scatter_sink
 
 #: Reduction op -> the augassign op it normalizes to (``-`` accumulates like ``+``).
-_WCR_OP = {"+": "+", "-": "+", "*": "*", "min": "min", "max": "max"}
+WCR_OP = {"+": "+", "-": "+", "*": "*", "min": "min", "max": "max", "or": "or", "and": "and"}
 
 
 def _op_from_wcr(wcr: str) -> str | None:
-    """The accumulation the WCR lambda performs (``+``/``*``/``min``/``max``; ``-`` accumulates like ``+``), or
-    ``None`` for any other reducer."""
-    return _WCR_OP.get(wcr_operator(wcr))
+    """The accumulation the WCR lambda performs (``+``/``*``/``min``/``max``/``or``/``and``; ``-`` accumulates like
+    ``+``), or ``None`` for any other reducer."""
+    return WCR_OP.get(wcr_operator(wcr))
 
 
 def _binop_expr_from_wcr(wcr: str) -> str | None:
     """The WCR lambda's operator, keeping ``-`` as subtraction (the aug-assign operator); ``None`` for any other
-    reducer than ``+ - * min max``."""
+    reducer than ``+ - * min max or and``."""
     op = wcr_operator(wcr)
-    return op if op in _WCR_OP else None
+    return op if op in WCR_OP else None
 
 
 def _rmw_tasklet_code(op: str) -> str:
     """Return a plain tasklet expression that computes ``old OP addend``."""
-    if op in ("+", "-", "*"):
+    if op in ("+", "-", "*", "or", "and"):
         return f"__out = __old {op} __addend"
     if op == "min":
         return "__out = min(__old, __addend)"
@@ -116,6 +116,9 @@ def _identity_value(op: str, dtype: dtypes.typeclass):
         return int(numpy.iinfo(dtype.type).max) if is_int else float("inf")
     if op == "max":
         return int(numpy.iinfo(dtype.type).min) if is_int else float("-inf")
+    # A logical fold (ConstantStoreToLogicalReduction's flags) starts from the truth value it cannot change
+    if op in ("or", "and"):
+        return (op == "and") if dtype == dtypes.bool_ else int(op == "and")
     raise ValueError(f"unknown op {op!r}")
 
 
