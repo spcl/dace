@@ -68,6 +68,10 @@ def test_a_conditional_accumulation_into_one_row_lifts_as_a_reduction_over_the_s
 
 def test_the_lifted_species_loop_computes_the_same_sums_on_many_threads():
     sdfg = canonical_sdfg()
+    # Pinned on the maps themselves: the environment's thread count must not decide whether a race can show
+    for node, parent in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.MapEntry):
+            node.map.omp_num_threads = 8
     n = 20000
     zq = np.random.default_rng(0).uniform(-1.0, 1.0, (5, n))
     expected = zq.copy()
