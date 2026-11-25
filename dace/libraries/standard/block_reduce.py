@@ -318,8 +318,7 @@ def in_kernel_block_implementation(
 
 def accumulates_beside(node: nodes.LibraryNode, state: SDFGState) -> bool:
     """Whether the kernel around ``node`` accumulates anywhere but at ``node``: a block collective runs the kernel
-    body on every lane of the block, so each lane would add, and each lane would rerun a library node beside it. A
-    map exit only relays an accumulation made inside it.
+    body on every lane of the block, so each lane would add. A map exit only relays an accumulation made inside it.
     A plain update of what the body reads (``o[b] = o[b] + 1``) accumulates as surely as a WCR does; a write
     the body's reads provably miss only repeats the same values on every lane.
     """
@@ -345,14 +344,6 @@ def accumulates_beside(node: nodes.LibraryNode, state: SDFGState) -> bool:
             if inner is node or isinstance(inner, nodes.MapExit):
                 continue
             if any(edge.data.wcr is not None for edge in graph.out_edges(inner)):
-                return True
-            # A library node with no block lowering runs whole on every lane, and its lowering may build its output
-            # in steps (a GEMM zeroes its output, then adds into it): lanes repeating the steps race.
-            if (
-                isinstance(inner, nodes.LibraryNode)
-                and gpu_block_implementation(inner, graph, graph.sdfg) is None
-                and any(not edge.data.is_empty() for edge in graph.out_edges(inner))
-            ):
                 return True
             if isinstance(inner, nodes.Tasklet) and any(
                 subsets.intersects(widest(graph, edge, inside, False), other, facts) is not symbolic.Truth.FALSE
