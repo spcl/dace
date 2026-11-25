@@ -6,8 +6,9 @@ into the element it names.
 store writes the same value, so the order of the iterations does not matter, but the loop is not last-write-wins
 either: an iteration whose guard fails writes nothing. As the write-conflict resolution ``flag[k] = flag[k] or True``
 the store means the same in a sequential loop, and the loop lift reads it as a reduction (``||``) instead of a conflict
-on ``flag[k]``. ``False`` reduces with ``and`` alike. Only the literal truth values qualify: ``x or v`` is ``1``, the
-stored value, only when ``v`` is ``1``.
+on ``flag[k]``. ``False`` reduces with ``and`` alike. Only the boolean literals qualify (Fortran ``.TRUE.``, also into a
+``LOGICAL`` held as an integer): a store of the integer ``0`` or ``1`` is a value (``enabled[s] = 0`` clears a slot of a
+worklist), and reading it as a flag reduction hides the store from the lifts that prove such loops.
 """
 
 import ast
@@ -25,14 +26,14 @@ LOGICAL_WCR = {True: "lambda a, b: a or b", False: "lambda a, b: a and b"}
 
 
 def stored_truth(tasklet: nodes.Tasklet) -> bool | None:
-    """The truth value a tasklet ``out = True`` (``False``, ``1``, ``0``) with no inputs stores, else ``None``."""
+    """The truth value a tasklet ``out = True`` (``False``) with no inputs stores, else ``None``."""
     if tasklet.code.language != dtypes.Language.Python or tasklet.in_connectors:
         return None
     body = tasklet.code.code
     if len(body) != 1 or not isinstance(body[0], ast.Assign) or not isinstance(body[0].value, ast.Constant):
         return None
     value = body[0].value.value
-    return bool(value) if value in (True, False) and type(value) in (bool, int) else None
+    return value if type(value) is bool else None
 
 
 def constant_stores(loop: LoopRegion) -> dict[str, list[tuple[Any, bool | None]]]:
