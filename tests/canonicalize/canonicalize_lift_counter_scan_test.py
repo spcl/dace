@@ -12,7 +12,7 @@ from dace.libraries.standard.nodes.scan import Scan
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
-from dace.transformation.passes.canonicalize.lift_counter_scan import INCREMENT_PREFIX, LiftCounterScan
+from dace.transformation.passes.canonicalize.lift_counter_scan import INCREMENT_PREFIX, MIN_PREFIX, LiftCounterScan
 from dace.transformation.passes.canonicalize.loop_to_stream_compaction import MASK_PREFIX
 
 N = dace.symbol("N", dtype=dace.int64)
@@ -212,8 +212,13 @@ def test_a_counter_read_only_after_the_loop_is_left_to_the_reductions():
     assert lifted_alone(count_only) is None
 
 
-def test_a_bump_inside_an_inner_loop_is_refused():
-    assert lifted_alone(bump_in_inner_loop) is None
+def test_a_bump_inside_an_inner_loop_adds_its_trip_count_per_iteration():
+    sdfg = canonical(bump_in_inner_loop)
+    assert scanned(sdfg)
+    k = np.random.default_rng(4).integers(-2, 6, 300)
+    start = np.zeros(300, np.int64)
+    sdfg(k=k, start=start, N=300)
+    assert np.array_equal(start, offsets_in_numpy(np.maximum(k, 0))[0])
 
 
 def test_a_guard_that_reads_the_counter_is_refused():
@@ -228,6 +233,193 @@ def test_a_step_that_reads_what_the_body_writes_is_refused():
     assert lifted_alone(step_reads_body_write) is None
 
 
+# Counters that index their own segment ``[c, c + s)`` of an array: the reproducers of QE vexx and cp2k.
+
+L = dace.symbol("L", dtype=dace.int64)
+NAT = dace.symbol("NAT", dtype=dace.int64)
+NH = dace.symbol("NH", dtype=dace.int64)
+P = dace.symbol("P", dtype=dace.int64)
+
+
+@dace.program
+def harmonics_segments(ylm: dace.float64[(L + 1) * (L + 1)], scale: dace.float64[L + 1]):
+    # QE ylmr2's ``sym51 = sym51 + 1 + 2 * max(0, i)``: degree i owns the 2i + 1 entries from sym51 on
+    s = 1
+    for i in range(1, L + 1):
+        ylm[s] = scale[i] * ylm[s]
+        for k in range(1, i + 1):
+            ylm[2 * k + s - 1] = ylm[2 * k + s - 1] + scale[i]
+        for k in range(1, i + 1):
+            ylm[2 * k + s] = ylm[2 * k + s] - scale[i]
+        s = s + 1 + 2 * max(0, i)
+
+
+def harmonics_in_numpy(ylm: np.ndarray, scale: np.ndarray, degree: int) -> np.ndarray:
+    ylm = ylm.copy()
+    s = 1
+    for i in range(1, degree + 1):
+        ylm[s] *= scale[i]
+        for k in range(1, i + 1):
+            ylm[2 * k + s - 1] = ylm[2 * k + s - 1] + scale[i]
+        for k in range(1, i + 1):
+            ylm[2 * k + s] = ylm[2 * k + s] - scale[i]
+        s = s + 1 + 2 * max(0, i)
+    return ylm
+
+
+@dace.program
+def triangle_segments(lx: dace.int64[L * L], ly: dace.int64[L * L], j: dace.int64):
+    # cp2k grid_integrate's ``inl1 = inl1 + max(0, j - k + 1)``: pair k owns the j - k + 1 entries from inl1 on
+    n = 0
+    for k in range(j + 1):
+        for m in range(j - k + 1):
+            lx[n + m] = k
+            ly[n + m] = m
+        n = n + max(0, j - k + 1)
+
+
+def triangle_in_numpy(size: int, j: int) -> tuple[np.ndarray, np.ndarray]:
+    lx, ly = np.zeros(size, np.int64), np.zeros(size, np.int64)
+    n = 0
+    for k in range(j + 1):
+        for m in range(j - k + 1):
+            lx[n + m], ly[n + m] = k, m
+        n += max(0, j - k + 1)
+    return lx, ly
+
+
+@dace.program
+def projector_segments(
+    ityp: dace.int64[NAT], nh: dace.int64[1], sk: dace.float64[NAT, P], vkb: dace.float64[NAT * NH, P], j: dace.int64
+):
+    # QE vexx's ``sym1 = sym1 + nhnt`` over the atoms of type j: atom k owns nhnt rows of vkb from sym1 on
+    s = 0
+    nhnt = nh[0]
+    for k in range(NAT):
+        if ityp[k] == j:
+            for m in range(nhnt):
+                for p in range(P):
+                    vkb[s + m, p] = sk[k, p] * (m + 1)
+            s = s + nhnt
+
+
+def projector_in_numpy(ityp: np.ndarray, nhnt: int, sk: np.ndarray, rows: int, j: int) -> np.ndarray:
+    vkb = np.zeros((rows, sk.shape[1]))
+    s = 0
+    for k in range(ityp.size):
+        if ityp[k] == j:
+            for m in range(nhnt):
+                vkb[s + m] = sk[k] * (m + 1)
+            s += nhnt
+    return vkb
+
+
+def guarded(sdfg: dace.SDFG) -> bool:
+    return any(name.startswith(MIN_PREFIX) for name in sdfg.arrays)
+
+
+@pytest.mark.parametrize("degree", [0, 1, 6])
+def test_a_counter_that_indexes_its_own_segment_becomes_a_scan_and_a_parallel_map(degree):
+    sdfg = canonical(harmonics_segments)
+    assert scanned(sdfg) and loops(sdfg) == 0 and not guarded(sdfg)  # the step 1 + 2 * max(0, i) is never negative
+    rng = np.random.default_rng(degree)
+    ylm, scale = rng.random((degree + 1) ** 2), rng.random(degree + 1)
+    want = harmonics_in_numpy(ylm, scale, degree)
+    sdfg(ylm=ylm, scale=scale, L=degree)
+    assert np.array_equal(ylm, want)
+
+
+@pytest.mark.parametrize("j", [0, 3, 9])
+def test_a_triangular_segment_counter_fills_each_pair_once(j):
+    sdfg = canonical(triangle_segments)
+    assert scanned(sdfg) and not guarded(sdfg)
+    side = j + 2
+    lx, ly = np.full(side * side, -1, np.int64), np.full(side * side, -1, np.int64)
+    sdfg(lx=lx, ly=ly, j=j, L=side)
+    want_x, want_y = triangle_in_numpy(side * side, j)
+    filled = (j + 1) * (j + 2) // 2
+    assert np.array_equal(lx[:filled], want_x[:filled]) and np.array_equal(ly[:filled], want_y[:filled])
+    assert (lx[filled:] == -1).all() and (ly[filled:] == -1).all()
+
+
+@pytest.mark.parametrize("nhnt", [3, 0, -2])
+def test_a_data_sized_segment_runs_in_parallel_only_when_no_step_is_negative(nhnt):
+    """``nhnt`` is data: phase 3 runs in parallel under ``min(inc) >= 0``, in order otherwise."""
+    sdfg = canonical(projector_segments)
+    assert scanned(sdfg) and guarded(sdfg)
+    rng = np.random.default_rng(5)
+    nat, p, j = 40, 7, 2
+    ityp, sk = rng.integers(0, 4, nat), rng.random((nat, p))
+    vkb = np.zeros((nat * 3, p))
+    sdfg(ityp=ityp, nh=np.array([nhnt]), sk=sk, vkb=vkb, j=j, NAT=nat, NH=3, P=p)
+    assert np.array_equal(vkb, projector_in_numpy(ityp, nhnt, sk, nat * 3, j))
+
+
+NSP = dace.symbol("NSP", dtype=dace.int64)
+
+
+@dace.program
+def pair_segments(nh: dace.int64[NSP], tvanp: dace.int64[NSP], qgm: dace.float64[NSP * NH * NH, P]):
+    # QE vexx's ``ijh = ijh + 1`` inside the k and l loops: pair (k, l), l >= k, of a species with tvanp gets a column
+    ijh = 0
+    for j in range(NSP):
+        if tvanp[j] != 0:
+            for k in range(nh[j]):
+                for m in range(k, nh[j]):
+                    ijh = ijh + 1
+                    for p in range(P):
+                        qgm[ijh - 1, p] = j * 100.0 + k * 10.0 + m + p * 0.5
+
+
+def pairs_in_numpy(nh: np.ndarray, tvanp: np.ndarray, rows: int, columns: int) -> np.ndarray:
+    qgm, ijh = np.zeros((rows, columns)), 0
+    for j in range(nh.size):
+        if tvanp[j] != 0:
+            for k in range(nh[j]):
+                for m in range(k, nh[j]):
+                    qgm[ijh] = j * 100.0 + k * 10.0 + m + np.arange(columns) * 0.5
+                    ijh += 1
+    return qgm
+
+
+def test_a_counter_bumped_in_inner_loops_scans_the_sum_of_each_iterations_bumps():
+    sdfg = canonical(pair_segments)
+    assert scanned(sdfg) and not guarded(sdfg)
+    rng = np.random.default_rng(6)
+    nsp, nh_max, p = 9, 4, 5
+    nh, tvanp = rng.integers(0, nh_max + 1, nsp), rng.integers(0, 2, nsp)
+    qgm = np.zeros((nsp * nh_max * nh_max, p))
+    sdfg(nh=nh, tvanp=tvanp, qgm=qgm, NSP=nsp, NH=nh_max, P=p)
+    assert np.array_equal(qgm, pairs_in_numpy(nh, tvanp, qgm.shape[0], p))
+
+
+@dace.program
+def rectangular_nest_counter(a: dace.float64[N, M], out: dace.float64[N * M]):
+    n = 0
+    for i in range(N):
+        for m in range(M):
+            out[n] = a[i, m]
+            n = n + 1
+
+
+def test_a_constant_bump_in_a_rectangular_nest_is_left_to_the_induction_variables():
+    assert lifted_alone(rectangular_nest_counter) is None
+
+
+@dace.program
+def segment_overlaps(k: dace.int64[N], out: dace.float64[2 * N]):
+    n = 0
+    for i in range(N):
+        for m in range(k[i] + 1):
+            out[n + m] = 1.0
+        n = n + k[i]
+
+
+def test_a_write_past_its_segment_is_refused():
+    """``out[n + k]`` is the next iteration's first element."""
+    assert lifted_alone(segment_overlaps) is None
+
+
 if __name__ == "__main__":
     for size in (1, 2, 37, 1000):
         test_a_counter_bumped_every_iteration_becomes_a_scan_and_two_parallel_loops(size)
@@ -238,7 +430,16 @@ if __name__ == "__main__":
     test_a_counter_that_gathers_reads_the_table_at_each_offset()
     test_a_cursor_that_indexes_a_write_is_left_to_the_compaction_lift()
     test_a_counter_read_only_after_the_loop_is_left_to_the_reductions()
-    test_a_bump_inside_an_inner_loop_is_refused()
+    test_a_bump_inside_an_inner_loop_adds_its_trip_count_per_iteration()
     test_a_guard_that_reads_the_counter_is_refused()
     test_a_step_that_reads_the_counter_is_refused()
     test_a_step_that_reads_what_the_body_writes_is_refused()
+    for degree in (0, 1, 6):
+        test_a_counter_that_indexes_its_own_segment_becomes_a_scan_and_a_parallel_map(degree)
+    for j in (0, 3, 9):
+        test_a_triangular_segment_counter_fills_each_pair_once(j)
+    for nhnt in (3, 0, -2):
+        test_a_data_sized_segment_runs_in_parallel_only_when_no_step_is_negative(nhnt)
+    test_a_write_past_its_segment_is_refused()
+    test_a_counter_bumped_in_inner_loops_scans_the_sum_of_each_iterations_bumps()
+    test_a_constant_bump_in_a_rectangular_nest_is_left_to_the_induction_variables()

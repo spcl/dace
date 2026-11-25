@@ -288,6 +288,9 @@ class MapToForLoop(transformation.SingleStateTransformation):
             f"{loop_idx} = {replace_param(loop_from)}",
             f"{loop_idx} = {loop_idx} + {replace_param(loop_step)}",
         )
+        if parallel:
+            # The map's class line (a guard it runs under, a proof it was lifted on) holds for its iterations as a loop
+            loop_region.specialization_hint = map_entry.specialization_hint
         nsdfg.add_node(loop_region, is_start_block=True)
         nsdfg.remove_node(nstate)
         loop_region.add_node(nstate, is_start_block=True)
