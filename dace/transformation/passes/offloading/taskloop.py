@@ -126,6 +126,17 @@ def is_kernel_refused_libnode(node: nodes.Node, state: SDFGState) -> bool:
     return gpu_block_implementation(node, state, state.sdfg) is None
 
 
+def is_fixed_size_host_call(node: nodes.Node, state: SDFGState) -> bool:
+    """A call no kernel can run (:func:`is_kernel_refused_libnode`) on operands of constant size. A map around such
+    calls runs as host code with the CPU library; one whose calls grow with the problem (QE's FFT of ``nnr`` points)
+    issues the device-wide call per iteration instead, as the host would otherwise run the whole body serially."""
+    return is_kernel_refused_libnode(node, state) and all(
+        symbolic.pystr_to_symbolic(edge.data.subset.num_elements()).is_number
+        for edge in state.all_edges(node)
+        if not edge.data.is_empty()
+    )
+
+
 def encloses_device_wide_libnode(
     state: SDFGState, entry: nodes.MapEntry, scope_children: dict, test: LibnodeTest = is_device_wide_libnode
 ) -> bool:

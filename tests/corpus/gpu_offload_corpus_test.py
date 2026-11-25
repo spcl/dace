@@ -24,7 +24,7 @@ from dace.transformation.passes.canonicalize.finalize import (
     recompute_fuse_for_gpu,
     select_gpu_device_block_size,
 )
-from dace.transformation.passes.offloading.taskloop import encloses_device_wide_libnode, is_kernel_refused_libnode
+from dace.transformation.passes.offloading.taskloop import encloses_device_wide_libnode, is_fixed_size_host_call
 from tests.corpus import corpus_suite as suite
 
 
@@ -55,7 +55,7 @@ def host_calls_only(sdfg: dace.SDFG) -> bool:
     top = [(state, node) for state in sdfg.states() for node in state.scope_children()[None]]
     maps = [(state, node) for state, node in top if isinstance(node, dace.nodes.MapEntry)]
     return bool(maps) and all(
-        encloses_device_wide_libnode(state, node, state.scope_children(), is_kernel_refused_libnode)
+        encloses_device_wide_libnode(state, node, state.scope_children(), is_fixed_size_host_call)
         for state, node in maps
     )
 
