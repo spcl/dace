@@ -11,6 +11,7 @@ import dace
 from dace import symbolic
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 from dace.transformation.passes.parallelization_prep import BestEffortLoopPeeling, ModuloBandSplit
 from tests.sdfg.cfg_list_checks import assert_cfg_list_as_after_a_reset, loop_over_nested_sdfg, record_tree_resets
 
@@ -179,13 +180,52 @@ def store_near_the_end(a: dace.float64[N + 8], b: dace.float64[N + 8]):
             b[0] = a[i + 4]
 
 
-def test_a_split_point_near_the_end_adds_no_iteration_to_a_short_loop():
-    """``N = 1`` puts the point ``N - 3`` below the start: the tail must not begin at ``i = -1``."""
+def reference_store_near_the_end(n: int) -> tuple[np.ndarray, np.ndarray]:
+    a, b = np.zeros(n + 8), np.arange(n + 8.0) + 1.0
+    for i in range(n):
+        a[i + 4] = b[i + 4] + 1.0
+        if i == n - 3:
+            b[0] = a[i + 4]
+    return a, b
+
+
+def test_a_loop_whose_guarded_store_no_iteration_reads_maps_without_a_split():
+    """``b[0]`` is stored by the one iteration ``N - 3`` and no iteration reads it: nothing for a split to unblock."""
     sdfg = store_near_the_end.to_sdfg(simplify=True)
+    assert not BestEffortLoopPeeling().apply_pass(sdfg, {})
+    ParallelizeLoops().apply_pass(sdfg, {})
+    assert not [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+    for n in (1, 2, 3, 5, 10):
+        a, b = np.zeros(n + 8), np.arange(n + 8.0) + 1.0
+        sdfg(a=a, b=b, N=n)
+        expected_a, expected_b = reference_store_near_the_end(n)
+        assert np.array_equal(a, expected_a) and np.array_equal(b, expected_b), n
+
+
+@dace.program
+def store_read_by_an_earlier_iteration(a: dace.float64[N + 8], b: dace.float64[N + 8]):
+    for i in range(N):
+        a[i + 4] = b[i + 4] + 1.0
+        if i == N - 3:
+            b[5] = a[i + 4]
+
+
+def test_a_split_point_near_the_end_adds_no_iteration_to_a_short_loop():
+    """``N = 1`` puts the point ``N - 3`` below the start: the tail must not begin at ``i = -1``.
+
+    ``b[5]`` is stored by iteration ``N - 3`` and read by iteration 1, so the loop needs the split to map.
+    """
+    sdfg = store_read_by_an_earlier_iteration.to_sdfg(simplify=True)
     assert BestEffortLoopPeeling().apply_pass(sdfg, {})
-    a, b = np.zeros(9), np.arange(9.0) + 1.0
-    sdfg(a=a, b=b, N=1)
-    assert a[3] == 0.0 and a[4] == b[4] + 1.0
+    for n in (1, 2, 3, 5, 10):
+        a, b = np.zeros(n + 8), np.arange(n + 8.0) + 1.0
+        expected_a, expected_b = a.copy(), b.copy()
+        for i in range(n):
+            expected_a[i + 4] = expected_b[i + 4] + 1.0
+            if i == n - 3:
+                expected_b[5] = expected_a[i + 4]
+        sdfg(a=a, b=b, N=n)
+        assert np.array_equal(a, expected_a) and np.array_equal(b, expected_b), n
 
 
 if __name__ == "__main__":
