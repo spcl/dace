@@ -11,6 +11,7 @@ from tests.codegen.cpf.conftest import render_gpu
 
 N = dace.symbol("N")
 M = dace.symbol("M")
+T = dace.symbol("T")
 
 
 def bench_c(program: dace.program, name: str) -> str:
@@ -90,9 +91,29 @@ def test_a_simd_loop_says_vectorized_not_not_parallelized():
     assert line.endswith("; vectorized (omp simd), not thread-parallel: inside parallel loop i"), line
 
 
+@dace.program
+def time_stencil(a: dace.float64[N], b: dace.float64[N]):
+    for t in range(T):
+        for i in dace.map[1 : N - 1]:
+            b[i] = 0.25 * (a[i - 1] + 2 * a[i] + a[i + 1])
+        for i in dace.map[1 : N - 1]:
+            a[i] = b[i]
+
+
+def test_a_time_loop_names_the_flow_dependence_alike_on_cpu_and_gpu():
+    """Finding 5: the CPU said an iteration reads the ``b`` an earlier one wrote, though each writes ``b`` first."""
+    flow = "// sequential -- proven dependence on a[1:N - 1]: an iteration reads what an earlier one wrote"
+    cpu = bench_c(time_stencil, "cpf_review2_stencil_cpu")
+    gpu = render_gpu(time_stencil, "cpf_review2_stencil_gpu", "cuda").code
+    for code in (cpu, gpu):
+        (line,) = [line.strip() for line in code.splitlines() if line.strip().startswith("// sequential --")]
+        assert line.startswith(flow), line
+
+
 if __name__ == "__main__":
     test_a_grid_stride_reduction_kernel_says_reduction_and_grid_stride()
     test_a_block_per_row_kernel_has_one_line_per_kernel_and_per_thread_block()
     test_a_lane_strided_reduction_says_reduction_and_carries_no_host_pragma()
     test_a_kernel_library_loop_names_the_kernel_not_its_launch_bounds()
     test_a_simd_loop_says_vectorized_not_not_parallelized()
+    test_a_time_loop_names_the_flow_dependence_alike_on_cpu_and_gpu()
