@@ -1411,6 +1411,25 @@ def observable_from(
     return not seen.isdisjoint(read_by_control_flow)
 
 
+def owns_slot(subset: subsets.Subset, itervar: str, varying: set[str]) -> bool:
+    """Whether ``subset`` confines a dimension to a slot that moves with ``itervar`` by at least its width, and with
+    nothing else that varies in the loop (``tmp[i]``, ``tmp[n*i : n*i + n]``): no two iterations then share an
+    element."""
+    for begin, end, _ in subset.ndrange():
+        begin, end = symbolic.pystr_to_symbolic(begin), symbolic.pystr_to_symbolic(end)
+        names = {str(s) for s in begin.free_symbols | end.free_symbols}
+        if itervar not in names or names & varying:
+            continue
+        (iterator,) = {s for s in begin.free_symbols | end.free_symbols if str(s) == itervar}
+        slope, width = sp.diff(begin, iterator), sp.expand(end - begin)
+        if iterator in width.free_symbols:
+            continue
+        step = slope if slope.is_positive else -slope if slope.is_negative else None
+        if step is not None and (step - width - 1).is_nonnegative:
+            return True
+    return False
+
+
 def loop_varying_symbols(loop: ControlFlowRegion) -> set[str]:
     """Symbols whose value can change *while* ``loop`` runs, other than its own iterator:
     the iterators of loops and maps nested inside its body, and everything its
@@ -3237,23 +3256,19 @@ class LoopLift:
         if itervar in (str(s) for s in desc.free_symbols):
             # If the shape or strides of the array depend on the iteration variable, then the array is thread-local.
             return True
+        # Shared only when every access stays in its own iteration's slot (``tmp[i]``). An access that merely mentions
+        # the iterator can still overlap another iteration's: vexx's block buffer ``aux1[0:min(256, ngm - 256*i)]``
+        # starts at 0 in every block, and sharing it raced (the analysis exempted it as private to each iteration).
+        varying = loop_varying_symbols(self.loop) - {itervar}
+        accessed: list[subsets.Subset] = []
         for state in states:
             for node in state.data_nodes():
-                if node.data != name:
-                    continue
-                for e in state.out_edges(node):
-                    src_subset = e.data.get_src_subset(e, state)
-                    # itersym in the subset → not thread-local. Assumes the loop is a valid Map
-                    # (all edges carrying the array depend on itersym consistently).
-                    if src_subset and itervar in src_subset.free_symbols:
-                        return False
-                for e in state.in_edges(node):
-                    dst_subset = e.data.get_dst_subset(e, state)
-                    # itersym in the subset → not thread-local. Assumes the loop is a valid Map
-                    # (all edges carrying the array depend on itersym consistently).
-                    if dst_subset and itervar in dst_subset.free_symbols:
-                        return False
-        return True
+                if node.data == name:
+                    accessed += [e.data.get_src_subset(e, state) for e in state.out_edges(node)]
+                    accessed += [e.data.get_dst_subset(e, state) for e in state.in_edges(node)]
+        # An empty memlet orders, it accesses nothing
+        accessed = [subset for subset in accessed if subset is not None]
+        return not accessed or not all(owns_slot(subset, itervar, varying) for subset in accessed)
 
     def lift_in(self, graph: ControlFlowRegion, sdfg: sd.SDFG) -> None:
         """:meth:`rewrite` of :attr:`loop` in ``graph`` of ``sdfg``."""
