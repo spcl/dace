@@ -5,7 +5,7 @@ kernel computes what its numpy reference does.
 This is the *baseline* arm of the TSVC suite -- the foundation the canonicalize
 and LoopToMap value tests build on (a transform can only be checked value-preserving
 once the un-transformed program is itself correct). For every kernel in
-:mod:`tests.corpus.tsvc`, at **both** ``simplify=False`` and ``simplify=True``, we
+:mod:`tests.corpus.tsvc`, with simplification on (extended never runs ``simplify=False``), we
 build the SDFG, run it, and compare its outputs to the plain-numpy reference in
 :mod:`tests.corpus.tsvc_numpy` on identical inputs.
 
@@ -32,11 +32,10 @@ def _allclose(a, b) -> bool:
     return np.allclose(np.asarray(a), np.asarray(b), rtol=_TOL, atol=_TOL, equal_nan=True)
 
 
-@pytest.mark.parametrize("simplify", [False, True], ids=["nosimplify", "simplify"])
 @pytest.mark.parametrize("kernel", _CORPUS, ids=[k.name for k in _CORPUS])
 # Reproducer: test(tsvc): full 151-kernel corpus + numpy oracle; canonicalize/l2map fixes (a2ce24f4af)
-def test_tsvc_baseline_matches_numpy(kernel, simplify, request):
-    """The un-transformed SDFG (at this simplify level) matches the numpy reference."""
+def test_tsvc_baseline_matches_numpy(kernel, request):
+    """The un-transformed, simplified SDFG matches the numpy reference."""
     l1, l2 = tsvc.lengths(kernel)
     arrays = tsvc.allocate(kernel, l1, l2, np.random.default_rng(1234))
     call_kwargs = {**tsvc.scalar_params(kernel, l1), **tsvc.symbols(kernel, l1, l2)}
@@ -45,8 +44,7 @@ def test_tsvc_baseline_matches_numpy(kernel, simplify, request):
     ref = {n: a.copy() for n, a in arrays.items()}
     REFERENCES[kernel.name](**ref, **call_kwargs)
 
-    # DaCe scalar SDFG at the requested simplify level
-    sdfg = tsvc.to_sdfg(kernel, request.node.name, simplify=simplify)
+    sdfg = tsvc.to_sdfg(kernel, request.node.name, simplify=True)
     got = {n: a.copy() for n, a in arrays.items()}
     with contextlib.redirect_stdout(io.StringIO()):
         sdfg.compile()(**got, **call_kwargs)
@@ -55,7 +53,7 @@ def test_tsvc_baseline_matches_numpy(kernel, simplify, request):
         if np.issubdtype(arr.dtype, np.integer):
             continue  # gather indices are read-only inputs
         assert _allclose(ref[name], got[name]), (
-            f"{kernel.name}/{name} (simplify={simplify}): SDFG baseline diverges from numpy "
+            f"{kernel.name}/{name}: SDFG baseline diverges from numpy "
             f"reference, max|diff|={np.nanmax(np.abs(np.asarray(ref[name]) - np.asarray(got[name]))):.3e}"
         )
 
