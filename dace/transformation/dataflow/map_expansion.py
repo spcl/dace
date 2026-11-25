@@ -8,8 +8,9 @@ from dace import dtypes, subsets, symbolic
 from dace.properties import EnumProperty, Property, make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.propagation import propagate_memlets_scope
-from dace.sdfg.utils import consolidate_edges
+from dace.sdfg.propagation import propagate_memlets_scope, propagate_node
+from dace.sdfg.state import SymbolResolver
+from dace.sdfg.utils import consolidate_edges_scope
 from dace.transformation import transformation as pm
 
 
@@ -227,23 +228,16 @@ class MapExpansion(pm.SingleStateTransformation):
                 propagate=False,
             )
 
-        from dace.sdfg.scope import ScopeTree
-
-        scope = None
-        queue: list[ScopeTree] = graph.scope_leaves()
-        while len(queue) > 0:
-            tnode = queue.pop()
-            if tnode.entry == entries[-1]:
-                scope = tnode
-                break
-            elif tnode.parent is not None:
-                queue.append(tnode.parent)
-        else:
-            raise ValueError("Cannot find scope in state")
-
-        # The one propagation: it rewrites every external edge from the innermost new scope outwards, so the paths
-        # above are built from the unpropagated memlets rather than propagated once more on the way.
-        propagate_memlets_scope(sdfg, state=graph, scopes=scope)
-        consolidate_edges(sdfg, scope)
+        # Only the new scopes need memlets: the expanded map covers the same iterations, so what crosses its own
+        # entry and exit (and every scope around it) is unchanged. Innermost first, each scope from the one inside it.
+        symbols = SymbolResolver()
+        for entry, exit_ in zip(reversed(entries), reversed(exits)):
+            consolidate_edges_scope(graph, entry, symbols)
+            consolidate_edges_scope(graph, exit_, symbols)
+            propagate_node(graph, entry, symbols)
+            propagate_node(graph, exit_, symbols)
+        # Two connectors of one container the inner scopes merged change what crosses the map: propagate outwards.
+        if consolidate_edges_scope(graph, map_entry, symbols) + consolidate_edges_scope(graph, map_exit, symbols):
+            propagate_memlets_scope(sdfg, graph, graph.scope_tree()[map_entry], symbols=symbols)
 
         return [map_entry] + entries

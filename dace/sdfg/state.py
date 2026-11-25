@@ -3266,6 +3266,15 @@ class SymbolResolver:
             )
         return collections.OrderedDict(last[2])
 
+    def sdfg_small(self, sdfg: "SDFG") -> frozenset[str]:
+        """The ``SMALL`` names of ``sdfg`` and the SDFGs around it, before any scope rebinds one: a superset of the
+        ``small`` of every ``facts_at`` inside it, from the facts derived once per SDFG."""
+        if sdfg not in self._sdfg_facts:
+            self._sdfg_facts[sdfg] = (sdfg.facts(), self.outer_facts(sdfg))
+        own, outer = self._sdfg_facts[sdfg]
+        outer_small = outer[2]
+        return frozenset(outer_small | own.small)
+
     def facts_at(self, block: "ControlFlowBlock", node: nd.Node | None = None) -> symbolic.Facts:
         """The facts that hold inside ``block`` (inside the body, for a loop), or at ``node`` of the state ``block``: the
         SDFG's own facts, the ranges of the enclosing loops and maps whose step has a known sign, and the facts of an

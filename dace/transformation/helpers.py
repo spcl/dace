@@ -30,6 +30,7 @@ from dace.sdfg.state import (
     SymbolResolver,
 )
 from dace.subsets import Range, union
+from dace.symbolic_facts import SMALL_CONSTANT_EXTENT
 
 
 def staying_descriptor_symbols(sdfg: SDFG, states: list[SDFGState], moved: Collection[str]) -> OrderedSet[str]:
@@ -2097,9 +2098,14 @@ def extract_map_dims(
 def small_map_axes(state: SDFGState, map_entry: nodes.MapEntry, resolver: SymbolResolver) -> list[bool]:
     """Per parameter of ``map_entry``, whether its extent is too small to share out
     (:func:`~dace.symbolic.is_small_extent`), at the facts around the map."""
-    facts = resolver.facts_at(state, map_entry)
     # A range bound may be a SymExpr; its main expression is the extent
-    return [symbolic.is_small_extent(as_expr(end - begin + 1), facts) for begin, end, _ in map_entry.map.range.ranges]
+    extents = [symbolic.sympy.sympify(as_expr(end - begin + 1)) for begin, end, step in map_entry.map.range.ranges]
+    # Only an extent over the SDFG's SMALL names needs the facts at the map, which cost a scope walk per map
+    small = resolver.sdfg_small(state.sdfg)
+    if not any(not extent.is_number and {str(free) for free in extent.free_symbols} <= small for extent in extents):
+        return [bool(extent.is_number and extent < SMALL_CONSTANT_EXTENT) for extent in extents]
+    facts = resolver.facts_at(state, map_entry)
+    return [symbolic.is_small_extent(extent, facts) for extent in extents]
 
 
 def isolate_small_map_axes(
