@@ -1364,9 +1364,11 @@ def late_allocation_block(
     blocks = {sized_after(e) for e in edges if e.data.assignments.keys() & sizes}
     if not blocks:
         return alloc_block
-    if len(blocks) > 1:
+    # The size is final at the block every other assignment runs before (QE's nij: set to 0, then summed in a loop)
+    last = [b for b in blocks if all(o is b or precedes(o, b) for o in blocks)]
+    if len(last) != 1:
         raise NotImplementedError(f"{desc} is sized at {len(blocks)} places: it would need a reallocation")
-    (block,) = blocks
+    (block,) = last
     outer = block.parent_graph
     while outer is not region:
         if isinstance(outer, LoopRegion):
@@ -1377,9 +1379,9 @@ def late_allocation_block(
     return block
 
 
-def precedes(state: SDFGState, block: ControlFlowBlock) -> bool:
-    """Whether ``state`` runs before ``block`` is entered on some path, in one iteration of the loops around both."""
-    chain = [state]
+def precedes(first: ControlFlowBlock, block: ControlFlowBlock) -> bool:
+    """Whether ``first`` runs before ``block`` is entered on some path, in one iteration of the loops around both."""
+    chain = [first]
     while not isinstance(chain[-1], SDFG):
         chain.append(chain[-1].parent_graph)
     if any(block is other for other in chain):

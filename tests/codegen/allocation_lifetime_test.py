@@ -689,8 +689,8 @@ def test_dominator_tree_matches_the_transitive_closure():
 
 
 def two_branches_sdfg(name: str, resize: bool = False) -> dace.SDFG:
-    """``t`` is sized by ``n``, 0 on entry (Fortran's unallocated extent), which the first conditional assigns before
-    it fills ``t``; a later conditional reads ``t`` (and, with ``resize``, first assigns ``n`` anew)."""
+    """``t`` is sized by ``n``, 0 on entry (Fortran's unallocated extent), which the first conditional resets and then
+    assigns before it fills ``t``; a later conditional reads ``t`` (and, with ``resize``, first assigns ``n`` anew)."""
     sdfg = dace.SDFG(name)
     sdfg.add_array("A", [4], dace.float64)
     sdfg.add_array("N", [1], dace.int64)
@@ -707,8 +707,9 @@ def two_branches_sdfg(name: str, resize: bool = False) -> dace.SDFG:
         arms.append(arm)
         previous = sdfg.add_state_after(branches, f"after_{label}")
     size = arms[0].add_state("size", is_start_block=True)
-    write = arms[0].add_state("write")
-    arms[0].add_edge(size, write, dace.InterstateEdge(assignments={"n": "N[0]"}))
+    zero = arms[0].add_state_after(size, "zero", assignments={"n": "0"})
+    count = arms[0].add_state_after(zero, "count")
+    write = arms[0].add_state_after(count, "write", assignments={"n": "N[0]"})
     write.add_mapped_tasklet("fill", {"i": "0:n"}, {}, "o = i", {"o": dace.Memlet("t[i]")}, external_edges=True)
     read = arms[1].add_state("read", is_start_block=True)
     if resize:
@@ -732,7 +733,7 @@ def test_a_transient_sized_in_one_branch_and_read_in_a_later_one_is_allocated_af
 
 def test_a_transient_resized_after_its_first_use_is_refused():
     """``n`` changes between the fill and the read of ``t``: that needs a reallocation, which codegen refuses."""
-    with pytest.raises(NotImplementedError, match="sized at 2 places"):
+    with pytest.raises(NotImplementedError, match="accessed before it is sized"):
         two_branches_sdfg("resized_allocation", resize=True).generate_code()
 
 
