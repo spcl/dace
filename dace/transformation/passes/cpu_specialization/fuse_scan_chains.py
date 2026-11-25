@@ -17,6 +17,7 @@ parallel expansion), and a ``min`` / ``max`` scan must carry a seed or an identi
 """
 
 import ast
+import re
 from typing import Any, NamedTuple
 
 from dace import SDFG, SDFGState, data, dtypes, symbolic
@@ -45,6 +46,10 @@ OUT = "scan_out"
 SEED = "scan_seed"
 #: The scan position while the producer's expression is built; ``{i}`` once it is C.
 POSITION = "scan_position"
+
+#: Sympy's ``Min`` / ``Max`` in an expression the fused tasklet would paste: CPF types the call where a printer emits
+#: it, and pasted text reaches no printer.
+MINMAX_CALL = re.compile(r"\bM(?:in|ax)\s*\(")
 
 
 def connector(array: str) -> str:
@@ -124,6 +129,9 @@ def compose(
             reads.update(more)
         else:
             return None
+
+    # The map parameter read as a value (``__out = n - i``) is the scan position too
+    replacement.setdefault(param, position)
 
     class Substitute(ast.NodeTransformer):
         def visit_Name(self, node: ast.Name) -> ast.AST:
@@ -264,6 +272,9 @@ class FuseScanChains(ppl.Pass):
         if out_start is None:
             return False
         length = sym2cpp(stop - start + 1)
+        # The pasted C++ reaches CPF's C unit verbatim, where an untyped ``Max`` has no spelling
+        if MINMAX_CALL.search(producer.expression) or MINMAX_CALL.search(length):
+            return False
         kind = "excl" if scan.exclusive else "incl"
         body = blocked_scan_body(
             kind,
@@ -273,7 +284,7 @@ class FuseScanChains(ppl.Pass):
             element=producer.expression,
             store=f"{OUT}[({out_start}) + {{i}}] = acc;",
             # One position reads one element of every array the producer reads: the block holds 512 KB of those.
-            element_bytes=str(sum(sdfg.arrays[name].dtype.bytes for name in producer.reads)),
+            element_bytes=str(sum(sdfg.arrays[name].dtype.bytes for name in producer.reads) or out_desc.dtype.bytes),
         )
         inclusive = "exclusive" if scan.exclusive else "inclusive"
         code = "\n".join(

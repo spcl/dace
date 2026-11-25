@@ -709,6 +709,35 @@ def test_a_step_assigned_in_the_loop_is_not_folded():
     assert list(out) == [0, 1, 2, 3, 8, 13]
 
 
+NSP = dace.symbol("NSP")
+
+
+@dace.program
+def counted_pairs(nh: dace.int64[NSP], on: dace.int64[NSP], out: dace.float64[64]):
+    ijh = 0
+    for j in range(NSP):
+        if on[j] != 0:
+            for k in range(nh[j]):
+                for m in range(k, nh[j]):
+                    ijh = ijh + 1
+                    out[ijh - 1] = j * 100.0 + k * 10.0 + m
+
+
+@pytest.mark.parametrize("simplify", [False, True])
+def test_a_counter_bumped_in_a_guarded_triangular_nest_keeps_its_carry(simplify: bool):
+    # QE vexx's ijh: the pairs l >= k a nest counts differ per k and per species, so no closed form folds them
+    nh, on = np.array([3, 2, 4, 1]), np.array([1, 0, 1, 1])
+    want, ijh = np.zeros(64), 0
+    for j in range(nh.size):
+        for k in range(nh[j] if on[j] else 0):
+            for m in range(k, nh[j]):
+                want[ijh] = j * 100.0 + k * 10.0 + m
+                ijh += 1
+    out = np.zeros(64)
+    counted_pairs.to_sdfg(simplify=simplify)(nh=nh, on=on, out=out, NSP=nh.size)
+    assert np.array_equal(out, want), (out, want)
+
+
 if __name__ == "__main__":
     test_folds_memlet_subset_and_removes_dead_assignment()
     test_no_action_when_no_derived_iv()
@@ -735,3 +764,5 @@ if __name__ == "__main__":
     test_does_not_fold_conditional_argmax_iv()
     test_counter_reseeded_without_reading_itself_is_not_folded()
     test_a_step_assigned_in_the_loop_is_not_folded()
+    test_a_counter_bumped_in_a_guarded_triangular_nest_keeps_its_carry(False)
+    test_a_counter_bumped_in_a_guarded_triangular_nest_keeps_its_carry(True)

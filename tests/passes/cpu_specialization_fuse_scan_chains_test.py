@@ -93,5 +93,41 @@ def test_a_buffer_with_a_second_reader_is_left_alone():
     assert "tmp" in sdfg.arrays
 
 
+def position_sdfg(name: str) -> dace.SDFG:
+    """``b = exclusive_scan(2 * i for i in 0:N)``: the producer reads no array, only its map parameter."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("b", [N], dace.int64)
+    sdfg.add_array("tmp", [N], dace.int64, transient=True)
+    state = sdfg.add_state("body")
+    state.add_mapped_tasklet(
+        "produce",
+        {"i": "0:N"},
+        {},
+        "z = 2 * i",
+        {"z": dace.Memlet("tmp[i]")},
+        schedule=dtypes.ScheduleType.CPU_Multicore,
+        external_edges=True,
+    )
+    tmp = next(n for n in state.data_nodes() if n.data == "tmp")
+    scan = Scan("scan", op=ScanOp.SUM, exclusive=True, identity=0)
+    state.add_node(scan)
+    state.add_edge(tmp, None, scan, INPUT_CONNECTOR_NAME, dace.Memlet("tmp[0:N]"))
+    state.add_edge(scan, OUTPUT_CONNECTOR_NAME, state.add_write("b"), None, dace.Memlet("b[0:N]"))
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("n", [5, 3 * 65536 * 4 + 17])
+def test_a_producer_that_reads_only_its_position_scans_the_position(n: int):
+    """The map parameter read as a value was pasted unbound, and a producer reading no array divided by zero bytes."""
+    sdfg = position_sdfg(f"fuse_position_{n}")
+    assert FuseScanChains().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    b = np.zeros(n, np.int64)
+    sdfg(b=b, N=n)
+    values = 2 * np.arange(n)
+    assert np.array_equal(b, np.cumsum(values) - values)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])

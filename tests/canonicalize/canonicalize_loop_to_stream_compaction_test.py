@@ -25,6 +25,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.symbolic import permutation
 from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.canonicalize import canonicalize
+from dace.transformation.passes.canonicalize.lift_counter_scan import INCREMENT_PREFIX
 from dace.transformation.passes.canonicalize.loop_to_stream_compaction import (
     IDX_PREFIX,
     MASK_PREFIX,
@@ -1319,14 +1320,15 @@ def csr_children_append(
     cnt[0] = n
 
 
-def test_csr_children_append_lifts_the_row_level():
+def test_csr_children_append_scans_the_rows_and_compacts_each_row():
     """Step 2 of nfa_frontier without the dedup: the inner range moves with ``rows[k]``, so the nest has no
-    rectangular mask. The row loop is the widest level that is one, so it lifts on its own and its phases stay
-    inside the sequential loop over ``k``, which carries the cursor from row to row."""
+    rectangular mask. The counter scan takes the loop over ``k`` (each row's offset is the scan of its kept children),
+    and each row, in the nested SDFG of that parallel loop, lifts to a compaction of its own."""
     sdfg = build(csr_children_append)
-    assert lifted(sdfg)
+    names = [name for sd in sdfg.all_sdfgs_recursive() for name in sd.arrays]
+    assert any(name.startswith(INCREMENT_PREFIX) for name in sdfg.arrays)
+    assert any(name.startswith(MASK_PREFIX) for name in names)
     assert not nest_claimed(sdfg, 2)
-    assert phases_under_a_loop(sdfg)
     row_ptr = np.array([0, 2, 2, 5, 6], dtype=np.int64)
     col_idx = np.array([1, 3, 0, 2, 3, 1], dtype=np.int64)
     keep = np.array([1, 0, 1, 1], dtype=np.int64)

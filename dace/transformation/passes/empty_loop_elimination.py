@@ -76,8 +76,20 @@ class EmptyLoopElimination(ppl.Pass):
 
         ies = parent_graph.in_edges(node)
         oes = parent_graph.out_edges(node)
-        new_assignments = dict()
-        new_assignments.update(ies[0].data.assignments)
-        new_assignments.update(oes[0].data.assignments)
-        parent_graph.add_edge(ies[0].src, oes[0].dst, InterstateEdge(condition="1", assignments=new_assignments))
+        before, after = ies[0].data, oes[0].data
+        # One edge assigns all at once: an assignment or test after the loop reading what the edge before sets, or a
+        # test on either side, keeps both edges around an empty state
+        if (
+            before.is_unconditional()
+            and after.is_unconditional()
+            and not after.read_symbols() & before.assignments.keys()
+        ):
+            new_assignments = dict()
+            new_assignments.update(before.assignments)
+            new_assignments.update(after.assignments)
+            parent_graph.add_edge(ies[0].src, oes[0].dst, InterstateEdge(condition="1", assignments=new_assignments))
+        else:
+            empty = parent_graph.add_state(f"{node.label}_empty")
+            parent_graph.add_edge(ies[0].src, empty, before)
+            parent_graph.add_edge(empty, oes[0].dst, after)
         parent_graph.remove_node(node)

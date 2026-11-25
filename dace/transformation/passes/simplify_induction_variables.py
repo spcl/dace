@@ -163,6 +163,12 @@ def fold_self_referential_iedge_ivs(
             # Mid-body increment: conservatively refuse until a use-side analysis lands.
             continue
 
+        trip = loop_trip_count(loop)
+        per_iter = None if trip is None else symbolic.simplify(trip * step)
+        # Dropping the update loses the carry across the iterations of the loops around this one
+        if not outer_closes_carry(loop, name, per_iter):
+            continue
+
         # The symbol inside the loop now represents the value on entry, so the
         # closed form is ``entry_sym + body_offset * step``.
         closed = symbolic.symstr(symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(name)) + body_offset * step))
@@ -171,12 +177,45 @@ def fold_self_referential_iedge_ivs(
         # A temporary the body sizes by the counter grows with it (``res[:n] + 1.0`` under ``n = n + 1``)
         fold_into_loop_local_descriptors(loop, name, closed)
 
-        trip = loop_trip_count(loop)
-        if trip is not None:
-            nested_carries[name] = (loop, symbolic.simplify(trip * step))
+        if per_iter is not None:
+            nested_carries[name] = (loop, per_iter)
         applied += 1
 
     return applied
+
+
+def enclosing_loop(block: Any) -> LoopRegion | None:
+    graph = block.parent_graph
+    while graph is not None and not isinstance(graph, LoopRegion):
+        graph = graph.parent_graph
+    return graph
+
+
+def outer_closes_carry(loop: LoopRegion, name: str, per_iter: symbolic.SymbolicType | None) -> bool:
+    """Whether folding counter ``name`` in ``loop`` keeps its carry across the loops around ``loop``: none encloses
+    it, or one loop, its direct parent and itself in no loop, adds the same ``per_iter`` on every iteration
+    (``fold_nested_carried_symbols`` closes it there). A triangular or guarded nest (QE's ``ijh``) does not."""
+    outer = enclosing_loop(loop)
+    if outer is None:
+        return True
+    if outer is not loop.parent_graph or enclosing_loop(outer) is not None or per_iter is None:
+        return False
+    inner_edges = OrderedSet(id(edge) for edge in loop.all_interstate_edges())
+    assigned = OrderedSet(
+        target
+        for edge in outer.all_interstate_edges()
+        if id(edge) not in inner_edges
+        for target in edge.data.assignments
+    )
+    varying = {outer.loop_variable, name, *assigned}
+    return (
+        name not in assigned
+        and not {str(sym) for sym in symbolic.pystr_to_symbolic(per_iter).free_symbols} & varying
+        and loop_analysis.get_init_assignment(outer) is not None
+        and loop_analysis.get_loop_stride(outer) is not None
+        and not shared_container_uses_symbol(outer, name)
+        and not names_containers(loop.sdfg, per_iter)
+    )
 
 
 def fold_nested_carried_symbols(

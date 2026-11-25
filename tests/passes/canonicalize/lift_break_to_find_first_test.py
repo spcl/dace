@@ -6,7 +6,7 @@ import pytest
 
 import dace
 from dace.libraries.standard.nodes.find_first import FindFirst
-from dace.sdfg.state import BreakBlock
+from dace.sdfg.state import BreakBlock, LoopRegion
 from dace.transformation.passes.canonicalize.lift_break_to_find_first import LiftBreakToFindFirst
 
 N = dace.symbol("N", dace.int64)
@@ -240,6 +240,129 @@ def test_a_test_that_gathers_through_the_counter_keeps_the_loop():
     assert out_index[0] == 10
 
 
+@dace.program
+def last_match(a: dace.float64[N], out_index: dace.int64[1], out_value: dace.float64[1]):
+    index = -1
+    value = 0.0
+    for i in range(N):
+        if a[i] > 0.9:
+            index = i
+            value = a[i]
+    out_index[0] = index
+    out_value[0] = value
+
+
+@dace.program
+def last_match_into_memory(a: dace.float64[N], out_index: dace.int64[1]):
+    out_index[0] = -1
+    for i in range(N):
+        if a[i] > 0.9:
+            out_index[0] = i
+
+
+@dace.program
+def first_match_without_break(a: dace.float64[N], out_index: dace.int64[1]):
+    index = -1
+    for i in range(N):
+        if a[i] > 0.9 and index < 0:
+            index = i
+    out_index[0] = index
+
+
+@dace.program
+def first_match_by_flag(a: dace.float64[N], out_index: dace.int64[1]):
+    found = 0
+    index = -1
+    for i in range(N):
+        if found == 0 and a[i] > 0.9:
+            found = 1
+            index = i
+    out_index[0] = index
+
+
+@dace.program
+def counts_matches(a: dace.float64[N], out: dace.int64[1]):
+    count = 0
+    for i in range(N):
+        if a[i] > 0.9:
+            count = count + 1
+    out[0] = count
+
+
+@dace.program
+def marks_every_match(a: dace.float64[N], marks: dace.int64[N]):
+    for i in range(N):
+        if a[i] > 0.9:
+            marks[i] = 1
+
+
+@dace.program
+def sentinel_reopens(a: dace.float64[N], out_index: dace.int64[1]):
+    index = -1
+    for i in range(N):
+        if a[i] > 0.9 and index < 0:
+            index = i - 5
+    out_index[0] = index
+
+
+@dace.program
+def record_feeds_the_test(a: dace.float64[N], out: dace.float64[1]):
+    best = 0.5
+    for i in range(N):
+        if a[i] > best:
+            best = a[i]
+    out[0] = best
+
+
+def hits_at(positions: list[int], size: int = 1000) -> np.ndarray:
+    a = np.random.default_rng(2).uniform(0.0, 0.5, size)
+    for position in positions:
+        a[position] = 0.95 + position / (10 * size)
+    return a
+
+
+@pytest.mark.parametrize("positions", [[17, 400, 999], [0], []])
+def test_a_last_match_is_a_search_from_the_end_and_records_once(positions):
+    sdfg, result = lifted(last_match, f"lift_ff_last_{len(positions)}")
+    assert result == 1 and len(find_firsts(sdfg)) == 1
+    assert not any(isinstance(r, LoopRegion) for r in sdfg.all_control_flow_regions())
+    a = hits_at(positions)
+    out_index, out_value = np.zeros(1, np.int64), np.zeros(1)
+    sdfg(a=a, out_index=out_index, out_value=out_value, N=a.size)
+    assert out_index[0] == (positions[-1] if positions else -1)
+    assert out_value[0] == (a[positions[-1]] if positions else 0.0)
+
+
+@pytest.mark.parametrize("positions", [[17, 400], []])
+def test_a_last_match_into_memory_keeps_the_value_from_before_the_loop_on_no_hit(positions):
+    sdfg, result = lifted(last_match_into_memory, f"lift_ff_last_memory_{len(positions)}")
+    assert result == 1
+    a = hits_at(positions)
+    out_index = np.zeros(1, np.int64)
+    sdfg(a=a, out_index=out_index, N=a.size)
+    assert out_index[0] == (positions[-1] if positions else -1)
+
+
+@pytest.mark.parametrize("program", [first_match_without_break, first_match_by_flag])
+@pytest.mark.parametrize("positions", [[17, 400], [999], []])
+def test_a_first_match_without_break_is_a_find_first_guarded_by_its_sentinel(program, positions):
+    sdfg, result = lifted(program, f"lift_ff_{program.name}_{len(positions)}")
+    assert result == 1 and len(find_firsts(sdfg)) == 1
+    a = hits_at(positions)
+    out_index = np.zeros(1, np.int64)
+    sdfg(a=a, out_index=out_index, N=a.size)
+    assert out_index[0] == (positions[0] if positions else -1)
+
+
+@pytest.mark.parametrize(
+    "program", [counts_matches, marks_every_match, sentinel_reopens, record_feeds_the_test], ids=lambda p: p.name
+)
+def test_a_record_that_is_not_last_wins_is_refused(program):
+    """Each record builds on the last, writes where the index says, reopens its sentinel, or feeds the test."""
+    sdfg, result = lifted(program, f"lift_ff_refused_{program.name}")
+    assert result is None and not find_firsts(sdfg)
+
+
 if __name__ == "__main__":
     test_capture_finds_the_first_hit_and_runs_the_effect_once(17)
     test_capture_finds_the_first_hit_and_runs_the_effect_once(0)
@@ -260,3 +383,12 @@ if __name__ == "__main__":
         test_the_pure_search_is_python_sdfg_components_and_finds_the_first_hit(hit)
     test_a_test_that_gathers_through_the_counter_keeps_the_loop()
     test_a_test_dividing_by_data_is_refused()
+    for positions in ([17, 400, 999], [0], []):
+        test_a_last_match_is_a_search_from_the_end_and_records_once(positions)
+    for positions in ([17, 400], []):
+        test_a_last_match_into_memory_keeps_the_value_from_before_the_loop_on_no_hit(positions)
+    for program in (first_match_without_break, first_match_by_flag):
+        for positions in ([17, 400], [999], []):
+            test_a_first_match_without_break_is_a_find_first_guarded_by_its_sentinel(program, positions)
+    for program in (counts_matches, marks_every_match, sentinel_reopens, record_feeds_the_test):
+        test_a_record_that_is_not_last_wins_is_refused(program)

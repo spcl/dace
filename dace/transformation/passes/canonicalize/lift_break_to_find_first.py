@@ -1,5 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lift an early-exit loop to a parallel find-first, the body below the hit and the exit effect once."""
+"""Lift an early-exit loop to a parallel find-first, the body below the hit and the exit effect once; and a loop that
+records the first or the last index where a test holds, without an exit, to the same search (from the end for the
+last), the record made once at the found index."""
 
 import ast
 import copy
@@ -40,7 +42,15 @@ CHUNKED_EXIT = (
     "; blocks of {chunk} iterations, in order: each block is searched in parallel for the first exit (find-first), "
     "then its iterations below the exit run in parallel, and no block after the exit runs"
 )
-FIND_FIRST_HINT = "find-first: chunked cancelling search; alt: one min-reduction (faster on a late or no hit)"
+FIND_FIRST_HINT = (
+    "parallel -- reduction: min over the indices where the test holds (find-first: chunked cancelling search); "
+    "alt: one min-reduction (faster on a late or no hit)"
+)
+#: Recorded on the search of a lifted last-match loop: the find-first runs over the range reversed.
+FIND_LAST_HINT = (
+    "parallel -- reduction: max over the indices where the test holds (find-first from the end: chunked cancelling "
+    "search); alt: one max-reduction (faster on an early or no hit)"
+)
 
 
 class Match:
@@ -55,6 +65,11 @@ class Match:
         self.post = chain[position + 1 :]
         _, self.effect = test.branches[0]
         self.predicate = ""
+        #: A break-free record: the LAST firing index is the one kept (searched from the end).
+        self.last = False
+        #: A break-free first-match: the test's terms that read what the record assigns, ``"p < 0"``; they hold at
+        #: entry or the loop records nothing, and once the record runs they never hold again.
+        self.sentinel = ""
         self.inputs: dict[str, str] = {}
         #: Per array the test subscripts: each read's per-dimension index, written over ``INDEX_NAME``.
         self.reads: dict[str, list[list[str]]] = {}
@@ -141,14 +156,84 @@ def searched(
     return memlet
 
 
+def names_in(code: str) -> set[str]:
+    """Every bare name ``code`` reads."""
+    return {n.id for n in ast.walk(ast.parse(code, mode="eval")) if isinstance(n, ast.Name)}
+
+
+def split_conjunction(code: str) -> list[str]:
+    """The terms of ``code`` read as ``a and b and ...``; ``code`` alone when it is no conjunction."""
+    tree = ast.parse(code, mode="eval").body
+    if isinstance(tree, ast.BoolOp) and isinstance(tree.op, ast.And):
+        return [ast.unparse(term) for term in tree.values]
+    return [ast.unparse(tree)]
+
+
+def substituted(code: str, values: dict[str, str]) -> str | None:
+    """``code`` with each name of ``values`` replaced by its expression, or ``None`` if one reads data."""
+    replacements = {name: ast.parse(rhs, mode="eval").body for name, rhs in values.items()}
+    if any(isinstance(n, ast.Subscript) for rhs in replacements.values() for n in ast.walk(rhs)):
+        return None
+
+    class Replace(ast.NodeTransformer):
+        def visit_Name(self, node: ast.Name) -> ast.expr:
+            return copy.deepcopy(replacements[node.id]) if node.id in replacements else node
+
+    return ast.unparse(Replace().visit(ast.parse(code, mode="eval")))
+
+
+def never_holds(
+    expr: Any, counter: Any, begin: symbolic.SymbolicType, end: symbolic.SymbolicType, facts: symbolic.Facts
+) -> bool:
+    """Whether ``expr`` is false at every ``counter`` in ``[begin, end]``: a literal false, a conjunction with a term
+    that never holds, or a comparison of two sides that differ by an affine function of ``counter`` staying on the
+    false side over the whole range."""
+    if expr is sympy.false or expr is False:
+        return True
+    if isinstance(expr, sympy.And):
+        return any(never_holds(term, counter, begin, end, facts) for term in expr.args)
+    if not isinstance(expr, sympy.core.relational.Relational):
+        return False
+    difference = sympy.expand(expr.lhs - expr.rhs)
+    slope = difference.diff(counter)
+    if not slope.is_number:
+        return False
+    at_begin, at_end = difference.subs(counter, begin), difference.subs(counter, end)
+
+    # An affine difference takes its least value at one end of the range, chosen by its slope
+    def at_least(bound: int) -> bool:
+        lowest = at_begin if slope >= 0 else at_end
+        return symbolic.provably_le(sympy.Integer(bound), lowest, facts)
+
+    def at_most(bound: int) -> bool:
+        highest = at_end if slope >= 0 else at_begin
+        return symbolic.provably_le(highest, sympy.Integer(bound), facts)
+
+    if isinstance(expr, sympy.StrictLessThan):
+        return at_least(0)
+    if isinstance(expr, sympy.LessThan):
+        return at_least(1)
+    if isinstance(expr, sympy.StrictGreaterThan):
+        return at_most(0)
+    if isinstance(expr, sympy.GreaterThan):
+        return at_most(-1)
+    if isinstance(expr, sympy.Equality):
+        return at_least(1) or at_most(-1)
+    return False
+
+
 class PredicateBuilder(ast.NodeTransformer):
     """Rewrites the test over the loop's symbols into a Python predicate over FindFirst's connectors."""
 
-    def __init__(self, sdfg: SDFG, counter: str, bindings: dict[str, ast.expr], match: Match) -> None:
+    def __init__(
+        self, sdfg: SDFG, counter: str, bindings: dict[str, ast.expr], match: Match, index: ast.expr | None = None
+    ) -> None:
         self.sdfg = sdfg
         self.counter = counter
         self.bindings = bindings
         self.match = match
+        #: What the counter becomes: the search index, or for a last-match the index counted from the end.
+        self.index = ast.Name(INDEX_NAME, ast.Load()) if index is None else index
 
     def connector(self, name: str) -> str:
         return self.match.inputs.setdefault(name, f"_{name}")
@@ -157,7 +242,7 @@ class PredicateBuilder(ast.NodeTransformer):
         if node.id in self.bindings:
             return copy.deepcopy(self.bindings[node.id])
         if node.id == self.counter:
-            return ast.Name(INDEX_NAME, ast.Load())
+            return copy.deepcopy(self.index)
         if node.id in self.sdfg.arrays:
             desc = self.sdfg.arrays[node.id]
             if not isinstance(desc, data.Scalar):
@@ -232,6 +317,8 @@ class LiftBreakToFindFirst(ppl.Pass):
         # A do-while runs its first body before the test of the range, which the search does not.
         if loop.inverted:
             return None
+        if not jumps:
+            return self.match_record(sdfg, loop)
         if len(jumps) != 1 or not isinstance(jumps[0], BreakBlock):
             return None
         if get_init_assignment(loop) is None or get_loop_end(loop) is None or get_loop_stride(loop) != 1:
@@ -258,6 +345,108 @@ class LiftBreakToFindFirst(ppl.Pass):
         if not self.reads_stay_in_bounds(sdfg, match):
             return None
         return match
+
+    def match_record(self, sdfg: SDFG, loop: LoopRegion) -> Match | None:
+        """A break-free loop whose one guard records where its test holds (``if p(i): last = i; v = a[i]``): the last
+        firing index, or with a sentinel term (``if p(i) and pos < 0: pos = i``) the first one. ``None`` unless the
+        record, made once at that index, leaves what all the records in order leave."""
+        if get_init_assignment(loop) is None or get_loop_end(loop) is None or get_loop_stride(loop) != 1:
+            return None
+        chain = linear_chain(loop)
+        if chain is None:
+            return None
+        tests = [b for b in chain if isinstance(b, ConditionalBlock)]
+        # Nothing but the test does work: the search replaces every iteration but the found one.
+        if len(tests) != 1 or any(does_work(b) for b in chain if b is not tests[0]):
+            return None
+        test = tests[0]
+        if len(test.branches) != 1 or test.branches[0][0] is None:
+            return None
+        match = Match(loop, chain, test)
+        effect_chain = linear_chain(match.effect)
+        if effect_chain is None or not all(isinstance(b, SDFGState) for b in effect_chain):
+            return None
+        assigned = {name for e in match.effect.edges() for name in e.data.assignments}
+        counter = loop.loop_variable
+        reads_index = any(counter in names_in(rhs) for e in match.effect.edges() for rhs in e.data.assignments.values())
+        if not reads_index and not any(counter in state.free_symbols for state in effect_chain):
+            return None  # a flag records no index: an any-reduction (``ConstantStoreToLogicalReduction``)
+        if not self.record_is_last_wins(sdfg, match, effect_chain, assigned):
+            return None
+        terms = split_conjunction(match.test.branches[0][0].as_string)
+        sentinel = [t for t in terms if names_in(t) & assigned]
+        predicate = [t for t in terms if t not in sentinel]
+        if not predicate:
+            return None
+        if sentinel:
+            match.sentinel = " and ".join(f"({t})" for t in sentinel)
+            if not self.sentinel_closes(sdfg, match, assigned):
+                return None
+        else:
+            match.last = True
+        if not self.build_predicate(sdfg, match, " and ".join(f"({t})" for t in predicate)):
+            return None
+        if match.symbols & assigned or set(match.inputs) & written_data(effect_chain):
+            return None  # the test reads what the record writes: the order of the records matters
+        if not self.private_to_loop(sdfg, match) or not self.reads_stay_in_bounds(sdfg, match):
+            return None
+        return match
+
+    def record_is_last_wins(
+        self, sdfg: SDFG, match: Match, effect_chain: list[ControlFlowBlock], assigned: set[str]
+    ) -> bool:
+        """Whether running the record once, at the last index it runs at, leaves what every run in order leaves: it
+        reads nothing it assigns or writes, and writes the same elements at every index."""
+        counter = match.loop.loop_variable
+        moving = {counter, *(name for e in match.loop.all_interstate_edges() for name in e.data.assignments)}
+        written = written_data(effect_chain)
+        for edge in match.effect.edges():
+            for rhs in edge.data.assignments.values():
+                if names_in(rhs) & (assigned | written):
+                    return False  # ``count = count + 1``: each record builds on the last
+        for state in effect_chain:
+            if state.free_symbols & assigned:
+                return False
+            for node in state.nodes():
+                if isinstance(node, nodes.NestedSDFG) or (
+                    isinstance(node, nodes.CodeNode) and node.has_side_effects(sdfg)
+                ):
+                    return False
+                if (
+                    isinstance(node, nodes.AccessNode)
+                    and state.in_degree(node) == 0
+                    and state.out_degree(node)
+                    and node.data in written
+                ):
+                    return False  # reads what an earlier record wrote
+            for edge in state.edges():
+                if edge.data.is_empty() or not isinstance(edge.dst, nodes.AccessNode):
+                    continue
+                subset = edge.data.get_dst_subset(edge, state)
+                if edge.data.wcr is not None or subset is None or {str(f) for f in subset.free_symbols} & moving:
+                    return False  # a write that moves with the index keeps every record, not only the last
+        return True
+
+    def sentinel_closes(self, sdfg: SDFG, match: Match, assigned: set[str]) -> bool:
+        """Whether the sentinel terms read only what the record assigns and what the loop leaves fixed, and the record
+        makes them false at every index of the range: then only the first firing index records."""
+        loop = match.loop
+        moving = {loop.loop_variable, *(n for e in loop.all_interstate_edges() for n in e.data.assignments)} - assigned
+        if names_in(match.sentinel) & (moving | set(sdfg.arrays)):
+            return False
+        values = {name: rhs for e in match.effect.edges() for name, rhs in e.data.assignments.items()}
+        closed = substituted(match.sentinel, values)
+        if closed is None:
+            return False
+        try:
+            expr = symbolic.pystr_to_symbolic(closed)
+        except (TypeError, ValueError, SyntaxError):
+            return False
+        counter = symbolic.pystr_to_symbolic(loop.loop_variable)
+        expr, counter, begin, end = symbolic.equalize_symbols_across(
+            expr, counter, get_init_assignment(loop), get_loop_end(loop)
+        )
+        return never_holds(expr, counter, begin, end, sdfg.facts())
 
     def reads_stay_in_bounds(self, sdfg: SDFG, match: Match) -> bool:
         """Whether every element the test reads through the counter exists at every index of the range."""
@@ -288,17 +477,25 @@ class LiftBreakToFindFirst(ppl.Pass):
                         return False
         return True
 
-    def build_predicate(self, sdfg: SDFG, match: Match) -> bool:
-        """Fill ``match.predicate`` from the test and the assignments that feed it; ``False`` if impossible."""
+    def build_predicate(self, sdfg: SDFG, match: Match, test: str | None = None) -> bool:
+        """Fill ``match.predicate`` from the test (``test``, else the guard's condition) and the assignments that feed
+        it; ``False`` if impossible. A last-match reads the counter as ``begin + end - __i``: the search runs from the
+        end."""
         counter = match.loop.loop_variable
         bindings: dict[str, ast.expr] = {}
-        builder = PredicateBuilder(sdfg, counter, bindings, match)
+        index = None
+        if match.last:
+            bounds = (
+                f"({symbolic.symstr(get_init_assignment(match.loop))}) + ({symbolic.symstr(get_loop_end(match.loop))})"
+            )
+            index = ast.parse(f"({bounds} - {INDEX_NAME})", mode="eval").body
+        builder = PredicateBuilder(sdfg, counter, bindings, match, index)
         loop_written = written_data(match.pre + match.post)
         try:
             for block in match.pre:
                 for name, rhs in match.loop.out_edges(block)[0].data.assignments.items():
                     bindings[name] = builder.visit(ast.parse(rhs, mode="eval").body)
-            condition = ast.parse(match.test.branches[0][0].as_string, mode="eval").body
+            condition = ast.parse(match.test.branches[0][0].as_string if test is None else test, mode="eval").body
             predicate = builder.visit(condition)
         except (ValueError, SyntaxError):
             return False
@@ -308,6 +505,10 @@ class LiftBreakToFindFirst(ppl.Pass):
         body_assigned = {name for e in match.loop.edges() for name in e.data.assignments}
         if match.symbols & body_assigned:
             return False
+        if match.last:
+            # The reversed index reads the loop bounds
+            bounds = (get_init_assignment(match.loop), get_loop_end(match.loop))
+            match.symbols.update(str(f) for bound in bounds for f in sympy.sympify(bound).free_symbols)
         match.predicate = ast.unparse(predicate)
         return INDEX_NAME in match.predicate
 
@@ -376,7 +577,7 @@ class LiftBreakToFindFirst(ppl.Pass):
         )
         node = FindFirst(f"{loop.label}_find_first", predicate=match.predicate, begin=lo, end=hi)
         node.symbols = sorted(match.symbols)
-        node.specialization_hint = FIND_FIRST_HINT
+        node.specialization_hint = FIND_LAST_HINT if match.last else FIND_FIRST_HINT
         search.add_node(node)
         for name, conn in sorted(match.inputs.items()):
             node.add_in_connector(conn)
@@ -387,8 +588,14 @@ class LiftBreakToFindFirst(ppl.Pass):
 
         hit = ConditionalBlock(f"{loop.label}_hit_effect", sdfg=sdfg, parent=container)
         branch = ControlFlowRegion(f"{loop.label}_hit_branch", sdfg=sdfg, parent=hit)
-        hit.add_branch(properties.CodeBlock(f"{first_sym} < {symbolic.symstr(hi)}"), branch)
-        self.copy_pre_and_effect(sdfg, match, branch, counter, first_sym, keep_break=chunked)
+        found = f"{first_sym} < {symbolic.symstr(hi)}"
+        # The sentinel reads the values from before the loop: it held there, or no index records
+        hit.add_branch(properties.CodeBlock(f"({found}) and ({match.sentinel})" if match.sentinel else found), branch)
+        index = first_sym
+        if match.last:
+            # The search ran over the reversed range: its answer counts from the end
+            index = sdfg.find_new_symbol(f"{loop.label}_last")
+        self.copy_pre_and_effect(sdfg, match, branch, counter, first_sym, keep_break=chunked, index=index)
         container.add_node(hit)
         if not chunked:
             for edge in list(container.in_edges(loop)):
@@ -418,12 +625,24 @@ class LiftBreakToFindFirst(ppl.Pass):
             container.add_edge(search, hit, bind)
 
     def copy_pre_and_effect(
-        self, sdfg: SDFG, match: Match, branch: ControlFlowRegion, counter: str, first_sym: str, keep_break: bool
+        self,
+        sdfg: SDFG,
+        match: Match,
+        branch: ControlFlowRegion,
+        counter: str,
+        first_sym: str,
+        keep_break: bool,
+        index: str | None = None,
     ) -> None:
-        """Fill ``branch`` with ``pre(first); effect(first)`` (and its ``break`` when kept), the counter renamed."""
+        """Fill ``branch`` with ``pre(i); effect(i)`` (and its ``break`` when kept), the counter renamed to ``index``:
+        the search's answer ``first_sym``, or for a last-match the index it stands for, bound first."""
         loop = match.loop
+        index = first_sym if index is None else index
         previous = branch.add_state(f"{loop.label}_bind_hit", is_start_block=True)
         pending = InterstateEdge()
+        if index != first_sym:
+            bounds = f"({symbolic.symstr(get_init_assignment(loop))}) + ({symbolic.symstr(get_loop_end(loop))})"
+            pending = InterstateEdge(assignments={index: f"{bounds} - {first_sym}"})
         for block in match.pre:
             twin = copy.deepcopy(block)
             branch.add_node(twin)
@@ -432,7 +651,10 @@ class LiftBreakToFindFirst(ppl.Pass):
             previous = twin
         effect = match.effect
         effect_chain = linear_chain(effect)
-        for block in effect_chain if keep_break else effect_chain[:-1]:
+        # A record (no break) copies whole
+        if not keep_break and isinstance(effect_chain[-1], BreakBlock):
+            effect_chain = effect_chain[:-1]
+        for block in effect_chain:
             twin = copy.deepcopy(block)
             branch.add_node(twin)
             branch.add_edge(previous, twin, pending)
@@ -442,7 +664,7 @@ class LiftBreakToFindFirst(ppl.Pass):
         if pending.assignments and not keep_break:
             closing = branch.add_state(f"{loop.label}_hit_done")
             branch.add_edge(previous, closing, pending)
-        branch.replace_dict({counter: first_sym})
+        branch.replace_dict({counter: index})
         for block in branch.all_control_flow_blocks():
             block.sdfg = sdfg
         for state in [s for s in branch.all_control_flow_blocks() if isinstance(s, SDFGState)]:
