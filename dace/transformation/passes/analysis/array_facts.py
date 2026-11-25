@@ -967,6 +967,18 @@ def read_bounds(
     return found
 
 
+def constant_table(sdfg: SDFG, name: str) -> tuple[int, ...] | None:
+    """The values of the one-dimensional integer constant ``name`` of ``sdfg`` or an SDFG around it, else ``None``."""
+    while sdfg is not None:
+        if name in sdfg.constants:
+            values = np.asarray(sdfg.constants[name])
+            return (
+                tuple(int(v) for v in values) if values.ndim == 1 and np.issubdtype(values.dtype, np.integer) else None
+            )
+        sdfg = sdfg.parent_sdfg
+    return None
+
+
 def runs_at_most_once(loop: LoopRegion, bounds: tuple[Any, Any, Any]) -> bool:
     """Whether ``loop``, of unit stride up or down, provably runs at most once. No two of its iterations exist, so any
     proof that none of them store alike holds for nothing, and a solver verdict on it says nothing about the body."""
@@ -1017,11 +1029,7 @@ def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[A
     if arrays & set(written):
         return None
     # A table of compile-time constants (``FoldConstantTables``) is read as it is, not as an array with facts
-    tables = {
-        n: tuple(int(v) for v in sdfg.constants[n])
-        for n in sorted(arrays)
-        if n in sdfg.constants and np.ndim(sdfg.constants[n]) == 1 and sdfg.arrays[n].dtype in dtypes.INTEGER_TYPES
-    }
+    tables = {n: table for n in sorted(arrays) if (table := constant_table(sdfg, n)) is not None}
     facts = facts_at(sdfg, loop, sorted(arrays - tables.keys()))
     start, end, step = bounds
     pairs = [(first, second) for x, first in enumerate(stores) for second in stores[x:]]
