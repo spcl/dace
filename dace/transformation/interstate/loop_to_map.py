@@ -240,35 +240,53 @@ def meet_within_one_iteration(
     )
 
 
-def exact_accesses(state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet]) -> list[subsets.Subset] | None:
-    """The subsets of ``e``'s array that a nested SDFG behind the map scope ``e`` leaves or enters really accesses, each
-    propagated over the map, when ``e`` is a MapExit's output (writes) or a MapEntry's input (reads) whose connector
-    carries nested SDFGs only; ``None`` (the caller keeps ``e``'s bounding box) when an access is a write-conflict, sits
-    in a deeper SDFG, or names a symbol the nested SDFG assigns.
+def exact_accesses(state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet]) -> list[memlet.Memlet] | None:
+    """The accesses of ``e``'s array that the nested SDFG behind ``e`` really makes, one memlet each (a reduction keeps
+    its WCR), when ``e`` joins a nested SDFG to the array directly or through one map scope (a MapExit's output for
+    writes, a MapEntry's input for reads), each propagated over the map; ``None`` (the caller keeps ``e``'s bounding box)
+    when an access sits in a deeper SDFG or names a symbol the nested SDFG assigns.
 
     Propagation unions the accesses behind one connector into a box: ``a[jm, c, jl]`` and ``a[c, jm, jl]`` in a map over
     ``jl`` leave it as ``a[Min(c, jm):Max(c, jm) + 1, ..., 0:L]``, which meets every other ``jm`` though no element is
-    shared."""
+    shared; a reduction into one row and the zeroing of another leave as the box of both."""
     from dace.sdfg.propagation import propagate_memlet  # avoid an import cycle
 
-    write = isinstance(e.src, nodes.MapExit)
-    scope = e.src if write else e.dst
-    if not isinstance(scope, nodes.MapExit if write else nodes.MapEntry) or e.data.is_empty() or e.data.wcr is not None:
+    if e.data.is_empty():
         return None
-    entry = state.entry_node(scope) if write else scope
-    suffix = (e.src_conn if write else e.dst_conn or "")[len("OUT_" if write else "IN_") :]
-    inner = list(
-        state.in_edges_by_connector(scope, "IN_" + suffix)
-        if write
-        else state.out_edges_by_connector(scope, "OUT_" + suffix)
-    )
-    found: dict[str, subsets.Subset] = {}
-    for ie in inner:
-        ns, conn = (ie.src, ie.src_conn) if write else (ie.dst, ie.dst_conn)
-        if not isinstance(ns, nodes.NestedSDFG) or ie.data.is_empty() or ie.data.data != e.data.data:
+    write = isinstance(e.src, (nodes.MapExit, nodes.NestedSDFG))
+    scope = e.src if write else e.dst
+    if isinstance(scope, nodes.NestedSDFG):
+        joins = [(scope, e.src_conn if write else e.dst_conn)]
+        entry = None
+    elif isinstance(scope, nodes.MapExit if write else nodes.MapEntry):
+        entry = state.entry_node(scope) if write else scope
+        suffix = (e.src_conn if write else e.dst_conn or "")[len("OUT_" if write else "IN_") :]
+        inner = list(
+            state.in_edges_by_connector(scope, "IN_" + suffix)
+            if write
+            else state.out_edges_by_connector(scope, "OUT_" + suffix)
+        )
+        joins = [(ie.src, ie.src_conn) if write else (ie.dst, ie.dst_conn) for ie in inner]
+        if any(ie.data.is_empty() or ie.data.data != e.data.data for ie in inner):
+            return None
+    else:
+        return None
+    found: dict[tuple[str, str], memlet.Memlet] = {}
+    for ns, conn in joins:
+        if not isinstance(ns, nodes.NestedSDFG):
+            return None
+        mapped = {s: sp.sympify(v) for s, v in ns.symbol_mapping.items()}
+        inner_desc, outer_desc = ns.sdfg.arrays.get(conn), state.sdfg.arrays.get(e.data.data)
+        # Indices are absolute only while the connector's array has the shape of the outer one
+        if (
+            inner_desc is None
+            or outer_desc is None
+            or [str(sp.sympify(d).subs({sp.Symbol(k): v for k, v in mapped.items()})) for d in inner_desc.shape]
+            != [str(d) for d in outer_desc.shape]
+        ):
             return None
         assigned = {name for edge in ns.sdfg.all_interstate_edges() for name in edge.data.assignments}
-        accessed: list[subsets.Subset] = []
+        accessed: list[tuple[subsets.Subset | None, str | None]] = []
         for block in ns.sdfg.all_control_flow_blocks():
             if isinstance(block, SDFGState):
                 for dn in block.data_nodes():
@@ -277,28 +295,34 @@ def exact_accesses(state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet]) ->
                     for ne in block.in_edges(dn) if write else block.out_edges(dn):
                         if ne.data.is_empty():
                             continue
-                        if ne.data.wcr is not None or isinstance(ne.src if write else ne.dst, nodes.NestedSDFG):
+                        if isinstance(ne.src if write else ne.dst, nodes.NestedSDFG):
                             return None
                         accessed.append(
-                            ne.data.get_dst_subset(ne, block) if write else ne.data.get_src_subset(ne, block)
+                            (
+                                ne.data.get_dst_subset(ne, block) if write else ne.data.get_src_subset(ne, block),
+                                ne.data.wcr,
+                            )
                         )
             elif not write and isinstance(block, (LoopRegion, ConditionalBlock)):
-                accessed += [m.subset for m in block.get_meta_read_memlets() if m.data == conn]
+                accessed += [(m.subset, None) for m in block.get_meta_read_memlets() if m.data == conn]
         if not write:
             accessed += [
-                m.subset
+                (m.subset, None)
                 for edge in ns.sdfg.all_interstate_edges()
                 for m in edge.data.get_read_memlets(ns.sdfg.arrays)
                 if m.data == conn
             ]
-        for subset in accessed:
+        for subset, wcr in accessed:
             if subset is None:
                 return None
             outer = through_symbol_mapping(subset, ns)
             if assigned & {str(x) for x in outer.free_symbols}:
                 return None
-            box = propagate_memlet(state, memlet.Memlet(data=e.data.data, subset=outer), entry, False).subset
-            found[str(box)] = box
+            access = memlet.Memlet(data=e.data.data, subset=outer, wcr=wcr)
+            if entry is not None:
+                access = propagate_memlet(state, access, entry, False)
+                access.wcr = wcr
+            found[(str(access.subset), str(wcr))] = access
     return list(found.values()) or None
 
 
@@ -309,7 +333,7 @@ def read_subsets(
     exact = exact_accesses(state, e)
     if exact is None:
         return [in_closed_form(e.data.get_src_subset(e, state), closed_forms)]
-    return [in_closed_form(subset, closed_forms) for subset in exact]
+    return [in_closed_form(access.subset, closed_forms) for access in exact]
 
 
 def nested_write_subsets(nsdfg_node, conn) -> list[subsets.Subset]:
@@ -2742,7 +2766,16 @@ class LoopLift:
                             write_memlets[dn.data].append(accumulated)
                             continue
                         # Each access behind a nested SDFG's bounding box is checked alone: the box meets other iterations'
-                        for exact in exact_accesses(state, e) or [None]:
+                        for access in exact_accesses(state, e) or [None]:
+                            exact = None if access is None else access.subset
+                            if access is not None and access.wcr is not None:
+                                # A reduction combines the writes of any iterations; the other writes are checked against it
+                                write_memlets[dn.data].append(
+                                    memlet.Memlet(
+                                        data=dn.data, subset=in_closed_form(exact, closed_forms), wcr=access.wcr
+                                    )
+                                )
+                                continue
                             reason = write_refusal(
                                 sdfg,
                                 state,

@@ -10,13 +10,17 @@ Two things stopped it. The frontend orders the snapshot of ``ZQXN(4, JL)`` befor
 ``FoldScalarReadCopies`` kept the snapshot, and ``AugAssignToWCR`` never saw ``zq[4] = zq[4] + x``. The fold now asks
 the facts at the state (the enclosing loops' ranges) whether the written row lies apart from the read one.
 
-Still open: once the accumulation is a WCR, ``LoopToMap`` unions the loop's two writes (row ``JN-1`` and the WCR row 4)
-into the box ``JN-1:5`` and finds the read of row ``JN-1`` in conflict with it.
+Once the accumulation is a WCR on row ``4``, the species loop's two writes (row ``JN-1`` zeroed, row ``4`` summed) leave
+the nested SDFG through one connector as the box ``JN-1:5``. ``LoopToMap`` now reads the accesses of the nested SDFG one
+by one (``exact_accesses``), and so do the pass that decides whether an update accumulates (``accumulates``) and the
+revert of a WCR that conflicts with nothing: a box that varies with ``JN`` must not vouch for the write to row ``4``,
+which every iteration makes.
 """
 
-import pytest
+import numpy as np
 
 import dace
+from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 
@@ -38,21 +42,22 @@ def canonical_sdfg() -> dace.SDFG:
     return sdfg
 
 
-def test_the_update_of_the_one_row_reads_it_in_place_beside_a_write_of_another_row():
+def test_the_sum_into_the_one_row_is_a_reduction_beside_the_plain_zeroing_of_another_row():
     sdfg = canonical_sdfg()
 
-    update = next(
-        (state, node)
+    stores = [
+        (str(edge.data.subset), edge.data.wcr)
         for node, state in sdfg.all_nodes_recursive()
-        if isinstance(node, dace.nodes.Tasklet) and node.label.startswith("_Add_")
-    )
-    state, tasklet = update
-    reads = [state.memlet_path(e)[0].src for e in state.in_edges(tasklet)]
+        if isinstance(node, nodes.Tasklet)
+        for edge in state.out_edges(node)
+        if edge.data.data == "zq"
+    ]
 
-    assert any(isinstance(src, dace.nodes.AccessNode) and src.data == "zq" for src in reads), reads
+    reductions = [subset for subset, wcr in stores if wcr is not None]
+    assert len(reductions) == 1 and reductions[0].startswith("4,"), stores
+    assert len(stores) == 2, stores
 
 
-@pytest.mark.xfail(strict=True, reason="LoopToMap unions the WCR row and the zeroed row into one write box")
 def test_a_conditional_accumulation_into_one_row_lifts_as_a_reduction_over_the_species():
     sdfg = canonical_sdfg()
 
@@ -61,6 +66,20 @@ def test_a_conditional_accumulation_into_one_row_lifts_as_a_reduction_over_the_s
     ]
 
 
+def test_the_lifted_species_loop_computes_the_same_sums_on_many_threads():
+    sdfg = canonical_sdfg()
+    n = 20000
+    zq = np.random.default_rng(0).uniform(-1.0, 1.0, (5, n))
+    expected = zq.copy()
+    for jn in range(1, 5):
+        taken = expected[jn - 1] < 0.9
+        expected[4, taken] += expected[jn - 1, taken]
+        expected[jn - 1, taken] = 0.0
+    sdfg(zq=zq, kidia=1, kfdia=n, zepsec=0.9, N=n)
+    assert np.allclose(zq, expected, rtol=0, atol=1e-12)
+
+
 if __name__ == "__main__":
-    test_the_update_of_the_one_row_reads_it_in_place_beside_a_write_of_another_row()
-    # test_a_conditional_accumulation_into_one_row_lifts_as_a_reduction_over_the_species() -- xfail until lifted
+    test_the_sum_into_the_one_row_is_a_reduction_beside_the_plain_zeroing_of_another_row()
+    test_a_conditional_accumulation_into_one_row_lifts_as_a_reduction_over_the_species()
+    test_the_lifted_species_loop_computes_the_same_sums_on_many_threads()

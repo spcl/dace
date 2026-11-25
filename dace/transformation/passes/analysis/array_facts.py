@@ -863,7 +863,7 @@ def stored_subsets(state: SDFGState, edge: Any) -> list[subsets.Subset]:
     subset of ``edge``."""
     from dace.transformation.interstate.loop_to_map import exact_accesses  # avoid an import loop
 
-    return exact_accesses(state, edge) or [edge.data.subset]
+    return [m.subset for m in exact_accesses(state, edge) or []] or [edge.data.subset]
 
 
 def write_bounds(
@@ -951,7 +951,7 @@ def read_bounds(
             for e in st.out_edges(dn):
                 if e.data is None or e.data.is_empty():
                     continue
-                for subset in exact_accesses(st, e) or [e.data.get_src_subset(e, st)]:
+                for subset in [m.subset for m in exact_accesses(st, e) or []] or [e.data.get_src_subset(e, st)]:
                     read = None if subset is None else write_bounds(loop, st, e, bindings, assigned, subset)
                     if read is None:
                         return None

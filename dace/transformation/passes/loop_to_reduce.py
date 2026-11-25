@@ -594,7 +594,9 @@ def read_by_its_update(state: SDFGState, read: gr.MultiConnectorEdge[mm.Memlet],
 def leaf_updates(state: SDFGState, leaf: gr.MultiConnectorEdge[mm.Memlet], name: str) -> bool:
     reader = leaf.dst
     if isinstance(reader, nodes.NestedSDFG):
-        return leaf.dst_conn in reader.out_connectors and only_read_modify_written(reader.sdfg, leaf.dst_conn)
+        return leaf.dst_conn in reader.out_connectors and (
+            only_read_modify_written(reader.sdfg, leaf.dst_conn) or updates_apart_from_the_rest(reader, leaf.dst_conn)
+        )
     # One element only: a staged slab is the operand of whatever reads it, householder's ``V @ Q[k:, :]``
     if isinstance(reader, nodes.AccessNode) and state.out_degree(reader) == 1 and leaf.data.num_elements() == 1:
         reader = state.memlet_path(state.out_edges(reader)[0])[-1].dst
@@ -614,6 +616,55 @@ def leaf_updates(state: SDFGState, leaf: gr.MultiConnectorEdge[mm.Memlet], name:
         ]
         written = [state.memlet_path(e)[-1].dst for e in staged]
     return False
+
+
+def updates_apart_from_the_rest(nsdfg: nodes.NestedSDFG, conn: str) -> bool:
+    """Whether the elements ``nsdfg`` updates in place through ``conn`` (read-modify-writes) are touched by nothing else
+    in its body: every other read or write of ``conn`` provably lies apart from them under the ranges of the loops
+    around, and no condition or interstate edge reads ``conn``. A WCR on those elements then leaves no conflict even
+    though the body also stores elsewhere in ``conn`` (CloudSC's ``zq[4]`` summed over the species beside the zeroing of
+    ``zq[jn - 1]``)."""
+    from dace.sdfg.state import SymbolResolver
+    from dace.transformation.interstate.loop_to_map import rmw_edges
+
+    sdfg = nsdfg.sdfg
+    if conn in loop_analysis.control_reads(sdfg):
+        return False
+    states = [b for b in sdfg.all_control_flow_blocks() if isinstance(b, SDFGState)]
+    writes, reads, names = rmw_edges(states, frozenset({conn}))
+    if conn not in names:
+        return False
+    updated: list[subsets.Subset] = []
+    others: list[tuple[SDFGState, subsets.Subset]] = []
+    for state in states:
+        for node in state.data_nodes():
+            if node.data != conn:
+                continue
+            for e in data_in_edges(state, node):
+                subset = e.data.get_dst_subset(e, state)
+                if subset is None:
+                    return False
+                # A store of a constant beside a read of the same element is no update: the tasklet must read it
+                if (id(e) in writes or e.data.wcr is not None) and any(
+                    ie.data.data == conn and ie.data.get_src_subset(ie, state) == subset
+                    for ie in state.in_edges(e.src)
+                    if not ie.data.is_empty()
+                ):
+                    updated.append(subset)
+                else:
+                    others.append((state, subset))
+            for e in data_out_edges(state, node):
+                subset = e.data.get_src_subset(e, state)
+                if subset is None:
+                    return False
+                if not (id(e) in reads and isinstance(e.dst, nodes.Tasklet) and e.dst.out_connectors):
+                    others.append((state, subset))
+    resolver = SymbolResolver()
+    return bool(updated) and all(
+        subsets.intersects(subset, mine, resolver.facts_at(state)) == symbolic.Truth.FALSE
+        for state, subset in others
+        for mine in updated
+    )
 
 
 def names_across_nesting(state: SDFGState, name: str) -> dict[SDFG, set[str]]:
@@ -699,7 +750,16 @@ def accumulates(state: SDFGState, tasklet: nodes.Tasklet, refusals: dict[LoopReg
                 return False
             out = [e for e in outer.out_edges(nsdfg) if e.src_conn in targets and not e.data.is_empty()]
             targets = {e.data.data for e in out}
-            handed = [e.data.subset for e in out if e.data.subset is not None]
+            # What the nest really writes of each container: its one connector's box would hide a row apart from the
+            # iterator's own (``zq[jn - 1:5]`` for the rows ``jn - 1`` and ``4``)
+            from dace.transformation.interstate.loop_to_map import exact_accesses  # avoid an import loop
+
+            handed = [
+                subset
+                for e in out
+                if e.data.subset is not None
+                for subset in [m.subset for m in exact_accesses(outer, e) or []] or [e.data.subset]
+            ]
             # A container the nest owns is private to each of its calls: nothing outside repeats the write
             if not targets:
                 return False
