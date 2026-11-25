@@ -10,7 +10,7 @@ import warnings
 from collections.abc import Callable, Sequence
 from typing import NamedTuple
 
-from dace import SDFG, Memlet, SDFGState, cpf_lowering, data, dtypes, library, nodes, properties, symbolic
+from dace import SDFG, Memlet, SDFGState, cpf_lowering, data, dtypes, library, nodes, properties, subsets, symbolic
 from dace import transformation as xf
 from dace.frontend.python.replacements.utils import normalize_axes
 from dace.libraries import hip_dialect
@@ -647,10 +647,43 @@ def block_axis(node: FourierTransform, out: data.Data) -> int | None:
     return long_axes[0] if long_axes else axes[0]
 
 
+def operand_footprint(state: SDFGState, edge, access: nodes.Node) -> tuple[str, object] | None:
+    """The container a node's operand edge reaches through views and the subset of it the operand covers, or
+    ``None`` when the view chain is not one view over its container's elements."""
+    desc = state.sdfg.arrays[edge.data.data]
+    if not (isinstance(access, nodes.AccessNode) and isinstance(state.sdfg.arrays[access.data], data.View)):
+        return edge.data.data, edge.data.subset
+    view_edges = sdutil.get_all_view_edges(state, access)
+    root = sdutil.get_last_view_node(state, access)
+    if root is None or len(view_edges) != 1 or view_edges[0].data.data != root.data:
+        return None
+    # The operand must cover its whole view, so the view's footprint in the container is the operand's.
+    if any(symbolic.equal(a, b) is not True for a, b in zip(edge.data.subset.size(), desc.shape)):
+        return None
+    return root.data, view_edges[0].data.subset
+
+
+def operand_overlap(node: FourierTransform, state: SDFGState) -> str:
+    """``'disjoint'`` operands, ``'same'`` elements, or ``'overlap'`` for any other (or unprovable) sharing."""
+    inp = sdutil.in_edge_with_name(node, state, "_inp")
+    out = sdutil.out_edge_with_name(node, state, "_out")
+    a, b = operand_footprint(state, inp, inp.src), operand_footprint(state, out, out.dst)
+    if a is None or b is None:
+        names = {inp.data.data, out.data.data}
+        roots = {sdutil.get_last_view_node(state, n) for n in (inp.src, out.dst) if isinstance(n, nodes.AccessNode)}
+        return "overlap" if len(names) < 2 or None in roots or len({r.data for r in roots}) < 2 else "disjoint"
+    if a[0] != b[0]:
+        return "disjoint"
+    if a[1] == b[1]:
+        src, dst = block_operands(node, state, state.sdfg)
+        same_strides = all(symbolic.equal(x, y) is True for x, y in zip(src.strides, dst.strides))
+        return "same" if same_strides else "overlap"
+    disjoint = subsets.intersects(a[1], b[1], state.sdfg.facts()) is symbolic.Truth.FALSE
+    return "disjoint" if disjoint else "overlap"
+
+
 def block_refusal(node: FourierTransform, state: SDFGState, sdfg: SDFG) -> str | None:
     """Why the in-kernel block FFT cannot take ``node``, or ``None`` if it can."""
-    from dace.libraries.blas.blas_helpers import same_memory  # avoid import loop
-
     if node.half_spectrum:
         return "a half-spectrum transform changes the extent of its last axis"
     src, out = block_operands(node, state, sdfg)
@@ -658,8 +691,8 @@ def block_refusal(node: FourierTransform, state: SDFGState, sdfg: SDFG) -> str |
         return f"the output is {out.dtype}, not complex64 or complex128"
     if len(src.shape) != len(out.shape) or any(symbolic.equal(a, b) is not True for a, b in zip(src.shape, out.shape)):
         return "the input and output extents differ"
-    if same_memory(node, state, "_inp", "_out"):
-        return "the transform is in place"
+    if operand_overlap(node, state) == "overlap":
+        return "the input and output share memory other than element for element"
     if block_axis(node, out) is None:
         return "more than one axis is transformed"
     return None
@@ -677,6 +710,7 @@ def block_fft_sdfg(node: FourierTransform, parent_state: SDFGState, parent_sdfg:
     src, out = block_operands(node, parent_state, parent_sdfg)
     axis = block_axis(node, out)
     batch = [d for d in range(len(out.shape)) if d != axis]
+    in_place = operand_overlap(node, parent_state) == "same"
 
     def line_start(desc: data.Array) -> str:
         """``[&](l)``: the offset of line ``l``, its batch index unravelled in C order."""
@@ -690,7 +724,8 @@ def block_fft_sdfg(node: FourierTransform, parent_state: SDFGState, parent_sdfg:
     lines = functools.reduce(operator.mul, (out.shape[d] for d in batch), 1)
     real = "double" if out.dtype == dtypes.complex128 else "float"
     code = (
-        f"dace::block_fft::transform<{out.dtype.ctype}>(__in, __out, {sym2cpp(out.shape[axis])}, {sym2cpp(lines)}, "
+        f"dace::block_fft::transform<{out.dtype.ctype}, {'true' if in_place else 'false'}>(__in, __out, "
+        f"{sym2cpp(out.shape[axis])}, {sym2cpp(lines)}, "
         f"{sym2cpp(src.strides[axis])}, {sym2cpp(out.strides[axis])}, {line_start(src)}, {line_start(out)}, "
         f"{'true' if isinstance(node, IFFT) else 'false'}, ({real})({floating_text(node.factor)}), "
         f"{BLOCK_COLLECTIVE_THREADS});"
