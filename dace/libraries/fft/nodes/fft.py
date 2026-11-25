@@ -592,5 +592,23 @@ class MKLIFFTExpansion(ExpandMKL):
 ##################################################################################################
 
 
+def connector_view(desc: data.Data, subset) -> data.Data:
+    """``desc`` as a memlet on ``subset`` shows it to the node: the subset's extents, each stride times its step.
+
+    :param desc: The array the memlet names.
+    :param subset: The memlet's subset of it.
+    :return: ``desc`` itself for a whole-array memlet.
+    """
+    if not isinstance(desc, data.Array) or subset is None or subset.size() == list(desc.shape):
+        return desc
+    strides = [stride * step for stride, (_, _, step) in zip(desc.strides, subset.ndrange())]
+    return data.Array(desc.dtype, subset.size(), storage=desc.storage, strides=strides)
+
+
 def input_and_output(state: SDFGState, sdfg: SDFG, node: nodes.LibraryNode) -> tuple[data.Data, data.Data]:
-    return sdutil.in_desc_with_name(node, state, sdfg, "_inp"), sdutil.out_desc_with_name(node, state, sdfg, "_out")
+    """The node's input and output as its memlets show them: a subset of an array is a view of its extents."""
+    inp, out = sdutil.in_edge_with_name(node, state, "_inp"), sdutil.out_edge_with_name(node, state, "_out")
+    return (
+        connector_view(sdfg.arrays[inp.data.data], inp.data.subset),
+        connector_view(sdfg.arrays[out.data.data], out.data.subset),
+    )

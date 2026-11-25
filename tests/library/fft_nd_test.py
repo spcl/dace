@@ -54,7 +54,7 @@ def test_pure_ifftn_symbolic_factor_is_emitted_in_floating_point(norm):
     sdfg = tester_pure_ifftn_symbolic_factor_is_emitted_in_floating_point.to_sdfg(simplify=False)
     sdfg.expand_library_nodes()
     codes = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
-    scaled = [code for code in codes if "* float64(" in code and "angle" not in code]
+    scaled = [code for code in codes if "* float64(" in code and "math.cos" not in code]
     assert scaled, f"no DFT tasklet carries the {norm} factor: {codes}"
     assert all("float64(M)" in code and "float64(N)" in code for code in scaled), scaled
     assert not any("1/(M*N)" in code.replace(" ", "") for code in scaled), scaled

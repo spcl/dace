@@ -548,6 +548,21 @@ def test_a_loaded_program_keeps_planning_after_a_threaded_one_was_unloaded():
     np.testing.assert_allclose(run_without_fallback(sdfg, x=x.copy()), np.fft.fft(x), rtol=1e-12, atol=1e-12)
 
 
+@pytest.mark.fftw
+# Reproducer: FFTW3 planned the whole array of a subset memlet and wrote past the output, cropped ifft (ault 924717)
+def test_fftw3_transforms_a_subset_of_its_input():
+    """Simplify hands the node ``x[0:6, 0:5]`` of a 6 x 8 array: the plan takes the subset's length and strides."""
+
+    @dace.program
+    def cropped_inverse(x: dace.complex128[6, 8]):
+        return np.fft.ifft(x, n=5)
+
+    sdfg = compile_with(cropped_inverse, "FFTW3")
+    sdfg.name = "fft_cropped_subset_FFTW3"
+    x = rng_complex((6, 8))
+    np.testing.assert_allclose(run_without_fallback(sdfg, x=x.copy()), np.fft.ifft(x, n=5), rtol=1e-12, atol=1e-12)
+
+
 def test_an_fftw3_plan_is_cached_by_the_library():
     """The plan comes from the program state's FFTW3 plan cache, keyed by layout, aliasing, threads and alignment;
     the tasklet holds none."""
@@ -775,6 +790,7 @@ if __name__ == "__main__":
     test_a_threaded_fftw_plans_for_the_team(False)
     test_a_program_plans_after_a_threaded_one_was_unloaded()
     test_a_loaded_program_keeps_planning_after_a_threaded_one_was_unloaded()
+    test_fftw3_transforms_a_subset_of_its_input()
     test_hipfft_is_the_cufft_code_renamed()
     test_set_fast_implementations_lowers_fft_to_the_cpu_vendor()
     test_the_gpu_fast_library_list_names_the_vendor_fft()
