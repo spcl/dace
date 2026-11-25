@@ -53,17 +53,22 @@ def levels_offloaded(small: bool) -> dace.SDFG:
     return offloaded(sdfg)
 
 
-def test_a_block_dimension_of_a_merged_map_is_split_out_as_a_host_map_around_the_kernel():
+def test_a_block_dimension_of_a_map_without_inner_maps_stays_in_the_one_kernel():
+    """ICON's ``jb`` x ``jk`` with no map inside is all parallelism: one kernel over both, not a host loop over the
+    blocks launching a kernel each (velocity_tendencies left a MapFusion buffer in host memory between them)."""
+    from dace.sdfg.scope import is_devicelevel_gpu
+
     sdfg = levels_offloaded(small=True)
     hosts = [
         entry
-        for entry, parent in sdfg.all_nodes_recursive()
-        if isinstance(entry, dace.nodes.MapEntry) and entry.map.schedule == dtypes.ScheduleType.Sequential
+        for entry, state in sdfg.all_nodes_recursive()
+        if isinstance(entry, dace.nodes.MapEntry)
+        and entry.map.schedule == dtypes.ScheduleType.Sequential
+        and not is_devicelevel_gpu(state.sdfg, state, entry)
     ]
-    assert any("small dimension (NB)" in (entry.specialization_hint or "") for entry in hosts)
-    assert kernels(sdfg)
-    for entry in device_maps(sdfg):
-        assert not {"lo", "hi"} & {str(free) for free in entry.map.range.free_symbols}
+    assert not hosts, "a host map around the kernel"
+    assert len(kernels(sdfg)) == 1
+    assert {"lo", "hi"} <= {str(free) for free in kernels(sdfg)[0].map.range.free_symbols}
 
 
 def test_a_block_dimension_of_undeclared_scale_stays_in_the_grid():
@@ -72,7 +77,7 @@ def test_a_block_dimension_of_undeclared_scale_stays_in_the_grid():
 
 
 @pytest.mark.gpu
-def test_a_split_block_dimension_matches_numpy():
+def test_a_block_dimension_in_the_kernel_matches_numpy():
     cupy = pytest.importorskip("cupy")
     A = np.random.default_rng(8).random((4, 300))
     B = cupy.zeros_like(cupy.asarray(A))

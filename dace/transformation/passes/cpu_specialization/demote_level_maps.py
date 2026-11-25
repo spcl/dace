@@ -31,6 +31,7 @@ from dace import SDFG, dtypes, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.symbolic_facts import is_small_extent
+from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_dim_shuffle import MapDimShuffle
 from dace.transformation.dataflow.map_expansion import MapExpansion
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
@@ -334,6 +335,18 @@ def split_out(state: SDFGState, entry: nodes.MapEntry, outer: list[str]) -> node
     return entry
 
 
+def collapse_into_inner_map(state: SDFGState, entry: nodes.MapEntry) -> bool:
+    """Collapse ``entry`` with the one map its body holds when the two are perfectly nested; whether it did."""
+    inner = [n for n in state.scope_children()[entry] if isinstance(n, nodes.MapEntry)]
+    if len(inner) != 1:
+        return False
+    where = {"outer_map_entry": entry, "inner_map_entry": inner[0]}
+    if not MapCollapse.can_be_applied_to(state.sdfg, **where):
+        return False
+    MapCollapse.apply_to(state.sdfg, verify=False, **where)
+    return True
+
+
 def small_maps(sdfg: SDFG) -> list[nodes.MapEntry]:
     """The top-level maps of ``sdfg``'s own states to keep on the host, each given the reason it will run
     sequentially: a GPU offload keeps them on the host and launches the maps inside them, not a kernel of a few
@@ -341,7 +354,9 @@ def small_maps(sdfg: SDFG) -> list[nodes.MapEntry]:
 
     A map around maps is one when its every extent is small (:func:`~dace.symbolic_facts.is_small_extent`: a literal,
     or symbols declared ``SMALL``), or when its every parameter is a block index (:func:`block_params`). A map whose
-    parameters are only partly block indices (ICON's ``jb`` x ``jk``) splits them out as a map around the rest. A
+    parameters are only partly block indices (ICON's ``jb`` x ``jk`` around a map over ``jc``) splits them out as a map
+    around the rest. A map with no map inside is never one: the whole nest is the kernel. A map whose body is one
+    perfectly nested map collapses with it into one map, which the offload launches once. A
     symbolic extent of default scale (CloudSC's ``NBLOCKS``) stays the grid, and a small map with no map inside stays
     the kernel: its iterations are all the parallelism there is."""
     facts = sdfg.facts()
@@ -350,12 +365,19 @@ def small_maps(sdfg: SDFG) -> list[nodes.MapEntry]:
         for entry in list(state.scope_children()[None]):
             if not isinstance(entry, nodes.MapEntry):
                 continue
+            # A map with no map inside is all parallelism: the offload makes the whole nest one kernel. Splitting its
+            # block axis out (ICON's ``jb`` x ``jk`` x ``jc``) would launch a kernel per block from a host loop.
+            if not holds_maps(state, entry):
+                continue
+            # One perfectly nested map inside: one map over both, so the offload launches it once
+            if collapse_into_inner_map(state, entry):
+                continue
             sizes = [symbolic.pystr_to_symbolic(size) for size in entry.map.range.size()]
             blocks = block_params(state, entry, set(facts.small))
             if 0 < len(blocks) < len(entry.map.params):
                 entry = split_out(state, entry, list(blocks))
                 sizes = [symbolic.pystr_to_symbolic(size) for size in entry.map.range.size()]
-            elif not holds_maps(state, entry) or not (blocks or all(is_small_extent(size, facts) for size in sizes)):
+            elif not (blocks or all(is_small_extent(size, facts) for size in sizes)):
                 continue
             names = sorted(set().union(*blocks.values())) or sorted(
                 {str(free) for size in sizes for free in size.free_symbols}
