@@ -233,6 +233,10 @@ class Reason(enum.Enum):
     IMPLEMENTATION = "implementation loop of "
     #: A GPU thread-block map that carries no program loop's line of its own: what its threads are.
     THREAD_BLOCK = "thread block"
+    #: ``unknown``: a branch condition reads a container the loop writes.
+    GUARD_READS_WRITTEN = "the guard "
+    #: ``unknown``: the solver used up its resource budget before it found a conflict or showed there is none.
+    BUDGET_EXPIRED = "the solver ran out of its budget before it found a conflict or showed there is none"
 
 
 #: What a pass or the renderer appends to the class line of a proven-parallel loop that has no thread pragma (or, on a

@@ -811,6 +811,10 @@ def element_range(fact: Any, sym_cache: dict[str, Any]) -> tuple[Any, Any] | Non
     return bounds[0], bounds[1]
 
 
+class BudgetExpired(NamedTuple):
+    """The solver gave up within its resource budget: neither a conflict nor its absence is shown."""
+
+
 def find_conflict_witness(
     first: tuple[sp.Basic, ...],
     second: tuple[sp.Basic, ...],
@@ -827,7 +831,7 @@ def find_conflict_witness(
     tables: Mapping[str, tuple[int, ...]] | None = None,
     computed: frozenset[str] = frozenset(),
     facts: Any = None,
-) -> dict[str, int] | NeedsComputed | None:
+) -> dict[str, int] | NeedsComputed | BudgetExpired | None:
     """Values under which ``first``, at an earlier iteration of the carrying loop, and ``second``, at a later one,
     touch the same element; ``None`` when there are none, the solver gives up, or something cannot be encoded.
 
@@ -952,9 +956,12 @@ def find_conflict_witness(
     domain += in_bounds
     solver.add(*domain, *conflict, *(required(z3).Int(name) >= 1 for name in sorted(sizes)))
     try:
-        if solver.check() != required(z3).sat:
-            return None
+        verdict = solver.check()
     except Exception:
+        return None
+    if verdict == required(z3).unknown:
+        return BudgetExpired()
+    if verdict != required(z3).sat:
         return None
     model = solver.model()
     if (params or quantified) and not conflicts_for_every(

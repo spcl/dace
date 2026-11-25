@@ -907,6 +907,11 @@ class Search(NamedTuple):
 
     label: str | None = None
     blocker: str | None = None
+    #: ``the guard aa[0, j] reads aa``: a branch condition reads a container the loop writes, so the conflict the
+    #: search skipped depends on values the loop computes
+    guard: str | None = None
+    #: The solver ran out of its budget on some pair before any witness was found
+    expired: bool = False
 
 
 def declared_conditions(loop: LoopRegion, traps: list[tuple[str, set[str]]]) -> smt_dependence.Guard:
@@ -949,6 +954,7 @@ def witness_search(loop: LoopRegion, traps: list[tuple[str, set[str]]] | None = 
     mapping = {name: sympy.sympify(value) for name, value in loop.sdfg.constants.items()}
     sites: list[Site] = []
     region_sites(loop, arrays, mapping, (counter,), sites)
+    guard = guard_reading_written(loop, sites)
     sites = [site._replace(guard=input_guard(loop, site.guard)) for site in sites]
     scratch = {site.access.array for site in sites if is_scratch(loop.sdfg, site.access.array)}
     # A read of scratch that no write of its own iteration reaches first sees an earlier iteration's value, which no
@@ -964,7 +970,7 @@ def witness_search(loop: LoopRegion, traps: list[tuple[str, set[str]]] | None = 
     facts = (
         SolverFacts(loop, SymbolResolver().facts_at(loop), loop_varying_symbols(loop)) if computed or fixed else None
     )
-    blocker = None
+    blocker, expired = None, False
     pairs = [(w, o) for w in sites if w.access.write for o in sites if o.access.array == w.access.array]
     pairs.sort(key=lambda pair: pair[1].access.write)
     for write, other in pairs:
@@ -1005,9 +1011,37 @@ def witness_search(loop: LoopRegion, traps: list[tuple[str, set[str]]] | None = 
                 )
             if isinstance(found, smt_dependence.NeedsComputed):
                 blocker = blocker or found.values
+            elif isinstance(found, smt_dependence.BudgetExpired):
+                expired = True
             elif found is not None:
                 return Search(conflict_label(first, second, found, counter[0]))
-    return Search(blocker=blocker)
+    return Search(blocker=blocker, guard=guard, expired=expired)
+
+
+def guard_reading_written(loop: LoopRegion, sites: list[Site]) -> str | None:
+    """``the guard aa[0, j] reads aa`` for the first branch condition under ``loop`` that reads, directly or through a
+    scalar its state loads, a container the loop writes; else ``None``."""
+    written = OrderedSet(site.access.array for site in sites if site.access.write)
+    for site in sites:
+        for term, unused_holds in site.guard or ():
+            for element in as_basic(term).atoms(symbolic.Subscript):
+                if str(element.args[0]) in written:
+                    return f"the guard {element} reads {element.args[0]}"
+    for region in loop.all_control_flow_regions(recursive=True):
+        if not isinstance(region, ConditionalBlock):
+            continue
+        for condition, unused_branch in region.branches:
+            if condition is None:
+                continue
+            names = condition.get_free_symbols()
+            for name in guard_arrays(((symbolic.pystr_to_symbolic(condition.as_string), True),)) & written:
+                return f"the guard {condition.as_string} reads {name}"
+            for site in sites:
+                loads = isinstance(site.node, nodes.AccessNode) and site.node.data in names
+                if loads and not site.access.write and site.access.array in written and site.state.sdfg is region.sdfg:
+                    index = ", ".join(str(e) for e in site.access.index)
+                    return f"the guard {site.access.array}[{index}] reads {site.access.array}"
+    return None
 
 
 def input_guard(loop: LoopRegion, guard: smt_dependence.Guard | None) -> smt_dependence.Guard | None:
@@ -1242,7 +1276,19 @@ def loop_hint(loop: LoopRegion, session: Any = None, traps: list[tuple[str, set[
         return SEQUENTIAL_PROVEN.format(reason=proven_reason(access)) + carrier_note(loop, access)
     if searched.blocker is not None:
         return unproven_hint(loop, f"{computed_value_reason(searched.blocker)}; {UNSHOWN_TAIL}")
+    if searched.guard is not None and reason.kind is Refusal.CARRIED_DEPENDENCE:
+        return unproven_hint(loop, GUARD_READS_WRITTEN.format(guard=searched.guard))
+    if searched.expired:
+        return unproven_hint(loop, f"{Reason.BUDGET_EXPIRED.value}; {unproven_reason(reason, loop)}")
     return unproven_hint(loop, unproven_reason(reason, loop))
+
+
+#: An ``unknown`` loop whose one conflict the search could not pose: a branch condition reads what the loop writes.
+GUARD_READS_WRITTEN = (
+    "{guard}, which this loop writes, so whether two iterations conflict depends on values the loop computes "
+    "(outside the analyzable domain); parallel if no earlier iteration writes an element a later one reads; otherwise "
+    "that read must see the earlier iteration's value, so keep the order"
+)
 
 
 def computed_value_reason(values: str) -> str:

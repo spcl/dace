@@ -316,6 +316,24 @@ def test_a_row_recurrence_read_through_a_map_scalar_is_proven():
         assert line.startswith(flow), line
 
 
+@dace.program
+def guarded_columns(aa: dace.float64[L, L], bb: dace.float64[L, L]):
+    for i in range(L):
+        if aa[0, i] > 0.0:
+            for j in range(1, L):
+                aa[j, i] = aa[j - 1, i] + bb[j, i]
+
+
+def test_an_unknown_loop_under_a_guard_on_written_data_names_the_guard():
+    """s275: the unknown row loop said only that the test could not show the conflict, not that its guard reads aa."""
+    cpu = bench_c(guarded_columns, "cpf_review2_s275_cpu")
+    gpu = render_gpu(guarded_columns, "cpf_review2_s275_gpu", "cuda").device_code
+    for code in (cpu, gpu):
+        (line,) = [line.strip() for line in code.splitlines() if line.strip().startswith("// unknown")]
+        assert line.startswith("// unknown -- the guard aa[0, "), line
+        assert "reads aa, which this loop writes" in line and "(outside the analyzable domain)" in line, line
+
+
 if __name__ == "__main__":
     test_a_grid_stride_reduction_kernel_says_reduction_and_grid_stride()
     test_a_block_per_row_kernel_has_one_line_per_kernel_and_per_thread_block()
@@ -337,3 +355,4 @@ if __name__ == "__main__":
     test_a_reduction_call_names_its_operator_input_axis_and_output()
     test_the_closing_line_names_fallback_arms_and_units_without_loops()
     test_a_row_recurrence_read_through_a_map_scalar_is_proven()
+    test_an_unknown_loop_under_a_guard_on_written_data_names_the_guard()
