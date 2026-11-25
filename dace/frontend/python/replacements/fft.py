@@ -8,7 +8,6 @@ from collections.abc import Sequence
 import sympy as sp
 
 from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, symbolic
-from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import StringLiteral
 from dace.frontend.python.replacements.array_manipulation import _numpy_roll as numpy_roll
@@ -302,15 +301,14 @@ def add_fft_frequencies(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, n, d, 
     n = symbolic.pystr_to_symbolic(scalar_argument(n))
     count = sp.floor(n / 2) + 1 if half_spectrum else n
     name = pv.add_temp_transient([count], dtypes.float64)[0]
-    total = f"({float(d)!r} * {sym2cpp(n)})"
-    index = "__i" if half_spectrum else f"(__i < ({sym2cpp(n)} + 1) / 2 ? __i : __i - {sym2cpp(n)})"
+    length = symbolic.symstr(n)
+    index = "__i" if half_spectrum else f"(__i if __i < ({length} + 1) // 2 else __i - {length})"
     state.add_mapped_tasklet(
         "frequencies",
         {"__i": f"0:{symbolic.symstr(count)}"},
         {},
-        f"o = {index} / {total};",
+        f"o = float64({index}) / ({float(d)!r} * float64({length}))",
         {"o": Memlet(data=name, subset="__i")},
-        language=dtypes.Language.CPP,
         external_edges=True,
     )
     return name

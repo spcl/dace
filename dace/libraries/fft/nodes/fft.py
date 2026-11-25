@@ -95,8 +95,8 @@ def pure_sdfg(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG
 
 
 def declare_factor_symbols(sdfg: SDFG, node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG) -> None:
-    # The factor scales a C++ tasklet, whose code no symbol inference reads: declare what it names, typed as where
-    # the node sits -- a symbol in scope there, or the scalar container the factor reads
+    # Declare what the factor names, typed as where the node sits -- a symbol in scope there, or the scalar container
+    # the factor reads -- rather than as inference's default integer
     names = sorted(str(s) for s in symbolic.pystr_to_symbolic(node.factor).free_symbols)
     if any(name not in sdfg.symbols for name in names):
         defined = parent_state.symbols_defined_at(node)

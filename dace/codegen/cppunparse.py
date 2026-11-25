@@ -1014,6 +1014,11 @@ class CPPUnparser:
     renamed_calls = {**modulo_calls, **TYPECAST_CPP}
 
     def _Call(self, t: ast.Call):
+        # ``z.real()`` is already the C++ member call: ``_Attribute`` would add a second pair of parentheses
+        if isinstance(t.func, ast.Attribute) and t.func.attr in ("real", "imag") and not t.args and not t.keywords:
+            self.dispatch(t.func.value)
+            self.write(f".{t.func.attr}()")
+            return
         # Special cases for sympy functions
         if isinstance(t.func, ast.Name):
             if t.func.id in self.callcmps:
