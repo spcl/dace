@@ -1799,9 +1799,10 @@ def late_allocation_block(
                 raise NotImplementedError(f"{desc} is sized in {outer}, which reallocates it per iteration")
             outer = outer.parent_graph
     # Accessed before the assignment: the earlier accesses use the size in force at the dominating block, as before;
-    # accessed on both sides of a size that changes in between needs a reallocation
+    # accessed on both sides of a size that changes in between needs a reallocation, however many places assign it (a
+    # buffer sized N + 2, read, then filled to N + 3 overflowed when the first size lay before the span)
     if any(precedes(state, block) for state in access_states for block in last):
-        if len(blocks) > 1 and any(
+        if any(
             block is state or precedes(block, state) or contains(block, state)
             for state in access_states
             for block in last

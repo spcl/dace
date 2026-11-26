@@ -5,14 +5,19 @@ Fortran allocates a local array in each arm of an ``IF`` with the arm's own size
 ``ALLOCATE(psio(ngk(1), incr))`` in one arm, ``ALLOCATE(psio(ngk(1), brange))`` in the other). The frontend gives both
 one container sized by symbols each arm assigns, and one allocation cannot follow two sizes. Each arm uses its own
 allocation only, so each arm gets its own container: the allocation of each then follows its arm's size.
+
+Allocations one after another take a container each the same way (QE's ``p_psi``: ``ALLOCATE(coeff(nbnd, m))`` ...
+``DEALLOCATE(coeff)`` in one ``IF``, then ``ALLOCATE(coeff(ibnd_2 - ibnd_1 + 1, m))`` in the next): when every block
+that uses it assigns its size before each of its uses, no value crosses from one block to the next.
 """
 
 import copy
 
 from dace import data, dtypes, properties
+from dace.codegen.targets.framecode import contains, precedes
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState
+from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, SDFGState
 from dace.transformation import pass_pipeline as ppl
 
 
@@ -57,6 +62,14 @@ class SplitBranchTransients(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> int | None:
         """:returns: How many containers were split, or ``None`` if none were."""
         split = 0
+        # Each split can expose another inside a copy (two allocations in a row in one arm): repeat until none
+        while (found := self.split_once(sdfg)) > 0:
+            split += found
+        return split or None
+
+    def split_once(self, sdfg: SDFG) -> int:
+        """Split every candidate once; :returns: how many containers were split."""
+        split = 0
         # Each SDFG owns its transients
         for sd in list(sdfg.all_sdfgs_recursive()):
             users: dict[str, list[SDFGState]] = {}
@@ -78,11 +91,15 @@ class SplitBranchTransients(ppl.Pass):
                     if None not in arms:
                         break
                     found = enclosing_branch(found[0])
-                if found is None or len(arms) < 2 or not self.sized_in(desc, found[0], arms):
+                if found is not None and len(arms) >= 2 and self.sized_in(desc, found[0], arms):
+                    self.split(sd, name, {f"branch{index}": found[0].branches[index][1] for index in sorted(arms)})
+                    split += 1
                     continue
-                self.split(sd, name, found[0], arms)
-                split += 1
-        return split or None
+                blocks = self.sequential_blocks(name, desc, states)
+                if blocks:
+                    self.split(sd, name, {f"part{index}": block for index, block in enumerate(blocks)})
+                    split += 1
+        return split
 
     @staticmethod
     def candidate(desc: data.Data) -> bool:
@@ -107,15 +124,52 @@ class SplitBranchTransients(ppl.Pass):
         )
 
     @staticmethod
-    def split(sdfg: SDFG, name: str, conditional: ConditionalBlock, arms: OrderedSet[int]) -> None:
-        """Rename ``name`` in each used branch of ``conditional`` to a copy of its own."""
+    def sequential_blocks(name: str, desc: data.Data, states: list[SDFGState]) -> list[ControlFlowBlock] | None:
+        """The blocks of the innermost region holding every use of ``name``, one per group of uses, when there are two
+        or more and each assigns the size before every use it holds and writes the container before every read: no
+        value crosses from one block to the next. Else ``None``."""
+        region = states[0].parent_graph
+        # Climb to the innermost region, not a conditional, that holds every use
+        while not isinstance(region, SDFG) and (
+            isinstance(region, ConditionalBlock) or not all(s is region or contains(region, s) for s in states)
+        ):
+            region = region.parent_graph
+        blocks: list[ControlFlowBlock] = []
+        # Over the uses: the block of the region each lies in
+        for state in states:
+            block = state
+            while block.parent_graph is not region:
+                block = block.parent_graph
+            if not any(block is other for other in blocks):
+                blocks.append(block)
+        if len(blocks) < 2:
+            return None
+        sizes = OrderedSet(str(symbol) for symbol in desc.free_symbols)
+        # Over the blocks: each must assign the size, on an edge into it or inside it, ahead of every use it holds
+        for block in blocks:
+            inner = block.all_interstate_edges() if isinstance(block, AbstractControlFlowRegion) else []
+            sized = [e.dst for e in inner if sizes & e.data.assignments.keys()]
+            if any(sizes & e.data.assignments.keys() for e in region.in_edges(block)):
+                sized.append(block)
+            uses = [s for s in states if s is block or contains(block, s)]
+            if not sized or not all(any(b is s or contains(b, s) or precedes(b, s) for b in sized) for s in uses):
+                return None
+            writes = [s for s in uses if any(s.in_degree(n) > 0 for n in s.data_nodes() if n.data == name)]
+            reads = [s for s in uses if any(s.out_degree(n) > 0 for n in s.data_nodes() if n.data == name)]
+            # Over the reads: each needs a write of this block ahead of it, else it reads the previous block's values
+            if not all(any(precedes(w, r) for w in writes) for r in reads):
+                return None
+        return blocks
+
+    @staticmethod
+    def split(sdfg: SDFG, name: str, blocks: dict[str, ControlFlowBlock]) -> None:
+        """Rename ``name`` in each of ``blocks`` to a copy of its own, named by the block's key."""
         desc = sdfg.arrays[name]
-        # Each used branch gets its own copy of the descriptor
-        for index in sorted(arms):
-            branch = conditional.branches[index][1]
-            new_name = sdfg.add_datadesc(f"{name}_branch{index}", copy.deepcopy(desc), find_new_name=True)
-            # Rename the container in every state of this branch
-            for state in branch.states():
+        # Each block gets its own copy of the descriptor
+        for suffix, block in blocks.items():
+            new_name = sdfg.add_datadesc(f"{name}_{suffix}", copy.deepcopy(desc), find_new_name=True)
+            # Rename the container in every state of this block
+            for state in [block] if isinstance(block, SDFGState) else block.states():
                 # Access nodes take the new name
                 for node in state.data_nodes():
                     if node.data == name:
