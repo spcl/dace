@@ -539,7 +539,7 @@ def test_promotes_multi_dim_constant_slot():
     """A 2-D array with a fully-constant slot ``arr[3, 5]`` -- both axes are
     constant integers, so the slot is a single element that can be privatised
     to a scalar. Was refused before the multi-dim relaxation
-    (``_is_constant_point_subset`` only accepted 1-D Ranges).
+    (``is_constant_point_subset`` only accepted 1-D Ranges).
     """
 
     @dace.program

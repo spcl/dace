@@ -65,7 +65,9 @@ would not help is never applied, so the SDFG does not grow needlessly.
       (multi-dim, every axis a literal integer) are accepted. Mixed
       constant + loop-variable axes (``arr[jl, 3]``) are refused -- the
       loop-variable axis varies per iteration, so the access isn't a single
-      privatisable point.
+      privatisable point. Under ``last_write`` a slot may also name symbols the loop never
+      changes (``a[i]`` in TSVC s257's ``j`` loop), when the array's other points in the loop
+      are provably different elements (``a[i - 1]``) and only the written ones are promoted.
     - **Live-out at the same slot triggers a refusal** unless ``last_write`` (see above),
       which also needs a unit-stride loop. The slot-precise live-out check only allows
       promotion without a copy-out when no post-loop read targets *this* specific slot.
@@ -85,6 +87,7 @@ import contextlib
 import copy
 import enum
 import io
+import itertools
 from typing import Any
 
 from dace import SDFG, InterstateEdge, data, dtypes, properties, subsets, symbolic
@@ -173,7 +176,7 @@ class OverlapSlotAccesses(SlotAccesses):
         sub = memlet.subset
         if memlet.data != self.name or sub is None:
             return False
-        if PromoteConstantIndexAccess._is_constant_point_subset(sub):
+        if PromoteConstantIndexAccess.is_constant_point_subset(sub):
             return point_subsets_equal(sub, self.slot)
         if not isinstance(sub, subsets.Range) or len(sub.ranges) != len(self.slot.ranges):
             return True
@@ -367,6 +370,9 @@ class PromoteConstantIndexAccess(ppl.Pass):
         per_arr_mixed: set[str] = set()
         # Arrays read at an index that is not a constant point (``arr[k - 1]``)
         per_arr_picked: set[str] = set()
+        # Under last_write a slot may name symbols the loop never changes (``a[i]`` in a ``j`` loop)
+        moving = self.moving_symbols(loop) if self.last_write else None
+        per_arr_written: dict[str, list[subsets.Range]] = {}
         for state in loop_states:
             for node in state.nodes():
                 if not isinstance(node, nodes.AccessNode):
@@ -392,8 +398,10 @@ class PromoteConstantIndexAccess(ppl.Pass):
                     if sub is None:
                         per_arr_mixed.add(name)
                         continue
-                    if self._is_constant_point_subset(sub):
+                    if self.is_constant_point_subset(sub, moving):
                         per_arr.setdefault(name, []).append(sub)
+                        if edge.dst is node:
+                            per_arr_written.setdefault(name, []).append(sub)
                     elif self.last_write and self.picked_read(state, edge, node):
                         per_arr_picked.add(name)
                     else:
@@ -415,6 +423,8 @@ class PromoteConstantIndexAccess(ppl.Pass):
             for s in subs:
                 if not any(point_subsets_equal(s, p) for p in unique_points):
                     unique_points.append(s)
+            if any(p.free_symbols for p in unique_points):
+                unique_points = self.written_disjoint_points(unique_points, per_arr_written.get(name, []), sdfg)
             # A picked read chooses between the array and one promoted slot
             if name in per_arr_picked and len(unique_points) != 1:
                 continue
@@ -438,6 +448,18 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 if copy_out is not None:
                     results.append((name, point, copy_out))
         return results
+
+    @staticmethod
+    def written_disjoint_points(
+        points: list[subsets.Range], written: list[subsets.Range], sdfg: SDFG
+    ) -> list[subsets.Range]:
+        """The ``points`` the loop writes, when no two of ``points`` may be one element (``a[i]`` and ``a[i - 1]``
+        never are, ``a[i]`` and ``a[k]`` may be); else none."""
+        facts = sdfg.facts()
+        for first, second in itertools.combinations(points, 2):
+            if subsets.intersects(first, second, facts) is not symbolic.Truth.FALSE:
+                return []
+        return [p for p in points if any(point_subsets_equal(p, w) for w in written)]
 
     @staticmethod
     def picked_read(state: SDFGState, edge: Any, node: nodes.AccessNode) -> bool:
@@ -735,8 +757,17 @@ class PromoteConstantIndexAccess(ppl.Pass):
             idx = after
 
     @staticmethod
-    def _is_constant_point_subset(sub) -> bool:
-        """True if ``sub`` is a single point (size 1 on every axis) with no free symbols.
+    def moving_symbols(loop: LoopRegion) -> set[str]:
+        """The symbols whose value may change while ``loop`` runs, its iterator included."""
+        # Avoid an import cycle
+        from dace.transformation.interstate.loop_to_map import loop_varying_symbols
+
+        return loop_varying_symbols(loop) | {loop.loop_variable}
+
+    @staticmethod
+    def is_constant_point_subset(sub, moving: set[str] | None = None) -> bool:
+        """True if ``sub`` is a single point (size 1 on every axis) with no free symbols, or, given ``moving``,
+        with no symbol of ``moving``: the same point on every iteration of the loop.
 
         Accepts 1-D ``arr[3]`` and multi-dim ``arr[3, 5]`` -- both name a single element
         whose location does not depend on any symbol. Multi-dim slots with mixed
@@ -756,7 +787,9 @@ class PromoteConstantIndexAccess(ppl.Pass):
             if sub.tile_sizes and symbolic.pystr_to_symbolic(sub.tile_sizes[axis]) != 1:
                 return False
         # No free symbols across any axis -> truly constant.
-        return len(sub.free_symbols) == 0
+        if moving is None:
+            return len(sub.free_symbols) == 0
+        return not set(map(str, sub.free_symbols)) & moving
 
     def _not_live_out(self, loop: LoopRegion, name: str, slot: subsets.Range | None = None) -> bool:
         """Live-out check for ``name`` (whole array) or ``name[slot]`` (one element).
@@ -865,9 +898,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 memlet = edge.data
                 if memlet is None or memlet.data != arr_name or memlet.subset is None:
                     continue
-                if not self._is_constant_point_subset(memlet.subset) or not point_subsets_equal(
-                    memlet.subset, c_subset
-                ):
+                if not self.is_constant_point_subset(memlet.subset) or not point_subsets_equal(memlet.subset, c_subset):
                     return False
         return True
 
@@ -914,6 +945,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
         scalar_subset = subsets.Range([(0, 0, 1)])
 
         single_slot = self._arr_accesses_only_at_slot(loop, arr_name, c_subset)
+        facts = sdfg.facts()
 
         for state in loop.states():
             if state is prologue:
@@ -945,7 +977,8 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 if (
                     edge.data.data == arr_name
                     and edge.data.subset is not None
-                    and not self._is_constant_point_subset(edge.data.subset)
+                    and not self.is_constant_point_subset(edge.data.subset)
+                    and subsets.intersects(edge.data.subset, c_subset, facts) is not symbolic.Truth.FALSE
                 ):
                     if per_state_scalar is None:
                         per_state_scalar = state.add_access(scalar_name)

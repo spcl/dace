@@ -59,7 +59,6 @@ UNTILED_KERNELS = frozenset(
         "s176_d_single",
         "s2111_d_single",
         "s232_d_single",
-        "s257_d_single",
         "s258_d_single",
         "s3110_d_single",
         "s3112_d_single",
