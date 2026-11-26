@@ -592,7 +592,7 @@ def nonnegative_containers(
             # Sums, products, minima and maxima of nonnegative values, from a nonnegative seed, are nonnegative
             seeded = not node.exclusive or node.identity is None or parses_nonnegative(str(node.identity), known)
             reads = [e.data.data for e in state.in_edges(node) if not e.data.is_empty()]
-            return node.op is not ScanOp.AFFINE and seeded and all(data in known for data in reads)
+            return node.op not in (ScanOp.AFFINE, ScanOp.LINEAR2) and seeded and all(data in known for data in reads)
         if isinstance(node, nodes.NestedSDFG):
             inputs = {e.dst_conn for e in state.in_edges(node) if e.dst_conn and e.data.data in known}
             inputs |= {k for k, v in node.symbol_mapping.items() if parses_nonnegative(str(v), known)}

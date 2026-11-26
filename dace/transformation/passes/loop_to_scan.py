@@ -21,6 +21,8 @@ This pass detects that shape and replaces the loop with three sibling states:
 A computed delta (``out[i+1] = out[i] + a[i] * b[i] + c[i]``) is built into the delta
 buffer first. A first-order LINEAR recurrence (``a[i] = a[i] + a[i-1] * b[i]``) lifts
 as ``op=AFFINE``: :func:`match_affine_scan` proves linearity in the carry symbolically.
+On the CPU target the SECOND-order one (``a[i] = a[i] + a[i-1] * b[i] + a[i-2] * c[i]``)
+lifts as ``op=LINEAR2``, whose carry is the affine map of the pair ``(a[i-1], a[i-2])``.
 
 Compatibility with :class:`~dace.transformation.passes.loop_to_reduce.LoopToReduce`:
 ``LoopToReduce``'s tasklet matcher refuses any loop whose write subset depends on the
@@ -52,6 +54,7 @@ from dace.frontend.python import astutils
 # Re-export the supported associative ops via :class:`ScanOp`; the matcher recognises
 # the same four ops the libnode expansions cover.
 from dace.libraries.standard.nodes.scan import (
+    COEF2_CONNECTOR_NAME,
     COEF_CONNECTOR_NAME,
     INIT_CONNECTOR_NAME,
     INPUT_CONNECTOR_NAME,
@@ -643,7 +646,8 @@ class LoopToScan(ppl.Pass):
             # Last: the AFFINE shape, the first-order LINEAR recurrence every matcher above
             # refuses on purpose. Tried only after they all decline, so a loop the scalar ops
             # can lift keeps its existing lowering unchanged.
-            aff = match_affine_scan(loop, owner)
+            # The second-order scan has host expansions only: on the GPU the loop stays sequential.
+            aff = match_affine_scan(loop, owner, second_order=self.target == "cpu")
             if aff is not None:
                 if carry_distance_kind(aff.stride, SymbolResolver().facts_at(loop)) == "guard":
                     rewrite = lambda region: self._specialize_affine_by_distance(region, loop, aff, owner)
@@ -3441,7 +3445,7 @@ def _classify_subset(subset: subsets.Subset | None, loop_var: str):
 
 
 def carrier_reads_admissible(
-    state: SDFGState, out_name: str, loop_var: str, scan_axis: int, write_others, k_w, k_r, write_coef
+    state: SDFGState, out_name: str, loop_var: str, scan_axis: int, write_others, k_w, k_r, write_coef, k_r2=None
 ) -> bool:
     """True iff every same-slot read of ``out_name`` on the scan axis sits at the carry offset
     ``k_r`` or the write offset ``k_w``. Any other offset is a second carried dependence the scan
@@ -3457,7 +3461,7 @@ def carrier_reads_admissible(
             r_axis, k, r_others, r_coef = _classify_subset(subset, loop_var)
             if r_axis != scan_axis or r_coef != write_coef or not _same_other_indices(r_others, write_others):
                 continue
-            if symbolic.simplify(k - k_w) != 0 and symbolic.simplify(k - k_r) != 0:
+            if all(symbolic.simplify(k - at) != 0 for at in (k_w, k_r, k_r2) if at is not None):
                 return False
     return True
 
@@ -5027,6 +5031,7 @@ class _AffineScan(NamedTuple):
     :param stride: ``k_w - k_r``, the carry distance -- 1 for the contiguous recurrence, ``S`` for
         the residue-class one. May be symbolic, in which case the lift is valid only under
         ``stride >= 1`` and the caller owes that guard (:func:`carry_distance_kind`).
+    :param coef2_code: For the second-order recurrence, the coefficient of ``out[i + k_w - 2]``.
     """
 
     out_name: str
@@ -5042,6 +5047,8 @@ class _AffineScan(NamedTuple):
     k_w: Any
     k_r: Any
     stride: Any
+    #: Second order only (``op=LINEAR2``): the coefficient of ``out[i + k_w - 2]``.
+    coef2_code: str | None = None
 
 
 class _AffineRefused(Exception):
@@ -5153,7 +5160,9 @@ def sign_query(expr, facts: symbolic.Facts) -> tuple[Any, symbolic.Facts]:
     )
 
 
-def affine_value_walk(state: SDFGState, sdfg: SDFG, write_edge, out_name: str, loop_var: str, k_w: Any):
+def affine_value_walk(
+    state: SDFGState, sdfg: SDFG, write_edge, out_name: str, loop_var: str, k_w: Any, max_carries: int = 1
+):
     """Compose the whole straight-line chain behind ``write_edge`` into one symbolic expression.
 
     Tasklets contribute their code, transient scalars written once in this state are walked
@@ -5171,86 +5180,48 @@ def affine_value_walk(state: SDFGState, sdfg: SDFG, write_edge, out_name: str, l
     :param out_name: The carrier array.
     :param loop_var: The loop iteration variable.
     :param k_w: Constant offset of the carrier write.
-    :returns: ``(expr, leaves, chain, carry_name, k_r, reads)``, or ``None`` when not liftable.
+    :param max_carries: How many distinct carry offsets to accept (2 for the second-order recurrence).
+    :returns: ``(expr, leaves, chain, carries, reads)`` with ``carries`` mapping each distinct carry
+              offset ``k_r`` to its leaf name, or ``None`` when not liftable.
     """
     leaves: dict[str, _AffineLeaf] = {}
     chain: list[Any] = []
-    carry: list[Any] = []  # single-slot: [(name, k_r)] once the carry leaf is seen
+    carry: dict[Any, str] = {}  # simplified k_r -> leaf name, per distinct carry offset
     reads: list[Any] = []  # every edge the value reads the carrier through
 
     def leaf_for(edge) -> Any:
-        subset = edge.data.subset
         if isinstance(edge.src, nodes.AccessNode) and edge.src.data == out_name:
             reads.append(edge)
-            if reads_the_pre_loop_value(edge, loop_var, k_w):
-                check_leaf_is_one_element(edge)
-                name = f"{_AFFINE_LEAF_PREFIX}{len(leaves)}"
-                leaves[name] = _AffineLeaf(edge.src, edge.src_conn, edge.data)
-                return symbolic.pystr_to_symbolic(name)
-            axis, k_r, others, coef = _classify_subset(subset, loop_var)
-            # The shape checks come first and short-circuit: a subset this does not classify hands
-            # back ``k_r = None``, and the distance below would raise on it rather than refuse.
-            #
-            # The carry may then reach back any POSITIVE distance: at distance S the recurrence is
-            # S independent unit-stride ones, one per residue class of the index mod S, and the
-            # libnode scans them as such. Zero or negative is not a carry at all -- it reads what
-            # this iteration or a later one writes -- and a distance whose sign is unknown is
-            # decided by the caller's specialization, not here.
-            if (
-                axis != 0
-                or coef != 1
-                or others
-                or k_r is None
-                or carry_distance_kind(symbolic.simplify(k_w - k_r), SymbolResolver().facts_at(state)) is None
-            ):
-                raise _AffineRefused("carrier read is not a positive-distance predecessor")
-            if carry:
-                if symbolic.simplify(carry[0][1] - k_r) != 0:
-                    raise _AffineRefused("two distinct carrier offsets")
-                return symbolic.pystr_to_symbolic(carry[0][0])
-            check_leaf_is_one_element(edge)
-            name = f"{_AFFINE_LEAF_PREFIX}_carry"
-            carry.append((name, k_r))
-            leaves[name] = _AffineLeaf(edge.src, edge.src_conn, edge.data)
-            return symbolic.pystr_to_symbolic(name)
+            if not reads_the_pre_loop_value(edge, loop_var, k_w):
+                return carry_leaf(edge)
         check_leaf_is_one_element(edge)
         name = f"{_AFFINE_LEAF_PREFIX}{len(leaves)}"
         leaves[name] = _AffineLeaf(edge.src, edge.src_conn, edge.data)
         return symbolic.pystr_to_symbolic(name)
 
-    def check_leaf_is_one_element(edge) -> None:
-        # Every leaf is rebuilt as an edge into a scalar tasklet connector, so it has to name ONE
-        # element on the array side. A copy edge carrying a multi-element region and an
-        # ``other_subset`` is a real copy, not a scalar read; it stays an AccessNode-to-AccessNode
-        # path for the copy lowering at codegen to handle, and this matcher declines it rather
-        # than flattening it into a connector read that means something narrower.
-        array_subset = edge.data.subset if edge.data.data == edge.src.data else edge.data.other_subset
-        if array_subset is None:
-            raise _AffineRefused("leaf read names neither side of its memlet")
-        count = symbolic.simplify(array_subset.num_elements())
-        if not (isinstance(count, (int, sympy.Integer)) and int(count) == 1):
-            raise _AffineRefused("leaf read is a multi-element copy, not a scalar read")
+    def carry_leaf(edge) -> Any:
+        k_r = carry_offset(edge.data.subset, loop_var, k_w, state)
+        if k_r is None:
+            raise _AffineRefused("carrier read is not a positive-distance predecessor")
+        k_r = symbolic.simplify(k_r)
+        if k_r in carry:
+            return symbolic.pystr_to_symbolic(carry[k_r])
+        if len(carry) >= max_carries:
+            raise _AffineRefused("more distinct carrier offsets than the recurrence order")
+        check_leaf_is_one_element(edge)
+        name = _AFFINE_LEAF_PREFIX + ("_carry", "_carry2")[len(carry)]
+        carry[k_r] = name
+        leaves[name] = _AffineLeaf(edge.src, edge.src_conn, edge.data)
+        return symbolic.pystr_to_symbolic(name)
 
     def value_of(edge) -> Any:
         src = edge.src
         if isinstance(src, nodes.AccessNode):
-            desc = sdfg.arrays.get(src.data)
-            in_edges = [e for e in state.in_edges(src) if not e.data.is_empty()]
-            # A transient written exactly once here and read exactly once is a wire, not a value.
-            if (
-                desc is not None
-                and desc.transient
-                and src.data != out_name
-                and len(in_edges) == 1
-                and len(state.out_edges(src)) == 1
-            ):
-                chain.append(src)
-                return value_of(in_edges[0])
-            writer = split_access_writer(state, src) if desc is not None and src.data != out_name else None
-            if writer is not None and len(state.out_edges(src)) == 1:
-                chain.extend([src, writer])
-                return value_of(next(e for e in state.in_edges(writer) if not e.data.is_empty()))
-            return leaf_for(edge)
+            wire = wire_through(state, src, out_name)
+            if wire is None:
+                return leaf_for(edge)
+            chain.extend(wire[0])
+            return value_of(wire[1])
         if not isinstance(src, nodes.Tasklet):
             raise _AffineRefused(f"{type(src).__name__} in the value chain")
         if len([e for e in state.out_edges(src) if not e.data.is_empty()]) != 1:
@@ -5274,7 +5245,64 @@ def affine_value_walk(state: SDFGState, sdfg: SDFG, write_edge, out_name: str, l
         return None
     if not carry:
         return None
-    return expr, leaves, chain, carry[0][0], carry[0][1], reads
+    return expr, leaves, chain, carry, reads
+
+
+def check_leaf_is_one_element(edge) -> None:
+    """Refuse a leaf read that is not ONE element on the array side.
+
+    Every leaf is rebuilt as an edge into a scalar tasklet connector. A copy edge carrying a
+    multi-element region and an ``other_subset`` is a real copy, not a scalar read; it stays an
+    AccessNode-to-AccessNode path for the copy lowering at codegen to handle, and the matcher
+    declines it rather than flattening it into a connector read that means something narrower.
+    """
+    array_subset = edge.data.subset if edge.data.data == edge.src.data else edge.data.other_subset
+    if array_subset is None:
+        raise _AffineRefused("leaf read names neither side of its memlet")
+    count = symbolic.simplify(array_subset.num_elements())
+    if not (isinstance(count, (int, sympy.Integer)) and int(count) == 1):
+        raise _AffineRefused("leaf read is a multi-element copy, not a scalar read")
+
+
+def wire_through(state: SDFGState, src: nodes.AccessNode, out_name: str) -> tuple[list[Any], Any] | None:
+    """``(wire nodes, edge feeding them)`` when ``src`` is a transient wire the value walk passes through.
+
+    A transient written exactly once here and read exactly once is a wire, not a value; so is the
+    split pair :func:`split_access_writer` finds.
+    """
+    desc = state.sdfg.arrays.get(src.data)
+    in_edges = [e for e in state.in_edges(src) if not e.data.is_empty()]
+    if (
+        desc is not None
+        and desc.transient
+        and src.data != out_name
+        and len(in_edges) == 1
+        and len(state.out_edges(src)) == 1
+    ):
+        return [src], in_edges[0]
+    writer = split_access_writer(state, src)
+    if writer is None:
+        return None
+    return [src, writer], next(e for e in state.in_edges(writer) if not e.data.is_empty())
+
+
+def carry_offset(subset: Any, loop_var: str, k_w: Any, state: SDFGState) -> Any | None:
+    """The offset ``k_r`` of a carrier read ``out[i + k_r]`` that is a carry, or ``None``.
+
+    The shape checks come first and short-circuit: a subset this does not classify hands back
+    ``k_r = None``, and the distance below would raise on it rather than refuse.
+
+    The carry may then reach back any POSITIVE distance: at distance S the recurrence is S
+    independent unit-stride ones, one per residue class of the index mod S, and the libnode scans
+    them as such. Zero or negative is not a carry at all -- it reads what this iteration or a later
+    one writes -- and a distance whose sign is unknown is decided by the caller's specialization.
+    """
+    axis, k_r, others, coef = _classify_subset(subset, loop_var)
+    if axis != 0 or coef != 1 or others or k_r is None:
+        return None
+    if carry_distance_kind(symbolic.simplify(k_w - k_r), SymbolResolver().facts_at(state)) is None:
+        return None
+    return k_r
 
 
 def split_access_writer(state: SDFGState, node: nodes.AccessNode) -> nodes.AccessNode | None:
@@ -5284,7 +5312,9 @@ def split_access_writer(state: SDFGState, node: nodes.AccessNode) -> nodes.Acces
     written by the copy, one read by the tasklet, joined only by an ordering edge. The value walk
     follows that edge as a wire when the twin is written exactly once and read by nothing else.
     """
-    if not state.sdfg.arrays[node.data].transient or any(not e.data.is_empty() for e in state.in_edges(node)):
+    if not state.sdfg.arrays[node.data].transient or state.out_degree(node) != 1:
+        return None
+    if any(not e.data.is_empty() for e in state.in_edges(node)):
         return None
     twins = [e.src for e in state.in_edges(node) if isinstance(e.src, nodes.AccessNode) and e.src.data == node.data]
     if len(twins) != 1:
@@ -5377,11 +5407,12 @@ def python_code_for(expr: Any) -> str | None:
     return text
 
 
-def match_affine_scan(loop: LoopRegion, sdfg: SDFG) -> _AffineScan | None:
+def match_affine_scan(loop: LoopRegion, sdfg: SDFG, second_order: bool = False) -> _AffineScan | None:
     """Match ``out[i + k_w] = c(i) * out[i + k_w - 1] + d(i)`` in ``loop``, or return ``None``.
 
     :param loop: Candidate loop.
     :param sdfg: SDFG owning it.
+    :param second_order: Also match ``+ c2(i) * out[i + k_w - 2]`` (``op=LINEAR2``, host expansions only).
     :returns: The match, or ``None``.
     """
     if loop_analysis.get_loop_stride(loop) != 1:
@@ -5410,17 +5441,16 @@ def match_affine_scan(loop: LoopRegion, sdfg: SDFG) -> _AffineScan | None:
     if write_axis != 0 or write_coef != 1 or write_others:
         return None
 
-    walked = affine_value_walk(state, sdfg, write_edge, out_name, loop_var, k_w)
+    walked = affine_value_walk(state, sdfg, write_edge, out_name, loop_var, k_w, max_carries=2 if second_order else 1)
     if walked is None:
         return None
-    expr, leaves, chain, carry_name, k_r, reads = walked
-    split = split_linear_in_carry(expr, carry_name)
+    expr, leaves, chain, carries, reads = walked
+    split = split_recurrence(expr, carries, k_w, symbolic.simplify(iter_end - iter_start + 1))
     if split is None:
         return None
-    coef_code, delta_code = python_code_for(split[0]), python_code_for(split[1])
-    if coef_code is None or delta_code is None:
-        return None
-    if not carrier_reads_admissible(state, out_name, loop_var, 0, [], k_w, k_r, 1):
+    coef_code, coef2_code, delta_code, k_r = split
+    k_r2 = symbolic.simplify(k_w - 2) if coef2_code is not None else None
+    if not carrier_reads_admissible(state, out_name, loop_var, 0, [], k_w, k_r, 1, k_r2):
         return None
     if _read_survives_rewrite(loop, sdfg, {out_name}, reads):
         return None
@@ -5440,7 +5470,40 @@ def match_affine_scan(loop: LoopRegion, sdfg: SDFG) -> _AffineScan | None:
         k_w=k_w,
         k_r=k_r,
         stride=symbolic.simplify(k_w - k_r),
+        coef2_code=coef2_code,
     )
+
+
+def split_recurrence(expr: Any, carries: dict[Any, str], k_w: Any, trip: Any) -> tuple | None:
+    """``(coef_code, coef2_code, delta_code, k_r)`` of a first- or second-order linear recurrence, or ``None``.
+
+    One carry is the first-order recurrence at any carry distance (``coef2_code`` is ``None``). Two must
+    sit at ``k_w - 1`` and ``k_w - 2``, with ``expr`` linear in each and no product of the two (TSVC
+    s322 ``a[i] = a[i] + a[i-1]*b[i] + a[i-2]*c[i]``); the scan then needs at least two elements, since
+    a one-element operand reaches the libnode as a scalar.
+    """
+    if len(carries) == 1:
+        k_r, name = next(iter(carries.items()))
+        split = split_linear_in_carry(expr, name)
+        if split is None:
+            return None
+        coef_code, delta_code = python_code_for(split[0]), python_code_for(split[1])
+        if coef_code is None or delta_code is None:
+            return None
+        return coef_code, None, delta_code, k_r
+    near, far = (carries.get(symbolic.simplify(k_w - distance)) for distance in (1, 2))
+    if near is None or far is None:
+        return None
+    if isinstance(trip, (int, sympy.Integer)) and int(trip) < 2:
+        return None
+    first = split_linear_in_carry(expr, near)
+    second = None if first is None else split_linear_in_carry(first[1], far)
+    if second is None or symbolic.pystr_to_symbolic(far) in first[0].free_symbols:
+        return None
+    codes = python_code_for(first[0]), python_code_for(second[0]), python_code_for(second[1])
+    if any(code is None for code in codes):
+        return None
+    return codes[0], codes[1], codes[2], symbolic.simplify(k_w - 1)
 
 
 def rewrite_affine_scan(parent: ControlFlowRegion, loop: LoopRegion, info: _AffineScan, sdfg: SDFG):
@@ -5476,7 +5539,15 @@ def rewrite_affine_scan(parent: ControlFlowRegion, loop: LoopRegion, info: _Affi
             f"{_COEF_BUF_PREFIX}{info.out_name}", [trip], out_desc.dtype, transient=True, find_new_name=True
         )[0]
     )
-    mutate_body_to_affine_buffers(info, delta_buf, coef_buf)
+    direct_coef2 = None if info.coef2_code is None else direct_operand(info, info.coef2_code, sdfg)
+    coef2_buf = (
+        None
+        if info.coef2_code is None or direct_coef2
+        else sdfg.add_array(
+            f"{_COEF_BUF_PREFIX}{info.out_name}_2", [trip], out_desc.dtype, transient=True, find_new_name=True
+        )[0]
+    )
+    mutate_body_to_affine_buffers(info, delta_buf, coef_buf, coef2_buf)
 
     out_edges = list(parent.out_edges(loop))
     s_scan = parent.add_state(loop.label + "_affine_scan")
@@ -5484,7 +5555,9 @@ def rewrite_affine_scan(parent: ControlFlowRegion, loop: LoopRegion, info: _Affi
     for e in out_edges:
         parent.remove_edge(e)
         parent.add_edge(s_scan, e.dst, e.data)
-    emit_affine_scan(s_scan, sdfg, info, delta_buf, coef_buf, trip, direct_delta, direct_coef)
+    emit_affine_scan(
+        s_scan, sdfg, info, delta_buf, coef_buf, trip, direct_delta, direct_coef, (coef2_buf, direct_coef2)
+    )
 
 
 def emit_affine_build_tasklet(state: SDFGState, info: _AffineScan, label: str, code: str, buf: str, idx: Any) -> None:
@@ -5561,7 +5634,9 @@ def direct_operand(info: "_AffineScan", code: str, sdfg: SDFG) -> tuple[str, Any
     return name, offset
 
 
-def mutate_body_to_affine_buffers(info: _AffineScan, delta_buf: str | None, coef_buf: str | None):
+def mutate_body_to_affine_buffers(
+    info: _AffineScan, delta_buf: str | None, coef_buf: str | None, coef2_buf: str | None = None
+):
     """In place: replace the recurrence with two independent per-iteration writes.
 
     The original computation chain is removed wholesale rather than rewired. Every node in it was
@@ -5576,6 +5651,8 @@ def mutate_body_to_affine_buffers(info: _AffineScan, delta_buf: str | None, coef
         emit_affine_build_tasklet(state, info, "affine_coef", info.coef_code, coef_buf, idx)
     if delta_buf is not None:
         emit_affine_build_tasklet(state, info, "affine_delta", info.delta_code, delta_buf, idx)
+    if coef2_buf is not None:
+        emit_affine_build_tasklet(state, info, "affine_coef2", required(info.coef2_code), coef2_buf, idx)
 
     state.remove_edge(info.write_edge)
     for node in info.chain:
@@ -5600,6 +5677,7 @@ def emit_affine_scan(
     trip: Any,
     direct_delta: tuple[str, Any] | None = None,
     direct_coef: tuple[str, Any] | None = None,
+    coef2: tuple[str | None, tuple[str, Any] | None] = (None, None),
 ):
     """Wire the ``Scan(op=AFFINE)`` node reading both buffers and writing ``out`` directly.
 
@@ -5609,7 +5687,8 @@ def emit_affine_scan(
     """
     out_desc = sdfg.arrays[info.out_name]
     write_start = symbolic.simplify(info.iter_start + info.k_w)
-    node = Scan(name=f"{state.label}_op", op=ScanOp.AFFINE, exclusive=False)
+    second_order = info.coef2_code is not None
+    node = Scan(name=f"{state.label}_op", op=ScanOp.LINEAR2 if second_order else ScanOp.AFFINE, exclusive=False)
     # Set after construction: ``stride`` is a Property, and Scan's ``__init__`` forwards its
     # keyword arguments to CodeNode, which has no such parameter.
     node.stride = info.stride
@@ -5623,8 +5702,10 @@ def emit_affine_scan(
     # array: codegen hands a scalar to the tasklet by value and an array by pointer, and the
     # contiguous body spells its seed as a value. A length-1 array here compiles the seed into a
     # pointer the body then uses as a number.
-    seed_axis = symbolic.simplify(info.iter_start + info.k_r)
-    contiguous = symbolic.simplify(info.stride) == 1
+    # The second-order recurrence enters with TWO elements, (out[start + k_w - 2], out[start + k_w - 1]).
+    seed_count = 2 if second_order else info.stride
+    seed_axis = symbolic.simplify(info.iter_start + info.k_r - (1 if second_order else 0))
+    contiguous = symbolic.simplify(info.stride) == 1 and not second_order
     if contiguous:
         seed_name, _ = sdfg.add_scalar(
             f"{_SEED_SCALAR_PREFIX}{info.out_name}", out_desc.dtype, transient=True, find_new_name=True
@@ -5633,10 +5714,10 @@ def emit_affine_scan(
         seed_hi: symbolic.SymbolicType | int = 0
     else:
         seed_name, _ = sdfg.add_array(
-            f"{_SEED_SCALAR_PREFIX}{info.out_name}", (info.stride,), out_desc.dtype, transient=True, find_new_name=True
+            f"{_SEED_SCALAR_PREFIX}{info.out_name}", (seed_count,), out_desc.dtype, transient=True, find_new_name=True
         )
-        seed_last = symbolic.simplify(seed_axis + info.stride - 1)
-        seed_hi = symbolic.simplify(info.stride - 1)
+        seed_last = symbolic.simplify(seed_axis + seed_count - 1)
+        seed_hi = symbolic.simplify(seed_count - 1)
     seed_an = state.add_access(seed_name)
     node.add_in_connector(INIT_CONNECTOR_NAME)
     state.add_edge(
@@ -5677,6 +5758,8 @@ def emit_affine_scan(
 
     wire(INPUT_CONNECTOR_NAME, delta_buf, direct_delta)
     wire(COEF_CONNECTOR_NAME, coef_buf, direct_coef)
+    if second_order:
+        wire(COEF2_CONNECTOR_NAME, *coef2)
     state.add_edge(
         node,
         OUTPUT_CONNECTOR_NAME,

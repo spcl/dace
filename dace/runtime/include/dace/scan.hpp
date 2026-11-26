@@ -873,6 +873,68 @@ inline void inclusive_affine(CIt coef, DIt delta, OutIt out_first, long n, T see
       [](M x, M y) { return detail::affine_compose<E>(x, y); });
 }
 
+// Second-order linear recurrence: out[k] = c1[k]*out[k-1] + c2[k]*out[k-2] + d[k], entered with
+// out[-1] = seed1 and out[-2] = seed2. The carry is the affine map of the PAIR (out[k-1], out[k-2]):
+// a 2x2 matrix and a 2-vector, composed as x -> M x + v, with the same blocked scan as above.
+
+namespace detail {
+
+template <typename E>
+struct linear2_map {
+  E m00, m01, m10, m11;
+  E v0, v1;
+};
+
+// Compose two maps: y applied after x.
+template <typename E>
+inline linear2_map<E> linear2_compose(const linear2_map<E>& x, const linear2_map<E>& y) {
+  return linear2_map<E>{y.m00 * x.m00 + y.m01 * x.m10, y.m00 * x.m01 + y.m01 * x.m11,
+                        y.m10 * x.m00 + y.m11 * x.m10, y.m10 * x.m01 + y.m11 * x.m11,
+                        y.m00 * x.v0 + y.m01 * x.v1 + y.v0,  y.m10 * x.v0 + y.m11 * x.v1 + y.v1};
+}
+
+// Fold one block: each step is M = [[c1, c2], [1, 0]], v = [d, 0], applied after the running map.
+template <typename E, typename C1It, typename C2It, typename DIt>
+inline linear2_map<E> fold_linear2(C1It c1, C2It c2, DIt d, long lo, long hi) {
+  linear2_map<E> m{static_cast<E>(1), static_cast<E>(0), static_cast<E>(0), static_cast<E>(1),
+                   static_cast<E>(0), static_cast<E>(0)};
+  for (long k = lo; k < hi; ++k) {
+    const E a = static_cast<E>(c1[k]), b = static_cast<E>(c2[k]);
+    m = linear2_map<E>{a * m.m00 + b * m.m10, a * m.m01 + b * m.m11, m.m00, m.m01,
+                       a * m.v0 + b * m.v1 + static_cast<E>(d[k]), m.v0};
+  }
+  return m;
+}
+
+// Write out[lo:hi] entered with the composed map off; the seed has M == 0, so off.v is the pair.
+template <typename E, typename C1It, typename C2It, typename DIt, typename OutIt>
+inline void scan_incl_linear2(C1It c1, C2It c2, DIt d, OutIt o, long lo, long hi, linear2_map<E> off) {
+  E prev = off.v0, prev2 = off.v1;
+  for (long k = lo; k < hi; ++k) {
+    const E y = static_cast<E>(c1[k]) * prev + static_cast<E>(c2[k]) * prev2 + static_cast<E>(d[k]);
+    o[k] = y;
+    prev2 = prev;
+    prev = y;
+  }
+}
+
+}  // namespace detail
+
+// ``seeds`` holds (out[-2], out[-1]) in memory order.
+template <typename C1It, typename C2It, typename DIt, typename OutIt, typename SIt>
+inline void inclusive_linear2(C1It coef, C2It coef2, DIt delta, OutIt out_first, long n, SIt seeds) {
+  using E = typename std::iterator_traits<OutIt>::value_type;
+  using M = detail::linear2_map<E>;
+  const E zero = static_cast<E>(0);
+  detail::blocked_scan<M>(
+      n, static_cast<long>(4 * sizeof(E)), M{zero, zero, zero, zero, static_cast<E>(seeds[1]), static_cast<E>(seeds[0])},
+      [coef, coef2, delta](long lo, long hi) { return detail::fold_linear2<E>(coef, coef2, delta, lo, hi); },
+      [coef, coef2, delta, out_first](long lo, long hi, M off) {
+        detail::scan_incl_linear2<E>(coef, coef2, delta, out_first, lo, hi, off);
+      },
+      [](M x, M y) { return detail::linear2_compose<E>(x, y); });
+}
+
 // Strided affine: x[i] = c[i] * x[i - stride] + d[i] is `stride` independent unit-stride
 // affine scans, one per residue class of the index mod stride. Reuses inclusive_affine
 // unchanged; stride == 1 is the plain contiguous scan.

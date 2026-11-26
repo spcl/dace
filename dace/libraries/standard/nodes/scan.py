@@ -78,6 +78,8 @@ INIT_CONNECTOR_NAME = "_scan_init"
 #: Second input array, wired only when ``op is ScanOp.AFFINE``: the per-element
 #: coefficient ``c`` of ``out[k] = c[k] * out[k-1] + d[k]``. ``_scan_in`` carries ``d``.
 COEF_CONNECTOR_NAME = "_scan_coef"
+#: Wired only when ``op is ScanOp.LINEAR2``: the coefficient ``c2`` of the ``out[k-2]`` term.
+COEF2_CONNECTOR_NAME = "_scan_coef2"
 
 
 def in_connector(chain: int = 0) -> str:
@@ -119,6 +121,11 @@ class ScanOp(enum.Enum):
     #: whole function and there is nothing of bounded width to scan over; ``LoopToScan``'s matcher
     #: proves linearity symbolically before it ever builds these buffers.
     AFFINE = "affine"
+    #: ``out[k] = c[k] * out[k-1] + c2[k] * out[k-2] + d[k]`` -- the SECOND-order linear recurrence.
+    #: Its carry is the affine map of the pair ``(out[k-1], out[k-2])``: a 2x2 matrix and a 2-vector.
+    #: Reads ``_scan_coef`` and ``_scan_coef2``, and ``_scan_init`` holds ``(out[-2], out[-1])``.
+    #: Inclusive, single-chain, unit-stride and host-only: the CPU, sequential and pure expansions.
+    LINEAR2 = "linear2"
 
 
 #: Map op enum to the suffix of the OpenMP-scan function in ``dace/scan.hpp``.
@@ -206,10 +213,12 @@ def _validate_chain(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain:
             f"single-chain host expansions."
         )
     coef_edges = [e for e in state.in_edges(node) if e.dst_conn == coef_connector(chain)]
-    if node.op is ScanOp.AFFINE:
+    if node.op is ScanOp.LINEAR2:
+        validate_linear2(node, state, sdfg, out_desc)
+    if node.op in (ScanOp.AFFINE, ScanOp.LINEAR2):
         if len(coef_edges) != 1:
             raise ValueError(
-                f"Scan node {node.label}: ``op=AFFINE`` requires exactly one "
+                f"Scan node {node.label}: ``op={node.op.name}`` requires exactly one "
                 f"``{coef_connector(chain)}`` in-edge; got {len(coef_edges)}."
             )
         coef_desc = sdfg.arrays[required(coef_edges[0].data.data)]
@@ -249,6 +258,92 @@ def _validate_chain(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain:
                 f"{init_desc.dtype} must match output dtype {out_desc.dtype}."
             )
     return in_desc, out_desc, in_edges[0], out_edges[0], (init_edges[0] if init_edges else None)
+
+
+def validate_linear2(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, out_desc) -> None:
+    """The second-order shape: one inclusive unit-stride chain, ``_scan_coef2`` beside ``_scan_coef``, two seeds."""
+    if node.chains != 1 or node.exclusive or segmented(node) or not symbolic.equal_valued(1, node.stride):
+        raise ValueError(f"Scan node {node.label}: ``op=LINEAR2`` is inclusive, single-chain and unit-stride.")
+    coef2 = [e for e in state.in_edges(node) if e.dst_conn == COEF2_CONNECTOR_NAME]
+    init = [e for e in state.in_edges(node) if e.dst_conn == INIT_CONNECTOR_NAME]
+    if len(coef2) != 1 or sdfg.arrays[required(coef2[0].data.data)].dtype != out_desc.dtype:
+        raise ValueError(
+            f"Scan node {node.label}: ``op=LINEAR2`` needs one ``{COEF2_CONNECTOR_NAME}`` of the output dtype."
+        )
+    if len(init) != 1 or symbolic.equal(required(init[0].data.subset).num_elements(), 2) is False:
+        raise ValueError(
+            f"Scan node {node.label}: ``op=LINEAR2`` needs ``{INIT_CONNECTOR_NAME}`` = (out[-2], out[-1])."
+        )
+
+
+def linear2_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, out_desc, parallel: bool) -> nodes.Tasklet:
+    """The second-order recurrence: the blocked runtime call, or the naked two-accumulator loop."""
+    n_expr = _resolve_length(node, state, sdfg)
+    c1, c2, d, o, init = (
+        COEF_CONNECTOR_NAME,
+        COEF2_CONNECTOR_NAME,
+        INPUT_CONNECTOR_NAME,
+        OUTPUT_CONNECTOR_NAME,
+        INIT_CONNECTOR_NAME,
+    )
+    if parallel:
+        code = f"::dace::scan::inclusive_linear2({c1}, {c2}, {d}, {o}, static_cast<long>({n_expr}), {init});"
+    else:
+        ctype = out_desc.dtype.ctype
+        code = (
+            f"{{ const long _n = static_cast<long>({n_expr});\n"
+            f"  {ctype} _p = {init}[1], _q = {init}[0];\n"
+            f"  for (long _k = 0; _k < _n; ++_k) {{\n"
+            f"      const {ctype} _y = {c1}[_k] * _p + {c2}[_k] * _q + {d}[_k];\n"
+            f"      {o}[_k] = _y;\n"
+            f"      _q = _p;\n"
+            f"      _p = _y;\n"
+            f"  }}\n"
+            f"}}"
+        )
+    return nodes.Tasklet(
+        node.name,
+        inputs=dict.fromkeys([d, c1, c2, init]),
+        outputs={o: None},
+        code=code,
+        language=dace.Language.CPP,
+    )
+
+
+def linear2_pure_sdfg(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> dace.SDFG:
+    """:func:`linear2_tasklet`'s loop as SDFG components: two accumulators, seeded from ``_scan_init``."""
+    nsdfg = dace.SDFG(f"{node.label}_pure")
+    for edge in [*state.in_edges(node), *state.out_edges(node)]:
+        operand_array(nsdfg, edge.dst_conn if edge.dst is node else edge.src_conn, edge, sdfg)
+    n = symbolic.symstr(
+        required(next(e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME).data.subset).num_elements()
+    )
+    prev = accumulator(nsdfg, 0)
+    prev2 = nsdfg.add_scalar("acc_2", nsdfg.arrays[prev].dtype, transient=True, storage=dtypes.StorageType.Register)[0]
+    seed = tasklet_state(
+        nsdfg,
+        "seed",
+        f"{NEXT} = {X}[1]\n{NEXT2} = {X}[0]",
+        {X: Memlet(f"{INIT_CONNECTOR_NAME}[0:2]")},
+        {NEXT: Memlet(f"{prev}[0]"), NEXT2: Memlet(f"{prev2}[0]")},
+    )
+    reads = {
+        X: Memlet(element(nsdfg, INPUT_CONNECTOR_NAME, SCAN_INDEX)),
+        COEF: Memlet(element(nsdfg, COEF_CONNECTOR_NAME, SCAN_INDEX)),
+        COEF2: Memlet(element(nsdfg, COEF2_CONNECTOR_NAME, SCAN_INDEX)),
+        ACC: Memlet(f"{prev}[0]"),
+        ACC2: Memlet(f"{prev2}[0]"),
+    }
+    writes = {
+        NEXT: Memlet(f"{prev}[0]"),
+        NEXT2: Memlet(f"{prev2}[0]"),
+        Y: Memlet(element(nsdfg, OUTPUT_CONNECTOR_NAME, SCAN_INDEX)),
+    }
+    code = f"{Y} = {COEF} * {ACC} + {COEF2} * {ACC2} + {X}\n{NEXT2} = {ACC}\n{NEXT} = {Y}"
+    loop = counted_loop("scan_0", SCAN_INDEX, "0", n, "1")
+    chain_blocks(loop, [tasklet_state(nsdfg, "step_0", code, reads, writes)])
+    chain_blocks(nsdfg, [seed, loop])
+    return nsdfg
 
 
 def segmented(node: "Scan") -> bool:
@@ -980,6 +1075,9 @@ class ExpandSequential(ExpandTransformation):
         # form over this loop would be false.
         if node.specialization_hint == PARALLEL_SCAN_HINT:
             node.specialization_hint = SEQUENTIAL_SCAN_HINT
+        if node.op is ScanOp.LINEAR2:
+            refuse_widening(node, in_desc, out_desc, "op=LINEAR2")
+            return linear2_tasklet(node, state, sdfg, out_desc, parallel=False)
         if node.op is ScanOp.AFFINE:
             refuse_widening(node, in_desc, out_desc, "op=AFFINE")
             if _is_length_one(node, state):
@@ -1037,6 +1135,8 @@ CLASS_INDEX = "scan_r"
 #: affine coefficient. Reserved spellings, because an expansion is inlined into the SDFG around it and a
 #: connector may not share a name with that SDFG's data -- bare ``a`` refused a program with an array ``a``.
 X, ACC, NEXT, Y, COEF = "__scan_x", "__scan_acc", "__scan_next", "__scan_y", "__scan_coef"
+#: The second accumulator, its update and the second coefficient of ``op=LINEAR2``.
+ACC2, NEXT2, COEF2 = "__scan_acc2", "__scan_next2", "__scan_coef2"
 
 
 def accumulator(nsdfg: dace.SDFG, chain: int) -> str:
@@ -1167,6 +1267,9 @@ class ExpandPure(ExpandTransformation):
             node.specialization_hint = SEQUENTIAL_SCAN_HINT
         strided = not symbolic.equal_valued(1, node.stride)
         # the same refusals, in the same order, as ExpandSequential
+        if node.op is ScanOp.LINEAR2:
+            refuse_widening(node, in_desc, out_desc, "op=LINEAR2")
+            return linear2_pure_sdfg(node, state, sdfg)
         if node.op is ScanOp.AFFINE:
             refuse_widening(node, in_desc, out_desc, "op=AFFINE")
             if _is_length_one(node, state):
@@ -1225,6 +1328,9 @@ class ExpandCPU(ExpandTransformation):
         if libnode_is_sequential(node, state, sdfg):
             # Already inside an OpenMP region or a loop: take the sequential naked-loop shape.
             return ExpandSequential.expansion(node, state, sdfg)
+        if node.op is ScanOp.LINEAR2:
+            refuse_widening(node, in_desc, out_desc, "op=LINEAR2")
+            return linear2_tasklet(node, state, sdfg, out_desc, parallel=True)
         if node.op is ScanOp.AFFINE:
             refuse_widening(node, in_desc, out_desc, "op=AFFINE")
             if _is_length_one(node, state):
@@ -1410,6 +1516,8 @@ def block_refusal(node: "Scan", state: dace.SDFGState | None = None, sdfg: dace.
     strided = not symbolic.equal_valued(1, node.stride)
     if segmented(node):
         return "segmented scans are not supported."
+    if node.op is ScanOp.LINEAR2:
+        return "op=LINEAR2 has host expansions only."
     if node.op is ScanOp.AFFINE and (node.exclusive or node.chains != 1):
         return "op=AFFINE is inclusive and single-chain."
     if strided and node.chains != 1:
@@ -1603,6 +1711,8 @@ class ExpandCUDA(ExpandTransformation):
 
             ExpandCUDA.environments = [ScanScratch]
         in_desc, out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
+        if node.op is ScanOp.LINEAR2:
+            raise NotImplementedError(f"Scan {node.label}: ``op=LINEAR2`` has host expansions only.")
         if node.op is ScanOp.AFFINE:
             refuse_unsupported_affine_flags(node)
             if _is_length_one(node, state):
@@ -1877,8 +1987,10 @@ class Scan(nodes.LibraryNode):
         # ``_scan_coef`` is part of the node's shape, not an optional extra like ``_scan_init``:
         # an affine scan with no coefficients is not a scan of some other kind, it is unwired.
         conns = {in_connector(c): None for c in range(chains)}
-        if op is ScanOp.AFFINE:
+        if op in (ScanOp.AFFINE, ScanOp.LINEAR2):
             conns.update({coef_connector(c): None for c in range(chains)})
+        if op is ScanOp.LINEAR2:
+            conns[COEF2_CONNECTOR_NAME] = None
         super().__init__(name, *args, inputs=conns, outputs={out_connector(c): None for c in range(chains)}, **kwargs)
         self.op = op
         self.exclusive = exclusive
