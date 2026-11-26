@@ -235,6 +235,10 @@ class Facts:
 
     def known(self) -> tuple[Relation, ...]:
         """The relations the facts are solved from: the fallback when ``relations`` contradict."""
+        # Whether they contradict is decided per group of relations sharing symbols, each solved once for every facts
+        # holding it, not by solving all relations of every scope (most of QE vexx's LoopToMap)
+        if self.fallback is not None and self.solution is None and consistent(self.relations, self.integers):
+            self.fallback = None
         if self.fallback is not None:
             self.solved()
         return self.relations if self.fallback is None else self.fallback
@@ -425,6 +429,25 @@ def split_extrema(relation: Relation) -> list[Relation]:
                 for split in split_extrema(Relation(relation.kind, sympy.Integer(0), rest + coefficient * arg))
             ]
     return [relation]
+
+
+def consistent(relations: tuple[Relation, ...], integers: frozenset[str]) -> bool:
+    """Whether ``relations`` do not contradict: ``eliminate`` solves each relation over the symbols of the relations it
+    shares symbols with, so they contradict exactly when the relations of one such group do."""
+    groups: list[tuple[frozenset[str], list[int]]] = []
+    for index, relation in enumerate(relations):
+        names, members = relation_names(relation), [index]
+        for group in [group for group in groups if group[0] & names]:
+            groups.remove(group)
+            names, members = names | group[0], members + group[1]
+        groups.append((names, members))
+    try:
+        for names, members in groups:
+            # In the order of ``relations``, as the whole would solve them
+            solve(tuple(relations[index] for index in sorted(members)), integers & names)
+    except InconsistentAssumptionsError:
+        return False
+    return True
 
 
 @functools.lru_cache(maxsize=1 << 14)
