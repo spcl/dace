@@ -1021,13 +1021,14 @@ class Range(Subset):
         return Range.ndslice_to_string_list(self.ranges, self.tile_sizes)
 
     def replace(self, repl_dict):
+        keys_by_name = symbolic.keys_by_free_name(repl_dict)
         for i, ((rb, re, rs), ts) in enumerate(zip(self.ranges, self.tile_sizes)):
             self.ranges[i] = (
-                rb.subs(repl_dict) if symbolic.issymbolic(rb) else rb,
-                re.subs(repl_dict) if symbolic.issymbolic(re) else re,
-                rs.subs(repl_dict) if symbolic.issymbolic(rs) else rs,
+                symbolic.subs_reachable(rb, repl_dict, keys_by_name),
+                symbolic.subs_reachable(re, repl_dict, keys_by_name),
+                symbolic.subs_reachable(rs, repl_dict, keys_by_name),
             )
-            self.tile_sizes[i] = ts.subs(repl_dict) if symbolic.issymbolic(ts) else ts
+            self.tile_sizes[i] = symbolic.subs_reachable(ts, repl_dict, keys_by_name)
 
     def intersects(self, other: "Range"):
         type_error = False
