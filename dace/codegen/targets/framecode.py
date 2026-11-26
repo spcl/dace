@@ -1236,7 +1236,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     first_block, last_block = paired_allocation_blocks([state for state, _ in instances])
                     alloc_state = first_block if isinstance(first_block, SDFGState) else first_state_instance
                     alloc_block = allocation_block(first_block, desc, access_states)
-                    sized_blocks = late_allocation_block(alloc_block, last_block, desc, access_states)
+                    sized_blocks = late_allocation_block(alloc_block, last_block, name, desc, access_states)
                     if (
                         len(sized_blocks) == 1
                         and sized_blocks[0] is alloc_block
@@ -1733,7 +1733,11 @@ def allocation_block(state: SDFGState, desc: data.Data, access_states: set[SDFGS
 
 
 def late_allocation_block(
-    alloc_block: ControlFlowBlock, last_block: ControlFlowBlock, desc: data.Data, access_states: set[SDFGState]
+    alloc_block: ControlFlowBlock,
+    last_block: ControlFlowBlock,
+    name: str,
+    desc: data.Data,
+    access_states: set[SDFGState],
 ) -> list[ControlFlowBlock]:
     """
     The blocks whose entry allocates ``desc`` when a symbol it is sized by is assigned between ``alloc_block`` and
@@ -1744,6 +1748,7 @@ def late_allocation_block(
 
     :param alloc_block: The block :func:`allocation_block` picked.
     :param last_block: The block whose exit frees ``desc``.
+    :param name: The name of ``desc``.
     :param desc: The descriptor to allocate.
     :param access_states: The states that access ``desc`` or read it on an adjacent edge.
     A size assigned after an access keeps ``alloc_block``, as before this placement existed.
@@ -1802,14 +1807,22 @@ def late_allocation_block(
     # accessed on both sides of a size that changes in between needs a reallocation, however many places assign it (a
     # buffer sized N + 2, read, then filled to N + 3 overflowed when the first size lay before the span)
     if any(precedes(state, block) for state in access_states for block in last):
-        if any(
-            block is state or precedes(block, state) or contains(block, state)
-            for state in access_states
-            for block in last
-        ):
+        # An in-edge read runs before that edge's assignments and is recorded on its source state too (tmp1 in N = tmp1[0])
+        later = [state for state in access_states if uses_in_state_or_after(state, name)]
+        if any(block is state or precedes(block, state) or contains(block, state) for state in later for block in last):
             raise NotImplementedError(f"{desc} is sized at {len(blocks)} places: it would need a reallocation")
         return [alloc_block]
     return last
+
+
+def uses_in_state_or_after(state: SDFGState, name: str) -> bool:
+    """Whether ``state`` uses container ``name`` in its own graph or on an out-edge, not only on an in-edge."""
+    if any(node.data == name for node in state.data_nodes()):
+        return True
+    if any(name in node.free_symbols for node in state.nodes() if not isinstance(node, nodes.AccessNode)):
+        return True
+    arrays = state.sdfg.arrays
+    return any(name in edge.data.used_arrays(arrays) for edge in state.parent_graph.out_edges(state))
 
 
 def one_per_arm(blocks: list[ControlFlowBlock]) -> bool:
