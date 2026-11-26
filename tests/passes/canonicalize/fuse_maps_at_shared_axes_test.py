@@ -5,10 +5,13 @@ producer iteration row, as an inner map over ``k``; a consumer reading another r
 import re
 
 import numpy as np
+import pytest
 
 import dace
 from dace.sdfg import nodes
+from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 from dace.transformation.passes.canonicalize.fuse_maps_at_shared_axes import FuseMapsAtSharedAxes
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 N = dace.symbol("N")
 
@@ -90,6 +93,90 @@ def total_sum_then_scale(A: dace.float64[N, M], B: dace.float64[N]):
         T[0] += A[i, k]
     for i in dace.map[0:N]:
         B[i] = T[0] * 2.0
+
+
+@dace.program
+def taps_then_gather(j: dace.float64[N], out: dace.float64[N]):
+    tx = np.empty(4, dtype=np.float64)
+    for t in dace.map[0:4]:
+        tx[t] = t * 0.5
+    ix = np.empty((4, N), dtype=np.float64)
+    for t, p in dace.map[0:4, 0:N]:
+        ix[t, p] = j[p] + tx[t]
+    for p in dace.map[0:N]:
+        out[p] = ix[0, p] * ix[3, p]
+
+
+@dace.program
+def taps_then_reversed_gather(j: dace.float64[N], out: dace.float64[N]):
+    tx = np.empty(4, dtype=np.float64)
+    for t in dace.map[0:4]:
+        tx[t] = t * 0.5
+    ix = np.empty((4, N), dtype=np.float64)
+    for t, p in dace.map[0:4, 0:N]:
+        ix[t, p] = j[p] + tx[t]
+    for p in dace.map[0:N]:
+        out[p] = ix[0, N - 1 - p] * ix[3, p]
+
+
+P = dace.symbol("P")
+G = dace.symbol("G")
+S = dace.symbol("S")
+
+
+@dace.program
+def gather_taps(
+    f: dace.float64[G, G],
+    j: dace.int64[P],
+    k: dace.int64[P],
+    sx: dace.float64[S, P],
+    sy: dace.float64[S, P],
+    lo: dace.int64[2],
+    out: dace.float64[P],
+):
+    tx = np.arange(S)
+    ty = np.arange(S)
+    ix = ((lo[0] + j)[None, :] + tx[:, None])[:, None, :]
+    iy = ((lo[1] + k)[None, :] + ty[:, None])[None, :, :]
+    ix_b = np.empty((S, S, P), dtype=np.int64)
+    ix_b[:] = ix
+    iy_b = np.empty((S, S, P), dtype=np.int64)
+    iy_b[:] = iy
+    gathered = f[ix_b, iy_b]
+    weight = sx[:, None, :] * sy[None, :, :]
+    out[:] = out + np.sum(weight * gathered, axis=(0, 1))
+
+
+def per_particle_transients(sdfg: dace.SDFG) -> list[str]:
+    # Every SDFG's transients whose size names the particle count
+    return [
+        name
+        for sd in sdfg.all_sdfgs_recursive()
+        for name, desc in sd.arrays.items()
+        if desc.transient and "P" in {str(s) for s in desc.free_symbols}
+    ]
+
+
+def gather_inputs(particles: int, grid: int, taps: int) -> dict[str, np.ndarray]:
+    rng = np.random.default_rng(7)
+    return dict(
+        f=rng.random((grid, grid)),
+        j=rng.integers(0, grid - taps - 2, particles),
+        k=rng.integers(0, grid - taps - 2, particles),
+        sx=rng.random((taps, particles)),
+        sy=rng.random((taps, particles)),
+        lo=np.array([1, 2], dtype=np.int64),
+        out=rng.random(particles),
+    )
+
+
+def gather_reference(
+    f: np.ndarray, j: np.ndarray, k: np.ndarray, sx: np.ndarray, sy: np.ndarray, lo: np.ndarray, out: np.ndarray
+) -> np.ndarray:
+    taps = np.arange(sx.shape[0])
+    ix = lo[0] + j[None, :] + taps[:, None]
+    iy = lo[1] + k[None, :] + taps[:, None]
+    return out + np.einsum("ap,bp,abp->p", sx, sy, f[ix[:, None, :], iy[None, :, :]])
 
 
 def top_level_maps(sdfg: dace.SDFG) -> list[nodes.Map]:
@@ -254,6 +341,58 @@ def test_a_fusion_hint_names_no_map_and_is_said_once_per_pair():
         assert re.search(r"\b(w and v|v and w)\b", lines[0]), lines
 
 
+# Reproducer: v1.0.4 WarpX field gather: canon split a tap map into the tap loop, burying the particle axis
+def test_a_producer_split_fuses_before_a_consumer_split_buries_its_axis():
+    """``tx -> ix`` splits ``ix`` at the tap axis, ``ix -> out`` splits it at the particle axis; fused first, the
+    second keeps the per-particle ``ix`` out of memory and leaves the four-element ``tx``."""
+    sdfg = taps_then_gather.to_sdfg(simplify=True)
+    assert FuseMapsAtSharedAxes().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert "ix" not in sdfg.arrays and sdfg.arrays["__map_fusion_ix"].total_size == 4
+    assert sdfg.arrays["tx"].total_size == 4
+    j = np.random.default_rng(8).random(10)
+    out = np.zeros(10)
+    sdfg(j=j, out=out, N=10)
+    assert np.allclose(out, j * (j + 1.5))
+
+
+def test_a_consumer_reading_another_particle_still_takes_the_tap_producer():
+    """``out[p]`` reads ``ix[0, N - 1 - p]``: no fused iteration holds that row, so ``ix`` stays whole and the tap
+    map fuses into it instead."""
+    sdfg = taps_then_reversed_gather.to_sdfg(simplify=True)
+    assert FuseMapsAtSharedAxes().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert "tx" not in sdfg.arrays and sdfg.arrays["ix"].shape == (4, N)
+    j = np.random.default_rng(9).random(10)
+    out = np.zeros(10)
+    sdfg(j=j, out=out, N=10)
+    assert np.allclose(out, j[::-1] * (j + 1.5))
+
+
+# Reproducer: v1.0.4 WarpX field gather: canon split a tap map into the tap loop, burying the particle axis
+def test_a_tap_gather_canonicalizes_to_no_per_particle_buffer():
+    """The index rows ``lo + j`` and ``lo + j + t`` were four per-particle buffers the gather could not fuse."""
+    sdfg = gather_taps.to_sdfg(simplify=True)
+    canonicalize(sdfg, target="gpu")
+    assert per_particle_transients(sdfg) == []
+
+
+@pytest.mark.gpu
+def test_the_fused_tap_gather_matches_numpy_on_the_gpu():
+    import cupy as cp
+
+    sdfg = gather_taps.to_sdfg(simplify=True)
+    canonicalize(sdfg, target="gpu")
+    offload_to_gpu(sdfg)
+    finalize_for_target(sdfg, "gpu")
+    args = gather_inputs(particles=1000, grid=16, taps=4)
+    expected = gather_reference(**args)
+    # Each argument on the device, as the offloaded program takes it
+    device = {name: cp.asarray(value) for name, value in args.items()}
+    sdfg(**device, P=1000, G=16, S=4)
+    assert np.allclose(device["out"].get(), expected, rtol=1e-12)
+
+
 if __name__ == "__main__":
     test_a_producer_over_more_axes_fuses_as_an_inner_map()
     test_the_fused_map_drops_a_thread_block_sized_for_the_split_axes()
@@ -266,3 +405,7 @@ if __name__ == "__main__":
     test_maps_of_equal_rank_sharing_only_an_outer_axis_stay_apart_without_a_hint()
     test_a_reduction_every_iteration_contributes_to_keeps_the_producer()
     test_a_fusion_hint_names_no_map_and_is_said_once_per_pair()
+    test_a_producer_split_fuses_before_a_consumer_split_buries_its_axis()
+    test_a_consumer_reading_another_particle_still_takes_the_tap_producer()
+    test_a_tap_gather_canonicalizes_to_no_per_particle_buffer()
+    test_the_fused_tap_gather_matches_numpy_on_the_gpu()

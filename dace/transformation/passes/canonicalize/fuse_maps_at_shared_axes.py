@@ -49,8 +49,9 @@ def reorder(entry: nodes.MapEntry, params: list[str]) -> None:
 def candidates(
     state: SDFGState, inner_axis: list | None = None
 ) -> list[tuple[nodes.MapEntry, nodes.AccessNode, nodes.MapEntry, list[str], bool]]:
-    """Top-level ``(producer entry, transient, consumer entry, shared axes, split consumer)`` tuples of ``state``: the
-    shared axes are parameters of the map with more axes, the consumer when ``split consumer``."""
+    """Top-level ``(producer entry, transient, consumer entry, shared axes, split consumer)`` tuples of ``state``, the
+    split consumers last: the shared axes are parameters of the map with more axes, the consumer when ``split
+    consumer``."""
     sdict = state.scope_dict()
     found = []
     for node in state.data_nodes():
@@ -78,7 +79,8 @@ def candidates(
                     found.append((producer, node, oe.dst, axes, True))
                 elif axes is not None and inner_axis is not None:
                     inner_axis.append((producer, node, oe.dst, axes))
-    return found
+    # A split consumer keeps its other axes in a sequential inner map no top-level fusion reaches: split producers first
+    return sorted(found, key=lambda candidate: candidate[4])
 
 
 def record_hint(entry: nodes.MapEntry, hint: str) -> None:
