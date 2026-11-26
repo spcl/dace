@@ -1364,6 +1364,11 @@ def read_before_written(
                     branch_flags = dict(flags)
                     branch_guarded = dict(guarded)
                     scan(body, branch_written, branch_guarded, branch_flags)
+                    # A flag this branch set is seen set after the branch only once all of it ran (graupel sets
+                    # ``if_cond`` before ``sig`` in one arm)
+                    for flag, stores in branch_flags.items():
+                        if stores is not None and stores is not flags.get(flag):
+                            branch_flags[flag] = set(branch_written)
                     per_branch.append(branch_written)
                     per_branch_flags.append(branch_flags)
                     per_branch_guarded.append(branch_guarded)

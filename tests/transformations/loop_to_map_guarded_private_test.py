@@ -64,6 +64,24 @@ def test_a_value_read_only_under_the_flag_set_with_it_is_private():
 
 
 @dace.program
+def flag_set_before_value(a: dace.float64[N], b: dace.float64[N]):
+    for i in range(N):
+        f = 0
+        if a[i] > 0:
+            f = 1
+            s = a[i] * 2.0
+        if f != 0:
+            b[i] = s
+
+
+# Reproducer: graupel's arm set if_cond before sig, so the flag held the stores before sig (dace-fortran graupel,
+# LoopToMap sweep)
+def test_a_flag_set_ahead_of_the_value_in_its_branch_still_guards_it():
+    rng = np.random.default_rng(3)
+    lift_and_run(flag_set_before_value, flag_guarded_reference, a=rng.standard_normal(16), b=np.zeros(16))
+
+
+@dace.program
 def flag_set_before_the_loop(a: dace.float64[N], b: dace.float64[N]):
     f = 0
     for i in range(N):
@@ -128,6 +146,7 @@ def test_a_value_the_inner_loop_resets_on_its_first_trip_is_private():
 
 if __name__ == "__main__":
     test_a_value_read_only_under_the_flag_set_with_it_is_private()
+    test_a_flag_set_ahead_of_the_value_in_its_branch_still_guards_it()
     test_a_flag_the_iteration_does_not_reset_keeps_the_value_carried()
     test_a_value_both_arms_store_once_the_condition_holds_is_private()
     test_a_value_the_inner_loop_resets_on_its_first_trip_is_private()
