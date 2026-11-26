@@ -723,7 +723,7 @@ def lanes_apart(
     for slot in (first, second):
         if len(slot) != 1:
             return False
-        begin, end, _step = slot.ndrange()[0]
+        begin, end = slot.ndrange()[0][:2]
         if str(begin) != str(end) or str(begin) not in bindings:
             return False
         array, dim_nodes = bindings[str(begin)]
