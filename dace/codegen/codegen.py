@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 from collections.abc import Iterator
+from typing import Any
 
 import dace
 from dace import config, cpf_lowering, data, dtypes
@@ -267,7 +268,12 @@ def apply_node_pattern_repeated(sdfg: SDFG, xform: "dace.transformation.transfor
     applied = True
     while applied:
         applied = False
+        # Every probe of a sweep parses under its SDFG's unchanged symbols: prepare them once per SDFG, not per probe
+        # (QE h_psi's host inlining spent most of codegen re-preparing them). An application ends the sweep.
+        authorities: dict[SDFG, Any] = {}
         for region, state_id, state, node_id in node_pattern_candidates(sdfg, node_type):
+            if region.sdfg not in authorities:
+                authorities[region.sdfg] = pattern_matching.match_authority(region.sdfg)
             match = pattern_matching._try_to_match_transformation(
                 state,
                 None,
@@ -280,6 +286,7 @@ def apply_node_pattern_repeated(sdfg: SDFG, xform: "dace.transformation.transfor
                 False,
                 options,
                 {},
+                authority=authorities[region.sdfg],
             )
             if match is not None:
                 match.apply(state, region.sdfg)
