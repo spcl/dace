@@ -59,7 +59,7 @@ def slices_on_plain_lanes(loop: LoopRegion) -> bool:
     sdfg = loop.sdfg
     if analyze_lanes(loop, sdfg).refusal is None:
         return False
-    facts = analyze_lanes(loop, sdfg, True, True)
+    facts = analyze_lanes(loop, sdfg, axis=True, shared=True)
     if facts.refusal is not None or facts.transparent:
         return False
     # Over the lane maps: each must take every dimension as a lane
