@@ -3266,6 +3266,14 @@ class SymbolResolver:
             )
         return collections.OrderedDict(last[2])
 
+    def forget_scope(self, state: "SDFGState", entry: nd.EntryNode) -> None:
+        """Drops what was resolved for the scope ``entry`` opens, after its parameters or ranges changed in place (a map
+        expanded into a nest keeps its entry node). Everything outside the scope stays valid."""
+        self._facts.pop((state, entry), None)
+        last = self._per_scope.get(state.sdfg)
+        if last is not None and last[1] is entry:
+            del self._per_scope[state.sdfg]
+
     def sdfg_small(self, sdfg: "SDFG") -> frozenset[str]:
         """A superset of the ``small`` of every ``facts_at`` inside ``sdfg``: its own ``SMALL`` names and each name its
         nested SDFG node maps to an expression over the enclosing SDFG's ones, without deriving any facts (a library

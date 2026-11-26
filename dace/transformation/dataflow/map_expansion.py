@@ -53,6 +53,10 @@ class MapExpansion(pm.SingleStateTransformation):
         default=None,
     )
 
+    #: A resolver shared by the caller's expansions, so the SDFG's facts are derived once for all of them; not a
+    #: property, as it is never serialized. Valid while the caller changes nothing but the maps it expands.
+    symbols: SymbolResolver | None = None
+
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.map_entry)]
@@ -232,7 +236,9 @@ class MapExpansion(pm.SingleStateTransformation):
         # entry and exit (and every scope around it) is unchanged. Innermost first, each scope from the one inside it,
         # propagated before it is consolidated: a union taken first replaces each lane's memlet, and a reduction into
         # one column of an array becomes a plain store to the whole row (fuse_elementwise_into_gemv).
-        symbols = SymbolResolver()
+        symbols = self.symbols if self.symbols is not None else SymbolResolver()
+        # The expanded map kept its entry node with fewer parameters: what was resolved for its scope is stale
+        symbols.forget_scope(graph, map_entry)
         # New scopes innermost first, so each outer scope sees its inner memlets propagated
         for entry, exit_ in zip(reversed(entries), reversed(exits)):
             propagate_node(graph, entry, symbols)

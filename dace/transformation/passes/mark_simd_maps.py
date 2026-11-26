@@ -10,7 +10,7 @@ from dace import SDFG, dtypes, properties
 from dace.frontend import operations
 from dace.sdfg import nodes
 from dace.sdfg.infer_types import map_scope_carries_dependency
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import LoopRegion, SDFGState, SymbolResolver
 from dace.symbolic_facts import SMALL_CONSTANT_EXTENT
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -199,6 +199,8 @@ class MarkSIMDMaps(ppl.Pass):
         :return: The marked maps as ``(state id, map label)``, or ``None`` if none qualified.
         """
         marked: set[tuple[int, str]] = set()
+        # One resolver for every expansion: each changes only the map it expands, so the SDFG's facts stay valid
+        symbols = SymbolResolver()
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
                 candidates = [
@@ -211,17 +213,18 @@ class MarkSIMDMaps(ppl.Pass):
                     # ``annotate`` stays off: a whole-SDFG propagation per map is quadratic.
                     if len(entry.map.params) > 1:
                         original = entry.specialization_hint
-                        nest = MapExpansion.apply_to(
+                        expansion = MapExpansion()
+                        expansion.setup_match(
                             nsdfg,
-                            options={
-                                "expansion_limit": len(entry.map.params) - 1,
-                                "inner_schedule": dtypes.ScheduleType.Sequential,
-                            },
-                            map_entry=entry,
-                            verify=False,
-                            annotate=False,
-                            save=False,
+                            state.parent_graph.cfg_id,
+                            state.block_id,
+                            {MapExpansion.map_entry: state.node_id(entry)},
+                            0,
                         )
+                        expansion.expansion_limit = len(entry.map.params) - 1
+                        expansion.inner_schedule = dtypes.ScheduleType.Sequential
+                        expansion.symbols = symbols
+                        nest = expansion.apply(state, nsdfg)
                         # After the loop kinds were written: each loop of the nest says what it is on its own.
                         relabel_expanded(state, nest, original)
                         entry = nest[-1]
