@@ -27,6 +27,7 @@ from dace.sdfg.state import (
     LoopRegion,
     SymbolResolver,
     UnstructuredControlFlow,
+    last_condition_negates_the_others,
 )
 from dace.sdfg.symbol_repo import assumption_check, program_assumptions
 from dace.sdfg.type_inference import infer_expr_type
@@ -1235,9 +1236,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     first_block, last_block = paired_allocation_blocks([state for state, _ in instances])
                     alloc_state = first_block if isinstance(first_block, SDFGState) else first_state_instance
                     alloc_block = allocation_block(first_block, desc, access_states)
-                    sized_block = late_allocation_block(alloc_block, last_block, desc, access_states)
+                    sized_blocks = late_allocation_block(alloc_block, last_block, desc, access_states)
                     if (
-                        sized_block is alloc_block
+                        len(sized_blocks) == 1
+                        and sized_blocks[0] is alloc_block
                         and getattr(desc.storage, "force", False)
                         and scope_allocation_repeats_per_iteration(alloc_block)
                         and straight_line(alloc_block.parent_graph)
@@ -1259,10 +1261,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         # instances. This is especially needed for Views which require both the SDFGState and the
                         # AccessNode.
                         self.to_allocate[curscope].append((sdfg, None, nodes.AccessNode(name), True, False, False))
-                    curscope = sized_block
-                    if getattr(desc.storage, "force", False) and not scope_allocation_repeats_per_iteration(curscope):
-                        self.frame_allocated.add((sdfg, name))
-                    self.to_allocate[curscope].append((sdfg, alloc_state, first_node_instance, False, True, False))
+                    # Over the blocks that allocate it: one, or one per arm of a conditional that sizes it
+                    for curscope in sized_blocks:
+                        if getattr(desc.storage, "force", False) and not scope_allocation_repeats_per_iteration(
+                            curscope
+                        ):
+                            self.frame_allocated.add((sdfg, name))
+                        self.to_allocate[curscope].append((sdfg, alloc_state, first_node_instance, False, True, False))
                     curscope = last_block
                     # A control flow region has no state to dispatch the deallocation through
                     dealloc_state = curscope if isinstance(curscope, SDFGState) else instances[-1][0]
@@ -1729,12 +1734,13 @@ def allocation_block(state: SDFGState, desc: data.Data, access_states: set[SDFGS
 
 def late_allocation_block(
     alloc_block: ControlFlowBlock, last_block: ControlFlowBlock, desc: data.Data, access_states: set[SDFGState]
-) -> ControlFlowBlock:
+) -> list[ControlFlowBlock]:
     """
-    The block whose entry allocates ``desc`` when a symbol it is sized by is assigned between ``alloc_block`` and
+    The blocks whose entry allocates ``desc`` when a symbol it is sized by is assigned between ``alloc_block`` and
     ``last_block``, inside a branch or a loop (QE's ``qgm``: one conditional sizes and fills it, a later one reads
     it). Its declaration stays at ``alloc_block``, where the size is not yet assigned; the allocation follows the
-    assignment. Without such an assignment, the block is ``alloc_block``.
+    assignment. Without such an assignment, the block is ``alloc_block``. When every arm of one conditional sizes it
+    (Fortran's ``allocate`` with an arm's own extents in each arm), each arm allocates: one of them runs per path.
 
     :param alloc_block: The block :func:`allocation_block` picked.
     :param last_block: The block whose exit frees ``desc``.
@@ -1777,26 +1783,53 @@ def late_allocation_block(
 
     blocks = {sized_after(e) for e in edges if e.data.assignments.keys() & sizes}
     if not blocks:
-        return alloc_block
+        return [alloc_block]
     # The size is final at the block every other assignment runs before (QE's nij: set to 0, then summed in a loop)
     last = [b for b in blocks if all(o is b or precedes(o, b) for o in blocks)]
     if len(last) != 1:
-        raise NotImplementedError(f"{desc} is sized at {len(blocks)} places: it would need a reallocation")
-    (block,) = last
-    outer = block.parent_graph
-    while outer is not region:
-        if isinstance(outer, LoopRegion):
-            raise NotImplementedError(f"{desc} is sized in {outer}, which reallocates it per iteration")
-        outer = outer.parent_graph
+        # Or at the last assignment in each arm of one conditional that sizes it on every path (QE h_psi's tg_v)
+        last = [b for b in blocks if not any(o is not b and precedes(b, o) for o in blocks)]
+        if not one_per_arm(last):
+            raise NotImplementedError(f"{desc} is sized at {len(blocks)} places: it would need a reallocation")
+    # Over the allocating blocks: none may sit in a loop the free does not run in
+    for block in last:
+        outer = block.parent_graph
+        while outer is not region:
+            if isinstance(outer, LoopRegion):
+                raise NotImplementedError(f"{desc} is sized in {outer}, which reallocates it per iteration")
+            outer = outer.parent_graph
     # Accessed before the assignment: the earlier accesses use the size in force at the dominating block, as before;
     # accessed on both sides of a size that changes in between needs a reallocation
-    if any(precedes(state, block) for state in access_states):
+    if any(precedes(state, block) for state in access_states for block in last):
         if len(blocks) > 1 and any(
-            block is state or precedes(block, state) or contains(block, state) for state in access_states
+            block is state or precedes(block, state) or contains(block, state)
+            for state in access_states
+            for block in last
         ):
             raise NotImplementedError(f"{desc} is sized at {len(blocks)} places: it would need a reallocation")
-        return alloc_block
-    return block
+        return [alloc_block]
+    return last
+
+
+def one_per_arm(blocks: list[ControlFlowBlock]) -> bool:
+    """Whether ``blocks`` lie one in each arm of one conditional that has an else, so exactly one of them runs on every
+    path through it."""
+    if len(blocks) < 2:
+        return False
+    # The conditional holding the first block, climbing out until one holds every block
+    owner = blocks[0].parent_graph
+    while owner is not None and not (
+        isinstance(owner, ConditionalBlock) and all(contains(owner, b) for b in blocks[1:])
+    ):
+        owner = owner.parent_graph if not isinstance(owner, SDFG) else None
+    if owner is None:
+        return False
+    arms = [region for condition, region in owner.branches]
+    conditions = tuple(c.as_string for c, region in owner.branches if c is not None)
+    if len(conditions) == len(arms) and not last_condition_negates_the_others(conditions):
+        return False
+    # Over the arms: each holds exactly one of the blocks
+    return len(blocks) == len(arms) and all(sum(contains(arm, b) for b in blocks) == 1 for arm in arms)
 
 
 def contains(block: ControlFlowBlock, state: SDFGState) -> bool:
