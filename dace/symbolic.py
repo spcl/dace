@@ -2031,17 +2031,14 @@ PyMod = sympy.Mod
 
 
 class CMod(DaceFunction):
-    """C's modulo, the meaning of ``%`` in an SDFG (also Fortran's ``MOD``, ``numpy.fmod``): the quotient is truncated,
-    so the result takes the sign of the dividend (``fmod`` for floating point)."""
+    """C's truncating modulo, the meaning of ``%`` in an SDFG."""
 
     @classmethod
     def eval(cls, x, y):
         if x.is_Number and y.is_Number and y != 0:
-            quotient = x / y
-            return x - y * (sympy.floor(quotient) if quotient >= 0 else sympy.ceiling(quotient))
+            return x - y * sympy.Integer(int(x / y))
         if x.is_nonnegative and y.is_positive:
-            return PyMod(x, y)  # both roundings agree, so simplification sees a single form
-        return None
+            return sympy.Mod(x, y)
 
     def _eval_is_integer(self):
         return self.args[0].is_integer and self.args[1].is_integer
@@ -4247,9 +4244,13 @@ def simplify(expr: SymbolicType, facts: Facts | None = None) -> SymbolicType:
         return sympy.Integer(expr)
     if isinstance(expr, sympy.Number):
         return expr
-    # The facts may solve a symbol for a value (``N == 512``); only facts that rewrite nothing leave these unchanged
-    if (facts is None or not facts.substitution) and (_is_plain_symbol(expr) or _is_simplify_fixed_point(expr)):
-        return expr
+    # The facts may solve a symbol for a value (``N == 512``); only facts that rewrite nothing leave these unchanged.
+    # The relations connected to the expression's symbols decide that, as they decide ``simplify_under``: solving all
+    # of a scope's facts (QE h_psi: thousands of map scopes over the SDFG's relations) only to return early cost a
+    # fifth of its build
+    if _is_plain_symbol(expr) or _is_simplify_fixed_point(expr):
+        if facts is None or not facts.about({str(free) for free in expr.free_symbols}).substitution:
+            return expr
     return simplify_under(expr, facts if facts is not None else Facts.none())
 
 

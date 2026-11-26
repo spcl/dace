@@ -343,6 +343,23 @@ value3=5000000000"""
         # bool * bool stays bool.
         self.assertEqual(dtypes.result_type_of(b, b), b)
 
+    def testComplexParts(self):
+        # The real and imaginary parts of complex numbers are real numbers of the same precision
+        symbols = {"a": dtypes.complex128, "b": dtypes.complex64, "x": dtypes.float32}
+        self.assertEqual(type_inference.infer_expr_type("a.real", symbols), dtypes.float64)
+        self.assertEqual(type_inference.infer_expr_type("b.imag", symbols), dtypes.float32)
+        self.assertEqual(type_inference.infer_expr_type("a.real * x", symbols), dtypes.float64)
+        self.assertEqual(type_inference.infer_expr_type(ast.parse("b.real", mode="eval").body, symbols), dtypes.float32)
+        # A type name that is already translated to C++
+        call = ast.parse("complex64(x, x)", mode="eval").body
+        call.func.id = "dace::complex64"
+        self.assertEqual(type_inference.infer_expr_type(call, symbols), dtypes.complex64)
+        # An element of a pointer, as code generation names subscripts of connectors
+        element = ast.Name(id="p[i + 1]")
+        self.assertEqual(
+            type_inference.infer_expr_type(element, {"p": dtypes.pointer(dtypes.complex128)}), dtypes.complex128
+        )
+
 
 def test_the_sympy_spellings_of_abs_min_and_max_are_typed():
     """An interstate assignment printed from a symbolic expression spells these as sympy does

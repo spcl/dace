@@ -1365,7 +1365,9 @@ def unparse_tasklet(
         stmt = astutils.copy_tree(stmt)
         if struct_initializer is not None:
             struct_initializer.visit(stmt)
-        remover = codegen.make_keyword_remover(sdfg, memlets, defined_symbols)
+        # The locals earlier statements declared keep their types for a statement the remover prints itself
+        local_types = {name: dtype for name, dtype in locals.get_name_type_associations().items() if dtype is not None}
+        remover = codegen.make_keyword_remover(sdfg, memlets, {**defined_symbols, **local_types})
         if isinstance(stmt, ast.Expr):
             rk = remover.visit_TopLevelExpr(stmt)
         else:
@@ -1374,10 +1376,10 @@ def unparse_tasklet(
         if rk is not None:
             # Unparse to C++ and add 'auto' declarations if locals not declared
             result = StringIO()
-            symbols, data_names = defined_symbols, set(memlets) | set(sdfg.constants)
+            # An access the remover inlined reaches the unparser as its own text, typed only there.
+            symbols = {**defined_symbols, **remover.operand_dtypes}
+            data_names = set(memlets) | set(sdfg.constants)
             if cpf_lowering.standalone():
-                # An access the remover inlined reaches the unparser as its own text, typed only there.
-                symbols = {**defined_symbols, **remover.operand_dtypes}
                 data_names |= set(remover.operand_dtypes)
             cppunparse.CPPUnparser(rk, ldepth + 1, locals, result, defined_symbols=symbols, data_names=data_names)
             callsite_stream.write(result.getvalue(), cfg, state_id, node)

@@ -120,7 +120,7 @@ def infer_expr_type(code, symbols=None):
     """
     Return inferred type of a given expression.
 
-    :param code: code string (an expression) or symbolic expression
+    :param code: code string (an expression), expression AST, or symbolic expression
     :param symbols: already defined symbols (if any) in a dictionary "symbol name" -> dytpes.typeclass:
     :return: inferred type
     """
@@ -132,6 +132,8 @@ def infer_expr_type(code, symbols=None):
         return symbols.get(code.name)
     elif isinstance(code, symbolic.TypedConstant):
         return code.dtype
+    elif isinstance(code, ast.expr):
+        return _dispatch(code, symbols, inferred_symbols)
     elif isinstance(code, sympy.Basic):
         has_typed_constant = any(isinstance(node, symbolic.TypedConstant) for node in sympy.preorder_traversal(code))
         if has_typed_constant:
@@ -424,7 +426,12 @@ def _Name(t, symbols, inferred_symbols):
 
         # if this is a statement generated from a tasklet with a dynamic memlet, it could have a leading * (pointer)
         t_id = t.id.removeprefix("*")
-        if t_id.strip("()") in _py2c_typeconversion:
+        # Code generation also replaces subscripts of connectors with names of the form "a[i]"; an access typed by its
+        # own text (an inlined connector) is looked up whole
+        subscripted = t_id.endswith("]") and t_id not in symbols and t_id.split("[", 1)[0] in symbols
+        if subscripted:
+            t_id = t_id.split("[", 1)[0]
+        if t_id.strip("()") in _py2c_typeconversion and not subscripted:
             inferred_type = _py2c_typeconversion[t_id.strip("()")]
         elif t_id in symbols:
             # defined symbols could have dtypes, in case convert it to typeclass
@@ -435,6 +442,8 @@ def _Name(t, symbols, inferred_symbols):
                 inferred_type = inferred_type.declaration.dtype
             elif isinstance(inferred_type, data.Data):
                 inferred_type = inferred_type.dtype
+            if subscripted and isinstance(inferred_type, dtypes.pointer):
+                inferred_type = inferred_type.base_type
         elif t_id in inferred_symbols:
             inferred_type = inferred_symbols[t_id]
         return inferred_type
@@ -539,10 +548,8 @@ def _BoolOp(t, symbols, inferred_symbols):
 
 def _infer_dtype(t: ast.Name | ast.Attribute):
     name = dace.frontend.python.astutils.rname(t)
-    if "." in name:
-        dtype_str = name[name.rfind(".") + 1 :]
-    else:
-        dtype_str = name
+    # Python (``dace.float64``) or, in code that is already translated to C++, C++ (``dace::float64``) qualified names
+    dtype_str = name.rsplit(".", 1)[-1].rsplit("::", 1)[-1]
 
     dtype = getattr(dtypes, dtype_str, False)
     if isinstance(dtype, dtypes.typeclass):
@@ -568,6 +575,9 @@ def _Attribute(t, symbols, inferred_symbols):
         and t.attr in inferred_type.base_type.fields
     ):
         return inferred_type.base_type.fields[t.attr]
+    if isinstance(inferred_type, dtypes.typeclass) and inferred_type.is_complex() and t.attr in ("real", "imag"):
+        # The real and imaginary parts of a complex number
+        return dtypes.typeclass(np.finfo(inferred_type.type).dtype.type)
     return inferred_type
 
 

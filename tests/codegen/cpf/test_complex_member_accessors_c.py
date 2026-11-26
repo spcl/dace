@@ -7,14 +7,16 @@ compiles. CPF's C text kept them, and ``double _Complex`` has no members: QE ``v
 ("request for member 'real' in something not a structure or union").
 """
 
+import pytest
+
 import dace
 from dace.codegen import cpf
 
 N = dace.symbol("N")
 
 
-def build_sdfg() -> dace.SDFG:
-    """``B[i] = 2 * Z[i].real() - Z[i].imag()`` over a map."""
+def build_sdfg(code: str) -> dace.SDFG:
+    """``B[i] = 2 * Z[i].real() - Z[i].imag()`` over a map, in the member call or the attribute spelling."""
     sdfg = dace.SDFG("complex_member_accessors_c")
     sdfg.add_array("Z", [N], dace.complex128)
     sdfg.add_array("B", [N], dace.float64)
@@ -23,7 +25,7 @@ def build_sdfg() -> dace.SDFG:
         "parts",
         {"i": "0:N"},
         {"__in": dace.Memlet("Z[i]")},
-        "__out = 2 * __in.real() - __in.imag()",
+        code,
         {"__out": dace.Memlet("B[i]")},
         external_edges=True,
     )
@@ -31,12 +33,14 @@ def build_sdfg() -> dace.SDFG:
     return sdfg
 
 
-def test_member_accessors_lower_to_creal_and_cimag():
+@pytest.mark.parametrize("tasklet", ["__out = 2 * __in.real() - __in.imag()", "__out = 2 * __in.real - __in.imag"])
+def test_member_accessors_lower_to_creal_and_cimag(tasklet: str):
     # ``render`` compiles the unit before returning it (``check_compiles``), so the C must build.
-    code = cpf.render(build_sdfg(), language="c").code
+    code = cpf.render(build_sdfg(tasklet), language="c").code
     assert "creal(" in code and "cimag(" in code, code
     assert ".real()" not in code and ".imag()" not in code, code
 
 
 if __name__ == "__main__":
-    test_member_accessors_lower_to_creal_and_cimag()
+    test_member_accessors_lower_to_creal_and_cimag("__out = 2 * __in.real() - __in.imag()")
+    test_member_accessors_lower_to_creal_and_cimag("__out = 2 * __in.real - __in.imag")

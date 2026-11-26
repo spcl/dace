@@ -646,8 +646,8 @@ STD_RENAMES: dict[str, str] = {
 #: ``Mod`` is SymPy's floored modulo, so it is ``py_mod``.
 REWRITES: dict[str, tuple[int, str]] = {
     "reciprocal": (1, "(1 / ({0}))"),
-    # A complex's components. The runtime helpers also take a real (``.real()`` on a ``double`` does not
-    # compile); ``std::real`` / ``std::imag`` have that overload.
+    # A complex's components, of a real operand too (``.real()`` on a ``double`` does not compile);
+    # ``std::real`` / ``std::imag`` have that overload.
     "re": (1, "(std::real({0}))"),
     "im": (1, "(std::imag({0}))"),
     "iround": (1, "(static_cast<int>(std::round({0})))"),
