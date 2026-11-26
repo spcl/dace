@@ -372,7 +372,6 @@ class PromoteConstantIndexAccess(ppl.Pass):
         per_arr_picked: set[str] = set()
         # Under last_write a slot may name symbols the loop never changes (``a[i]`` in a ``j`` loop)
         moving = self.moving_symbols(loop) if self.last_write else None
-        per_arr_written: dict[str, list[subsets.Range]] = {}
         for state in loop_states:
             for node in state.nodes():
                 if not isinstance(node, nodes.AccessNode):
@@ -400,8 +399,6 @@ class PromoteConstantIndexAccess(ppl.Pass):
                         continue
                     if self.is_constant_point_subset(sub, moving):
                         per_arr.setdefault(name, []).append(sub)
-                        if edge.dst is node:
-                            per_arr_written.setdefault(name, []).append(sub)
                     elif self.last_write and self.picked_read(state, edge, node):
                         per_arr_picked.add(name)
                     else:
@@ -423,8 +420,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
             for s in subs:
                 if not any(point_subsets_equal(s, p) for p in unique_points):
                     unique_points.append(s)
-            if any(p.free_symbols for p in unique_points):
-                unique_points = self.written_disjoint_points(unique_points, per_arr_written.get(name, []), sdfg)
+            unique_points = self.written_disjoint_points(unique_points, loop, name)
             # A picked read chooses between the array and one promoted slot
             if name in per_arr_picked and len(unique_points) != 1:
                 continue
@@ -450,16 +446,22 @@ class PromoteConstantIndexAccess(ppl.Pass):
         return results
 
     @staticmethod
-    def written_disjoint_points(
-        points: list[subsets.Range], written: list[subsets.Range], sdfg: SDFG
-    ) -> list[subsets.Range]:
-        """The ``points`` the loop writes, when no two of ``points`` may be one element (``a[i]`` and ``a[i - 1]``
-        never are, ``a[i]`` and ``a[k]`` may be); else none."""
-        facts = sdfg.facts()
+    def written_disjoint_points(points: list[subsets.Range], loop: LoopRegion, name: str) -> list[subsets.Range]:
+        """``points`` when all are constant; else the ones ``loop`` writes, when no two of ``points`` may be one
+        element (``a[i]`` and ``a[i - 1]`` never are, ``a[i]`` and ``a[k]`` may be), or none."""
+        if not any(p.free_symbols for p in points):
+            return points
+        facts = loop.sdfg.facts()
         for first, second in itertools.combinations(points, 2):
             if subsets.intersects(first, second, facts) is not symbolic.Truth.FALSE:
                 return []
-        return [p for p in points if any(point_subsets_equal(p, w) for w in written)]
+        written = [
+            e.data.subset
+            for state in loop.states()
+            for e in state.edges()
+            if e.data.data == name and isinstance(e.dst, nodes.AccessNode) and e.dst.data == name
+        ]
+        return [p for p in points if any(point_subsets_equal(p, w) for w in written if w is not None)]
 
     @staticmethod
     def picked_read(state: SDFGState, edge: Any, node: nodes.AccessNode) -> bool:
