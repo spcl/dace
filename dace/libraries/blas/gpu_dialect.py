@@ -23,7 +23,7 @@ def side(right: bool) -> str:
     return "CUBLAS_SIDE_RIGHT" if right else "CUBLAS_SIDE_LEFT"
 
 
-class GpuCall(NamedTuple):
+class GPUCall(NamedTuple):
     """The pieces a node's GPU call is written from, for one data type."""
 
     #: The BLAS letter of the data type (``D`` for ``double``).
@@ -38,17 +38,17 @@ class GpuCall(NamedTuple):
         return f"{self.cast}{connector}"
 
 
-def gpu_call(dtype: dtypes.typeclass) -> GpuCall | None:
+def gpu_call(dtype: dtypes.typeclass) -> GPUCall | None:
     """The call pieces for ``dtype``, or None if the vendor library has no routines for it."""
     letter = blas_helpers.blas_prefix(dtype)
     if letter is None:
         return None
     cuda_type = blas_helpers.cublas_type_metadata(dtype)[1]
     cast = f"({cuda_type}*)" if dtype.is_complex() else ""
-    return GpuCall(letter, cast)
+    return GPUCall(letter, cast)
 
 
-def scalar_pointers(call: GpuCall, dtype: dtypes.typeclass, **values) -> tuple[str, dict[str, str]]:
+def scalar_pointers(call: GPUCall, dtype: dtypes.typeclass, **values) -> tuple[str, dict[str, str]]:
     """Declares each of ``values`` as a host scalar of ``dtype``; returns the declarations and, per name, the pointer
     argument passing it to the vendor routine, which takes every scalar by address."""
     declarations, _ = blas_helpers.scalar_arguments(dtype, **values)
@@ -67,7 +67,7 @@ def required_layout(node, *matrices: blas_helpers.Operand) -> blas_helpers.Matri
     return layout
 
 
-def call_code(call: GpuCall, environment: type, node, scalars: str, routine_call: str) -> str:
+def call_code(call: GPUCall, environment: type, node, scalars: str, routine_call: str) -> str:
     """The tasklet body running ``routine_call``: handle setup, then the call with its scalars read from the host.
 
     The handle is created in device pointer mode (``dace_cublas.h``), so a call passing a host address would have the
