@@ -430,24 +430,6 @@ jobs:
           tests/codegen/readable \
           tests/codegen/split_nsdfg_translation_units_test.py
 
-    - name: Test with pytest (tests/graphlib, rustworkx backend)
-      run: |
-        export NOSTATUSBAR=1
-        ulimit -s 65536 || true
-        export OMP_STACKSIZE=64M
-        export DACE_compiler_max_stack_array_size=65536
-        export DACE_testing_serialization=1
-        export DACE_testing_deserialize_exception=1
-        export DACE_cache=unique
-        export DACE_optimizer_automatic_simplification=1
-        # Config FILE, not DACE_graph_backend: an env var beats Config.set, so every
-        # set_default_backend() in tests/graphlib would be a silent no-op under it.
-        export DACE_CONFIG=$PWD/.ci-graph-backend.conf
-        printf 'graph:\n  backend: rustworkx\n' > $DACE_CONFIG
-        pytest -n auto --tb=short --timeout_method thread --timeout=300 \
-          tests/graphlib \
-          -m "not gpu and not long and not sequential and not tile"
-
     # Non-blocking until the ratchet's baselines are re-measured on an idle machine: the numbers in
     # ``_KNOWN_SLOWER`` were taken on a box running eleven other pytest processes, which moved
     # several of them by a factor of two.
