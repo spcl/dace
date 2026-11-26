@@ -106,6 +106,7 @@ from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNum
 from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
 from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 from dace.transformation.passes.canonicalize.while_to_for import WhileToFor
+from dace.transformation.passes.conditional_last_value import ConditionalLastValue
 from dace.transformation.passes.consolidate_edges import ConsolidateEdges
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
@@ -816,6 +817,9 @@ def derive_parallelism(
     # Before the lift, after the lifts of last-value recurrences: a constant slot every iteration writes is private
     # per iteration, copied out after the loop from the last iteration that wrote it
     s += [(label, PromoteConstantIndexAccess(last_write=True))]
+    # Before the lift: a scalar a later block reads, stored under a condition, is the value of the last iteration that
+    # stored it: the loop splits at the store around a max-scan of the storing iterations
+    s += [(label, ConditionalLastValue())]
     # Before the lift: a guarded store of one truth value into one element is a logical reduction, not a conflict
     s += [(label, ConstantStoreToLogicalReduction())]
     # Before the lift: a wrapping modulo the dependence proof would map as a modular scatter maps as its affine bands.
