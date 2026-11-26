@@ -9,8 +9,8 @@ top-level child, found by an AST sweep:
   second child and ``j`` by the first. Distributed, each child gets its own level back.
 * IMPERFECT nest, a loop beside a bare statement -- ``s2275``, ``s235``, ``s2102``, ``s141``,
   ``s126``. Four of these distribute into ``for i { s1 }`` beside a PERFECT ``for i { for j { s2 } }``
-  (two directly, two once the pipeline's IV passes close their counter); only ``s2102`` is a
-  genuine legality refusal.
+  (two directly, two once the pipeline's IV passes close their counter); ``s2102``'s children both
+  write ``aa``, and only in the same column of one iteration, which the exact dependence test proves.
 
 The synthetic half covers what TSVC-2 does not contain: an adversarial cross-child dependence, a
 footprint the analysis cannot pin, more than two children, and a component that straddles an
@@ -61,10 +61,6 @@ SEPARABLE_IMPERFECT = ["s2275", "s235"]
 #: read off the SDFG rather than assumed -- see :func:`test_induction_variable_decides_the_verdict`.
 INDUCTION_VARIABLE_NESTS = ["s126", "s141"]
 
-#: The one genuine legality refusal in the corpus.
-REFUSED_NESTS = {
-    "s2102": "both children WRITE aa -- one dependence component",
-}
 
 #: ``kernel -> (fused, distributed)`` parallel levels AT THE PARENT LEVEL, reported by
 #: :func:`parallel_level_diagnostic` for the split the pass performs. A diagnostic, not a gate:
@@ -84,7 +80,7 @@ WHOLE_KERNEL_LEVELS = {
     "s233": ((1, 3), (2, 4)),
     "s2275": ((2, 2), (3, 3)),
     "s235": ((1, 2), (2, 3)),
-    "s2102": ((2, 2), (2, 2)),
+    "s2102": ((2, 2), (3, 3)),
 }
 
 N = dace.symbol("N")
@@ -330,15 +326,14 @@ def test_pass_is_idempotent(name):
     assert sdfg.to_json() == once
 
 
-# The refused nests: a pass that refuses changes nothing.
+# A refused nest: a pass that refuses changes nothing.
 
 
-@pytest.mark.parametrize("name", sorted(REFUSED_NESTS))
-def test_refused_nests_are_byte_identical(name):
-    """A refusal must leave the SDFG exactly as it was."""
-    kernel, sdfg = build(name, f"refuse_{name}")
+def test_a_refused_nest_is_byte_identical():
+    """A refusal must leave the SDFG exactly as it was: a child reads what the next one writes an iteration later."""
+    sdfg = backward_carried.to_sdfg(simplify=True)
     before = sdfg.to_json()
-    assert PerfectLoopNesting().apply_pass(sdfg, {}) is None, REFUSED_NESTS[name]
+    assert PerfectLoopNesting().apply_pass(sdfg, {}) is None
     assert sdfg.to_json() == before, "a refusal mutated the SDFG"
 
 
@@ -384,14 +379,21 @@ def test_trivial_loop_driver_eliminates_what_the_pattern_matcher_does_in_its_ord
     assert [r.label for r in driven.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)] == ["outer"]
 
 
-def test_shared_written_array_is_one_dependence_component():
-    """``s2102`` zeroes a column and then writes the diagonal element of that same column. Both
-    children write ``aa``, so they form ONE component and the loop stands -- the subset-disjointness
-    reasoning that would separate them is out of this pass's scope."""
+# Reproducer: canon kept LLR s2102 one imperfect nest (slow on the GPU, one thread per column): both children write
+# ``aa``, which merged them without asking where
+def test_a_shared_written_array_splits_when_every_conflict_is_in_one_iteration():
+    """``s2102`` zeroes a column and then writes the diagonal element of that same column. Both children write
+    ``aa``, but iteration ``i`` touches column ``i`` only, so every conflict is within one iteration and the zeros
+    may all run first: the exact dependence test splits the nest, and the values do not change."""
     kernel, sdfg = build("s2102", "component_s2102")
     loop = only_loop(sdfg)
     assert _linear_blocks(loop) is not None, "the body IS a plain two-block chain"
-    assert _forward_flow_groups(loop) is None, "but the two blocks are one dependence component"
+    groups = _forward_flow_groups(loop)
+    assert groups is not None and len(groups) == 2
+    assert PerfectLoopNesting().apply_pass(sdfg, {}) is not None
+    sdfg.validate()
+    assert top_level_nests(sdfg) == 2
+    assert run_matches_untransformed(kernel.program, sdfg)
 
 
 @pytest.mark.parametrize("name", INDUCTION_VARIABLE_NESTS)

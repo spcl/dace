@@ -15,7 +15,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis import exact_dependence, loop_analysis
 from dace.transformation.passes.loop_fission import _linear_blocks, per_iter_axes
 
 #: The axes of a container not every access of which is per-iteration.
@@ -165,6 +165,11 @@ def _forward_flow_groups(
             merge = False
             for x in dict.fromkeys(k for k in touched_i if k in writes_j or k in reads_j):
                 if x in writes_j:
+                    # A store in the later block conflicts with the earlier one: split only when no conflict has the
+                    # later block's instance in an earlier iteration, which ISL decides exactly
+                    if exact_dependence.runs_whole_before(loop, bi, bj, x):
+                        flows.append((bi, bj))
+                        continue
                     merge = True  # backward WAR / WAW / flow-back
                     break
                 if x in writes_i and x in reads_j:
