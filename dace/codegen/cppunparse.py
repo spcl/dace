@@ -727,7 +727,9 @@ class CPPUnparser:
                         self.locals.define(target.id, t.lineno, self._indent, inferred_type)
                         self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
                     else:
-                        self.locals.define(target.id, t.lineno, self._indent)
+                        # The type is still recorded where it is known, for expressions that depend on it (e.g., the
+                        # real part of a complex number)
+                        self.locals.define(target.id, t.lineno, self._indent, self.expr_type(t.value))
                         if cpf_lowering.standalone():
                             self.write(self.standalone_local_ctype(target.id, t.value) + " ")
                         else:
@@ -1541,7 +1543,29 @@ class CPPUnparser:
         interleave(lambda: self.write(s), self.dispatch, t.values)
         self.write(")")
 
+    def expr_type(self, expr: ast.expr) -> dace.dtypes.typeclass | None:
+        """The inferred type of an expression of the code, or None if it is unknown."""
+        symbols = {name: dtype for name, dtype in self.locals.get_name_type_associations().items() if dtype is not None}
+        symbols.update(self.defined_symbols)
+        return type_inference.infer_expr_type(expr, symbols)
+
+    def complex_part(self, value: ast.expr, attr: str) -> None:
+        """Write the real or imaginary part (``attr``) of the complex ``value``."""
+        if cpf_lowering.standalone_c():
+            # C has no members on ``double _Complex``: the ``re`` / ``im`` accessor is ``creal`` / ``cimag``
+            self.emit_call("re" if attr == "real" else "im", [value])
+            return
+        self.dispatch(value)
+        self.write(f".{attr}()")
+
     def _Attribute(self, t):
+        if isinstance(t.ctx, ast.Load) and t.attr in ("real", "imag"):
+            # In C++, the parts of a complex number are member functions
+            dtype = self.expr_type(t.value)
+            if isinstance(dtype, dace.dtypes.typeclass) and dtype.is_complex():
+                self.complex_part(t.value, t.attr)
+                return
+
         self.dispatch(t.value)
         # Special case: 3.__abs__() is a syntax error, so if t.value
         # is an integer literal then we need to either parenthesize
@@ -1612,13 +1636,6 @@ class CPPUnparser:
         "float64": "dace::float64",
     }
 
-    # Complex-component accessors.  ``re(z)`` / ``im(z)`` extract the real /
-    # imaginary part of a complex value -- they lower to the ``dace::math``
-    # helpers (which call ``.real()`` / ``.imag()`` on ``std::complex`` /
-    # ``thrust::complex``).  Same call shape as a renamed function: write the
-    # C++ name, then the (single) argument list.  This is the tasklet-body
-    # spelling for a complex's components, mirroring how ``int_floor`` maps to
-    # ``dace::math::ifloor``.
     # The math names come from ``cpf_lowering.RUNTIME_QUALIFIED_MATH``, which states why each one
     # must be qualified (a bare call binds to ``std::``, whose overloads are ambiguous for a 16-bit
     # float). It is shared with ``dace.symbolic``'s printer on purpose: the same expression reaches
@@ -1626,8 +1643,6 @@ class CPPUnparser:
     # only one of the two builds in one place and fails in the other.
     _renamed_funcs = {
         "detect_all_positive": "dace::detect_all_positive",
-        "re": "dace::math::re",
-        "im": "dace::math::im",
         **cpf_lowering.RUNTIME_QUALIFIED_MATH,
     }
     modulo_calls = {
@@ -1701,16 +1716,9 @@ class CPPUnparser:
         if cpf_lowering.standalone_c() and self.c_decltype_complex(t):
             return
         # ``z.real()`` / ``z.imag()``, the ``std::complex`` member spelling a tasklet may carry (dace-fortran's
-        # ``DBLE(z)``): C has no members on ``double _Complex``, so it is the ``re`` / ``im`` accessor (``creal``).
-        if (
-            cpf_lowering.standalone_c()
-            and isinstance(t.func, ast.Attribute)
-            and t.func.attr in ("real", "imag")
-            and not t.args
-            and not t.keywords
-        ):
-            accessor = ast.Name(id="re" if t.func.attr == "real" else "im", ctx=ast.Load())
-            self.dispatch(ast.copy_location(ast.Call(func=accessor, args=[t.func.value], keywords=[]), t))
+        # ``DBLE(z)``): ``_Attribute`` would add a second pair of parentheses
+        if isinstance(t.func, ast.Attribute) and t.func.attr in ("real", "imag") and not t.args and not t.keywords:
+            self.complex_part(t.func.value, t.func.attr)
             return
         # Special cases for sympy functions
         if isinstance(t.func, ast.Name):
