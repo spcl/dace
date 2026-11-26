@@ -9,6 +9,8 @@ from dace.libraries.standard.nodes import scan
 from dace.libraries.standard.nodes.scan import Scan, ScanOp
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
+from tests.corpus import corpus_suite as suite
+from tests.corpus.gpu_offload_corpus_test import canon_gpu
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 
@@ -86,14 +88,18 @@ def test_s322_lifts_to_a_second_order_scan():
     assert_matches_reference(kernel, sdfg)
 
 
-def linear2_sdfg(implementation: str) -> dace.SDFG:
-    sdfg = dace.SDFG(f"linear2_scan_{implementation}")
+def linear2_sdfg(implementation: str, seed_on_device: bool = False) -> dace.SDFG:
+    on_gpu = implementation == "CUDA"
+    sdfg = dace.SDFG(f"linear2_scan_{implementation}_{int(seed_on_device)}")
+    storage = dace.StorageType.GPU_Global if on_gpu else dace.StorageType.Default
     for name in ("c1", "c2", "d", "out"):
-        sdfg.add_array(name, [M], dace.float64)
-    sdfg.add_array("seed", [2], dace.float64)
+        sdfg.add_array(name, [M], dace.float64, storage=storage)
+    sdfg.add_array("seed", [2], dace.float64, storage=storage if seed_on_device else dace.StorageType.Default)
     state = sdfg.add_state()
     node = Scan("linear2", op=ScanOp.LINEAR2)
     node.implementation = implementation
+    if on_gpu:
+        node.schedule = dace.ScheduleType.GPU_Device
     node.add_in_connector(scan.INIT_CONNECTOR_NAME)
     for conn, name in (
         (scan.INPUT_CONNECTOR_NAME, "d"),
@@ -106,21 +112,52 @@ def linear2_sdfg(implementation: str) -> dace.SDFG:
     return sdfg
 
 
+def linear2_case(n: int) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    rng = np.random.default_rng(n)
+    # |c1| + |c2| < 1 keeps the recurrence contracting, so the reference itself is well conditioned
+    args = {
+        "c1": 0.5 * rng.random(n),
+        "c2": 0.4 * rng.random(n),
+        "d": rng.standard_normal(n),
+        "seed": np.array([0.3, -0.7]),
+    }
+    want = np.empty(n)
+    prev2, prev = args["seed"]
+    for k in range(n):
+        want[k] = args["c1"][k] * prev + args["c2"][k] * prev2 + args["d"][k]
+        prev2, prev = prev, want[k]
+    return args, want
+
+
 @pytest.mark.parametrize("implementation", ["CPU", "pure", "sequential"])
 @pytest.mark.parametrize("n", [2, 17, 40001])
 def test_second_order_scan_matches_the_sequential_recurrence(implementation: str, n: int):
-    rng = np.random.default_rng(n)
-    # |c1| + |c2| < 1 keeps the recurrence contracting, so the reference itself is well conditioned
-    c1, c2, d = 0.5 * rng.random(n), 0.4 * rng.random(n), rng.standard_normal(n)
-    seed = np.array([0.3, -0.7])
-    want = np.empty(n)
-    prev2, prev = seed
-    for k in range(n):
-        want[k] = c1[k] * prev + c2[k] * prev2 + d[k]
-        prev2, prev = prev, want[k]
+    args, want = linear2_case(n)
     out = np.zeros(n)
-    linear2_sdfg(implementation)(c1=c1, c2=c2, d=d, seed=seed, out=out, M=n)
+    linear2_sdfg(implementation)(**args, out=out, M=n)
     assert np.allclose(out, want, rtol=0, atol=1e-11)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("seed_on_device", [False, True])
+@pytest.mark.parametrize("n", [2, 17, 100003])
+def test_the_cuda_second_order_scan_matches_the_sequential_recurrence(seed_on_device: bool, n: int):
+    import cupy as cp
+
+    args, want = linear2_case(n)
+    device = {name: cp.asarray(value) for name, value in args.items() if name != "seed" or seed_on_device}
+    out = cp.zeros(n)
+    linear2_sdfg("CUDA", seed_on_device)(**{**args, **device}, out=out, M=n)
+    assert np.allclose(cp.asnumpy(out), want, rtol=0, atol=1e-11)
+
+
+@pytest.mark.gpu
+def test_s322_lifts_to_a_second_order_scan_on_the_gpu():
+    ctx = suite.make("tsvc", "s322_d_single")
+    sdfg = suite.build(ctx, canon_gpu, "linear2_gpu")
+    assert scan_ops(sdfg) == [ScanOp.LINEAR2]
+    assert not loops(sdfg), f"the recurrence loop survived: {[r.label for r in loops(sdfg)]}"
+    assert suite.run_matches(ctx, sdfg)
 
 
 def test_s222_nonlinear_recurrence_stays_sequential():
@@ -138,4 +175,8 @@ if __name__ == "__main__":
     for implementation in ("CPU", "pure", "sequential"):
         for n in (2, 17, 40001):
             test_second_order_scan_matches_the_sequential_recurrence(implementation, n)
+    for seed_on_device in (False, True):
+        for n in (2, 17, 100003):
+            test_the_cuda_second_order_scan_matches_the_sequential_recurrence(seed_on_device, n)
+    test_s322_lifts_to_a_second_order_scan_on_the_gpu()
     test_s222_nonlinear_recurrence_stays_sequential()

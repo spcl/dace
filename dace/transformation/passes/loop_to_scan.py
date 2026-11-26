@@ -21,7 +21,7 @@ This pass detects that shape and replaces the loop with three sibling states:
 A computed delta (``out[i+1] = out[i] + a[i] * b[i] + c[i]``) is built into the delta
 buffer first. A first-order LINEAR recurrence (``a[i] = a[i] + a[i-1] * b[i]``) lifts
 as ``op=AFFINE``: :func:`match_affine_scan` proves linearity in the carry symbolically.
-On the CPU target the SECOND-order one (``a[i] = a[i] + a[i-1] * b[i] + a[i-2] * c[i]``)
+The SECOND-order one (``a[i] = a[i] + a[i-1] * b[i] + a[i-2] * c[i]``)
 lifts as ``op=LINEAR2``, whose carry is the affine map of the pair ``(a[i-1], a[i-2])``.
 
 Compatibility with :class:`~dace.transformation.passes.loop_to_reduce.LoopToReduce`:
@@ -646,8 +646,7 @@ class LoopToScan(ppl.Pass):
             # Last: the AFFINE shape, the first-order LINEAR recurrence every matcher above
             # refuses on purpose. Tried only after they all decline, so a loop the scalar ops
             # can lift keeps its existing lowering unchanged.
-            # The second-order scan has host expansions only: on the GPU the loop stays sequential.
-            aff = match_affine_scan(loop, owner, second_order=self.target == "cpu")
+            aff = match_affine_scan(loop, owner)
             if aff is not None:
                 if carry_distance_kind(aff.stride, SymbolResolver().facts_at(loop)) == "guard":
                     rewrite = lambda region: self._specialize_affine_by_distance(region, loop, aff, owner)
@@ -5407,12 +5406,11 @@ def python_code_for(expr: Any) -> str | None:
     return text
 
 
-def match_affine_scan(loop: LoopRegion, sdfg: SDFG, second_order: bool = False) -> _AffineScan | None:
-    """Match ``out[i + k_w] = c(i) * out[i + k_w - 1] + d(i)`` in ``loop``, or return ``None``.
+def match_affine_scan(loop: LoopRegion, sdfg: SDFG) -> _AffineScan | None:
+    """Match ``out[i + k_w] = c(i) * out[i + k_w - 1] (+ c2(i) * out[i + k_w - 2]) + d(i)`` in ``loop``, or ``None``.
 
     :param loop: Candidate loop.
     :param sdfg: SDFG owning it.
-    :param second_order: Also match ``+ c2(i) * out[i + k_w - 2]`` (``op=LINEAR2``, host expansions only).
     :returns: The match, or ``None``.
     """
     if loop_analysis.get_loop_stride(loop) != 1:
@@ -5441,7 +5439,7 @@ def match_affine_scan(loop: LoopRegion, sdfg: SDFG, second_order: bool = False) 
     if write_axis != 0 or write_coef != 1 or write_others:
         return None
 
-    walked = affine_value_walk(state, sdfg, write_edge, out_name, loop_var, k_w, max_carries=2 if second_order else 1)
+    walked = affine_value_walk(state, sdfg, write_edge, out_name, loop_var, k_w, max_carries=2)
     if walked is None:
         return None
     expr, leaves, chain, carries, reads = walked

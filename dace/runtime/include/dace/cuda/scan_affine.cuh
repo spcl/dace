@@ -138,6 +138,83 @@ inline gpuError_t inclusive_affine(const C* coef, const D* delta, const S* seed_
   return gpuGetLastError();
 }
 
+/// The second-order recurrence ``out[k] = c1[k]*out[k-1] + c2[k]*out[k-2] + d[k]`` carries the affine map of the
+/// pair ``(out[k-1], out[k-2])``: ``x -> M x + v``, a 2x2 matrix and a 2-vector. Trivially copyable, as cub needs.
+template <typename E>
+struct linear2_map {
+  E m00, m01, m10, m11;
+  E v0, v1;
+};
+
+/// ``y`` applied AFTER ``x``: ``(My Mx, My vx + vy)``.
+template <typename E>
+struct linear2_compose {
+  __host__ __device__ __forceinline__ linear2_map<E> operator()(const linear2_map<E>& x,
+                                                                 const linear2_map<E>& y) const {
+    return linear2_map<E>{y.m00 * x.m00 + y.m01 * x.m10, y.m00 * x.m01 + y.m01 * x.m11,
+                          y.m10 * x.m00 + y.m11 * x.m10, y.m10 * x.m01 + y.m11 * x.m11,
+                          y.m00 * x.v0 + y.m01 * x.v1 + y.v0,  y.m10 * x.v0 + y.m11 * x.v1 + y.v1};
+  }
+};
+
+namespace detail {
+
+/// Element ``k``'s map ``M = [[c1, c2], [1, 0]], v = [d, 0]``; element 0 absorbs the seeds ``(out[-2], out[-1])``
+/// and comes out constant (``M == 0``), so every composed prefix is constant and its ``v0`` IS the value.
+template <typename E, typename S>
+__global__ void linear2_pack_kernel(const E* __restrict__ c1, const E* __restrict__ c2, const E* __restrict__ d,
+                                    linear2_map<E>* __restrict__ m, const S* __restrict__ seed_ptr, E seed0,
+                                    E seed1, long long n) {
+  const long long k = (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x;
+  if (k >= n) return;
+  const E zero = static_cast<E>(0);
+  if (k == 0) {
+    const E s0 = (seed_ptr != nullptr) ? static_cast<E>(seed_ptr[0]) : seed0;
+    const E s1 = (seed_ptr != nullptr) ? static_cast<E>(seed_ptr[1]) : seed1;
+    m[0] = linear2_map<E>{zero, zero, zero, zero, c1[0] * s1 + c2[0] * s0 + d[0], s1};
+  } else {
+    m[k] = linear2_map<E>{c1[k], c2[k], static_cast<E>(1), zero, d[k], zero};
+  }
+}
+
+template <typename E>
+__global__ void linear2_unpack_kernel(const linear2_map<E>* __restrict__ m, E* __restrict__ out, long long n) {
+  const long long k = (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x;
+  if (k < n) out[k] = m[k].v0;
+}
+
+}  // namespace detail
+
+/// ``out[k] = c1[k]*out[k-1] + c2[k]*out[k-2] + d[k]`` over ``k in [0, n)`` on ``stream``, entered with
+/// ``(out[-2], out[-1])`` from ``seed_ptr`` (device-resident) or, when it is null, ``seed0`` / ``seed1``.
+/// One scratch block holds the maps and cub's workspace, as in :func:`inclusive_affine`.
+template <typename E, typename S>
+inline gpuError_t inclusive_linear2(const E* c1, const E* c2, const E* d, const S* seed_ptr, E seed0, E seed1,
+                                    E* out, long long n, gpuStream_t stream) {
+  using M = linear2_map<E>;
+  if (n <= 0) return gpuSuccess;
+  linear2_compose<E> op;
+  std::size_t cub_bytes = 0;
+  gpuError_t err = ::gpucub::DeviceScan::InclusiveScan(nullptr, cub_bytes, static_cast<M*>(nullptr),
+                                                       static_cast<M*>(nullptr), op, n, stream);
+  if (err != gpuSuccess) return err;
+  const std::size_t map_bytes = ((static_cast<std::size_t>(n) * sizeof(M)) + 255u) & ~static_cast<std::size_t>(255u);
+  void* scratch = ::dace::cub::get_scratch<::dace::cub::ScanTag>(map_bytes + cub_bytes, stream, &err);
+  if (scratch == nullptr) return (err != gpuSuccess) ? err : gpuErrorMemoryAllocation;
+  M* maps = reinterpret_cast<M*>(scratch);
+  void* workspace = static_cast<char*>(scratch) + map_bytes;
+
+  const int threads = 256;
+  const unsigned blocks = static_cast<unsigned>((n + threads - 1) / threads);
+  detail::linear2_pack_kernel<E, S><<<blocks, threads, 0, stream>>>(c1, c2, d, maps, seed_ptr, seed0, seed1, n);
+  err = gpuGetLastError();
+  if (err != gpuSuccess) return err;
+  err = ::gpucub::DeviceScan::InclusiveScan(workspace, cub_bytes, maps, maps, op, n, stream);
+  if (err != gpuSuccess) return err;
+  detail::linear2_unpack_kernel<E><<<blocks, threads, 0, stream>>>(maps, out, n);
+  return gpuGetLastError();
+}
+
 }  // namespace cuda_scan
 }  // namespace dace
 

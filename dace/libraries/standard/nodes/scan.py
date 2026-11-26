@@ -124,7 +124,7 @@ class ScanOp(enum.Enum):
     #: ``out[k] = c[k] * out[k-1] + c2[k] * out[k-2] + d[k]`` -- the SECOND-order linear recurrence.
     #: Its carry is the affine map of the pair ``(out[k-1], out[k-2])``: a 2x2 matrix and a 2-vector.
     #: Reads ``_scan_coef`` and ``_scan_coef2``, and ``_scan_init`` holds ``(out[-2], out[-1])``.
-    #: Inclusive, single-chain, unit-stride and host-only: the CPU, sequential and pure expansions.
+    #: Inclusive, single-chain and unit-stride: the CPU, sequential, pure and CUDA expansions.
     LINEAR2 = "linear2"
 
 
@@ -1446,6 +1446,49 @@ def affine_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, ou
     )
 
 
+def linear2_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, out_desc) -> nodes.Tasklet:
+    """The second-order recurrence on the device: a cub scan over the pair maps of ``dace::cuda_scan``.
+
+    As in :func:`affine_cuda_tasklet`, the two seeds reach the wrapper as a device pointer or as two host
+    values, and exactly one of the two is live.
+    """
+    seed = required(seed_desc(node, state, sdfg, 0))
+    on_device = seed.storage in GPU_RESIDENT_STORAGES
+    e_ctype = out_desc.dtype.base_type.ctype
+    s_ctype = seed.dtype.base_type.ctype
+    seed_ptr = INIT_CONNECTOR_NAME if on_device else f"static_cast<const {s_ctype}*>(nullptr)"
+    seeds = (
+        f"static_cast<{e_ctype}>(0), static_cast<{e_ctype}>(0)"
+        if on_device
+        else f"static_cast<{e_ctype}>({INIT_CONNECTOR_NAME}[0]), static_cast<{e_ctype}>({INIT_CONNECTOR_NAME}[1])"
+    )
+    wrapper = f"__dace_scan_linear2_{global_code_id(sdfg, state, node)}"
+    params = (
+        f"const {e_ctype}* __sc_c1, const {e_ctype}* __sc_c2, const {e_ctype}* __sc_d, const {s_ctype}* __sc_seed_ptr, "
+        f"{e_ctype} __sc_seed0, {e_ctype} __sc_seed1, {e_ctype}* __sc_out, long long __sc_n, gpuStream_t __sc_stream"
+    )
+    prototype = f"DACE_EXPORTED gpuError_t {wrapper}({params});"
+    sdfg.append_global_code(prototype + "\n")
+    sdfg.append_global_code(
+        f"{prototype}\n"
+        f"gpuError_t {wrapper}({params}) {{\n"
+        f"    return ::dace::cuda_scan::inclusive_linear2<{e_ctype}, {s_ctype}>(\n"
+        f"        __sc_c1, __sc_c2, __sc_d, __sc_seed_ptr, __sc_seed0, __sc_seed1, __sc_out, __sc_n, __sc_stream);\n"
+        f"}}\n",
+        "cuda",
+    )
+    inputs = {INPUT_CONNECTOR_NAME: None, COEF_CONNECTOR_NAME: None, COEF2_CONNECTOR_NAME: None}
+    inputs[INIT_CONNECTOR_NAME] = dtypes.pointer(seed.dtype.base_type) if on_device else None
+    code = (
+        f"DACE_GPU_CHECK({wrapper}({COEF_CONNECTOR_NAME}, {COEF2_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME}, "
+        f"{seed_ptr}, {seeds}, {OUTPUT_CONNECTOR_NAME}, ({_resolve_length(node, state, sdfg)}), "
+        f"__dace_current_stream));"
+    )
+    return nodes.Tasklet(
+        node.name, inputs=inputs, outputs={OUTPUT_CONNECTOR_NAME: None}, code=code, language=dace.Language.CPP
+    )
+
+
 def batched_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, out_desc) -> nodes.Tasklet:
     """Many independent scans over one buffer in a fixed number of launches: the ``s`` residue classes of a
     strided scan, or the consecutive rows of a segmented one.
@@ -1517,7 +1560,7 @@ def block_refusal(node: "Scan", state: dace.SDFGState | None = None, sdfg: dace.
     if segmented(node):
         return "segmented scans are not supported."
     if node.op is ScanOp.LINEAR2:
-        return "op=LINEAR2 has host expansions only."
+        return "op=LINEAR2 has no block collective; the CUDA expansion lowers it."
     if node.op is ScanOp.AFFINE and (node.exclusive or node.chains != 1):
         return "op=AFFINE is inclusive and single-chain."
     if strided and node.chains != 1:
@@ -1712,7 +1755,8 @@ class ExpandCUDA(ExpandTransformation):
             ExpandCUDA.environments = [ScanScratch]
         in_desc, out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
         if node.op is ScanOp.LINEAR2:
-            raise NotImplementedError(f"Scan {node.label}: ``op=LINEAR2`` has host expansions only.")
+            refuse_widening(node, in_desc, out_desc, "op=LINEAR2")
+            return linear2_cuda_tasklet(node, state, sdfg, out_desc)
         if node.op is ScanOp.AFFINE:
             refuse_unsupported_affine_flags(node)
             if _is_length_one(node, state):
