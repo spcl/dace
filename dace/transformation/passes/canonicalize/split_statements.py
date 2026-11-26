@@ -935,6 +935,18 @@ def loop_assigned(loop: LoopRegion) -> set[str]:
     return {name for e in loop.all_interstate_edges() for name in e.data.assignments}
 
 
+def enclosing_loop_variables(loop: LoopRegion) -> OrderedSet[str]:
+    """The loop variables of the loops around ``loop`` in its SDFG."""
+    names: OrderedSet[str] = OrderedSet()
+    region = loop.parent_graph
+    # Climb to the SDFG, collecting each enclosing loop's variable
+    while region is not None and not isinstance(region, SDFG):
+        if isinstance(region, LoopRegion) and region.loop_variable:
+            names.add(region.loop_variable)
+        region = region.parent_graph
+    return names
+
+
 def guarded_groups(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> list[dict[str, None]] | None:
     """One group per output of a loop body with a guarded branch, in an order the clones may run one after the other,
     or ``None``. A clone repeats every guard and every symbol assignment, which is what expands a scalar temporary
@@ -952,10 +964,18 @@ def guarded_groups(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> list[
     # it. A guard that tests a value stored before it (``c = test; if c: ...``) is an ordinary read of an earlier group
     # A store at its own element per iteration (``if a[i] < 0: ... a[i] = ...``) is no such coupling: every clone repeats
     # the guard, and the ordering below runs the clone that stores the element after every clone that tests it.
+    # That holds only when every output is one element per iteration: an output shared by iterations (a flag, a
+    # running max, an argmin's best) is a reduction the guard and the stores form together.
+    # The element must also move with every enclosing loop: one an outer loop revisits is that loop's reduction slot
+    # (a masked argmin's ``zmin[k]`` inside its ``n`` loop).
+    outer = enclosing_loop_variables(loop)
+    per_iteration = all(
+        iteration_distinct([a.subset for a in stores], loop.loop_variable)
+        and all(outer <= OrderedSet(str(x) for x in a.subset.free_symbols) for a in stores)
+        for stores in body.stores.values()
+    )
     if any(
-        r.data in body.stores
-        and r.site < max(a.site for a in body.stores[r.data])
-        and not iteration_distinct([a.subset for a in body.stores[r.data]], loop.loop_variable)
+        r.data in body.stores and r.site < max(a.site for a in body.stores[r.data]) and not per_iteration
         for r in body.guard_reads
     ):
         return None
