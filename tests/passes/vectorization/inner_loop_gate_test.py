@@ -174,12 +174,17 @@ def test_conditional_over_the_tiled_param_is_refused_by_the_branch_gate():
 #: variables of the sequential loops that survive. adi's and deriche's sweeps carry a refused map scalar
 #: (``__no_vectorize``); lu's lane-uniform reductions inside its sweeps tile by 8 with a remainder map each.
 REAL_KERNEL_SHAPES = {
+    # The exact distribution splits each sweep's lane-uniform statements off into maps of their own, which tile
     "adi": (
         [
             ("single_state_body_0_map__no_vectorize", "CPU_Multicore", 1, False),
-            ("single_state_body_map__no_vectorize", "CPU_Multicore", 1, False),
+            ("single_state_body_1_map", "CPU_Multicore", 8, True),
+            ("single_state_body_1_map__tile_main", "CPU_Multicore", 8, True),
+            ("single_state_body_3_map__no_vectorize", "CPU_Multicore", 1, False),
+            ("single_state_body_5_map", "CPU_Multicore", 8, True),
+            ("single_state_body_5_map__tile_main", "CPU_Multicore", 8, True),
         ],
-        ["_loop_it_0", "_loop_it_2", "_loop_it_3", "_loop_it_5", "_loop_it_6"],
+        ["_loop_it_0", "_loop_it_2", "_loop_it_3", "_loop_it_3", "_loop_it_5", "_loop_it_6", "_loop_it_6"],
     ),
     "deriche": (
         [

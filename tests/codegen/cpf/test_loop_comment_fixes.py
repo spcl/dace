@@ -127,9 +127,10 @@ def any_per_row_code() -> str:
 
 # Reproducer: CPF loop comments: a loop is a reduction only where the accumulator does not move with its... (f71abf6b92)
 def test_only_the_loop_that_shares_the_accumulator_is_a_reduction():
-    """logical_any_per_row: the ``i`` loop writes ``flag[i]`` and ``unset[i]``, one element per iteration; only the
-    inner ``j`` loop reduces into them."""
-    outer, inner = class_lines(any_per_row_code())
+    """logical_any_per_row: the ``i`` loops write ``flag[i]`` and ``unset[i]``, one element per iteration (the exact
+    distribution splits the reset from the ``j`` nest); only the inner ``j`` loop reduces into them."""
+    reset, outer, inner = class_lines(any_per_row_code())
+    assert reset.startswith("// parallel -- independent: "), reset
     assert outer.startswith("// parallel -- independent: "), outer
     assert inner.startswith(
         "// parallel -- reduction: && into unset and || into flag; the other accesses are independent"
