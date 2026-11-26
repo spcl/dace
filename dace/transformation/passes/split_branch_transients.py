@@ -20,7 +20,7 @@ def enclosing_branch(block: ControlFlowBlock) -> tuple[ConditionalBlock, int] | 
     child, parent = block, block.parent_graph
     while parent is not None and not isinstance(parent, SDFG):
         if isinstance(parent, ConditionalBlock):
-            for index, (_condition, branch) in enumerate(parent.branches):
+            for index, branch in enumerate(region for condition, region in parent.branches):
                 if branch is child:
                     return parent, index
         child, parent = parent, parent.parent_graph
