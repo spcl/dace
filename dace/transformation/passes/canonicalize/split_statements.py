@@ -949,7 +949,14 @@ def guarded_groups(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> list[
     # A guard that tests a value the body stores later couples the statements: a compare-and-update (a masked argmin)
     # or a test-and-clear is one statement other lifts match whole, and per-statement copies of its guard only multiply
     # it. A guard that tests a value stored before it (``c = test; if c: ...``) is an ordinary read of an earlier group
-    if any(r.data in body.stores and r.site < max(a.site for a in body.stores[r.data]) for r in body.guard_reads):
+    # A store at its own element per iteration (``if a[i] < 0: ... a[i] = ...``) is no such coupling: every clone repeats
+    # the guard, and the ordering below runs the clone that stores the element after every clone that tests it.
+    if any(
+        r.data in body.stores
+        and r.site < max(a.site for a in body.stores[r.data])
+        and not iteration_distinct([a.subset for a in body.stores[r.data]], loop.loop_variable)
+        for r in body.guard_reads
+    ):
         return None
     outputs = sorted(body.stores, key=lambda name: min(a.site for a in body.stores[name]))
     after: list[dict[int, None]] = [{} for name in outputs]
@@ -963,8 +970,21 @@ def guarded_groups(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> list[
                 continue
             if not iteration_distinct([a.subset for a in stores], loop.loop_variable):
                 return None
-            if any({access_offset(r.subset, w.subset) for w in stores} != {0} for r in reads):
-                return None
+            offsets = {access_offset(r.subset, w.subset) for r in reads for w in stores}
+            if offsets != {0}:
+                # A read at a constant offset from the stores sees another iteration's store: the iteration that runs
+                # it orders the clones whole, the store's clone first when it ran earlier (TSVC s161: ``c[i + 1]``
+                # stored, ``c[i]`` read in the other arm), the reader's first when it runs later.
+                if None in offsets or 0 in offsets:
+                    return None
+                directions = {iteration_direction(r.subset, w.subset, loop) for r in reads for w in stores}
+                if directions == {-1}:
+                    after[writer][reader] = None
+                elif directions == {1}:
+                    after[reader][writer] = None
+                else:
+                    return None
+                continue
             first, last = min(a.site for a in stores), max(a.site for a in stores)
             if all(r.site < first for r in reads):
                 after[reader][writer] = None
