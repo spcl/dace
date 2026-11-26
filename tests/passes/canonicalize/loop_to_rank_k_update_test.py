@@ -299,12 +299,16 @@ def normalized(sdfg):
 
 
 def row_value(sdfg):
-    """What one iteration of the only outer loop nest stores into its row triangle, over the names ``i``, ``j``."""
-    ((parent, loop),) = [(p, lp) for p, lp in liv.outer_loop_candidates(sdfg) if p is sdfg]
-    summary = liv.summarize(sdfg, loop)
-    ((domain,),) = [summary.domains]
+    """What the top-level loops store into the row triangle, in order, over the names ``i``, ``j``: distribution
+    splits ``C *= beta`` and the update into two loops, each loop's value reads the one before it."""
     i, j = sympy.symbols("i j")
-    return liv.canonical(domain.value).xreplace({summary.var: i, domain.index[1]: j})
+    value = liv.leaf("C", (i, j))
+    for loop in (b for b in sdfg.bfs_nodes(sdfg.start_block) if isinstance(b, LoopRegion)):
+        summary = liv.summarize(sdfg, loop)
+        ((domain,),) = [summary.domains]
+        step = liv.canonical(domain.value).xreplace({summary.var: i, domain.index[1]: j})
+        value = step.xreplace({liv.leaf("C", (i, j)): value})
+    return liv.canonical(value)
 
 
 @pytest.mark.parametrize("name,loops", [("syrk", syrk_loops), ("syr2k", syr2k_loops)])
@@ -597,13 +601,13 @@ def deviating_reference(program, A, B, C, alpha, beta):
     return out
 
 
-DEVIATING = [syr2k_one_sided_alpha, syrk_scale_lower_update_upper]
+DEVIATING = [syr2k_one_sided_alpha]
 
 
 @pytest.mark.parametrize("program", DEVIATING, ids=lambda p: p.name)
 def test_deviating_rank_k_nests_not_lifted(program):
-    """An ``alpha`` on one of the two syr2k terms, and a scale and an update on different triangles, are not
-    rank-k updates: nothing lifts and the nest keeps computing its own result."""
+    """An ``alpha`` on one of the two syr2k terms is not a rank-k update: nothing lifts and the nest keeps computing
+    its own result."""
     sdfg = program.to_sdfg(simplify=False)
     sdfg.name = f"{sdfg.name}_deviating"
     canonicalize(sdfg)
@@ -611,6 +615,21 @@ def test_deviating_rank_k_nests_not_lifted(program):
 
     A, B, C, alpha, beta = rank_k_inputs("N")
     want = deviating_reference(program, A, B, C, alpha, beta)
+    sdfg(C=C, A=A, B=B, alpha=alpha, beta=beta, N=C.shape[0], M=A.shape[1])
+    np.testing.assert_allclose(C, want, rtol=1e-9, atol=1e-11)
+
+
+def test_a_scale_on_the_other_triangle_is_not_folded():
+    """A scale of the lower triangle and an update of the upper one distribute into two nests: the update lifts with
+    ``beta = 1``, the scale is no factor of it and stays a loop of its own, and the result is the nest's."""
+    sdfg = syrk_scale_lower_update_upper.to_sdfg(simplify=False)
+    sdfg.name = f"{sdfg.name}_other_triangle"
+    canonicalize(sdfg)
+    ((_, node),) = lifted(sdfg, Syrk)
+    assert node.uplo and float(node.beta) == 1
+
+    A, B, C, alpha, beta = rank_k_inputs("N")
+    want = deviating_reference(syrk_scale_lower_update_upper, A, B, C, alpha, beta)
     sdfg(C=C, A=A, B=B, alpha=alpha, beta=beta, N=C.shape[0], M=A.shape[1])
     np.testing.assert_allclose(C, want, rtol=1e-9, atol=1e-11)
 
@@ -638,5 +657,6 @@ if __name__ == "__main__":
         test_orientation_and_scaling_variants_lift(variant)
     for program in DEVIATING:
         test_deviating_rank_k_nests_not_lifted(program)
+    test_a_scale_on_the_other_triangle_is_not_folded()
     test_lifting_off_leaves_a_matrix_product_a_nest("lift")
     test_lifting_off_leaves_a_matrix_product_a_nest("semantic_lifting")

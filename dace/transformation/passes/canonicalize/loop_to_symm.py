@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Lift a hand-written symmetric matrix-multiply nest to a ``Symm`` BLAS node."""
 
+import dataclasses
 from typing import Any, NamedTuple
 
 import sympy
@@ -21,6 +22,7 @@ from dace.transformation.passes.canonicalize.loop_iteration_value import (
     own_indices,
     plain,
     read_array,
+    replace_loop_with_state,
     same,
     scale_of,
     shape_is,
@@ -41,6 +43,7 @@ class SymmMatch(NamedTuple):
     beta: Scale | None  #: ``None``: the prior ``C`` is dropped (``beta = 0``)
     side: str
     uplo: str
+    folded: LoopRegion | None = None  #: the second loop of a split nest, spliced out with the first
 
 
 class Layout(NamedTuple):
@@ -136,11 +139,58 @@ def match_side(sdfg: SDFG, summary: Summary, place: Layout) -> SymmMatch | None:
     return SymmMatch(c, a, b, alpha, beta, "L" if axis == 0 else "R", uplo)
 
 
-def match_symm(sdfg: SDFG, loop: LoopRegion) -> SymmMatch | None:
+def renamed(domain: Domain, rename: dict[sympy.Symbol, sympy.Symbol]) -> Domain:
+    """``domain`` with the loop variables of ``rename`` replaced, in its axes, query index and value."""
+    axes = tuple(dataclasses.replace(a, lo=a.lo.xreplace(rename), hi=a.hi.xreplace(rename)) for a in domain.axes)
+    return Domain(axes, tuple(x.xreplace(rename) for x in domain.index), domain.value.xreplace(rename))
+
+
+def split_pair(
+    sdfg: SDFG, parent: ControlFlowRegion, loop: LoopRegion
+) -> tuple[Summary, LoopRegion, Summary, Summary] | None:
+    """The summary of ``loop`` and the next loop as one nest, that loop, and the two loops' own summaries, when each
+    stores one domain of the same output over the same rows: distribution splits symm's scatter from its row
+    finish."""
+    edges = parent.out_edges(loop)
+    if len(edges) != 1 or edges[0].data.assignments or not edges[0].data.is_unconditional():
+        return None
+    other = edges[0].dst
+    if not isinstance(other, LoopRegion) or parent.in_degree(other) != 1:
+        return None
+    try:
+        first, second = summarize(sdfg, loop), summarize(sdfg, other)
+    except Refused:
+        return None
+    if (
+        first.output != second.output
+        or len(first.domains) != 1
+        or len(second.domains) != 1
+        or first.ascending != second.ascending
+        or not same(first.extent, second.extent)
+    ):
+        return None
+    (domain,) = second.domains
+    # Each summary mints its own query symbols (``__q0``): the second loop's get names of their own
+    rename = {x: sympy.Symbol(f"{x.name}_next") for x in domain.index if isinstance(x, sympy.Symbol)}
+    merged = [first.domains[0], renamed(domain, {**rename, second.var: first.var})]
+    written = {**first.written, **second.written}
+    return Summary(first.output, first.var, first.extent, first.ascending, merged, written), other, first, second
+
+
+def match_symm(sdfg: SDFG, loop: LoopRegion, parent: ControlFlowRegion | None = None) -> SymmMatch | None:
+    """The symm ``loop`` computes; with ``parent``, also over ``loop`` and the next loop when distribution split the
+    two (:attr:`SymmMatch.folded` names that loop)."""
+    folded = None
     try:
         summary = summarize(sdfg, loop)
     except Refused:
         return None
+    own, theirs = summary, summary
+    if len(summary.domains) == 1 and parent is not None:
+        pair = split_pair(sdfg, parent, loop)
+        if pair is None:
+            return None
+        summary, folded, own, theirs = pair
     c = summary.output
     shape = sdfg.arrays[c].shape
     if len(shape) != 2:
@@ -159,9 +209,16 @@ def match_symm(sdfg: SDFG, loop: LoopRegion) -> SymmMatch | None:
         runtime = [s.name for s in (match.alpha, match.beta) if s is not None and s.name is not None]
         if any(name in summary.written for name in (match.a, match.b, *runtime)):
             return None
-        if not transients_dead_outside(sdfg, loop, summary):
+        if not transients_dead_outside(sdfg, loop, own):
             return None
-        return match
+        if folded is None:
+            return match
+        # Split in two: every scatter lands after its row's finish, or the finish only adds
+        if place.own is not summary.domains[0] and not (match.beta is not None and match.beta.is_one()):
+            return None
+        if not transients_dead_outside(sdfg, folded, theirs):
+            return None
+        return match._replace(folded=folded)
     return None
 
 
@@ -182,7 +239,7 @@ class LoopToSymm(ppl.Pass):
         for parent, loop in outer_loop_candidates(sdfg):
             if loop not in parent.nodes():
                 continue  # inside a nest an earlier lift spliced out
-            match = match_symm(parent.sdfg, loop)
+            match = match_symm(parent.sdfg, loop, parent)
             if match is not None:
                 replace(parent, loop, match)
                 count += 1
@@ -193,6 +250,8 @@ def replace(parent: ControlFlowRegion, loop: LoopRegion, match: SymmMatch) -> No
     """Splice the recognized nest out and emit the ``Symm`` node in its place."""
     from dace.libraries.blas.nodes.symm import Symm  # local: the BLAS package imports transformations
 
+    if match.folded is not None:
+        replace_loop_with_state(parent, match.folded, match.folded.label + "_folded")
     node = Symm(loop.label + "_symm", side=match.side == "R", uplo=match.uplo == "U")
     splice_blas_update(parent, loop, node, {"_A": match.a, "_B": match.b}, match.c, match.alpha, match.beta)
 

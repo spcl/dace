@@ -14,18 +14,24 @@ from dace.transformation.passes.canonicalize.loop_iteration_value import (
     Refused,
     Scale,
     Summary,
+    adjacent_scale,
     canonical,
     leaf,
     leaves,
+    loop_range,
     outer_loop_candidates,
     own_indices,
+    plain,
     read_array,
+    replace_loop_with_state,
     same,
     scale_of,
     shape_is,
     splice_blas_update,
     summarize,
+    times,
     transients_dead_outside,
+    unit_stride,
 )
 from dace.transformation.transformation import explicit_cf_compatible
 
@@ -108,17 +114,44 @@ def rank_k_operands(terms: list[Pairing]) -> list[str] | None:
     return None
 
 
+def reduction_outside(sdfg: SDFG, loop: LoopRegion) -> tuple[Summary, sympy.Expr] | None:
+    """``for k: <one triangle nest adding a term of k to C>`` (stride permutation moves the inner product loop out
+    once distribution has split ``C *= beta`` away): the inner nest's summary and its value summed over ``k``."""
+    body = loop.nodes()
+    if len(body) != 1 or not isinstance(body[0], LoopRegion) or not unit_stride(loop):
+        return None
+    lo, hi = loop_range(loop, {})
+    try:
+        inner = summarize(sdfg, body[0])
+    except Refused:
+        return None
+    shape = triangle(inner)
+    k = sympy.Symbol(loop.loop_variable)
+    if not same(lo, 0) or shape is None or inner.extent.has(k) or k in inner.written:
+        return None
+    _, r, j = shape
+    prior = leaf(inner.output, (r, j))
+    value = canonical(inner.domains[0].value)
+    term = sympy.expand(value - prior)
+    if value.coeff(prior) != 1 or any(read_array(read) == inner.output for read in leaves(term)):
+        return None
+    return inner, canonical(prior + sympy.Sum(term, (k, 0, hi)))
+
+
 def match_rank_k(sdfg: SDFG, loop: LoopRegion) -> RankKMatch | None:
     try:
         summary = summarize(sdfg, loop)
+        value = canonical(summary.domains[0].value) if summary.domains else None
     except Refused:
-        return None
+        found = reduction_outside(sdfg, loop)
+        if found is None:
+            return None
+        summary, value = found
     shape = triangle(summary)
     c, n = summary.output, summary.extent
     if shape is None or not shape_is(sdfg, c, n, n):
         return None
     uplo, r, j = shape
-    value = canonical(summary.domains[0].value)
     prior = leaf(c, (r, j))
     beta_factor = value.coeff(prior)
     beta = None if beta_factor == 0 else scale_of(sdfg, beta_factor)
@@ -164,9 +197,36 @@ class LoopToRankKUpdate(ppl.Pass):
                 continue  # inside a nest an earlier lift spliced out
             match = match_rank_k(parent.sdfg, loop)
             if match is not None:
-                replace(parent, loop, match)
+                replace(parent, loop, fold_scales(parent, loop, match))
                 count += 1
         return count or None
+
+
+def stored_triangle(summary: Summary) -> tuple[str, sympy.Expr] | None:
+    """The triangle and extent ``summary`` stores, comparable across two loops."""
+    shape = triangle(summary)
+    return None if shape is None else (shape[0], summary.extent)
+
+
+def fold_scales(parent: ControlFlowRegion, loop: LoopRegion, match: RankKMatch) -> RankKMatch:
+    """``match`` with the scale loops of its triangle next to ``loop`` folded in: one before it multiplies ``beta``,
+    one after it ``alpha`` and ``beta``. Each folded loop becomes an empty state."""
+    sdfg = parent.sdfg
+    key = (match.uplo, plain(sdfg.arrays[match.c].shape[0]))
+    before = adjacent_scale(sdfg, parent, loop, match.c, stored_triangle, key, after=False)
+    if before is not None and match.beta is not None:
+        beta = times(match.beta, before[1])
+        if beta is not None:
+            replace_loop_with_state(parent, before[0], before[0].label + "_folded")
+            match = match._replace(beta=beta)
+    after = adjacent_scale(sdfg, parent, loop, match.c, stored_triangle, key, after=True)
+    if after is not None:
+        alpha = times(match.alpha, after[1])
+        beta = None if match.beta is None else times(match.beta, after[1])
+        if alpha is not None and (match.beta is None or beta is not None):
+            replace_loop_with_state(parent, after[0], after[0].label + "_folded")
+            match = match._replace(alpha=alpha, beta=beta)
+    return match
 
 
 def replace(parent: ControlFlowRegion, loop: LoopRegion, match: RankKMatch) -> None:

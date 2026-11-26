@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """What one iteration of a normalized loop nest computes, as a closed-form expression."""
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import NamedTuple
@@ -764,6 +764,49 @@ def replace_loop_with_state(parent: ControlFlowRegion, loop: LoopRegion, label: 
         )
     parent.remove_node(loop)
     return state
+
+
+def adjacent_scale(
+    sdfg: SDFG,
+    parent: ControlFlowRegion,
+    loop: LoopRegion,
+    output: str,
+    region: Callable[[Summary], object],
+    key: object,
+    after: bool,
+) -> tuple[LoopRegion, Scale] | None:
+    """The loop next to ``loop`` (the one after it when ``after``) and its factor ``s``, when that loop only stores
+    ``s * output`` over the write region ``key`` (what ``region`` maps its summary to) and an unconditional edge
+    without assignments joins the two. Distribution splits a BLAS update's ``C *= beta`` from it."""
+    edges = parent.out_edges(loop) if after else parent.in_edges(loop)
+    if len(edges) != 1 or edges[0].data.assignments or not edges[0].data.is_unconditional():
+        return None
+    other = edges[0].dst if after else edges[0].src
+    if not isinstance(other, LoopRegion) or len(parent.out_edges(other) if not after else parent.in_edges(other)) != 1:
+        return None
+    try:
+        theirs = summarize(sdfg, other)
+    except Refused:
+        return None
+    if theirs.output != output or len(theirs.domains) != 1 or not transients_dead_outside(sdfg, other, theirs):
+        return None
+    if region(theirs) != key:
+        return None
+    (domain,) = theirs.domains
+    value, prior = canonical(domain.value), leaf(output, domain.index)
+    factor = value.coeff(prior)
+    if not sympy.expand(value - factor * prior).is_zero:
+        return None
+    # A zero fill (``0.0``) is the factor 0: the update then overwrites
+    scale = Scale(sympy.S.Zero) if factor.is_zero else scale_of(sdfg, factor)
+    return None if scale is None else (other, scale)
+
+
+def times(a: Scale, b: Scale) -> Scale | None:
+    """``a * b``, when at most one of them reads a runtime container."""
+    if a.name is not None and b.name is not None:
+        return None
+    return Scale(a.value * b.value, a.name or b.name)
 
 
 def blas_coefficients(alpha: Scale, beta: Scale | None) -> dict[str, object]:
