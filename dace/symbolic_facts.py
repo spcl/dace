@@ -499,8 +499,16 @@ def eliminate(
         if isinstance(slack, sympy.Dummy):
             slacks[slack] = original
         solved = sympy.expand((slack - (difference - coefficient * target)) / coefficient)
-        substitution = {name: sympy.expand(value.xreplace({target: solved})) for name, value in substitution.items()}
-        residuals = [sympy.expand(residual.xreplace({target: solved})) for residual in residuals]
+        # Every value is expanded already: only those that read ``target`` change (a solve of R relations rewrote all
+        # R values per relation)
+        substitution = {
+            name: sympy.expand(value.xreplace({target: solved})) if target in value.free_symbols else value
+            for name, value in substitution.items()
+        }
+        residuals = [
+            sympy.expand(residual.xreplace({target: solved})) if target in residual.free_symbols else residual
+            for residual in residuals
+        ]
         if isinstance(target, sympy.Dummy):
             residuals.append(solved)
         substitution[target] = solved
