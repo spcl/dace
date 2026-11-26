@@ -729,7 +729,7 @@ class CPPUnparser:
                     else:
                         # The type is still recorded where it is known, for expressions that depend on it (e.g., the
                         # real part of a complex number)
-                        self.locals.define(target.id, t.lineno, self._indent, self.expr_type(t.value))
+                        self.locals.define(target.id, t.lineno, self._indent, self._expr_type(t.value))
                         if cpf_lowering.standalone():
                             self.write(self.standalone_local_ctype(target.id, t.value) + " ")
                         else:
@@ -1543,7 +1543,7 @@ class CPPUnparser:
         interleave(lambda: self.write(s), self.dispatch, t.values)
         self.write(")")
 
-    def expr_type(self, expr: ast.expr) -> dace.dtypes.typeclass | None:
+    def _expr_type(self, expr: ast.expr) -> dace.dtypes.typeclass | None:
         """The inferred type of an expression of the code, or None if it is unknown."""
         symbols = {name: dtype for name, dtype in self.locals.get_name_type_associations().items() if dtype is not None}
         symbols.update(self.defined_symbols)
@@ -1561,7 +1561,7 @@ class CPPUnparser:
     def _Attribute(self, t):
         if isinstance(t.ctx, ast.Load) and t.attr in ("real", "imag"):
             # In C++, the parts of a complex number are member functions
-            dtype = self.expr_type(t.value)
+            dtype = self._expr_type(t.value)
             if isinstance(dtype, dace.dtypes.typeclass) and dtype.is_complex():
                 self.complex_part(t.value, t.attr)
                 return
