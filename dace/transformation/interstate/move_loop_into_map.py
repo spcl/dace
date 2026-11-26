@@ -252,6 +252,14 @@ def axis_footprint(subset: sbs.Range, ref: sbs.Range, invariant: OrderedSet) -> 
     return tuple(dims) if sorted(j for _, j, _ in dims) == list(range(len(ref))) else None
 
 
+def lane_copy(src_sig: tuple | None, dst_sig: tuple | None, ref: sbs.Range, axis: bool) -> bool:
+    """Whether a copy outside the maps with these side signatures moves one lane's slice per lane, like a map over
+    the lanes would: with ``axis`` each side spans the lane axis, else each side spans every lane dimension once."""
+    if not src_sig or not dst_sig:
+        return False
+    return axis or all(sorted(dim[1] for dim in sig) == list(range(len(ref))) for sig in (src_sig, dst_sig))
+
+
 def copy_side(edge: gr.MultiConnectorEdge, state: SDFGState, source: bool) -> sbs.Range | None:
     """The subset a copy between two access nodes moves on one side; a side the memlet leaves unset is its whole
     container."""
@@ -709,10 +717,10 @@ def lane_refusal(loop: LoopRegion, sdfg: sd.SDFG, facts: LaneFacts, axis: bool =
                     if isinstance(e.dst, nodes.AccessNode) and not e.data.is_empty():
                         if axis and is_view_binding(state, e):
                             continue  # aliases, checked by view_keeps_lane
-                        if axis and e.data.wcr is None:
+                        if e.data.wcr is None and not is_view_binding(state, e):
                             src_sig = footprint_signature(copy_side(e, state, True), ref, invariant, axis)
                             dst_sig = footprint_signature(copy_side(e, state, False), ref, invariant, axis)
-                            if src_sig and dst_sig:
+                            if lane_copy(src_sig, dst_sig, ref, axis):
                                 accesses.setdefault(node.data, []).append((False, src_sig))
                                 accesses.setdefault(e.dst.data, []).append((True, dst_sig))
                                 facts.copies.append((state, e, src_sig, dst_sig))
@@ -812,11 +820,12 @@ def move_loop_into_lane_maps(
     for edge, sig in facts.narrow:
         edge.data.subset = narrowed(edge.data.subset, sig, spans)
         edge.data.volume = edge.data.subset.num_elements()
+    # Each copy between containers outside the maps moves only its lane's slice
     for copy_state, edge, src_sig, dst_sig in facts.copies:
-        source_side = edge.data.data == edge.src.data
         src, dst = copy_side(edge, copy_state, True), copy_side(edge, copy_state, False)
-        edge.data.subset = narrowed(src if source_side else dst, src_sig if source_side else dst_sig, spans)
-        edge.data.other_subset = narrowed(dst if source_side else src, dst_sig if source_side else src_sig, spans)
+        # The side setters follow the memlet's own direction: a copy within one container names it on both ends
+        edge.data.src_subset = narrowed(src, src_sig, spans)
+        edge.data.dst_subset = narrowed(dst, dst_sig, spans)
         edge.data.volume = edge.data.subset.num_elements()
 
     # Over device maps the lane map is a host loop that launches them until the GPU specialization makes it the

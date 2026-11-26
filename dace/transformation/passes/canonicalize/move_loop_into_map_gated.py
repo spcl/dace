@@ -45,6 +45,12 @@ def short_constant_trip(loop: LoopRegion, sdfg: SDFG) -> bool:
     return trips is not None and trips <= DEFAULT_UNROLL_LIMIT
 
 
+def repeats_body(loop: LoopRegion) -> bool:
+    """Whether ``loop``'s iterator appears nowhere in its body, so every iteration runs the same body again."""
+    used = [block.free_symbols for block in loop.nodes()] + [edge.data.free_symbols for edge in loop.edges()]
+    return all(loop.loop_variable not in names for names in used)
+
+
 def launches_saved(loop: LoopRegion) -> float:
     """Kernel launches the GPU interchange saves, ``trips * maps - 1``; ``inf`` for a symbolic trip count."""
     maps = len(lane_maps(loop))
@@ -127,10 +133,13 @@ class MoveLoopIntoMapGated(ppl.Pass):
         # A short constant loop moves in whole on CPU too: its body's maps of one range (velocity's gather and
         # accumulation per neighbour) become one map whose unrolled loop keeps the accumulator in a register.
         short = not gpu and short_constant_trip(loop, loop.sdfg)
-        options = {"cfg_body": gpu or short}
+        # A CPU loop that only repeats its body (time steps) indexes nothing, so moving it into the maps changes no
+        # stride and saves a fork/join per iteration; its lanes are the axis its maps share, copies included.
+        repeat = not gpu and not short and repeats_body(loop)
+        options = {"cfg_body": gpu or short or repeat, "lane_axis": repeat}
         if not MoveLoopIntoMap.can_be_applied_to(loop.sdfg, options=options, loop=loop):
             return False
-        if not gpu and not (short or interchange_lowers_stride(loop, loop.sdfg)):
+        if not gpu and not (short or repeat or interchange_lowers_stride(loop, loop.sdfg)):
             return False
         MoveLoopIntoMap.apply_to(loop.sdfg, options=options, loop=loop, verify=False, annotate=False)
         return True
