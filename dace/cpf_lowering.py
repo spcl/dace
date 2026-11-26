@@ -1539,8 +1539,19 @@ HIP_BASE_HEADERS: tuple[str, ...] = (
 )
 
 #: What a CUDA unit adds to :data:`BASE_HEADERS`, on the same footing: both ship with the CUDA toolkit.
-#: Cooperative groups carry a megakernel's grid barrier (``Sync`` of the grid scope).
-CUDA_BASE_HEADERS: tuple[str, ...] = ("<cuda_runtime.h>", "<cuda_bf16.h>", "<cub/cub.cuh>", "<cooperative_groups.h>")
+#: Cooperative groups carry a megakernel's grid barrier (``Sync`` of the grid scope). The ``<cuda/std/...>``
+#: headers (libcu++, part of CCCL) carry the ``__host__ __device__`` complex type and math the device unit
+#: spells its kernels with (:func:`cuda_std_spell_out`).
+CUDA_BASE_HEADERS: tuple[str, ...] = (
+    "<cuda_runtime.h>",
+    "<cuda_bf16.h>",
+    "<cub/cub.cuh>",
+    "<cooperative_groups.h>",
+    "<cuda/std/complex>",
+    "<cuda/std/cmath>",
+    "<cuda/std/cstdlib>",
+    "<cuda/std/limits>",
+)
 
 #: What ``dace/dace.h`` supplies that a DEVICE unit still needs, written out inline.
 #:
@@ -1911,6 +1922,75 @@ def device_spell_out(code: str, dialect: Dialect) -> str:
     spellings = DEVICE_SPELLINGS[dialect]
     code = DACE_PREFIX_PATTERN.sub("__cpf_", HIP_EXPORTED_PATTERN.sub("", code))
     return DEVICE_SPELLING_PATTERNS[dialect].sub(lambda match: spellings[match.group(1)], code)
+
+
+#: The standard-library names a CUDA kernel cannot call as ``std::``: ``std::complex`` and the functions that
+#: take one are ``constexpr`` host functions (libstdc++, C++20), which nvcc refuses in device code without
+#: ``--expt-relaxed-constexpr`` -- and a judge does not pass that flag (SC40: quatrex_rgf, qe_vexx_k,
+#: ls3df_scf). libcu++'s ``cuda::std::`` has each one as ``__host__ __device__``, with the real overloads too,
+#: so one call that a tasklet prints for a real or a complex argument resolves either way. Same layout as
+#: ``std::complex`` (two components, real first), which is what DaCe's own CUDA build relies on with
+#: ``thrust::complex``.
+CUDA_STD_NAMES: tuple[str, ...] = (
+    "complex",
+    "conj",
+    "real",
+    "imag",
+    "abs",
+    "arg",
+    "norm",
+    "polar",
+    "proj",
+    "exp",
+    "log",
+    "log10",
+    "sqrt",
+    "pow",
+    "sin",
+    "cos",
+    "tan",
+    "asin",
+    "acos",
+    "atan",
+    "sinh",
+    "cosh",
+    "tanh",
+    "asinh",
+    "acosh",
+    "atanh",
+    "numeric_limits",
+)
+
+#: A ``std::`` name of :data:`CUDA_STD_NAMES`, not already qualified further out (``cuda::std::``).
+CUDA_STD_PATTERN: "re.Pattern" = re.compile(r"(?<![\w:])std::(" + "|".join(CUDA_STD_NAMES) + r")\b")
+
+
+def cuda_std_spell_out(device_code: str, state_struct: str) -> str:
+    """``device_code`` with each :data:`CUDA_STD_NAMES` name spelled ``cuda::std::``, but for the lines both
+    units must declare alike: the launchers' signatures and the state struct.
+
+    The host unit keeps ``std::complex``: its entry takes the caller's ``std::complex`` pointers, and it calls
+    the launchers with them. A launcher passes its arguments to ``cudaLaunchKernel`` as ``void *``, so its
+    ``std::complex`` parameters reach the kernel's ``cuda::std::complex`` ones unconverted, and its signature
+    stays the one the host unit declares and links against.
+
+    :param device_code: the finished device unit, preamble included.
+    :param state_struct: the frame's state struct as the device unit repeats it (:func:`~dace.codegen.cpf.state_struct`).
+    :returns: the unit with its kernels and device helpers spelled with libcu++.
+    """
+    head, struct, tail = device_code.partition(state_struct) if state_struct else (device_code, "", "")
+    return cuda_std_spell_out_lines(head) + struct + cuda_std_spell_out_lines(tail)
+
+
+def cuda_std_spell_out_lines(text: str) -> str:
+    """:func:`cuda_std_spell_out` over ``text``, skipping each launcher's signature line (a declaration ends
+    ``);``, the definition ``)`` with its body on the lines below)."""
+    return "".join(
+        line
+        if "__cpf_runkernel_" in line and line.rstrip().endswith((")", ");"))
+        else CUDA_STD_PATTERN.sub(r"cuda::std::\1", line)
+        for line in text.splitlines(keepends=True)
+    )
 
 
 def device_preamble(code: str, dialect: Dialect) -> str:

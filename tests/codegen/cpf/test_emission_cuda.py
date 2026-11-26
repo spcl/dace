@@ -268,6 +268,58 @@ def test_a_nested_body_function_is_not_declared_inline_twice_in_a_cuda_unit():
     assert not re.search(r"\binline\s+__device__\s+__forceinline__", code), "inline is declared twice"
 
 
+@dace.program
+def complex_combination(a: dace.complex128[N], out: dace.complex128[N]):
+    for i in dace.map[0:N]:
+        out[i] = np.conj(a[i]) * 0.5 + np.exp(a[i]) - np.real(a[i])
+
+
+# Reproducer: std::complex in a CUDA kernel is a constexpr host type nvcc refuses (SC40 quatrex_rgf, qe_vexx_k, ls3df_scf)
+def test_a_complex_kernel_builds_with_nvcc_without_relaxed_constexpr(tmp_path: pathlib.Path):
+    """``std::complex``'s constructor, operators, ``std::conj``, ``std::exp`` and ``std::real`` are ``constexpr`` host
+    functions: a kernel calling them is refused by an nvcc without ``--expt-relaxed-constexpr``, the judge's build.
+    The device unit spells them with libcu++; the host unit keeps the ``std::complex`` entry. nvcc compiles both
+    units without a GPU."""
+    nvcc = shutil.which("nvcc")
+    if nvcc is None:
+        pytest.skip("nvcc is not on PATH")
+    name = "cpf_cuda_complex_combination"
+
+    rendering = render_gpu(complex_combination, name, language="cuda")
+
+    assert_standalone_units(rendering, name)
+    assert "std::complex<double> *" in entry_prototypes(rendering.code, name)[0], "the entry takes std::complex"
+    for suffix, text in (("_host.cu", rendering.code), ("_device.cu", rendering.device_code)):
+        source = tmp_path / f"{name}{suffix}"
+        source.write_text(text)
+        command = [nvcc, *CUDA_BUILD_FLAGS, "-arch=sm_80", "-c", str(source), "-o", f"{source}.o"]
+        result = subprocess.run(command, capture_output=True, text=True)
+        assert result.returncode == 0, f"{' '.join(command)}\n{result.stderr}"
+
+
+@pytest.mark.gpu
+def test_a_complex_cuda_unit_computes_what_numpy_computes(tmp_path: pathlib.Path):
+    """The launcher hands the host unit's ``std::complex`` pointers to a kernel taking ``cuda::std::complex``: the
+    same two components, so the kernel reads and writes the caller's values."""
+    require_gpu_backend("cuda")
+    import cupy  # Deferred: the optional GPU dependency, needed only where a GPU runs this test.
+
+    name = "cpf_cuda_run_complex_combination"
+    rendering = render_gpu(complex_combination, name, language="cuda")
+    sdfg = rendering.sdfg
+    entry = ctypes.CDLL(str(nvcc_library(rendering, tmp_path, name)))[name]
+    entry.argtypes = entry_argtypes(sdfg)
+    length = 1000
+    generator = np.random.default_rng(7)
+    a = generator.random(length) + 1j * generator.random(length)
+    device = {"a": cupy.asarray(a), "out": cupy.zeros(length, dtype=np.complex128)}
+    arguments = [ctypes.c_void_p(device[arg].data.ptr) if arg in device else length for arg in sdfg.arglist()]
+
+    entry(*arguments)
+
+    assert_matches({"out": np.conj(a) * 0.5 + np.exp(a) - np.real(a)}, {"out": cupy.asnumpy(device["out"])}, name)
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("label,program", PROGRAMS, ids=PROGRAM_IDS)
 def test_a_cuda_unit_built_by_nvcc_computes_what_numpy_computes(

@@ -2550,6 +2550,9 @@ def render_unit(
     # The device unit repeats the frame's state struct, whose vendor handles and plans need their declarations.
     device_environments = (set(device.environments) | set(frame.environments)) if device is not None else set()
     device_code = preamble(device_body, dialect, device_environments) + device_body if device_body else ""
+    if dialect is cpf_lowering.Dialect.STANDALONE_CUDA:
+        # nvcc refuses std::complex in a kernel; the host unit and the lines it shares keep it.
+        device_code = cpf_lowering.cuda_std_spell_out(device_code, state_struct(device_code, sdfg.name))
     kinds = cpf_lowering.hint_detail() is cpf_lowering.HintDetail.KINDS
     if kinds:
         code = cpf_summary.comment_every_loop(code, kinds=True)
