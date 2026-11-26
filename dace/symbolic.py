@@ -4991,8 +4991,14 @@ def infer_fp_ctype(expr) -> str | None:
 
 
 def printing_context() -> tuple:
-    """A cache key for what printing reads from its surroundings: the scope's symbol types and the printing facts."""
-    return (_SERIALIZATION_SYMBOL_DTYPES.cache_key(), _printing_facts.get())
+    """A cache key for what printing reads from its surroundings: the scope's symbol types and the printing facts.
+
+    The facts enter as a weak reference to their provider: the code generator makes one provider per node, closing
+    over the frame, the state and the node, so a strong one in a memoized printer's key kept every SDFG ever
+    generated alive (a sweep that renders many candidates of one program grew by the whole SDFG per render). A live
+    provider still matches its own entries; a dead one matches nothing, and no new provider equals it."""
+    provider = _printing_facts.get()
+    return (_SERIALIZATION_SYMBOL_DTYPES.cache_key(), None if provider is None else weakref.ref(provider))
 
 
 @lru_cache(maxsize=16384, typed=True)
