@@ -95,10 +95,13 @@ from dace.memlet import Memlet
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.state import (
+    BreakBlock,
     ConditionalBlock,
+    ContinueBlock,
     ControlFlowBlock,
     ControlFlowRegion,
     LoopRegion,
+    ReturnBlock,
     SDFGState,
 )
 from dace.transformation import pass_pipeline as ppl
@@ -372,6 +375,8 @@ class PromoteConstantIndexAccess(ppl.Pass):
         per_arr_picked: set[str] = set()
         # Under last_write a slot may name symbols the loop never changes (``a[i]`` in a ``j`` loop)
         moving = self.moving_symbols(loop) if self.last_write else None
+        # Per array: each access at a point of loop-invariant symbols, whether it writes, and whether it is a picked read
+        invariant: dict[str, list[tuple[subsets.Range, bool, bool]]] = {}
         for state in loop_states:
             for node in state.nodes():
                 if not isinstance(node, nodes.AccessNode):
@@ -397,12 +402,31 @@ class PromoteConstantIndexAccess(ppl.Pass):
                     if sub is None:
                         per_arr_mixed.add(name)
                         continue
-                    if self.is_constant_point_subset(sub, moving):
+                    if self.is_constant_point_subset(sub):
                         per_arr.setdefault(name, []).append(sub)
+                    elif moving is not None and self.is_constant_point_subset(sub, moving):
+                        picked = self.picked_read(state, edge, node)
+                        invariant.setdefault(name, []).append((sub, edge.dst is node, picked))
                     elif self.last_write and self.picked_read(state, edge, node):
                         per_arr_picked.add(name)
                     else:
                         per_arr_mixed.add(name)
+        # A point at loop-invariant symbols is a slot only where the loop writes it; a read elsewhere stays a picked
+        # read (``x[k - 1]`` next to a written ``x[1]``) or makes the array mixed, as any symbolic read does
+        facts = sdfg.facts() if invariant else None
+        for name, accesses in invariant.items():
+            stored = [sub for sub, is_write, picked in accesses if is_write]
+            slots = [*per_arr.get(name, []), *stored]
+            # Each access joins the slots, the picked reads or the mixed set, or is a read no slot can meet
+            for sub, is_write, picked in accesses:
+                if any(point_subsets_equal(sub, w) for w in stored):
+                    per_arr.setdefault(name, []).append(sub)
+                elif slots and all(subsets.intersects(sub, w, facts) is symbolic.Truth.FALSE for w in slots):
+                    continue
+                elif picked:
+                    per_arr_picked.add(name)
+                else:
+                    per_arr_mixed.add(name)
 
         if not per_arr:
             return []
@@ -456,13 +480,30 @@ class PromoteConstantIndexAccess(ppl.Pass):
         for first, second in itertools.combinations(points, 2):
             if subsets.intersects(first, second, facts) is not symbolic.Truth.FALSE:
                 return []
+        # A slot the loop does not store on every iteration keeps an earlier iteration's value at the end (or is a
+        # logical reduction): the last iteration's copy-out would be wrong, so only every-iteration stores count
+        always = PromoteConstantIndexAccess.states_on_every_iteration(loop)
         written = [
             e.data.subset
-            for state in loop.states()
+            for state in always
             for e in state.edges()
-            if e.data.data == name and isinstance(e.dst, nodes.AccessNode) and e.dst.data == name
+            if e.data.data == name
+            and isinstance(e.dst, nodes.AccessNode)
+            and e.dst.data == name
+            and not e.data.dynamic
+            and state.entry_node(e.dst) is None
         ]
         return [p for p in points if any(point_subsets_equal(p, w) for w in written if w is not None)]
+
+    @staticmethod
+    def states_on_every_iteration(loop: LoopRegion) -> list[SDFGState]:
+        """The states directly in ``loop``'s body when every edge between them is unconditional and nothing leaves
+        an iteration early, so each runs once per iteration; else none."""
+        if any(isinstance(b, (BreakBlock, ContinueBlock, ReturnBlock)) for b in loop.all_control_flow_blocks()):
+            return []
+        if not all(edge.data.is_unconditional() for edge in loop.edges()):
+            return []
+        return [block for block in loop.nodes() if isinstance(block, SDFGState)]
 
     @staticmethod
     def picked_read(state: SDFGState, edge: Any, node: nodes.AccessNode) -> bool:
