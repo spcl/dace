@@ -771,6 +771,25 @@ def test_view_first_read_by_an_interstate_edge():
     sdfg.generate_code()
 
 
+# Reproducer: late_allocation_block's early exit returned a bare state, which its caller iterated node by node
+def test_an_allocation_block_the_free_lies_outside_of_is_returned_as_a_list():
+    """The free's block lies outside the region of the allocating block: the allocation stays at that block, returned
+    as a one-element list (iterated, a bare state yielded its nodes and filed the allocation under a map entry)."""
+    sdfg = dace.SDFG("free_outside_allocation_region")
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_array("t", ["n"], dace.float64, transient=True)
+    branches = ConditionalBlock("branches")
+    sdfg.add_node(branches, is_start_block=True)
+    arm = ControlFlowRegion("arm", sdfg=sdfg)
+    branches.add_branch(dace.properties.CodeBlock("n > 0"), arm)
+    write = arm.add_state("write", is_start_block=True)
+    write.add_mapped_tasklet("fill", {"i": "0:n"}, {}, "o = i", {"o": dace.Memlet("t[i]")}, external_edges=True)
+    read = sdfg.add_state_after(branches, "read")
+    read.add_access("t")
+    blocks = framecode.late_allocation_block(write, read, sdfg.arrays["t"], {write, read})
+    assert blocks == [write]
+
+
 if __name__ == "__main__":
     test_determine_alloc_scope()
     test_determine_alloc_state()
@@ -801,3 +820,4 @@ if __name__ == "__main__":
     test_a_transient_resized_after_its_first_use_is_refused()
     test_container_read_only_from_tasklet_code()
     test_view_first_read_by_an_interstate_edge()
+    test_an_allocation_block_the_free_lies_outside_of_is_returned_as_a_list()

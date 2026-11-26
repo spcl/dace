@@ -1341,7 +1341,7 @@ def late_allocation_block(
     region = alloc_block.parent_graph
     while not any(last_block is block for block in region.nodes()):
         if isinstance(last_block, SDFG):
-            return alloc_block
+            return [alloc_block]
         last_block = last_block.parent_graph
 
     def accesses(graph: ControlFlowBlock) -> bool:
