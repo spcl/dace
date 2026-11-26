@@ -158,11 +158,11 @@ def test_compound_nest_loops_per_i_bounds_not_hoisted():
     assert inspected, "nothing evaluated at SDFG scope -- the leak check would pass on an empty SDFG"
     leaked = [label for label, syms in inspected if syms & set(iters)]
     assert not leaked, f"per-i bound leaked to SDFG top level: {leaked}"
-    # The inner ``beg:beg+2`` nests have a constant extent, so canonicalize, asked to, unrolls them away:
-    # the outer ``i`` is the only iteration left and it carries no bound symbol of its own.
-    assert _nmaps(sdfg) == 1 and _nloops(sdfg) == 0, f"maps={_nmaps(sdfg)} loops={_nloops(sdfg)}"
-    outer = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
-    assert str(outer.map.range) == "0:N", f"the surviving map must span the i axis, got {outer.map.range}"
+    # The inner ``beg:beg+2`` nests have a constant extent, so canonicalize, asked to, unrolls them away; the three
+    # bodies only meet on one ``out[i]`` element per iteration, so distribution gives each its own ``i`` map.
+    assert _nmaps(sdfg) == 3 and _nloops(sdfg) == 0, f"maps={_nmaps(sdfg)} loops={_nloops(sdfg)}"
+    outer = [n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
+    assert all(str(m.map.range) == "0:N" for m in outer), f"every map must span the i axis, got {outer}"
 
 
 # Map variant (``dace.map``)
@@ -208,15 +208,15 @@ def test_compound_nest_maps_value_preserving():
 def test_compound_nest_maps_outer_map_survives():
     """The outer parallel ``i`` map survives canonicalize and spans the ``i`` axis; the per-``i``
     bounds never leak to SDFG scope. As in the loop variant, the constant-extent inner nests unroll
-    away, so the ``i`` map is the only map left."""
+    away and the three bodies distribute, one ``i`` map each."""
     sdfg = compound_nest_maps.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True, unroll_limit=10)
-    assert _nmaps(sdfg) == 1 and _nloops(sdfg) == 0, f"maps={_nmaps(sdfg)} loops={_nloops(sdfg)}"
+    assert _nmaps(sdfg) == 3 and _nloops(sdfg) == 0, f"maps={_nmaps(sdfg)} loops={_nloops(sdfg)}"
     top_maps = [
         n for blk in sdfg.nodes() if isinstance(blk, SDFGState) for n in blk.nodes() if isinstance(n, nodes.MapEntry)
     ]
-    assert len(top_maps) == 1, f"exactly one map at SDFG scope, got {len(top_maps)}"
-    assert str(top_maps[0].map.range) == "0:N", f"the outer map must span the i axis, got {top_maps[0].map.range}"
+    assert len(top_maps) == 3, f"one map per body at SDFG scope, got {len(top_maps)}"
+    assert all(str(m.map.range) == "0:N" for m in top_maps), f"every map must span the i axis, got {top_maps}"
     leaked = [label for label, syms in top_level_expressions(sdfg) if syms & set(iterator_names(sdfg))]
     assert not leaked, f"per-i bound leaked to SDFG top level: {leaked}"
 

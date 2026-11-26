@@ -164,10 +164,15 @@ def test_equal_invariant_guards_unswitch_out_of_a_map():
     assert_same_outputs(sdfg, equal_guards_in_map)
 
 
-def test_guards_not_provably_equal_stay_in_the_map():
+def test_guards_not_provably_equal_unswitch_apart():
+    """Distribution gives each guard a map of its own: each unswitches alone, and the two unequal conditions are
+    never merged into one guard."""
     sdfg = unequal_guards_in_map.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) is None
+    assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) == 2
+    sdfg.validate()
+    guards = [b for b in sdfg.nodes() if isinstance(b, ConditionalBlock)]
+    assert sorted(guard.branches[0][0].as_string for guard in guards) == ["(C > 0)", "(C > 1)"]
     assert_same_outputs(sdfg, unequal_guards_in_map, values=(2, 1, 0))
 
 
@@ -257,6 +262,6 @@ if __name__ == "__main__":
     test_a_guard_reading_data_the_loop_writes_stays_in_the_loop()
     test_guards_reading_the_same_unwritten_element_unswitch_out_of_a_loop()
     test_equal_invariant_guards_unswitch_out_of_a_map()
-    test_guards_not_provably_equal_stay_in_the_map()
+    test_guards_not_provably_equal_unswitch_apart()
     test_work_reading_a_guards_in_place_value_keeps_the_guard_in_the_map()
     test_the_arm_without_the_guard_drops_the_access_node_it_wrote()

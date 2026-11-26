@@ -93,16 +93,18 @@ def test_loop_peeling_front_conflict_knob_parallelizes():
 @dace.program
 def _back_conflict(A: dace.float64[N], B: dace.float64[N]):
     for i in range(N):
-        A[i] = B[i] * 2.0
+        # The guard runs before the body writes ``A[0]`` at ``i = 0``: an earlier iteration of the later statement,
+        # so distribution cannot split the two and only peeling parallelizes the loop
         if i == N - 1:
             A[0] = A[0] + 1.0
+        A[i] = B[i] * 2.0
 
 
 # Reproducer: feat(canonicalize): peeling-driven parallelization — back-peel fix, range-aware LiftTrivia... (eb99dcf5a5)
 def test_loop_peeling_back_conflict_knob_parallelizes():
     """A last-iteration guard writes a conflicting extra location
-    (``if i==N-1: A[0]+=1``): off by default the write-write conflict keeps the
-    loop sequential; with ``peel_limit>0`` the final iteration is peeled off
+    (``if i==N-1: A[0]+=1``) before the body: off by default the write-write conflict, which runs backward
+    from the guard to the body's ``i = 0`` store and so also blocks distribution, keeps the loop sequential; with ``peel_limit>0`` the final iteration is peeled off
     (anchored on the concrete loop end, not the loop variable) and the now-dead
     guard pruned, leaving a disjoint-write remainder that maps, value-preserving.
     Exercises the back-peel path, which must substitute ``end - k*stride`` so no
@@ -414,9 +416,10 @@ def test_loop_peeling_modulo_symbolic_offset_specializes_if_par_else_seq():
 @dace.program
 def _interior_guard(A: dace.float64[N], B: dace.float64[N]):
     for i in range(N):
-        A[i] = B[i] * 2.0
+        # Guard first: the body's ``A[0]`` store at ``i = 0`` precedes it, so distribution cannot split the two
         if i == 4:
             A[0] = A[0] + 1.0
+        A[i] = B[i] * 2.0
 
 
 # Reproducer: feat(canonicalize): peeling-driven parallelization — back-peel fix, range-aware LiftTrivia... (eb99dcf5a5)
@@ -449,7 +452,10 @@ def _interior_guard_surrounded(A: dace.float64[N], B: dace.float64[N]):
     for i in range(N):
         A[i] = B[i] * 2.0  # body before the guard
         if i == 3:
-            A[N - 1] = A[N - 1] + 5.0  # the special-iteration body
+            # The special-iteration body: body1 stores ``A[N - 1]`` in a later iteration and body3 ``A[0]`` in an
+            # earlier one, so distribution can split neither side away
+            A[N - 1] = A[N - 1] + 5.0
+            A[0] = A[0] + 5.0
         A[i] = A[i] + 1.0  # body after the guard
 
 
