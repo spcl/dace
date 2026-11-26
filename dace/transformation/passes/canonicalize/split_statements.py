@@ -8,17 +8,20 @@ from dataclasses import dataclass
 from types import ModuleType
 from typing import Any, NamedTuple
 
+import islpy as isl
 import sympy
 
 from dace import SDFG, Memlet, dtypes, properties, subsets, symbolic
 from dace import data as dt
 from dace.optionals import required
 from dace.ordered import OrderedSet
-from dace.sdfg import nodes
+from dace.sdfg import narrowing, nodes
+from dace.sdfg.analysis import polyhedral_isl
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.passes import loop_fission
 from dace.transformation.passes.analysis import loop_analysis
 
 #: An edge of a body state that carries a value.
@@ -354,6 +357,50 @@ def iteration_direction(
     if not distance:
         return None
     return 1 if distance * stride > 0 else -1
+
+
+def conflict_directions(
+    first: subsets.Subset | None, second: subsets.Subset | None, loop: LoopRegion
+) -> dict[int, None] | None:
+    """The signs of ``k2 - k1`` over the iteration pairs at which ``first`` (in iteration ``k1``) and ``second`` (in
+    iteration ``k2``) touch one element, decided exactly by ISL; ``None`` when ISL cannot state the accesses: a range
+    or non-affine subscript, a symbol the body assigns, an unknown bound or a non-constant stride."""
+    one, two = subset_point(first), subset_point(second)
+    start, end = loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    if one is None or two is None or len(one) != len(two) or start is None or end is None or stride is None:
+        return None
+    stride = symbolic.simplify(stride)
+    if not isinstance(stride, sympy.Integer) or stride == 0:
+        return None
+    var = loop.loop_variable
+    exprs = [narrowing.as_expr(e) for e in [*one, *two, start, end]]
+    names = {s.name for e in exprs for s in narrowing.free_symbols(e)}
+    k1, k2 = f"{var}_k1", f"{var}_k2"
+    if {k1, k2} & names or names & loop_assigned(loop) or var in symbolic.free_symbols_and_functions(start):
+        return None
+    params = sorted(names - {var})
+    cons: list[sympy.Expr] = []
+    at: dict[str, sympy.Expr] = {}
+    # Per instance: its counter ``start + stride * k`` after ``k >= 0`` steps, still within ``end``
+    for k in (k1, k2):
+        at[k] = exprs[-2] + int(stride) * sympy.Symbol(k, integer=True)
+        cons += [sympy.Symbol(k, integer=True), exprs[-1] - at[k] if stride > 0 else at[k] - exprs[-1]]
+    # Per dimension: both subscripts name one element
+    for a, b in zip(one, two):
+        diff = polyhedral_isl.subs_by_name(a, {var: at[k1]}) - polyhedral_isl.subs_by_name(b, {var: at[k2]})
+        cons += [diff, -diff]
+    kk1, kk2 = sympy.Symbol(k1, integer=True), sympy.Symbol(k2, integer=True)
+    found: dict[int, None] = {}
+    # Per sign of ``k2 - k1``: one exact emptiness query
+    for sign, extra in ((-1, [kk1 - kk2 - 1]), (0, [kk2 - kk1, kk1 - kk2]), (1, [kk2 - kk1 - 1])):
+        try:
+            empty = polyhedral_isl.is_domain_empty([k1, k2], params, cons + extra)
+        except (ValueError, isl.Error):
+            return None
+        if not empty:
+            found[sign] = None
+    return found
 
 
 def output_read_edges(sdfg: SDFG, out_name: str, input_names: dict[str, None]) -> list[ConeRead]:
@@ -996,14 +1043,12 @@ def guarded_groups(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> list[
                 # A read at a constant offset from the stores sees another iteration's store: the iteration that runs
                 # it orders the clones whole, the store's clone first when it ran earlier (TSVC s161: ``c[i + 1]``
                 # stored, ``c[i]`` read in the other arm), the reader's first when it runs later.
-                if None in offsets or 0 in offsets:
-                    return None
-                directions = OrderedSet(iteration_direction(r.subset, w.subset, loop) for r in reads for w in stores)
+                directions = store_directions(reads, stores, offsets, loop)
                 if directions == {-1}:
                     after[writer][reader] = None
                 elif directions == {1}:
                     after[reader][writer] = None
-                else:
+                elif directions != set():
                     return None
                 continue
             first, last = min(a.site for a in stores), max(a.site for a in stores)
@@ -1015,6 +1060,178 @@ def guarded_groups(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> list[
                 return None
     order = topological_group_order(after)
     return None if order is None else [{outputs[i]: None} for i in order]
+
+
+def store_directions(
+    reads: list[Access], stores: list[Access], offsets: set[int | None], loop: LoopRegion
+) -> set[int] | None:
+    """Where the stores hitting the elements ``reads`` read run, ``+1`` later or ``-1`` earlier than the read; ``None``
+    when one runs in the read's own iteration or is undecidable. ``offsets`` are the constant offsets of the pairs."""
+    if 0 in offsets:
+        return None
+    if None not in offsets:
+        constant = [iteration_direction(r.subset, w.subset, loop) for r in reads for w in stores]
+        return None if None in constant else {d for d in constant if d is not None}
+    # Not a constant offset (``c[i]`` read, ``c[2 * i + 1]`` stored): ISL decides where every store hitting a read
+    # element runs, and a store in the read's own iteration has no clone order.
+    found: dict[int, None] = {}
+    # Per read and store pair: where the store hitting the read element runs
+    for r in reads:
+        for w in stores:
+            directions = conflict_directions(r.subset, w.subset, loop)
+            if directions is None or 0 in directions:
+                return None
+            found.update(directions)
+    return set(found)
+
+
+def shared_inputs(state: SDFGState) -> list[nodes.AccessNode]:
+    """The source nodes of containers ``state`` never writes: every statement reading one gets its own copy."""
+    written = {n.data for n in state.data_nodes() if value_edges(state.in_edges(n))}
+    return [n for n in state.data_nodes() if state.in_degree(n) == 0 and n.data not in written]
+
+
+def statement_groups(state: SDFGState, shared: list[nodes.AccessNode]) -> list[list[nodes.Node]]:
+    """The statements of ``state``, in node order: nodes joined by value edges, each node of ``shared`` added to every
+    statement that reads it."""
+    parent: dict[nodes.Node, nodes.Node] = {n: n for n in state.nodes() if n not in shared}
+
+    def find(x: nodes.Node) -> nodes.Node:
+        while parent[x] is not x:
+            x = parent[x]
+        return x
+
+    # Per value edge between two statement nodes: one statement
+    for e in value_edges(state.edges()):
+        if e.src in parent and e.dst in parent:
+            parent[find(e.src)] = find(e.dst)
+    groups: dict[nodes.Node, list[nodes.Node]] = {}
+    # Per node, in node order: its statement, with the shared inputs it reads
+    for n in state.nodes():
+        if n in parent:
+            groups.setdefault(find(n), []).append(n)
+    return [grp + [n for n in shared if any(e.dst in grp for e in state.out_edges(n))] for grp in groups.values()]
+
+
+def statement_accesses(state: SDFGState, grp: list[nodes.Node]) -> list[tuple[str, subsets.Subset | None, bool]] | None:
+    """``(container, subset, is_write)`` per value edge at an access node of ``grp``; ``None`` on a WCR store."""
+    found = []
+    # Per access node of the statement: its loads and stores
+    for n in grp:
+        if not isinstance(n, nodes.AccessNode):
+            continue
+        for e in value_edges(state.in_edges(n)):
+            if e.data.wcr is not None:
+                return None
+            found.append((n.data, e.data.get_dst_subset(e, state), True))
+        found.extend((n.data, e.data.get_src_subset(e, state), False) for e in value_edges(state.out_edges(n)))
+    return found
+
+
+def runs_before(
+    state: SDFGState, grp: list[nodes.Node], other: list[nodes.Node], shared: list[nodes.AccessNode]
+) -> bool:
+    """Whether a path of ``state`` (ordering edges included) leads from ``grp`` into ``other``, not starting at an input
+    both statements read."""
+    targets = dict.fromkeys(other)
+    stack = [n for n in grp if n not in shared]
+    seen: dict[nodes.Node, None] = {}
+    # Depth-first over the successors of the statement's nodes
+    while stack:
+        node = stack.pop()
+        if node in seen:
+            continue
+        seen[node] = None
+        for e in state.out_edges(node):
+            if e.dst in targets:
+                return True
+            stack.append(e.dst)
+    return False
+
+
+def pair_order(
+    state: SDFGState,
+    loop: LoopRegion,
+    grps: tuple[list[nodes.Node], list[nodes.Node]],
+    accesses: tuple[list, list],
+    shared: list[nodes.AccessNode],
+) -> int | None:
+    """``1`` when every conflicting instance pair of two statements runs the first statement's instance first, ``-1``
+    when every one runs the second's first, ``0`` without a conflict, ``None`` when mixed or undecidable."""
+    first_first = second_first = False
+    # Per pair of accesses to one container, at least one a store
+    for data, sub1, write1 in accesses[0]:
+        for other, sub2, write2 in accesses[1]:
+            if data != other or not (write1 or write2):
+                continue
+            directions = conflict_directions(sub1, sub2, loop)
+            if directions is None:
+                return None
+            if 0 in directions:
+                # Same iteration: the dataflow path between the statements orders them
+                if runs_before(state, grps[0], grps[1], shared):
+                    first_first = True
+                elif runs_before(state, grps[1], grps[0], shared):
+                    second_first = True
+                else:
+                    return None
+            first_first = first_first or 1 in directions
+            second_first = second_first or -1 in directions
+    if first_first and second_first:
+        return None
+    return 1 if first_first else (-1 if second_first else 0)
+
+
+def ordered_statements(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> list[list[int]] | None:
+    """Node indices of the single compute state's statements, in an order the per-statement loops may run one after the
+    other, when two statements touch a container one of them stores (dependences decided exactly by ISL); ``None``
+    otherwise. A statement loop that runs whole before another holds every instance that ran first in the fused loop."""
+    if splittable_loop_states(loop, sdfg, index) is None or any(e.data.assignments for e in loop.edges()):
+        return None
+    state = loop_fission._single_compute_state(loop)
+    # A scope's nodes are joined by ordering edges too, which the statement grouping does not follow
+    if state is None or any(isinstance(n, (nodes.EntryNode, nodes.ExitNode)) for n in state.nodes()):
+        return None
+    shared = shared_inputs(state)
+    groups = statement_groups(state, shared)
+    if len(groups) < 2:
+        return None
+    accesses = [statement_accesses(state, grp) for grp in groups]
+    after: list[dict[int, None]] = [{} for grp in groups]
+    coupled = False
+    # Per unordered pair of statements: the order every dependence between them asks
+    for i, j in [(i, j) for i in range(len(groups)) for j in range(i + 1, len(groups))]:
+        acc_i, acc_j = accesses[i], accesses[j]
+        if acc_i is None or acc_j is None:
+            return None
+        order = pair_order(state, loop, (groups[i], groups[j]), (acc_i, acc_j), shared)
+        if order is None:
+            return None
+        if order:
+            after[i if order > 0 else j][j if order > 0 else i] = None
+            coupled = True
+    # Statements with no dependence between them are the independent-output split's case
+    if not coupled:
+        return None
+    position = {n: k for k, n in enumerate(state.nodes())}
+    order = topological_group_order(after)
+    return None if order is None else [sorted(position[n] for n in groups[k]) for k in order]
+
+
+def split_statements_in_order(loop: LoopRegion, groups: list[list[int]]) -> None:
+    """Replace ``loop`` with one copy per statement group, in ``groups``' order, each keeping its group's nodes."""
+    state = required(loop_fission._single_compute_state(loop))
+    cidx = list(loop.nodes()).index(state)
+    clones: list[LoopRegion] = []
+    # Per statement group: a copy of the loop pruned to the group's nodes
+    for gi, keep in enumerate(groups):
+        clone = copy.deepcopy(loop)
+        clone.label = f"{loop.label}_stmt{gi}"
+        cstate = list(clone.nodes())[cidx]
+        kept = dict.fromkeys(keep)
+        cstate.remove_nodes_from([n for k, n in enumerate(cstate.nodes()) if k not in kept])
+        clones.append(clone)
+    loop_fission.splice_clones(loop, clones)
 
 
 def body_reads_and_writes(states: list[SDFGState], local: Any) -> tuple[dict[str, None], dict[str, None]] | None:
@@ -1278,6 +1495,11 @@ class SplitStatements(ppl.Pass):
             for loop in [r for r in cfg.all_control_flow_regions() if isinstance(r, LoopRegion)]:
                 decision = self.loop_output_groups(loop, cfg, index)
                 if decision is None:
+                    statements = ordered_statements(loop, cfg, index)
+                    if statements is not None:
+                        split_statements_in_order(loop, statements)
+                        count += 1
+                        index.clear()
                     continue
                 groups, ordered = decision
                 if self._split_one_loop(
