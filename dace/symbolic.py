@@ -2730,8 +2730,6 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         if str(expr.func) in self.arrays:
             indices = ", ".join(self._print(arg) for arg in expr.args)
             return f"{expr.func}[{indices}]"
-        if self.cpp_mode and str(expr.func) == "int_floor":
-            return "((%s) / (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
         if self.cpp_mode and str(expr.func) in TYPECAST_CPP:
             return f"{TYPECAST_CPP[str(expr.func)]}({self._print(expr.args[0])})"
         if str(expr.func) == "AND":
