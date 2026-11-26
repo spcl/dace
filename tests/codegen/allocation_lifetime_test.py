@@ -923,6 +923,10 @@ def test_a_transient_first_used_in_a_call_region_is_allocated_after_its_assignme
     read.add_nedge(read.add_read("t"), read.add_write("A"), dace.Memlet("t[n - 1]", other_subset="3"))
 
     assert framecode.paired_allocation_blocks([write, read]) == (write, read)
+    # Allocated once ahead of the fill's parallel loop: inside it every thread allocated a buffer of its own
+    code = sdfg.generate_code()[0].clean_code
+    assert code.count("aligned_new_array") == 1
+    assert code.index("aligned_new_array") < code.index("for (int64_t i = 0;")
     A = np.zeros(4)
     sdfg(A=A, N=np.array([3], dtype=np.int64))
     assert A[3] == 2.0
