@@ -9,6 +9,7 @@ SDFGs. When a block after the loop reads the original name, that name is assigne
 import dace
 from dace import nodes, symbolic
 from dace.sdfg.replace import replace_properties_dict
+from dace.sdfg.sdfg import memoize_facts
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import ControlFlowBlockReachability, loop_analysis
@@ -230,9 +231,11 @@ class UniqueLoopIterators(ppl.Pass):
             new = f"{LOOP_ITERATOR_PREFIX}{ident}"
             rename_iterator(loop, old, new)
             renamed.add(new)
-        # After every rename, so no rename rewrites an exit-value assignment.
-        for loop, old, ident in plan:
-            value = exit_value(loop) if self.read_after(loop, old) else None
+        # After every rename, so no rename rewrites an exit-value assignment. All values before any state is added:
+        # each added state invalidates the SDFG's facts, which every exit value reads (h_psi: 9.5% rebuilding them).
+        with memoize_facts(sdfg):
+            values = [exit_value(loop) if self.read_after(loop, old) else None for loop, old, ident in plan]
+        for (loop, old, ident), value in zip(plan, values):
             if value is not None:
                 loop.parent_graph.add_state_after(
                     loop,
