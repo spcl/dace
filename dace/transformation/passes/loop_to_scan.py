@@ -5559,6 +5559,7 @@ def upstream(state: SDFGState, root: nodes.Node) -> OrderedSet:
     stack = [root]
     # Each node found, until none is new: its producers are found too
     while stack:
+        # Producers of the popped node, ordering edges within one container excluded
         for edge in state.in_edges(stack.pop()):
             same = isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)
             if edge.data.is_empty() and not (same and edge.src.data == edge.dst.data):
@@ -5603,9 +5604,11 @@ def carrier_slices(loop: LoopRegion, sdfg: SDFG) -> list[tuple[str, OrderedSet]]
     order = sorted(carriers, key=lambda name: -sum(name in reads_of(slices[other]) for other in carriers))
     # Each carrier against each one ordered before it: no cycle, and only finished elements read
     for position, name in enumerate(order):
+        # No earlier carrier reads this one
         for earlier in order[:position]:
             if name in reads_of(slices[earlier]):
                 return None  # a cycle: each reads the other
+        # This carrier reads only elements an earlier carrier already finished
         for earlier in order[:position]:
             if not reads_only_finished(state, slices[name], earlier, stores[earlier], loop_var):
                 return None
@@ -5630,6 +5633,7 @@ def reads_only_finished(state: SDFGState, part: OrderedSet, name: str, k_w: Any,
     for node in part:
         if not isinstance(node, nodes.AccessNode) or node.data != name:
             continue
+        # Each value read of the carrier inside its slice
         for edge in state.out_edges(node):
             if edge.data.is_empty() or edge.dst not in part:
                 continue
@@ -5671,14 +5675,17 @@ def lift_split_carriers(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG)
         # Undo: every piece and every renamed transient goes, the original loop stays
         for piece in pieces:
             parent.remove_node(piece)
+        # Drop every renamed transient copy
         for container in renamed:
             sdfg.remove_data(container, validate=False)
         return 0
     # The pieces take the loop's place: its in-edges to the first, its out-edges from the last, a chain between
     for edge in list(parent.in_edges(loop)):
         parent.add_edge(edge.src, pieces[0], edge.data)
+    # The loop's out-edges leave from the last piece
     for edge in list(parent.out_edges(loop)):
         parent.add_edge(pieces[-1], edge.dst, edge.data)
+    # Chain the pieces in order
     for first, second in zip(pieces, pieces[1:]):
         parent.add_edge(first, second, InterstateEdge())
     if parent.start_block is loop:
