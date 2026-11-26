@@ -372,7 +372,12 @@ def needs_contract(
     for scattered, _window in _scatter_idx_targets_for_loop(loop, owner).values():
         targets |= scattered
     # The check proves one store's index one-to-one; the waiver below is of every conflict on its target
-    return not stores_may_meet(loop, targets) and lifts(loop, owner, frozenset(targets), probes)
+    bindings = _collect_indirect_bindings(loop, owner)
+
+    def apart(first: subsets.Subset, second: subsets.Subset) -> bool:
+        return lanes_apart(first, second, bindings, loop)
+
+    return not stores_may_meet(loop, targets, apart) and lifts(loop, owner, frozenset(targets), probes)
 
 
 #: The refusals of a loop whose only conflicts may be its scatter's: colliding stores and the reads among them.
@@ -653,7 +658,9 @@ def _scatter_idx_targets_for_loop(
                 if found:
                     seen = slots.setdefault(node.data, [])
                     if any(
-                        str(other) != str(e.data.subset) and not apart_by_constant(other, e.data.subset)
+                        str(other) != str(e.data.subset)
+                        and not apart_by_constant(other, e.data.subset)
+                        and not lanes_apart(other, e.data.subset, bindings, region)
                         for other in seen
                     ):
                         return {}
@@ -699,6 +706,38 @@ def apart_by_constant(first: subsets.Subset, second: subsets.Subset) -> bool:
         if b1 == e1 and b2 == e2 and b1.is_Integer and b2.is_Integer and b1 != b2:
             return True
     return False
+
+
+def lanes_apart(
+    first: subsets.Subset, second: subsets.Subset, bindings: dict[str, tuple[str, list[ast.AST]]], region: LoopRegion
+) -> bool:
+    """Whether two point slots are lanes of one unrolled loop: each is a symbol bound to the same 1-D index array read
+    at ``a*i + k``, the two offsets differ, and by less than one trip's advance ``a * stride``. No two (iteration,
+    lane) pairs then read one index position, so the guard that the index array holds no duplicate keeps the slots
+    apart (TSVC s353 unrolled by 17: ``b[ip[i + k]]``, ``0 <= k < 17``, step 17)."""
+    stride = symbolic.pystr_to_symbolic(str(loop_analysis.get_loop_stride(region)))
+    if not stride.is_Integer or stride == 0:
+        return False
+    loop_var = symbolic.pystr_to_symbolic(region.loop_variable)
+    indices = []
+    for slot in (first, second):
+        if len(slot) != 1:
+            return False
+        begin, end, _step = slot.ndrange()[0]
+        if str(begin) != str(end) or str(begin) not in bindings:
+            return False
+        array, dim_nodes = bindings[str(begin)]
+        if len(dim_nodes) != 1:
+            return False
+        indices.append((array, symbolic.pystr_to_symbolic(ast.unparse(dim_nodes[0]))))
+    (array1, index1), (array2, index2) = indices
+    if array1 != array2:
+        return False
+    scale = index1.diff(loop_var)
+    offset = symbolic.simplify(index1 - index2)
+    if not scale.is_Integer or scale != index2.diff(loop_var) or not offset.is_Integer:
+        return False
+    return 0 < abs(int(offset)) < abs(int(scale) * int(stride))
 
 
 def reads_within_slot(region: LoopRegion, sdfg: SDFG, name: str, slot: subsets.Subset, names: set[str]) -> bool:

@@ -971,10 +971,15 @@ def rmw_edges(states: Iterable[SDFGState], names: frozenset[str] | None = None) 
     return writes, reads, containers
 
 
-def stores_may_meet(loop: LoopRegion, names: Iterable[str]) -> bool:
+def stores_may_meet(
+    loop: LoopRegion, names: Iterable[str], apart: Callable[[subsets.Subset, subsets.Subset], bool] | None = None
+) -> bool:
     """Whether two stores of ``loop`` into one container of ``names``, at different subsets and not both accumulating,
     may share an element across two iterations: a contract on how one store is indexed keeps its own instances apart,
-    not ``A[idx[i]]`` and ``A[i]``."""
+    not ``A[idx[i]]`` and ``A[i]``.
+
+    :param apart: Whether the contract itself keeps two subsets apart (the lanes of an unrolled scatter).
+    """
     bounds = [f(loop) for f in (loop_analysis.get_init_assignment, loop_analysis.get_loop_end)]
     step = loop_analysis.get_loop_stride(loop)
     if None in bounds or step is None:
@@ -988,7 +993,9 @@ def stores_may_meet(loop: LoopRegion, names: Iterable[str]) -> bool:
                     stored = destination_memlet(e, state, dn, None)
                     stores[dn.data].setdefault(str(stored.subset), stored)
     return any(
-        (x.wcr is None or y.wcr is None) and _writes_may_overlap(x, y, itersym, step, *bounds, varying)
+        (x.wcr is None or y.wcr is None)
+        and not (apart is not None and apart(x.subset, y.subset))
+        and _writes_may_overlap(x, y, itersym, step, *bounds, varying)
         for found in stores.values()
         for x, y in itertools.combinations(found.values(), 2)
     )
