@@ -21,6 +21,7 @@ from dace.transformation.passes.multiple_buffering import LowerMultipleBuffering
 from dace.transformation.passes.region_boundary_states import RegionBoundaryStates
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
+from dace.transformation.passes.split_branch_transients import SplitBranchTransients
 
 
 def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
@@ -440,6 +441,8 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
         FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
 
     # Data sized by a symbol that a region's incoming edge assigns can only be allocated once the region is entered.
+    # A transient each branch of a conditional allocates with its own size gets a copy per branch, allocated there
+    SplitBranchTransients().apply_pass(sdfg, {})
     RegionBoundaryStates().apply_pass(sdfg, {})
 
     # Before generating the code, run type inference on the SDFG connectors
