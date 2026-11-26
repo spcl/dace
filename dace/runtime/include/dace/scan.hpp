@@ -8,6 +8,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <iterator>
 #include <limits>
@@ -933,6 +934,75 @@ inline void inclusive_linear2(C1It coef, C2It coef2, DIt delta, OutIt out_first,
         detail::scan_incl_linear2<E>(coef, coef2, delta, out_first, lo, hi, off);
       },
       [](M x, M y) { return detail::linear2_compose<E>(x, y); });
+}
+
+// Linear-fractional (Moebius) recurrence: out[k] = (p1[k]*out[k-1] + p0[k]) / (q1[k]*out[k-1] + q0[k]), entered
+// with out[-1] = seed. The carry is the projective
+// 2x2 matrix [[p1, p0], [q1, q0]] acting on (x, 1); composition is the matrix product, rescaled by its largest entry
+// (a projective map is the same map at any scale) so a long block's product neither overflows nor underflows.
+
+namespace detail {
+
+template <typename E>
+struct moebius_map {
+  E m00, m01, m10, m11;
+};
+
+template <typename E>
+inline moebius_map<E> moebius_rescaled(moebius_map<E> m) {
+  using std::abs;
+  E big = abs(m.m00);
+  big = abs(m.m01) > big ? abs(m.m01) : big;
+  big = abs(m.m10) > big ? abs(m.m10) : big;
+  big = abs(m.m11) > big ? abs(m.m11) : big;
+  if (big == static_cast<E>(0)) return m;
+  return moebius_map<E>{m.m00 / big, m.m01 / big, m.m10 / big, m.m11 / big};
+}
+
+// Compose: y applied after x, i.e. the product My * Mx.
+template <typename E>
+inline moebius_map<E> moebius_compose(const moebius_map<E>& x, const moebius_map<E>& y) {
+  return moebius_rescaled(moebius_map<E>{y.m00 * x.m00 + y.m01 * x.m10, y.m00 * x.m01 + y.m01 * x.m11,
+                                         y.m10 * x.m00 + y.m11 * x.m10, y.m10 * x.m01 + y.m11 * x.m11});
+}
+
+template <typename E, typename P1, typename P0, typename Q1, typename Q0>
+inline moebius_map<E> fold_moebius(P1 p1, P0 p0, Q1 q1, Q0 q0, long lo, long hi) {
+  moebius_map<E> m{static_cast<E>(1), static_cast<E>(0), static_cast<E>(0), static_cast<E>(1)};
+  // Each position of the block, in order: its map composes onto the block's product
+  for (long k = lo; k < hi; ++k) {
+    m = moebius_compose(m, moebius_map<E>{static_cast<E>(p1[k]), static_cast<E>(p0[k]), static_cast<E>(q1[k]),
+                                          static_cast<E>(q0[k])});
+  }
+  return m;
+}
+
+// Write out[lo:hi] entered with the composed map off. The seed's map is constant ([[0, s], [0, 1]]) and stays so
+// under composition, so off's value is off.m01 / off.m11 whatever it is applied to.
+template <typename E, typename P1, typename P0, typename Q1, typename Q0, typename OutIt>
+inline void scan_incl_moebius(P1 p1, P0 p0, Q1 q1, Q0 q0, OutIt o, long lo, long hi, moebius_map<E> off) {
+  E x = off.m01 / off.m11;
+  // Each position of the block, in order: the recurrence itself, from the block's entering value
+  for (long k = lo; k < hi; ++k) {
+    x = (static_cast<E>(p1[k]) * x + static_cast<E>(p0[k])) / (static_cast<E>(q1[k]) * x + static_cast<E>(q0[k]));
+    o[k] = x;
+  }
+}
+
+}  // namespace detail
+
+template <typename P1, typename P0, typename Q1, typename Q0, typename OutIt, typename T>
+inline void inclusive_moebius(P1 p1, P0 p0, Q1 q1, Q0 q0, OutIt out_first, long n, T seed) {
+  using E = typename std::iterator_traits<OutIt>::value_type;
+  using M = detail::moebius_map<E>;
+  const E zero = static_cast<E>(0);
+  detail::blocked_scan<M>(
+      n, static_cast<long>(4 * sizeof(E)), M{zero, static_cast<E>(seed), zero, static_cast<E>(1)},
+      [p1, p0, q1, q0](long lo, long hi) { return detail::fold_moebius<E>(p1, p0, q1, q0, lo, hi); },
+      [p1, p0, q1, q0, out_first](long lo, long hi, M off) {
+        detail::scan_incl_moebius<E>(p1, p0, q1, q0, out_first, lo, hi, off);
+      },
+      [](M x, M y) { return detail::moebius_compose<E>(x, y); });
 }
 
 // Strided affine: x[i] = c[i] * x[i - stride] + d[i] is `stride` independent unit-stride

@@ -56,6 +56,7 @@ from dace.frontend.python import astutils
 from dace.libraries.standard.nodes.scan import (
     COEF2_CONNECTOR_NAME,
     COEF_CONNECTOR_NAME,
+    DEN_CONNECTOR_NAME,
     INIT_CONNECTOR_NAME,
     INPUT_CONNECTOR_NAME,
     OUTPUT_CONNECTOR_NAME,
@@ -647,6 +648,8 @@ class LoopToScan(ppl.Pass):
             # refuses on purpose. Tried only after they all decline, so a loop the scalar ops
             # can lift keeps its existing lowering unchanged.
             aff = match_affine_scan(loop, owner)
+            # Several carried arrays: the affine match needs exactly one, so at most one of the two applies
+            count += lift_split_carriers(parent, loop, owner)
             if aff is not None:
                 if carry_distance_kind(aff.stride, SymbolResolver().facts_at(loop)) == "guard":
                     rewrite = lambda region: self._specialize_affine_by_distance(region, loop, aff, owner)
@@ -5051,6 +5054,9 @@ class _AffineScan(NamedTuple):
     #: A reverse sweep ``out[k_w - i] = c(i) * out[k_w + 1 - i] + d(i)``: the scan runs in iteration order into a
     #: buffer, which a map copies back reversed.
     reverse: bool = False
+    #: The first-order linear-fractional recurrence (``op=MOEBIUS``): the denominator's constant
+    #: ``q0``. ``coef_code`` / ``delta_code`` are then the numerator's ``p1`` / ``p0`` and ``coef2_code`` is ``q1``.
+    den_code: str | None = None
 
 
 class _AffineRefused(Exception):
@@ -5281,12 +5287,13 @@ def wire_through(state: SDFGState, src: nodes.AccessNode, out_name: str) -> tupl
     """
     desc = state.sdfg.arrays.get(src.data)
     in_edges = [e for e in state.in_edges(src) if not e.data.is_empty()]
+    # Ordering edges out of it are checked by :func:`affine_wire_is_private` once the chain is known
     if (
         desc is not None
         and desc.transient
         and src.data != out_name
         and len(in_edges) == 1
-        and len(state.out_edges(src)) == 1
+        and len([e for e in state.out_edges(src) if not e.data.is_empty()]) == 1
     ):
         return [src], in_edges[0]
     writer = split_access_writer(state, src)
@@ -5337,15 +5344,16 @@ def split_access_writer(state: SDFGState, node: nodes.AccessNode) -> nodes.Acces
 
 
 def affine_wire_is_private(state: SDFGState, node: nodes.AccessNode, chain: list[Any]) -> bool:
-    """:func:`_transient_is_a_wire`, extended to the split pair :func:`split_access_writer` walks.
+    """:func:`_transient_is_a_wire`, extended to the split pair :func:`split_access_writer` walks and to a wire
+    with ordering edges out of it.
 
-    The pair's writer may also order pure reads (no data written into them): dropping it with the
+    Those may only order other chain nodes or pure reads (no data written into them): dropping them with the
     chain orders nothing that writes.
     """
     if _transient_is_a_wire(state, node):
         return True
     twins = [n for n in state.data_nodes() if n.data == node.data]
-    if len(twins) != 2 or not all(n in chain for n in twins) or _acc_used_outside_body(state.sdfg, node.data, state):
+    if len(twins) > 2 or not all(n in chain for n in twins) or _acc_used_outside_body(state.sdfg, node.data, state):
         return False
     # Each ordering edge out of the accumulator must lead to a pure read or the chain's end
     for edge in state.out_edges(node):
@@ -5458,12 +5466,12 @@ def match_affine_scan(loop: LoopRegion, sdfg: SDFG) -> _AffineScan | None:
     split = split_recurrence(expr, carries, k_w, symbolic.simplify(iter_end - iter_start + 1))
     if split is None:
         return None
-    coef_code, coef2_code, delta_code, k_r = split
+    coef_code, coef2_code, delta_code, k_r, den_code = split
     stride = symbolic.simplify(write_coef * (k_w - k_r))
-    # A reverse sweep (the Thomas back substitution) lifts at carry distance 1 and first order only
+    # A reverse sweep lifts at carry distance 1 and first order only
     if write_coef == -1 and (coef2_code is not None or stride != 1):
         return None
-    k_r2 = symbolic.simplify(k_w - 2) if coef2_code is not None else None
+    k_r2 = symbolic.simplify(k_w - 2) if coef2_code is not None and den_code is None else None
     if not carrier_reads_admissible(state, out_name, loop_var, 0, [], k_w, k_r, write_coef, k_r2):
         return None
     if _read_survives_rewrite(loop, sdfg, {out_name}, reads):
@@ -5486,6 +5494,7 @@ def match_affine_scan(loop: LoopRegion, sdfg: SDFG) -> _AffineScan | None:
         stride=stride,
         coef2_code=coef2_code,
         reverse=write_coef == -1,
+        den_code=den_code,
     )
 
 
@@ -5501,11 +5510,11 @@ def split_recurrence(expr: Any, carries: dict[Any, str], k_w: Any, trip: Any) ->
         k_r, name = next(iter(carries.items()))
         split = split_linear_in_carry(expr, name)
         if split is None:
-            return None
+            return split_linear_fractional(expr, name, k_r, k_w, trip)
         coef_code, delta_code = python_code_for(split[0]), python_code_for(split[1])
         if coef_code is None or delta_code is None:
             return None
-        return coef_code, None, delta_code, k_r
+        return coef_code, None, delta_code, k_r, None
     near, far = (carries.get(symbolic.simplify(k_w - distance)) for distance in (1, 2))
     if near is None or far is None:
         return None
@@ -5518,7 +5527,167 @@ def split_recurrence(expr: Any, carries: dict[Any, str], k_w: Any, trip: Any) ->
     codes = python_code_for(first[0]), python_code_for(second[0]), python_code_for(second[1])
     if any(code is None for code in codes):
         return None
-    return codes[0], codes[1], codes[2], symbolic.simplify(k_w - 1)
+    return codes[0], codes[1], codes[2], symbolic.simplify(k_w - 1), None
+
+
+def split_linear_fractional(expr: Any, carry: str, k_r: Any, k_w: Any, trip: Any) -> tuple | None:
+    """``(p1, q1, p0, k_r, q0)`` codes of ``expr == (p1 * carry + p0) / (q1 * carry + q0)``, or ``None``.
+
+    The first-order linear-fractional (Moebius) recurrence ``x[i] = (p1[i] x[i-1] + p0[i]) / (q1[i] x[i-1] + q0[i])``
+    lifts as a scan of 2x2 matrix products: the numerator and the denominator are each
+    proven linear in the carry, and the denominator must read it (else the value is affine, handled above). Only at
+    carry distance 1 and over at least two elements, since a one-element operand reaches the libnode as a scalar.
+    """
+    if symbolic.simplify(k_w - k_r) != 1 or isinstance(trip, (int, sympy.Integer)) and int(trip) < 2:
+        return None
+    sym = symbolic.pystr_to_symbolic(carry)
+    numerator, denominator = sympy.fraction(sympy.together(expr))
+    den = split_linear_in_carry(denominator, carry)
+    num = split_linear_in_carry(numerator, carry) if sym in numerator.free_symbols else (sympy.Integer(0), numerator)
+    if den is None or num is None:
+        return None
+    codes = [python_code_for(part) for part in (num[0], den[0], num[1], den[1])]
+    if any(code is None for code in codes):
+        return None
+    return codes[0], codes[1], codes[2], k_r, codes[3]
+
+
+def upstream(state: SDFGState, root: nodes.Node) -> OrderedSet:
+    """``root`` with every node whose data reaches it in ``state``: along memlets, and along the ordering edge that
+    joins the two nodes of one container a frontend split (:func:`split_access_writer`)."""
+    found = OrderedSet([root])
+    stack = [root]
+    # Each node found, until none is new: its producers are found too
+    while stack:
+        for edge in state.in_edges(stack.pop()):
+            same = isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)
+            if edge.data.is_empty() and not (same and edge.src.data == edge.dst.data):
+                continue
+            if edge.src not in found:
+                found.add(edge.src)
+                stack.append(edge.src)
+    return found
+
+
+def carrier_slices(loop: LoopRegion, sdfg: SDFG) -> list[tuple[str, OrderedSet]] | None:
+    """The body of ``loop`` as one slice per carried array -- the nodes its store depends on -- in an order where a
+    slice reads an earlier slice's carrier only at elements earlier iterations wrote, and never a later one's.
+
+    ``None`` unless the body is one state holding several 1-D carriers stored once each, and nothing else: then
+    running the slices as separate loops in that order computes what the loop does (``c[i] = f(c[i-1])`` first,
+    then ``d[i] = g(d[i-1], c[i-1])``). A transient two slices share is recomputed by each.
+    """
+    state = loop.start_block
+    if loop.number_of_nodes() != 1 or not isinstance(state, SDFGState):
+        return None
+    loop_var = loop.loop_variable
+    carriers = _find_carried_arrays(state, sdfg, loop_var)
+    if len(carriers) < 2:
+        return None
+    slices: dict[str, OrderedSet] = {}
+    stores: dict[str, Any] = {}
+    # Each carried array: its one store, and the nodes that store depends on
+    for name in carriers:
+        written = [e for n in state.data_nodes() if n.data == name for e in state.in_edges(n) if not e.data.is_empty()]
+        edge = written[0] if len(written) == 1 else None
+        axis, k_w, others, coef = (
+            (None, None, None, 0) if edge is None else _classify_subset(edge.data.subset, loop_var)
+        )
+        if axis != 0 or coef != 1 or others or len(sdfg.arrays[name].shape) != 1:
+            return None
+        slices[name], stores[name] = upstream(state, edge.dst), k_w
+    covered = OrderedSet(n for part in slices.values() for n in part)
+    if len(covered) != state.number_of_nodes():
+        return None  # a node no store needs: a side effect the split would duplicate or drop
+    # A carrier other slices read comes first
+    order = sorted(carriers, key=lambda name: -sum(name in reads_of(slices[other]) for other in carriers))
+    # Each carrier against each one ordered before it: no cycle, and only finished elements read
+    for position, name in enumerate(order):
+        for earlier in order[:position]:
+            if name in reads_of(slices[earlier]):
+                return None  # a cycle: each reads the other
+        for earlier in order[:position]:
+            if not reads_only_finished(state, slices[name], earlier, stores[earlier], loop_var):
+                return None
+    shared = [
+        n.data
+        for n in covered
+        if isinstance(n, nodes.AccessNode) and is_written(state, n) and sum(n in p for p in slices.values()) > 1
+    ]
+    if any(not sdfg.arrays[d].transient or _acc_used_outside_body(sdfg, d, state) for d in shared):
+        return None
+    return [(name, slices[name]) for name in order]
+
+
+def reads_of(part: OrderedSet) -> OrderedSet:
+    return OrderedSet(n.data for n in part if isinstance(n, nodes.AccessNode))
+
+
+def reads_only_finished(state: SDFGState, part: OrderedSet, name: str, k_w: Any, loop_var: str) -> bool:
+    """Whether ``part`` reads ``name`` only at ``name[i + k]`` with constant ``k < k_w``: what earlier iterations
+    stored, and so what the loop that runs first leaves there."""
+    # Each read of ``name`` inside ``part``: its offset must be behind the store
+    for node in part:
+        if not isinstance(node, nodes.AccessNode) or node.data != name:
+            continue
+        for edge in state.out_edges(node):
+            if edge.data.is_empty() or edge.dst not in part:
+                continue
+            subset = edge.data.subset if edge.data.data == name else edge.data.other_subset
+            axis, k, others, coef = _classify_subset(subset, loop_var)
+            behind = None if k is None else symbolic.simplify(k_w - k)
+            if axis != 0 or coef != 1 or others or not isinstance(behind, (int, sympy.Integer)) or int(behind) < 1:
+                return False
+    return True
+
+
+def lift_split_carriers(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG) -> int:
+    """Split a loop of several carriers into one loop per carrier (:func:`carrier_slices`) and lift each to its
+    scan; leave the loop as it was unless every piece lifts. Returns how many scans it made."""
+    slices = carrier_slices(loop, sdfg)
+    if slices is None:
+        return 0
+    position = {node: i for i, node in enumerate(loop.start_block.nodes())}
+    pieces, renamed = [], []
+    # Each slice, in dependence order: a copy of the loop keeping only that slice's nodes
+    for name, part in slices:
+        piece = copy.deepcopy(loop)
+        kept = {position[n] for n in part}
+        body = piece.start_block
+        body.remove_nodes_from([n for i, n in enumerate(body.nodes()) if i not in kept])
+        # Each piece computes its transients itself, under names of its own, so each is private to its loop
+        private = {}
+        # Each transient the piece keeps: a fresh name for it
+        for container in sorted({n.data for n in body.data_nodes() if sdfg.arrays[n.data].transient}):
+            fresh = sdfg.add_datadesc(container, copy.deepcopy(sdfg.arrays[container]), find_new_name=True)
+            private[container] = fresh
+            renamed.append(fresh)
+        parent.add_node(piece, ensure_unique_name=True)
+        body.replace_dict(private)
+        pieces.append(piece)
+    matches = [match_affine_scan(piece, sdfg) for piece in pieces]
+    facts = SymbolResolver().facts_at(loop)
+    if any(m is None or carry_distance_kind(m.stride, facts) != "scan" for m in matches):
+        # Undo: every piece and every renamed transient goes, the original loop stays
+        for piece in pieces:
+            parent.remove_node(piece)
+        for container in renamed:
+            sdfg.remove_data(container, validate=False)
+        return 0
+    # The pieces take the loop's place: its in-edges to the first, its out-edges from the last, a chain between
+    for edge in list(parent.in_edges(loop)):
+        parent.add_edge(edge.src, pieces[0], edge.data)
+    for edge in list(parent.out_edges(loop)):
+        parent.add_edge(pieces[-1], edge.dst, edge.data)
+    for first, second in zip(pieces, pieces[1:]):
+        parent.add_edge(first, second, InterstateEdge())
+    if parent.start_block is loop:
+        parent.add_edge(parent.add_state(f"{loop.label}_split", is_start_block=True), pieces[0], InterstateEdge())
+    parent.remove_node(loop)
+    # Each piece, now a one-carrier loop, lifts to its own scan
+    for piece, match in zip(pieces, matches):
+        _lift_nonempty(parent, piece, sdfg, lambda region: rewrite_affine_scan(region, piece, match, sdfg))
+    return len(pieces)
 
 
 def rewrite_affine_scan(parent: ControlFlowRegion, loop: LoopRegion, info: _AffineScan, sdfg: SDFG):
@@ -5562,7 +5731,15 @@ def rewrite_affine_scan(parent: ControlFlowRegion, loop: LoopRegion, info: _Affi
             f"{_COEF_BUF_PREFIX}{info.out_name}_2", [trip], out_desc.dtype, transient=True, find_new_name=True
         )[0]
     )
-    mutate_body_to_affine_buffers(info, delta_buf, coef_buf, coef2_buf)
+    direct_den = None if info.den_code is None else direct_operand(info, info.den_code, sdfg)
+    den_buf = (
+        None
+        if info.den_code is None or direct_den
+        else sdfg.add_array(
+            f"{_COEF_BUF_PREFIX}{info.out_name}_den", [trip], out_desc.dtype, transient=True, find_new_name=True
+        )[0]
+    )
+    mutate_body_to_affine_buffers(info, delta_buf, coef_buf, coef2_buf, den_buf)
 
     out_edges = list(parent.out_edges(loop))
     s_scan = parent.add_state(loop.label + "_affine_scan")
@@ -5571,7 +5748,16 @@ def rewrite_affine_scan(parent: ControlFlowRegion, loop: LoopRegion, info: _Affi
         parent.remove_edge(e)
         parent.add_edge(s_scan, e.dst, e.data)
     emit_affine_scan(
-        s_scan, sdfg, info, delta_buf, coef_buf, trip, direct_delta, direct_coef, (coef2_buf, direct_coef2)
+        s_scan,
+        sdfg,
+        info,
+        delta_buf,
+        coef_buf,
+        trip,
+        direct_delta,
+        direct_coef,
+        (coef2_buf, direct_coef2),
+        (den_buf, direct_den),
     )
 
 
@@ -5650,7 +5836,11 @@ def direct_operand(info: "_AffineScan", code: str, sdfg: SDFG) -> tuple[str, Any
 
 
 def mutate_body_to_affine_buffers(
-    info: _AffineScan, delta_buf: str | None, coef_buf: str | None, coef2_buf: str | None = None
+    info: _AffineScan,
+    delta_buf: str | None,
+    coef_buf: str | None,
+    coef2_buf: str | None = None,
+    den_buf: str | None = None,
 ):
     """In place: replace the recurrence with two independent per-iteration writes.
 
@@ -5668,6 +5858,8 @@ def mutate_body_to_affine_buffers(
         emit_affine_build_tasklet(state, info, "affine_delta", info.delta_code, delta_buf, idx)
     if coef2_buf is not None:
         emit_affine_build_tasklet(state, info, "affine_coef2", required(info.coef2_code), coef2_buf, idx)
+    if den_buf is not None:
+        emit_affine_build_tasklet(state, info, "affine_den", required(info.den_code), den_buf, idx)
 
     state.remove_edge(info.write_edge)
     for node in info.chain:
@@ -5693,6 +5885,7 @@ def emit_affine_scan(
     direct_delta: tuple[str, Any] | None = None,
     direct_coef: tuple[str, Any] | None = None,
     coef2: tuple[str | None, tuple[str, Any] | None] = (None, None),
+    den: tuple[str | None, tuple[str, Any] | None] = (None, None),
 ):
     """Wire the ``Scan(op=AFFINE)`` node reading both buffers and writing ``out`` directly.
 
@@ -5702,8 +5895,9 @@ def emit_affine_scan(
     """
     out_desc = sdfg.arrays[info.out_name]
     write_start = symbolic.simplify(info.iter_start + info.k_w)
-    second_order = info.coef2_code is not None
-    node = Scan(name=f"{state.label}_op", op=ScanOp.LINEAR2 if second_order else ScanOp.AFFINE, exclusive=False)
+    second_order = info.coef2_code is not None and info.den_code is None
+    op = ScanOp.MOEBIUS if info.den_code is not None else ScanOp.LINEAR2 if second_order else ScanOp.AFFINE
+    node = Scan(name=f"{state.label}_op", op=op, exclusive=False)
     # Set after construction: ``stride`` is a Property, and Scan's ``__init__`` forwards its
     # keyword arguments to CodeNode, which has no such parameter.
     node.stride = info.stride
@@ -5775,8 +5969,10 @@ def emit_affine_scan(
 
     wire(INPUT_CONNECTOR_NAME, delta_buf, direct_delta)
     wire(COEF_CONNECTOR_NAME, coef_buf, direct_coef)
-    if second_order:
+    if info.coef2_code is not None:
         wire(COEF2_CONNECTOR_NAME, *coef2)
+    if info.den_code is not None:
+        wire(DEN_CONNECTOR_NAME, *den)
     if info.reverse:
         emit_reversed_store(state, sdfg, node, info, trip)
         return

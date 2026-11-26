@@ -330,8 +330,8 @@ def value_scan(node: scan_node.Scan, xp: str, seed: str | None, stride: str) -> 
 def scan(o: Operands) -> str:
     node = o.node
     strided = not symbolic.equal_valued(1, node.stride)
-    if node.op is scan_node.ScanOp.LINEAR2:
-        raise NotImplementedError(f"{node.label}: a second-order linear scan has no CuPy form")
+    if node.op in (scan_node.ScanOp.LINEAR2, scan_node.ScanOp.MOEBIUS):
+        raise NotImplementedError(f"{node.label}: a {node.op.value} scan has no CuPy form")
     if (node.chains != 1 and strided) or not symbolic.equal_valued(1, node.segments):
         raise NotImplementedError(f"{node.label}: the CuPy scan takes unit-stride chains or one strided chain")
     return "\n".join(chain_scan(o, chain) for chain in range(node.chains))

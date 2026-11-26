@@ -215,6 +215,85 @@ inline gpuError_t inclusive_linear2(const E* c1, const E* c2, const E* d, const 
   return gpuGetLastError();
 }
 
+/// The linear-fractional recurrence ``out[k] = (p1[k]*out[k-1] + p0[k]) / (q1[k]*out[k-1] + q0[k])``: a cub scan
+/// over projective 2x2 matrices, each product rescaled by its largest entry (the same map at any scale).
+template <typename E>
+struct moebius_map {
+  E m00, m01, m10, m11;
+};
+
+/// ``y`` applied AFTER ``x``: the product ``My Mx``, rescaled.
+template <typename E>
+struct moebius_compose {
+  __host__ __device__ __forceinline__ moebius_map<E> operator()(const moebius_map<E>& x,
+                                                                 const moebius_map<E>& y) const {
+    moebius_map<E> m{y.m00 * x.m00 + y.m01 * x.m10, y.m00 * x.m01 + y.m01 * x.m11, y.m10 * x.m00 + y.m11 * x.m10,
+                     y.m10 * x.m01 + y.m11 * x.m11};
+    E big = fabs(m.m00);
+    big = fmax(big, fabs(m.m01));
+    big = fmax(big, fabs(m.m10));
+    big = fmax(big, fabs(m.m11));
+    if (big == static_cast<E>(0)) return m;
+    return moebius_map<E>{m.m00 / big, m.m01 / big, m.m10 / big, m.m11 / big};
+  }
+};
+
+namespace detail {
+
+/// Element ``k``'s matrix; element 0 absorbs the seed and comes out constant (``[[0, v0], [0, v1]]``), so every
+/// composed prefix is constant and its value is ``m01 / m11``.
+template <typename E, typename S>
+__global__ void moebius_pack_kernel(const E* __restrict__ p1, const E* __restrict__ p0, const E* __restrict__ q1,
+                                    const E* __restrict__ q0, moebius_map<E>* __restrict__ m,
+                                    const S* __restrict__ seed_ptr, E seed_val, long long n) {
+  const long long k = (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x;
+  if (k >= n) return;
+  const E zero = static_cast<E>(0);
+  if (k == 0) {
+    const E s = (seed_ptr != nullptr) ? static_cast<E>(seed_ptr[0]) : seed_val;
+    m[0] = moebius_map<E>{zero, p1[0] * s + p0[0], zero, q1[0] * s + q0[0]};
+  } else {
+    m[k] = moebius_map<E>{p1[k], p0[k], q1[k], q0[k]};
+  }
+}
+
+template <typename E>
+__global__ void moebius_unpack_kernel(const moebius_map<E>* __restrict__ m, E* __restrict__ out, long long n) {
+  const long long k = (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x;
+  if (k < n) out[k] = m[k].m01 / m[k].m11;
+}
+
+}  // namespace detail
+
+/// ``out[k]`` of the linear-fractional recurrence over ``k in [0, n)`` on ``stream``, entered with ``out[-1]`` from
+/// ``seed_ptr`` (device-resident) or, when it is null, ``seed_val``. Scratch as in :func:`inclusive_affine`.
+template <typename E, typename S>
+inline gpuError_t inclusive_moebius(const E* p1, const E* p0, const E* q1, const E* q0, const S* seed_ptr,
+                                    E seed_val, E* out, long long n, gpuStream_t stream) {
+  using M = moebius_map<E>;
+  if (n <= 0) return gpuSuccess;
+  moebius_compose<E> op;
+  std::size_t cub_bytes = 0;
+  gpuError_t err = ::gpucub::DeviceScan::InclusiveScan(nullptr, cub_bytes, static_cast<M*>(nullptr),
+                                                       static_cast<M*>(nullptr), op, n, stream);
+  if (err != gpuSuccess) return err;
+  const std::size_t map_bytes = ((static_cast<std::size_t>(n) * sizeof(M)) + 255u) & ~static_cast<std::size_t>(255u);
+  void* scratch = ::dace::cub::get_scratch<::dace::cub::ScanTag>(map_bytes + cub_bytes, stream, &err);
+  if (scratch == nullptr) return (err != gpuSuccess) ? err : gpuErrorMemoryAllocation;
+  M* maps = reinterpret_cast<M*>(scratch);
+  void* workspace = static_cast<char*>(scratch) + map_bytes;
+
+  const int threads = 256;
+  const unsigned blocks = static_cast<unsigned>((n + threads - 1) / threads);
+  detail::moebius_pack_kernel<E, S><<<blocks, threads, 0, stream>>>(p1, p0, q1, q0, maps, seed_ptr, seed_val, n);
+  err = gpuGetLastError();
+  if (err != gpuSuccess) return err;
+  err = ::gpucub::DeviceScan::InclusiveScan(workspace, cub_bytes, maps, maps, op, n, stream);
+  if (err != gpuSuccess) return err;
+  detail::moebius_unpack_kernel<E><<<blocks, threads, 0, stream>>>(maps, out, n);
+  return gpuGetLastError();
+}
+
 }  // namespace cuda_scan
 }  // namespace dace
 

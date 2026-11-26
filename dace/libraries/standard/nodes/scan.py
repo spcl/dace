@@ -80,6 +80,8 @@ INIT_CONNECTOR_NAME = "_scan_init"
 COEF_CONNECTOR_NAME = "_scan_coef"
 #: Wired only when ``op is ScanOp.LINEAR2``: the coefficient ``c2`` of the ``out[k-2]`` term.
 COEF2_CONNECTOR_NAME = "_scan_coef2"
+#: Wired only when ``op is ScanOp.MOEBIUS``: the constant ``q0`` of the denominator.
+DEN_CONNECTOR_NAME = "_scan_den"
 
 
 def in_connector(chain: int = 0) -> str:
@@ -126,6 +128,11 @@ class ScanOp(enum.Enum):
     #: Reads ``_scan_coef`` and ``_scan_coef2``, and ``_scan_init`` holds ``(out[-2], out[-1])``.
     #: Inclusive, single-chain and unit-stride: the CPU, sequential, pure and CUDA expansions.
     LINEAR2 = "linear2"
+    #: ``out[k] = (p1[k] * out[k-1] + p0[k]) / (q1[k] * out[k-1] + q0[k])`` -- the first-order linear-fractional
+    #: (Moebius) recurrence. Its carry is the projective 2x2 matrix ``[[p1, p0], [q1, q0]]``, composed as a
+    #: product rescaled by its largest entry. ``_scan_coef`` is ``p1``, ``_scan_in`` is ``p0``, ``_scan_coef2`` is
+    #: ``q1``, ``_scan_den`` is ``q0`` and ``_scan_init`` holds ``out[-1]``. Inclusive, single-chain, unit-stride.
+    MOEBIUS = "moebius"
 
 
 #: Map op enum to the suffix of the OpenMP-scan function in ``dace/scan.hpp``.
@@ -213,9 +220,9 @@ def _validate_chain(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain:
             f"single-chain host expansions."
         )
     coef_edges = [e for e in state.in_edges(node) if e.dst_conn == coef_connector(chain)]
-    if node.op is ScanOp.LINEAR2:
+    if node.op in (ScanOp.LINEAR2, ScanOp.MOEBIUS):
         validate_linear2(node, state, sdfg, out_desc)
-    if node.op in (ScanOp.AFFINE, ScanOp.LINEAR2):
+    if node.op in (ScanOp.AFFINE, ScanOp.LINEAR2, ScanOp.MOEBIUS):
         if len(coef_edges) != 1:
             raise ValueError(
                 f"Scan node {node.label}: ``op={node.op.name}`` requires exactly one "
@@ -261,19 +268,21 @@ def _validate_chain(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain:
 
 
 def validate_linear2(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, out_desc) -> None:
-    """The second-order shape: one inclusive unit-stride chain, ``_scan_coef2`` beside ``_scan_coef``, two seeds."""
+    """The second-order and linear-fractional shapes: one inclusive unit-stride chain, ``_scan_coef2`` (and for
+    ``MOEBIUS`` ``_scan_den``) beside ``_scan_coef``, and the seeds (two, or one for ``MOEBIUS``)."""
+    op = node.op.name
     if node.chains != 1 or node.exclusive or segmented(node) or not symbolic.equal_valued(1, node.stride):
-        raise ValueError(f"Scan node {node.label}: ``op=LINEAR2`` is inclusive, single-chain and unit-stride.")
-    coef2 = [e for e in state.in_edges(node) if e.dst_conn == COEF2_CONNECTOR_NAME]
+        raise ValueError(f"Scan node {node.label}: ``op={op}`` is inclusive, single-chain and unit-stride.")
+    operands = [COEF2_CONNECTOR_NAME] + ([DEN_CONNECTOR_NAME] if node.op is ScanOp.MOEBIUS else [])
+    # Each extra operand the op reads: one edge, of the accumulator's dtype
+    for conn in operands:
+        wired = [e for e in state.in_edges(node) if e.dst_conn == conn]
+        if len(wired) != 1 or sdfg.arrays[required(wired[0].data.data)].dtype != out_desc.dtype:
+            raise ValueError(f"Scan node {node.label}: ``op={op}`` needs one ``{conn}`` of the output dtype.")
+    seeds = 1 if node.op is ScanOp.MOEBIUS else 2
     init = [e for e in state.in_edges(node) if e.dst_conn == INIT_CONNECTOR_NAME]
-    if len(coef2) != 1 or sdfg.arrays[required(coef2[0].data.data)].dtype != out_desc.dtype:
-        raise ValueError(
-            f"Scan node {node.label}: ``op=LINEAR2`` needs one ``{COEF2_CONNECTOR_NAME}`` of the output dtype."
-        )
-    if len(init) != 1 or symbolic.equal(required(init[0].data.subset).num_elements(), 2) is False:
-        raise ValueError(
-            f"Scan node {node.label}: ``op=LINEAR2`` needs ``{INIT_CONNECTOR_NAME}`` = (out[-2], out[-1])."
-        )
+    if len(init) != 1 or symbolic.equal(required(init[0].data.subset).num_elements(), seeds) is False:
+        raise ValueError(f"Scan node {node.label}: ``op={op}`` needs {seeds} seed(s) in ``{INIT_CONNECTOR_NAME}``.")
 
 
 def linear2_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, out_desc, parallel: bool) -> nodes.Tasklet:
@@ -308,6 +317,66 @@ def linear2_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, out_de
         code=code,
         language=dace.Language.CPP,
     )
+
+
+def moebius_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, out_desc, parallel: bool) -> nodes.Tasklet:
+    """The linear-fractional recurrence: the blocked runtime call, or the naked loop."""
+    n_expr = _resolve_length(node, state, sdfg)
+    p1, p0, q1, q0, o, init = (
+        COEF_CONNECTOR_NAME,
+        INPUT_CONNECTOR_NAME,
+        COEF2_CONNECTOR_NAME,
+        DEN_CONNECTOR_NAME,
+        OUTPUT_CONNECTOR_NAME,
+        INIT_CONNECTOR_NAME,
+    )
+    # The sequential form walks the positions in order, one division each
+    if parallel:
+        code = f"::dace::scan::inclusive_moebius({p1}, {p0}, {q1}, {q0}, {o}, static_cast<long>({n_expr}), {init});"
+    else:
+        ctype = out_desc.dtype.ctype
+        code = (
+            f"{{ const long _n = static_cast<long>({n_expr});\n"
+            f"  {ctype} _x = {init};\n"
+            f"  for (long _k = 0; _k < _n; ++_k) {{\n"
+            f"      _x = ({p1}[_k] * _x + {p0}[_k]) / ({q1}[_k] * _x + {q0}[_k]);\n"
+            f"      {o}[_k] = _x;\n"
+            f"  }}\n"
+            f"}}"
+        )
+    return nodes.Tasklet(
+        node.name,
+        inputs=dict.fromkeys([p0, p1, q1, q0, init]),
+        outputs={o: None},
+        code=code,
+        language=dace.Language.CPP,
+    )
+
+
+def moebius_pure_sdfg(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> dace.SDFG:
+    """:func:`moebius_tasklet`'s loop as SDFG components: one accumulator, seeded from ``_scan_init``."""
+    nsdfg = dace.SDFG(f"{node.label}_pure")
+    # Each wired connector of the libnode: an array of the nested SDFG
+    for edge in [*state.in_edges(node), *state.out_edges(node)]:
+        operand_array(nsdfg, edge.dst_conn if edge.dst is node else edge.src_conn, edge, sdfg)
+    n = symbolic.symstr(
+        required(next(e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME).data.subset).num_elements()
+    )
+    acc = accumulator(nsdfg, 0)
+    seed = seed_state(nsdfg, 0, acc, "init", "0")
+    reads = {
+        X: Memlet(element(nsdfg, INPUT_CONNECTOR_NAME, SCAN_INDEX)),
+        COEF: Memlet(element(nsdfg, COEF_CONNECTOR_NAME, SCAN_INDEX)),
+        COEF2: Memlet(element(nsdfg, COEF2_CONNECTOR_NAME, SCAN_INDEX)),
+        DEN: Memlet(element(nsdfg, DEN_CONNECTOR_NAME, SCAN_INDEX)),
+        ACC: Memlet(f"{acc}[0]"),
+    }
+    writes = {NEXT: Memlet(f"{acc}[0]"), Y: Memlet(element(nsdfg, OUTPUT_CONNECTOR_NAME, SCAN_INDEX))}
+    code = f"{Y} = ({COEF} * {ACC} + {X}) / ({COEF2} * {ACC} + {DEN})\n{NEXT} = {Y}"
+    loop = counted_loop("scan_0", SCAN_INDEX, "0", n, "1")
+    chain_blocks(loop, [tasklet_state(nsdfg, "step_0", code, reads, writes)])
+    chain_blocks(nsdfg, [seed, loop])
+    return nsdfg
 
 
 def linear2_pure_sdfg(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> dace.SDFG:
@@ -1079,6 +1148,9 @@ class ExpandSequential(ExpandTransformation):
         if node.op is ScanOp.LINEAR2:
             refuse_widening(node, in_desc, out_desc, "op=LINEAR2")
             return linear2_tasklet(node, state, sdfg, out_desc, parallel=False)
+        if node.op is ScanOp.MOEBIUS:
+            refuse_widening(node, in_desc, out_desc, "op=MOEBIUS")
+            return moebius_tasklet(node, state, sdfg, out_desc, parallel=False)
         if node.op is ScanOp.AFFINE:
             refuse_widening(node, in_desc, out_desc, "op=AFFINE")
             if _is_length_one(node, state):
@@ -1138,6 +1210,8 @@ CLASS_INDEX = "scan_r"
 X, ACC, NEXT, Y, COEF = "__scan_x", "__scan_acc", "__scan_next", "__scan_y", "__scan_coef"
 #: The second accumulator, its update and the second coefficient of ``op=LINEAR2``.
 ACC2, NEXT2, COEF2 = "__scan_acc2", "__scan_next2", "__scan_coef2"
+#: The denominator constant of ``op=MOEBIUS``.
+DEN = "__scan_den"
 
 
 def accumulator(nsdfg: dace.SDFG, chain: int) -> str:
@@ -1271,6 +1345,9 @@ class ExpandPure(ExpandTransformation):
         if node.op is ScanOp.LINEAR2:
             refuse_widening(node, in_desc, out_desc, "op=LINEAR2")
             return linear2_pure_sdfg(node, state, sdfg)
+        if node.op is ScanOp.MOEBIUS:
+            refuse_widening(node, in_desc, out_desc, "op=MOEBIUS")
+            return moebius_pure_sdfg(node, state, sdfg)
         if node.op is ScanOp.AFFINE:
             refuse_widening(node, in_desc, out_desc, "op=AFFINE")
             if _is_length_one(node, state):
@@ -1332,6 +1409,9 @@ class ExpandCPU(ExpandTransformation):
         if node.op is ScanOp.LINEAR2:
             refuse_widening(node, in_desc, out_desc, "op=LINEAR2")
             return linear2_tasklet(node, state, sdfg, out_desc, parallel=True)
+        if node.op is ScanOp.MOEBIUS:
+            refuse_widening(node, in_desc, out_desc, "op=MOEBIUS")
+            return moebius_tasklet(node, state, sdfg, out_desc, parallel=True)
         if node.op is ScanOp.AFFINE:
             refuse_widening(node, in_desc, out_desc, "op=AFFINE")
             if _is_length_one(node, state):
@@ -1490,6 +1570,44 @@ def linear2_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, o
     )
 
 
+def moebius_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, out_desc) -> nodes.Tasklet:
+    """The linear-fractional recurrence on the device: a cub scan over projective 2x2 matrices of
+    ``dace::cuda_scan``; the seed reaches the wrapper as a device pointer or a host value, as in
+    :func:`affine_cuda_tasklet`."""
+    seed = required(seed_desc(node, state, sdfg, 0))
+    on_device = seed.storage in GPU_RESIDENT_STORAGES
+    e_ctype = out_desc.dtype.base_type.ctype
+    s_ctype = seed.dtype.base_type.ctype
+    seed_ptr = INIT_CONNECTOR_NAME if on_device else f"static_cast<const {s_ctype}*>(nullptr)"
+    seed_val = f"static_cast<{e_ctype}>(0)" if on_device else f"static_cast<{e_ctype}>({INIT_CONNECTOR_NAME})"
+    wrapper = f"__dace_scan_moebius_{global_code_id(sdfg, state, node)}"
+    params = (
+        f"const {e_ctype}* __sc_p1, const {e_ctype}* __sc_p0, const {e_ctype}* __sc_q1, const {e_ctype}* __sc_q0, "
+        f"const {s_ctype}* __sc_seed_ptr, {e_ctype} __sc_seed_val, {e_ctype}* __sc_out, long long __sc_n, "
+        f"gpuStream_t __sc_stream"
+    )
+    prototype = f"DACE_EXPORTED gpuError_t {wrapper}({params});"
+    sdfg.append_global_code(prototype + "\n")
+    sdfg.append_global_code(
+        f"{prototype}\n"
+        f"gpuError_t {wrapper}({params}) {{\n"
+        f"    return ::dace::cuda_scan::inclusive_moebius<{e_ctype}, {s_ctype}>(\n"
+        f"        __sc_p1, __sc_p0, __sc_q1, __sc_q0, __sc_seed_ptr, __sc_seed_val, __sc_out, __sc_n, __sc_stream);\n"
+        f"}}\n",
+        "cuda",
+    )
+    inputs = dict.fromkeys([INPUT_CONNECTOR_NAME, COEF_CONNECTOR_NAME, COEF2_CONNECTOR_NAME, DEN_CONNECTOR_NAME])
+    inputs[INIT_CONNECTOR_NAME] = dtypes.pointer(seed.dtype.base_type) if on_device else None
+    code = (
+        f"DACE_GPU_CHECK({wrapper}({COEF_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME}, {COEF2_CONNECTOR_NAME}, "
+        f"{DEN_CONNECTOR_NAME}, {seed_ptr}, {seed_val}, {OUTPUT_CONNECTOR_NAME}, "
+        f"({_resolve_length(node, state, sdfg)}), __dace_current_stream));"
+    )
+    return nodes.Tasklet(
+        node.name, inputs=inputs, outputs={OUTPUT_CONNECTOR_NAME: None}, code=code, language=dace.Language.CPP
+    )
+
+
 def batched_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, out_desc) -> nodes.Tasklet:
     """Many independent scans over one buffer in a fixed number of launches: the ``s`` residue classes of a
     strided scan, or the consecutive rows of a segmented one.
@@ -1560,8 +1678,8 @@ def block_refusal(node: "Scan", state: dace.SDFGState | None = None, sdfg: dace.
     strided = not symbolic.equal_valued(1, node.stride)
     if segmented(node):
         return "segmented scans are not supported."
-    if node.op is ScanOp.LINEAR2:
-        return "op=LINEAR2 has no block collective; the CUDA expansion lowers it."
+    if node.op in (ScanOp.LINEAR2, ScanOp.MOEBIUS):
+        return f"op={node.op.name} has no block collective; the CUDA expansion lowers it."
     if node.op is ScanOp.AFFINE and (node.exclusive or node.chains != 1):
         return "op=AFFINE is inclusive and single-chain."
     if strided and node.chains != 1:
@@ -1758,6 +1876,9 @@ class ExpandCUDA(ExpandTransformation):
         if node.op is ScanOp.LINEAR2:
             refuse_widening(node, in_desc, out_desc, "op=LINEAR2")
             return linear2_cuda_tasklet(node, state, sdfg, out_desc)
+        if node.op is ScanOp.MOEBIUS:
+            refuse_widening(node, in_desc, out_desc, "op=MOEBIUS")
+            return moebius_cuda_tasklet(node, state, sdfg, out_desc)
         if node.op is ScanOp.AFFINE:
             refuse_unsupported_affine_flags(node)
             if _is_length_one(node, state):
@@ -2032,10 +2153,12 @@ class Scan(nodes.LibraryNode):
         # ``_scan_coef`` is part of the node's shape, not an optional extra like ``_scan_init``:
         # an affine scan with no coefficients is not a scan of some other kind, it is unwired.
         conns = {in_connector(c): None for c in range(chains)}
-        if op in (ScanOp.AFFINE, ScanOp.LINEAR2):
+        if op in (ScanOp.AFFINE, ScanOp.LINEAR2, ScanOp.MOEBIUS):
             conns.update({coef_connector(c): None for c in range(chains)})
-        if op is ScanOp.LINEAR2:
+        if op in (ScanOp.LINEAR2, ScanOp.MOEBIUS):
             conns[COEF2_CONNECTOR_NAME] = None
+        if op is ScanOp.MOEBIUS:
+            conns[DEN_CONNECTOR_NAME] = None
         super().__init__(name, *args, inputs=conns, outputs={out_connector(c): None for c in range(chains)}, **kwargs)
         self.op = op
         self.exclusive = exclusive
