@@ -1,9 +1,7 @@
 name: fortran
 
-# DaCe through its Fortran frontend, the separate dace-fortran package: the tests marked `fortran`. tests/fortran holds
-# small programs; tests/corpus/velocity runs ICON velocity tendencies end to end on the CPU: ConfigPropagation bakes the
-# namelist configuration into one external SDFG per combination, every variant is parallelized and compared bit for
-# bit against gfortran. The pipeline stops before GPU offloading.
+# DaCe through its Fortran frontend, the separate dace-fortran package: the tests marked `fortran` in tests/fortran,
+# small programs. dace-fortran's own CI runs the application corpus.
 
 on:
   push:
@@ -21,9 +19,9 @@ concurrency:
 env:
   UV_FROZEN: 1 # sync without updating uv.lock
   UV_NO_DEV: 1 # don't install dev dependency group by default
-  # The dace-fortran commit the frontend comes from (main, to be tagged v1.1). A commit, so a dace-fortran push cannot
+  # The dace-fortran commit the frontend comes from (v1.3-fixes, to be tagged v1.4). A commit, so a dace-fortran push cannot
   # change what this job tests.
-  DACE_FORTRAN_REF: 69b52d5b512939b47391cb7bca3439afe3e80693
+  DACE_FORTRAN_REF: 0621456935002164473567bdd161685b44f986d7
   LLVM_VERSION: '22'
   OMPI_MCA_pml: ob1
   OMPI_MCA_btl: self,vader
@@ -76,7 +74,6 @@ jobs:
       run: |
         export NOSTATUSBAR=1
         export DACE_cache=unique
-        export DACE_FORTRAN_ROOT="$PWD/dace-fortran"
         ulimit -s 65536 || true
         uv run pytest --tb=short --timeout_method thread --timeout=3600 -p no:cacheprovider -m fortran \
-          tests/fortran tests/corpus/velocity
+          tests/fortran
