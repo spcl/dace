@@ -4,13 +4,13 @@
 import math
 from typing import Any
 
-from dace import SDFG, properties, symbolic
+from dace import SDFG, data, properties, symbolic
 from dace.sdfg import propagation
 from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.interstate.move_loop_into_map import MoveLoopIntoMap, lane_maps
+from dace.transformation.interstate.move_loop_into_map import MoveLoopIntoMap, analyze_lanes, lane_maps
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.minimize_stride_permutation import score_indexed_strides, score_to_float
 from dace.transformation.passes.parallelization_prep import DEFAULT_UNROLL_LIMIT, _constant_trip_count
@@ -49,6 +49,24 @@ def repeats_body(loop: LoopRegion) -> bool:
     """Whether ``loop``'s iterator appears nowhere in its body, so every iteration runs the same body again."""
     used = [block.free_symbols for block in loop.nodes()] + [edge.data.free_symbols for edge in loop.edges()]
     return all(loop.loop_variable not in names for names in used)
+
+
+def slices_on_plain_lanes(loop: LoopRegion) -> bool:
+    """GPU: whether ``loop``'s body, refused by the plain lane analysis, passes the analysis over every shared axis
+    with the lanes the plain one would take: every top-level map spans the lanes in all its dimensions, so the thread
+    grid is the same, and only the code outside the maps covers a slice per lane along the other dimensions. A map
+    keeping a dimension inside its lane would shrink the grid, and a view would alias across it: both refuse."""
+    sdfg = loop.sdfg
+    if analyze_lanes(loop, sdfg).refusal is None:
+        return False
+    facts = analyze_lanes(loop, sdfg, True, True)
+    if facts.refusal is not None or facts.transparent:
+        return False
+    # Over the lane maps: each must take every dimension as a lane
+    if any(len(facts.dims[entry]) != len(entry.map.range) for state, entry in facts.lanes):
+        return False
+    # Over the containers each state of the body accesses: none may be a view
+    return not any(isinstance(node.desc(sdfg), data.View) for state in loop.states() for node in state.data_nodes())
 
 
 def launches_saved(loop: LoopRegion) -> float:
@@ -136,7 +154,10 @@ class MoveLoopIntoMapGated(ppl.Pass):
         # A CPU loop that only repeats its body (time steps) indexes nothing, so moving it into the maps changes no
         # stride and saves a fork/join per iteration; its lanes are the axis its maps share, copies included.
         repeat = not gpu and not short and repeats_body(loop)
-        options = {"cfg_body": gpu or short or repeat, "lane_axis": repeat}
+        # A GPU body whose code outside the maps covers a slice per lane (a reseed of several levels) keeps the plain
+        # lanes but takes the analysis over every shared axis.
+        slices = gpu and slices_on_plain_lanes(loop)
+        options = {"cfg_body": gpu or short or repeat, "lane_axis": repeat or slices, "shared_axes": slices}
         if not MoveLoopIntoMap.can_be_applied_to(loop.sdfg, options=options, loop=loop):
             return False
         if not gpu and not (short or repeat or interchange_lowers_stride(loop, loop.sdfg)):
