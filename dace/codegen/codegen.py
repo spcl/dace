@@ -177,6 +177,12 @@ def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
     :param validate: If True, validates the SDFG before generating the code.
     :return: List of code objects that correspond to files to compile.
     """
+    # Lowering is not program history; recorded, the first expansion deep-copies the SDFG into ``orig_sdfg``
+    with config.set_temporary("store_history", value=False):
+        return lower_and_generate_code(sdfg, validate)
+
+
+def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
     from dace.codegen.target import TargetCodeGenerator  # Avoid import loop
 
     # Before compiling, validate SDFG correctness

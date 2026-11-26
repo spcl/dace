@@ -366,6 +366,35 @@ def test_plain_window_replaces_symbols_at_once():
     assert dealias._plain_window(edge.data, sdfg.arrays["A"], inner.arrays["a"], node)
 
 
+def test_convert_widens_a_window_read_by_a_symbol_mapping():
+    """A nest bound to ``s = a[3]`` must read the same element once ``a`` is the whole parent container."""
+    sdfg = dace.SDFG("window_read_by_symbol_mapping")
+    sdfg.add_array("A", [4, 8], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    leaf = dace.SDFG("leaf")
+    leaf.add_symbol("s", dace.float64)
+    leaf.add_array("o", [1], dace.float64)
+    leaf_state = leaf.add_state()
+    write = leaf_state.add_tasklet("write", {}, {"x"}, "x = s")
+    leaf_state.add_edge(write, "x", leaf_state.add_write("o"), None, Memlet("o[0]"))
+    mid = dace.SDFG("mid")
+    mid.add_array("a", [8], dace.float64)
+    mid.add_array("b", [1], dace.float64)
+    mid_state = mid.add_state()
+    leaf_node = mid_state.add_nested_sdfg(leaf, {}, {"o"}, symbol_mapping={"s": "a[3]"})
+    mid_state.add_edge(leaf_node, "o", mid_state.add_write("b"), None, Memlet("b[0]"))
+    state = sdfg.add_state()
+    mid_node = state.add_nested_sdfg(mid, {"a"}, {"b"})
+    state.add_edge(state.add_read("A"), None, mid_node, "a", Memlet("A[2, 0:8]"))
+    state.add_edge(mid_node, "b", state.add_write("B"), None, Memlet("B[0]"))
+
+    dealias.convert_legacy_nested_sdfgs(sdfg)
+
+    assert tuple(mid.arrays["a"].shape) == (4, 8), mid.arrays["a"].shape
+    assert str(leaf_node.symbol_mapping["s"]) == "a[2, 3]", leaf_node.symbol_mapping
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_inline_windowed_connector()
     test_inline_windowed_connector_simplify()
@@ -377,3 +406,4 @@ if __name__ == "__main__":
     test_convert_window_under_shadowing_map_parameter()
     test_convert_rejects_different_read_and_write_windows()
     test_plain_window_replaces_symbols_at_once()
+    test_convert_widens_a_window_read_by_a_symbol_mapping()

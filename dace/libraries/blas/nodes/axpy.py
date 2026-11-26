@@ -97,7 +97,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
     def __init__(self, name, a=None, n=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_x", "_y"}, outputs={"_res"}, **kwargs)
-        self.a = a or dace.symbolic.symbol("a")
+        self.a = dace.symbolic.symbol("a") if a is None else a
         self.n = n or dace.symbolic.symbol("n")
 
     def compare(self, other):
