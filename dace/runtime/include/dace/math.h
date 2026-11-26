@@ -710,18 +710,6 @@ namespace dace
         static DACE_CONSTEXPR typeless_nan nan{};
         //////////////////////////////////////////////////////
 
-        // Real and imaginary part of a std::complex or thrust::complex (tasklet re(z) / im(z)).
-        template<typename T>
-        DACE_CONSTEXPR DACE_HDFI auto re(const T& z) -> decltype(z.real())
-        {
-            return z.real();
-        }
-        template<typename T>
-        DACE_CONSTEXPR DACE_HDFI auto im(const T& z) -> decltype(z.imag())
-        {
-            return z.imag();
-        }
-
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T exp(const T& a)
         {

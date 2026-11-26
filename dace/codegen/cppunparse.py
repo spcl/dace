@@ -1010,8 +1010,8 @@ class CPPUnparser:
         "PyMod": "py_mod",
         "FtnModulo": "ftn_modulo",
     }
-    # Modulo spellings, the numeric casts of the symbolic engine and complex components, by their C++ function
-    renamed_calls = {**modulo_calls, **TYPECAST_CPP, "re": "dace::math::re", "im": "dace::math::im"}
+    # Modulo spellings and the numeric casts of the symbolic engine, by their C++ function
+    renamed_calls = {**modulo_calls, **TYPECAST_CPP}
 
     def _Call(self, t: ast.Call):
         # ``z.real()`` is already the C++ member call: ``_Attribute`` would add a second pair of parentheses
