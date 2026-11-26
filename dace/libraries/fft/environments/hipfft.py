@@ -2,7 +2,6 @@
 """hipFFT environment for the ROCm backend of the :mod:`dace.libraries.fft` library nodes."""
 
 import dace.library
-from dace.libraries import hip_dialect
 from dace.libraries.fft.environments.plans import FFTPlans
 
 
@@ -24,7 +23,3 @@ class hipFFT:
     dependencies = [FFTPlans]
 
     cmake_includes: list[str] = []
-
-    @staticmethod
-    def is_installed():
-        return hip_dialect.find_rocm_library("hipfft") is not None

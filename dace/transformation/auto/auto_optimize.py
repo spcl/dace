@@ -372,9 +372,8 @@ def find_fast_library(device: dtypes.DeviceType) -> list[str]:
         if backend == "cuda":
             return ["cuBLAS", "cuSolverDn", "GPUAuto", "cuTENSOR", "cuFFT", "CUB", "pure"]
         elif backend == "hip":
-            # hipFFT ships apart from ROCm, so it is listed only where installed
-            fft = ["hipFFT"] if fft_environments.hipFFT.is_installed() else []
-            return ["rocBLAS", "GPUAuto", *fft, "pure"]
+            # The ROCm packages that ship rocBLAS ship hipFFT too
+            return ["rocBLAS", "GPUAuto", "hipFFT", "pure"]
         else:
             return ["GPUAuto", "pure"]
     elif device == dtypes.DeviceType.CPU:
