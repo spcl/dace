@@ -64,6 +64,25 @@ def guarded_strided_reference(a, b, c, d):
             a[i] = c[i] + d[i] * b[i]
 
 
+@dace.program
+def swap_through_scalar(
+    a: dace.float64[L], b: dace.float64[L], c: dace.float64[L], d: dace.float64[L], e: dace.float64[L]
+):
+    # Over every element: each statement reads, in its own iteration, what the other then overwrites
+    for i in range(L):
+        s = b[i] + c[i]
+        b[i] = a[i] + d[i]
+        a[i] = s * e[i]
+
+
+def swap_through_scalar_reference(a, b, c, d, e):
+    # Over every element, sequentially: the oracle for the swapped reads
+    for i in range(a.shape[0]):
+        s = b[i] + c[i]
+        b[i] = a[i] + d[i]
+        a[i] = s * e[i]
+
+
 def canonical_loops(prog) -> tuple[dace.SDFG, list[str]]:
     sdfg = prog.to_sdfg(simplify=True)
     with contextlib.redirect_stdout(io.StringIO()):
@@ -112,7 +131,15 @@ def test_guarded_strided_store_splits_store_first():
     check_numerics(sdfg, guarded_strided_reference, "abcd")
 
 
+# Reproducer: TSVC s1251 miscompiled once the statements were ordered by a path between them as wholes: each reads, in
+# the same iteration, the element the other then stores (a, then b), so only the access pairs themselves can order them
+def test_reads_each_overwritten_by_the_other_keep_the_order():
+    sdfg, loops = canonical_loops(swap_through_scalar)
+    check_numerics(sdfg, swap_through_scalar_reference, "abcde")
+
+
 if __name__ == "__main__":
     test_strided_overlap_splits_into_maps()
     test_mixed_direction_stays_sequential()
     test_guarded_strided_store_splits_store_first()
+    test_reads_each_overwritten_by_the_other_keep_the_order()

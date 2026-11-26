@@ -1128,8 +1128,10 @@ def statement_groups(state: SDFGState, shared: list[nodes.AccessNode]) -> list[l
     return [grp + [n for n in shared if any(e.dst in grp for e in state.out_edges(n))] for grp in groups.values()]
 
 
-def statement_accesses(state: SDFGState, grp: list[nodes.Node]) -> list[tuple[str, subsets.Subset | None, bool]] | None:
-    """``(container, subset, is_write)`` per value edge at an access node of ``grp``; ``None`` on a WCR store."""
+def statement_accesses(
+    state: SDFGState, grp: list[nodes.Node]
+) -> list[tuple[str, subsets.Subset | None, bool, nodes.AccessNode]] | None:
+    """``(container, subset, is_write, node)`` per value edge at an access node of ``grp``; ``None`` on a WCR store."""
     found = []
     # Over the statement's nodes: its access nodes hold every load and store it makes
     for n in grp:
@@ -1139,59 +1141,35 @@ def statement_accesses(state: SDFGState, grp: list[nodes.Node]) -> list[tuple[st
         for e in value_edges(state.in_edges(n)):
             if e.data.wcr is not None:
                 return None
-            found.append((n.data, e.data.get_dst_subset(e, state), True))
+            found.append((n.data, e.data.get_dst_subset(e, state), True, n))
         # Over the edges out of the node: its loads
-        found.extend((n.data, e.data.get_src_subset(e, state), False) for e in value_edges(state.out_edges(n)))
+        found.extend((n.data, e.data.get_src_subset(e, state), False, n) for e in value_edges(state.out_edges(n)))
     return found
-
-
-def runs_before(
-    state: SDFGState, grp: list[nodes.Node], other: list[nodes.Node], shared: list[nodes.AccessNode]
-) -> bool:
-    """Whether a path of ``state`` (ordering edges included) leads from ``grp`` into ``other``, not starting at an input
-    both statements read."""
-    targets = dict.fromkeys(other)
-    # Over the statement's nodes: a shared input feeds both statements and orders neither, so no path starts there
-    stack = [n for n in grp if n not in shared]
-    seen: dict[nodes.Node, None] = {}
-    # Over the nodes reachable from the statement, depth-first: reaching ``other`` orders the two
-    while stack:
-        node = stack.pop()
-        if node in seen:
-            continue
-        seen[node] = None
-        # Over the node's successors: one in ``other`` ends the search
-        for e in state.out_edges(node):
-            if e.dst in targets:
-                return True
-            stack.append(e.dst)
-    return False
 
 
 def pair_order(
     state: SDFGState,
     loop: LoopRegion,
-    grps: tuple[list[nodes.Node], list[nodes.Node]],
     accesses: tuple[list, list],
-    shared: list[nodes.AccessNode],
 ) -> int | None:
     """``1`` when every conflicting instance pair of two statements runs the first statement's instance first, ``-1``
     when every one runs the second's first, ``0`` without a conflict, ``None`` when mixed or undecidable."""
     first_first = second_first = False
     # Over the first statement's accesses: each may conflict with one of the second's
-    for data, sub1, write1 in accesses[0]:
+    for data, sub1, write1, node1 in accesses[0]:
         # Over the second statement's accesses: a pair on one container with a store conflicts
-        for other, sub2, write2 in accesses[1]:
+        for other, sub2, write2, node2 in accesses[1]:
             if data != other or not (write1 or write2):
                 continue
             directions = conflict_directions(sub1, sub2, loop)
             if directions is None:
                 return None
             if 0 in directions:
-                # Same iteration: the dataflow path between the statements orders them
-                if runs_before(state, grps[0], grps[1], shared):
+                # Same iteration: a path between the two conflicting accesses themselves orders them; a path between
+                # the statements says nothing about this container (each may read what the other then overwrites)
+                if node1 is not node2 and node2 in OrderedSet(state.bfs_nodes(node1)):
                     first_first = True
-                elif runs_before(state, grps[1], grps[0], shared):
+                elif node1 is not node2 and node1 in OrderedSet(state.bfs_nodes(node2)):
                     second_first = True
                 else:
                     return None
@@ -1233,7 +1211,7 @@ def ordered_statements(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> l
         acc_i, acc_j = accesses[i], accesses[j]
         if acc_i is None or acc_j is None:
             return None
-        order = pair_order(state, loop, (groups[i], groups[j]), (acc_i, acc_j), shared)
+        order = pair_order(state, loop, (acc_i, acc_j))
         if order is None:
             return None
         if order:
