@@ -1309,10 +1309,12 @@ def read_before_written(
         flags = {} if flags is None else flags
         for block in cfg_analysis.blockorder_topological_sort(region, recursive=False, ignore_nonstate_blocks=False):
             single_entry = region.in_degree(block) == 1
+            # Assignments on the edges into this block drop the guards and flags they overwrite
             for edge in region.in_edges(block):
                 if edge.data.assignments:
                     if guarded:
                         forget(guarded, set(edge.data.assignments))
+                    # A flag set unconditionally on the single entry keeps a meaning; any other assignment loses it
                     for name, value in edge.data.assignments.items():
                         if single_entry and edge.data.is_unconditional():
                             flags[name] = None if value.strip() in FALSE_LITERALS else set(written)
@@ -1326,6 +1328,7 @@ def read_before_written(
                 if isinstance(block, SDFGState):
                     set_flags(block, written, flags)
                 else:
+                    # A block outside the candidates' reach still changes flags it assigns
                     for name in changed_by(block):
                         flags.pop(name, None)
                 continue
@@ -1366,6 +1369,7 @@ def read_before_written(
                     if cond is not None and earlier:
                         branch_written |= skips_first(cond.as_string)
                     if cond is not None and position == 0:
+                        # A flag the first branch needs true brings the stores made when it was set
                         for flag in true_flags(cond.as_string) & flags.keys():
                             branch_written |= flags[flag] or set()
                     branch_flags = dict(flags)
@@ -1396,6 +1400,7 @@ def read_before_written(
             elif isinstance(block, LoopRegion):
                 inner = dict(guarded)
                 forget(inner, changed_by(block))
+                # Flags a nested loop changes have no fixed value in its body
                 for name in changed_by(block):
                     flags.pop(name, None)
                 pushed = bool(iteration_stores(block, written, inner))
@@ -1421,6 +1426,7 @@ def true_flags(cond: str) -> set[str]:
     ``f == True``."""
     test = symbolic.pystr_to_symbolic(cond)
     names: set[str] = set()
+    # Each conjunct that names a flag on its own requires that flag nonzero
     for part in sp.And.make_args(test):
         if isinstance(part, sp.Symbol):
             names.add(str(part))
@@ -1453,6 +1459,7 @@ def constant_false_write(state: SDFGState, dn: nodes.AccessNode) -> bool | None:
 def set_flags(state: SDFGState, written: set[Store], flags: dict[str, set[Store] | None]) -> None:
     """Record in ``flags`` each flag ``state`` writes: ``None`` for a constant false, else what ``written`` holds now.
     A write whose value cannot be told drops the flag."""
+    # Each written container in the state is a flag candidate
     for dn in state.data_nodes():
         if state.in_degree(dn) == 0 or not is_written(state, dn):
             continue
@@ -1471,7 +1478,11 @@ def merge_guards(
     """``guarded`` after every arm of an exhaustive conditional: a condition an arm recorded keeps what each arm
     guarantees once it is true, its own record there or else all that arm wrote (graupel's ``IF (t < tmelt)`` arm
     stores ``ice_dep`` under ``IF (sig)``, the other arm stores it outright, so a later ``IF (sig)`` reads it)."""
-    for key in {key for path in paths for key in path if key not in guarded or path[key] is not guarded[key]}:
+    # Each condition some arm recorded anew, once, in arm order (a dict keeps the order deterministic)
+    changed = dict.fromkeys(
+        key for path in paths for key in path if key not in guarded or path[key] is not guarded[key]
+    )
+    for key in changed:
         reads = next(path[key][0] for path in paths if key in path)
         stores = [path[key][1] if key in path else arm for path, arm in zip(paths, written)]
         guarded[key] = (reads, set.intersection(*stores))
@@ -1481,7 +1492,8 @@ def merge_flags(flags: dict[str, set[Store] | None], paths: list[dict[str, set[S
     """``flags`` after paths meet: a flag keeps a meaning only when every path gives it one; a path where it is false
     adds nothing, the others keep what they all stored."""
     merged: dict[str, set[Store] | None] = {}
-    for name in set.intersection(*(set(p) for p in paths)) if paths else set():
+    # Each flag every path knows, in the first path's order
+    for name in [name for name in paths[0] if all(name in p for p in paths[1:])] if paths else []:
         stores = [p[name] for p in paths if p[name] is not None]
         merged[name] = set.intersection(*stores) if stores else None
     flags.clear()

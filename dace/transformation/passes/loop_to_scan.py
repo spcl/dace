@@ -5347,6 +5347,7 @@ def affine_wire_is_private(state: SDFGState, node: nodes.AccessNode, chain: list
     twins = [n for n in state.data_nodes() if n.data == node.data]
     if len(twins) != 2 or not all(n in chain for n in twins) or _acc_used_outside_body(state.sdfg, node.data, state):
         return False
+    # Each ordering edge out of the accumulator must lead to a pure read or the chain's end
     for edge in state.out_edges(node):
         target = edge.dst
         if not edge.data.is_empty():

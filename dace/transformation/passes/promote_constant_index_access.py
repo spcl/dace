@@ -452,6 +452,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
         if not any(p.free_symbols for p in points):
             return points
         facts = loop.sdfg.facts()
+        # Every pair of written points must be provably distinct, else no point is promoted
         for first, second in itertools.combinations(points, 2):
             if subsets.intersects(first, second, facts) is not symbolic.Truth.FALSE:
                 return []

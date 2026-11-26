@@ -720,6 +720,7 @@ def lanes_apart(
         return False
     loop_var = symbolic.pystr_to_symbolic(region.loop_variable)
     indices = []
+    # Each slot must be one point bound to an index expression of the loop variable
     for slot in (first, second):
         if len(slot) != 1:
             return False

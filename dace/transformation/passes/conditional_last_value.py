@@ -39,6 +39,7 @@ class LastValueStore(NamedTuple):
 def chain(loop: LoopRegion) -> list[ControlFlowBlock] | None:
     """``loop``'s blocks when they run one after another over unconditional edges that assign nothing."""
     order = [loop.start_block]
+    # Follow the single out-edge until the chain ends; a branch, an assignment or a cycle refuses
     while loop.out_degree(order[-1]) == 1:
         edge = loop.out_edges(order[-1])[0]
         if edge.data.assignments or not edge.data.is_unconditional() or edge.dst in order:
@@ -51,7 +52,9 @@ def accessed(states: list[SDFGState]) -> tuple[set[str], set[str]]:
     """The containers ``states`` read and those they write."""
     read: set[str] = set()
     written: set[str] = set()
+    # Collect every container each state reads or writes
     for state in states:
+        # An out-edge reads the container, an in-edge writes it
         for node in state.data_nodes():
             if state.out_degree(node) > 0:
                 read.add(node.data)
@@ -78,6 +81,7 @@ def single_store(branch: SDFGState, sdfg: SDFG) -> nodes.AccessNode | None:
 
 def states_of(blocks: list[ControlFlowBlock]) -> list[SDFGState]:
     states = [b for b in blocks if isinstance(b, SDFGState)]
+    # States nested in control-flow blocks count as the block's states
     for block in blocks:
         if not isinstance(block, SDFGState):
             states += [s for r in block.all_control_flow_regions() for s in r.nodes() if isinstance(s, SDFGState)]
@@ -154,23 +158,29 @@ def split_loop(sdfg: SDFG, loop: LoopRegion, found: LastValueStore) -> None:
     memo = {id(b): b for b in loop.nodes()}
     memo.update((id(e.data), e.data) for e in loop.edges())
     second = copy.deepcopy(loop, memo)
+    # The copy keeps the loop's header only; its body is moved in below
     for block in list(second.nodes()):
         second.remove_node(block)
     second.label = f"{loop.label}_after_{found.name}"
     edges = [(a, b, loop.edges_between(a, b)[0].data) for a, b in zip(found.after, found.after[1:])]
+    # The blocks after the store leave the first loop
     for block in found.after:
         loop.remove_node(block)
     head = second.add_state(f"pick_{found.name}", is_start_block=True)
     add_pick(sdfg, head, values, last, point, found.name, held)
+    # Move each later block into the second loop, reading the picked value in place of the scalar
     for block in found.after:
         second.add_node(block)
+        # Access nodes of the scalar now read the picked value
         for node in block.data_nodes():
             if node.data == found.name:
                 node.data = held
+        # Memlets of the scalar now name the picked value
         for edge in block.edges():
             if edge.data.data == found.name:
                 edge.data.data = held
     second.add_edge(head, found.after[0], InterstateEdge())
+    # Restore the edges between the moved blocks
     for a, b, edge_data in edges:
         second.add_edge(a, b, edge_data)
 
@@ -201,6 +211,7 @@ def split_loop(sdfg: SDFG, loop: LoopRegion, found: LastValueStore) -> None:
     )
     keep.add_branch(properties.CodeBlock(f"{symbolic.symstr(end)} >= {symbolic.symstr(start)}"), branch)
     parent.add_node(keep)
+    # The loop's exits now leave from the final pick
     for edge in exits:
         parent.add_edge(keep, edge.dst, edge.data)
         parent.remove_edge(edge)
@@ -223,8 +234,10 @@ class ConditionalLastValue(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Split every loop whose only refusal is a conditional last-value scalar; the number split, or None."""
         split = 0
+        # Each SDFG, nested ones included, holds its own loops
         for owner in list(sdfg.all_sdfgs_recursive()):
             loops = [r for r in owner.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+            # Each loop is split at most once, on its own refusal
             for loop in loops:
                 found = conditional_store(owner, loop)
                 if found is None:

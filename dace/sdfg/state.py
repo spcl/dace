@@ -3274,6 +3274,7 @@ class SymbolResolver:
         node = sdfg.parent_nsdfg_node
         if node is not None and sdfg.parent_sdfg is not None:
             outer = self.sdfg_small(sdfg.parent_sdfg)
+            # A parameter the parent binds only from its own small symbols is small here too
             for name, value in node.symbol_mapping.items():
                 free = {str(x) for x in symbolic.pystr_to_symbolic(value).free_symbols}
                 if free and free <= outer:

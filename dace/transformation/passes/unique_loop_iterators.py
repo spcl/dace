@@ -235,6 +235,7 @@ class UniqueLoopIterators(ppl.Pass):
         # each added state invalidates the SDFG's facts, which every exit value reads (h_psi: 9.5% rebuilding them).
         with memoize_facts(sdfg):
             values = [exit_value(loop) if self.read_after(loop, old) else None for loop, old, ident in plan]
+        # Add the exit-value state after each loop whose old iterator is read later
         for (loop, old, ident), value in zip(plan, values):
             if value is not None:
                 loop.parent_graph.add_state_after(

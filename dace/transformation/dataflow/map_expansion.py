@@ -233,6 +233,7 @@ class MapExpansion(pm.SingleStateTransformation):
         # propagated before it is consolidated: a union taken first replaces each lane's memlet, and a reduction into
         # one column of an array becomes a plain store to the whole row (fuse_elementwise_into_gemv).
         symbols = SymbolResolver()
+        # New scopes innermost first, so each outer scope sees its inner memlets propagated
         for entry, exit_ in zip(reversed(entries), reversed(exits)):
             propagate_node(graph, entry, symbols)
             propagate_node(graph, exit_, symbols)

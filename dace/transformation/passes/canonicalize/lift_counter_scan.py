@@ -311,6 +311,7 @@ class LiftCounterScan(ppl.Pass):
         earlier one)."""
         bumps = [(region, edge, step_of(counter, rhs)) for region, edge, name, rhs in recurrent]
         facts = sdfg.facts()
+        # Every bump must add a proven nonnegative step that is free of the counter and runs unconditionally
         for region, edge, step in bumps:
             if step is None or "[" in step or counter in names_in(step) or not edge.data.is_unconditional():
                 return None
@@ -323,6 +324,7 @@ class LiftCounterScan(ppl.Pass):
         loop or a region that is not one chain."""
         total = sympy.Integer(0)
         block: Any = state
+        # Climb from the access to the loop, summing the bumps that surely ran before it in each enclosing chain
         while block is not loop:
             region = block.parent_graph
             if isinstance(region, ConditionalBlock):
@@ -333,6 +335,7 @@ class LiftCounterScan(ppl.Pass):
             chain = linear_chain(region)
             if chain is None:
                 return None
+            # A bump earlier in the same chain surely ran before the access
             for bump_region, edge, step in bumps:
                 if bump_region is region and chain.index(edge.dst) <= chain.index(block):
                     total = total + symbolic.pystr_to_symbolic(step)
@@ -346,6 +349,7 @@ class LiftCounterScan(ppl.Pass):
         ``P`` that surely ran, with ``d <= 0`` (at most what the iteration has bumped) and ``P + d >= 1``. With every
         step ``>= 0`` the segments of consecutive iterations are then disjoint."""
         facts = sdfg.facts()
+        # Every state that touches a counter-indexed array must keep its accesses inside the iteration's segment
         for state in loop.states():
             accesses = [n for n in state.data_nodes() if n.data in arrays]
             if not accesses:
@@ -353,9 +357,11 @@ class LiftCounterScan(ppl.Pass):
             ran = self.preceding_steps(state, loop, bumps)
             if ran is None or any(state.entry_node(node) is not None for node in accesses):
                 return False
+            # Each access node is checked on its read and write subsets
             for node in accesses:
                 sides = [e.data.get_dst_subset(e, state) for e in state.in_edges(node) if not e.data.is_empty()]
                 sides += [e.data.get_src_subset(e, state) for e in state.out_edges(node) if not e.data.is_empty()]
+                # Some dimension of each subset must sit inside the segment the bumps so far opened
                 for subset in sides:
                     if not isinstance(subset, subsets.Range) or not any(
                         self.index_after_bumps(begin, end, counter, ran, facts) for begin, end, stride in subset.ranges

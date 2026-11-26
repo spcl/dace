@@ -638,8 +638,10 @@ def invariant_branch_storing(loop: LoopRegion, container: str) -> tuple[int, str
     if not holders:
         return None
     guards = set()
+    # Find the conditional that guards each store of the container
     for state in holders:
         region = state.parent_graph
+        # Climb to the nearest conditional inside the loop
         while region is not loop and not isinstance(region, ConditionalBlock):
             region = region.parent_graph
         if region is loop:
@@ -664,8 +666,10 @@ def drop_block(block) -> None:
     """Replace ``block`` with an empty state on the same edges."""
     graph = block.parent_graph
     state = graph.add_state(f"{block.label}_dropped", is_start_block=graph.start_block is block)
+    # The empty state takes over the block's in-edges
     for edge in graph.in_edges(block):
         graph.add_edge(edge.src, state, edge.data)
+    # The empty state takes over the block's out-edges
     for edge in graph.out_edges(block):
         graph.add_edge(state, edge.dst, edge.data)
     graph.remove_node(block)

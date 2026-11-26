@@ -313,6 +313,7 @@ def linear2_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, out_de
 def linear2_pure_sdfg(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> dace.SDFG:
     """:func:`linear2_tasklet`'s loop as SDFG components: two accumulators, seeded from ``_scan_init``."""
     nsdfg = dace.SDFG(f"{node.label}_pure")
+    # Mirror each operand of the library node as an array of the nested SDFG
     for edge in [*state.in_edges(node), *state.out_edges(node)]:
         operand_array(nsdfg, edge.dst_conn if edge.dst is node else edge.src_conn, edge, sdfg)
     n = symbolic.symstr(
