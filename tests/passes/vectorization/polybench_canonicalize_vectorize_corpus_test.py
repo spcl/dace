@@ -39,7 +39,6 @@ PHASES = ("canon_vec",)
 #: ``canon_vec`` comparison alone passes on a refusal, which hands back the un-tiled graph.
 UNTILED_KERNELS = frozenset(
     {
-        "adi",
         "atax",
         "bicg",
         "doitgen",
