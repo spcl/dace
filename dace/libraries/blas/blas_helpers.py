@@ -422,9 +422,10 @@ def add_nested_mapped_tasklet(
     outputs: dict[str, "dace.Memlet"],
 ) -> None:
     """``add_mapped_tasklet`` over ``inner`` nested in a map over ``outer``, whose parameters ``inner``'s ranges may
-    name: a map over a triangle."""
+    name: a map over a triangle. The inner map is sequential: on a GPU, a thread-block map cannot take a range that
+    depends on the outer parameter."""
     outer_entry, outer_exit = state.add_map(label, outer)
-    inner_entry, inner_exit = state.add_map(f"{label}_inner", inner)
+    inner_entry, inner_exit = state.add_map(f"{label}_inner", inner, schedule=dtypes.ScheduleType.Sequential)
     tasklet = state.add_tasklet(label, set(inputs), set(outputs), code)
     if not inputs:
         state.add_nedge(outer_entry, inner_entry, dace.Memlet())
