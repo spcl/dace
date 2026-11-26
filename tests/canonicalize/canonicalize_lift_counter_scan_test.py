@@ -14,6 +14,10 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.lift_counter_scan import INCREMENT_PREFIX, MIN_PREFIX, LiftCounterScan
 from dace.transformation.passes.canonicalize.loop_to_stream_compaction import MASK_PREFIX
+from tests.corpus import corpus_suite as suite
+from tests.corpus.gpu_offload_corpus_test import canon_gpu
+from tests.corpus.tsvc import tsvc
+from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 
 N = dace.symbol("N", dtype=dace.int64)
 M = dace.symbol("M", dtype=dace.int64)
@@ -420,6 +424,61 @@ def test_a_write_past_its_segment_is_refused():
     assert lifted_alone(segment_overlaps) is None
 
 
+# Reproducer: s123 stayed sequential, CARRIED_SYMBOL j: two bump sites of one counter (LLR tsvc_2_s123)
+@pytest.mark.parametrize("target", ["cpu", "gpu"])
+def test_a_counter_bumped_at_two_sites_scans_the_sum_of_each_iterations_bumps(target: str):
+    kernel = tsvc.collect(name="s123_d_single")[0]
+    sdfg = tsvc.to_sdfg(kernel, f"two_bumps_{target}", simplify=True)
+    canonicalize(sdfg, validate=True, target=target)
+    assert scanned(sdfg) and loops(sdfg) == 0, f"{loops(sdfg)} loops left"
+    arrays, call_kwargs = tsvc.make_inputs(kernel)
+    arrays["c"] -= 0.5  # both branches of the guard
+    want = {name: value.copy() for name, value in arrays.items()}
+    REFERENCES[kernel.name](**want, **call_kwargs)
+    sdfg(**arrays, **call_kwargs)
+    for name, value in arrays.items():
+        assert np.allclose(value, want[name]), name
+
+
+@pytest.mark.gpu
+def test_a_counter_bumped_at_two_sites_runs_on_the_device():
+    ctx = suite.make("tsvc", "s123_d_single")
+    sdfg = suite.build(ctx, canon_gpu, "two_bumps_device")
+    assert scanned(sdfg) and loops(sdfg) == 0, f"{loops(sdfg)} loops left"
+    assert suite.run_matches(ctx, sdfg)
+
+
+@dace.program
+def two_bumps(a: dace.float64[2 * N], b: dace.float64[N], c: dace.float64[N]):
+    j = -1
+    for i in range(N):
+        j = j + 1
+        a[j] = b[i]
+        if c[i] > 0.0:
+            j = j + 1
+            a[j] = c[i]
+
+
+@dace.program
+def two_bumps_reaching_ahead(a: dace.float64[2 * N + 1], b: dace.float64[N], c: dace.float64[N]):
+    j = -1
+    for i in range(N):
+        j = j + 1
+        a[j + 1] = b[i]
+        if c[i] > 0.0:
+            j = j + 1
+            a[j] = c[i]
+
+
+def test_two_bump_sites_lift_alone():
+    assert lifted_alone(two_bumps) == 1
+
+
+def test_two_bump_sites_writing_past_the_bumped_value_are_refused():
+    """``a[j + 1]`` after the first bump is the next iteration's first element when the guard fails."""
+    assert lifted_alone(two_bumps_reaching_ahead) is None
+
+
 if __name__ == "__main__":
     for size in (1, 2, 37, 1000):
         test_a_counter_bumped_every_iteration_becomes_a_scan_and_two_parallel_loops(size)
@@ -443,3 +502,8 @@ if __name__ == "__main__":
     test_a_write_past_its_segment_is_refused()
     test_a_counter_bumped_in_inner_loops_scans_the_sum_of_each_iterations_bumps()
     test_a_constant_bump_in_a_rectangular_nest_is_left_to_the_induction_variables()
+    for target in ("cpu", "gpu"):
+        test_a_counter_bumped_at_two_sites_scans_the_sum_of_each_iterations_bumps(target)
+    test_a_counter_bumped_at_two_sites_runs_on_the_device()
+    test_two_bump_sites_lift_alone()
+    test_two_bump_sites_writing_past_the_bumped_value_are_refused()

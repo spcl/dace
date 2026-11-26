@@ -18,6 +18,10 @@ runs in parallel under ``min(inc) >= 0``, in order otherwise. A constant step is
 substitution closes an unconditional one, and the compaction lift
 (:class:`~dace.transformation.passes.canonicalize.loop_to_stream_compaction.LoopToStreamCompaction`) takes a guarded one.
 A counter read only after the loop is left to the reduction lifts.
+
+A counter bumped at several sites (TSVC s123: ``j = j + 1`` always, again under a guard) sums the steps of the bumps
+each iteration runs into ``inc``; phase 3 keeps the body's own bumps. Every step must be ``>= 0``, and every access
+through the counter lies in ``(c, c + inc]``: after bumps of steps ``P`` it reads ``c + d`` with ``1 - P <= d <= 0``.
 """
 
 import ast
@@ -80,6 +84,8 @@ class CounterMatch(NamedTuple):
     nested: bool = False
     #: The transients the body computes for a test, a bound or a step: phase 1 keeps the dataflow that writes them.
     kept: frozenset[str] = frozenset()
+    #: Several bump sites (TSVC s123): an iteration's increment is the sum of the bumps it runs, each its own step.
+    multi: bool = False
 
 
 def additive_terms(node: ast.expr, sign: int = 1) -> list[tuple[int, ast.expr]]:
@@ -146,7 +152,7 @@ class LiftCounterScan(ppl.Pass):
                 for loop in [r for r in sd.all_control_flow_regions() if isinstance(r, LoopRegion)]:
                     if not attached(loop, sd):
                         continue
-                    match = self.match(sd, loop)
+                    match = self.match(sd, loop) or self.match_several_bumps(sd, loop)
                     if match is not None:
                         self.lift(sd, match)
                         lifted_now += 1
@@ -193,7 +199,7 @@ class LiftCounterScan(ppl.Pass):
         while enclosing is not loop:
             nested = nested or isinstance(enclosing, LoopRegion)
             enclosing = enclosing.parent_graph
-        derived = self.derived_symbols(edges, counter, bump) - {temp}
+        derived = self.derived_symbols(edges, counter, [bump]) - {temp}
         if temp is not None and (
             any(temp in state.free_symbols for state in loop.states())
             or sum(temp in names_in(v) for edge in edges for v in edge.data.assignments.values()) != 1
@@ -244,6 +250,130 @@ class LiftCounterScan(ppl.Pass):
             kept,
         )
 
+    def match_several_bumps(self, sdfg: SDFG, loop: LoopRegion) -> CounterMatch | None:
+        """The match of one counter bumped at several sites, each ``c = c + s_k`` with ``s_k >= 0`` proven.
+
+        Every access through the counter must lie in its iteration's segment ``(c, c + inc]``: the steps of the bumps
+        that precede it on its path bound it from below, its own index from above (:meth:`several_segments_are_own`).
+        """
+        if not loop.loop_variable or loop.inverted or get_loop_stride(loop) != 1:
+            return None
+        if get_init_assignment(loop) is None or get_loop_end(loop) is None:
+            return None
+        if any(isinstance(b, (BreakBlock, ContinueBlock, ReturnBlock)) for b in loop.all_control_flow_blocks()):
+            return None
+        located = [(region, edge) for region in loop.all_control_flow_regions() for edge in region.edges()]
+        edges = [edge for region, edge in located]
+        recurrent = [
+            (region, edge, name, rhs)
+            for region, edge in located
+            for name, rhs in edge.data.assignments.items()
+            if name in names_in(rhs)
+        ]
+        counter = recurrent[0][2] if len(recurrent) > 1 else None
+        if counter is None or any(entry[2] != counter for entry in recurrent) or counter == loop.loop_variable:
+            return None
+        if counter not in sdfg.symbols or sdfg.symbols[counter] not in dtypes.INTEGER_TYPES:
+            return None
+        bumps = self.nonnegative_bumps(sdfg, counter, recurrent)
+        if bumps is None or sum(1 for edge in edges for name in edge.data.assignments if name == counter) != len(bumps):
+            return None
+        if self.derived_symbols(edges, counter, [edge for region, edge, step in bumps]):
+            return None
+        assigned = {name for edge in edges for name in edge.data.assignments} | {loop.loop_variable}
+        if all(
+            symbolic.pystr_to_symbolic(step).is_number and self.closable(loop, region, assigned)
+            for region, edge, step in bumps
+        ):
+            return None  # constant bumps no guard skips: the induction-variable substitution closes them
+        if counter in self.conditions_read(loop):
+            return None
+        kept = self.control_slice(sdfg, loop, {counter})
+        states = list(loop.states())
+        if kept is None or not any(counter in {str(f) for f in s.free_symbols} for s in states):
+            return None
+        cursor_arrays = self.cursor_arrays(states, counter, set())
+        if cursor_arrays is None:
+            return None
+        if cursor_arrays and not (
+            self.several_segments_are_own(sdfg, loop, bumps, counter, cursor_arrays)
+            and self.parallel_with_contract(loop, counter, cursor_arrays)
+        ):
+            return None
+        first = bumps[0]
+        return CounterMatch(
+            loop, counter, str(first[2]), first[1].data, frozenset(), False, cursor_arrays, kept=kept, multi=True
+        )
+
+    def nonnegative_bumps(self, sdfg: SDFG, counter: str, recurrent: list) -> list | None:
+        """``(region, edge, step)`` per bump ``c = c + s`` of an unconditional edge, or ``None`` unless every ``s`` is
+        a plain expression free of the counter and proven ``>= 0`` (else a later segment could move back over an
+        earlier one)."""
+        bumps = [(region, edge, step_of(counter, rhs)) for region, edge, name, rhs in recurrent]
+        facts = sdfg.facts()
+        for region, edge, step in bumps:
+            if step is None or "[" in step or counter in names_in(step) or not edge.data.is_unconditional():
+                return None
+            if not symbolic.provably_nonnegative(symbolic.pystr_to_symbolic(step), facts):
+                return None
+        return bumps
+
+    def preceding_steps(self, state: SDFGState, loop: LoopRegion, bumps: list) -> Any | None:
+        """The sum of the steps of the bumps every path to ``state`` runs in its iteration; ``None`` under an inner
+        loop or a region that is not one chain."""
+        total = sympy.Integer(0)
+        block: Any = state
+        while block is not loop:
+            region = block.parent_graph
+            if isinstance(region, ConditionalBlock):
+                block = region
+                continue
+            if region is None or (isinstance(region, LoopRegion) and region is not loop):
+                return None
+            chain = linear_chain(region)
+            if chain is None:
+                return None
+            for bump_region, edge, step in bumps:
+                if bump_region is region and chain.index(edge.dst) <= chain.index(block):
+                    total = total + symbolic.pystr_to_symbolic(step)
+            block = region
+        return total
+
+    def several_segments_are_own(
+        self, sdfg: SDFG, loop: LoopRegion, bumps: list, counter: str, arrays: frozenset[str]
+    ) -> bool:
+        """Whether every access to ``arrays`` lies in ``(c_in, c_in + inc]``: at ``c + d`` after bumps of steps
+        ``P`` that surely ran, with ``d <= 0`` (at most what the iteration has bumped) and ``P + d >= 1``. With every
+        step ``>= 0`` the segments of consecutive iterations are then disjoint."""
+        facts = sdfg.facts()
+        for state in loop.states():
+            accesses = [n for n in state.data_nodes() if n.data in arrays]
+            if not accesses:
+                continue
+            ran = self.preceding_steps(state, loop, bumps)
+            if ran is None or any(state.entry_node(node) is not None for node in accesses):
+                return False
+            for node in accesses:
+                sides = [e.data.get_dst_subset(e, state) for e in state.in_edges(node) if not e.data.is_empty()]
+                sides += [e.data.get_src_subset(e, state) for e in state.out_edges(node) if not e.data.is_empty()]
+                for subset in sides:
+                    if not isinstance(subset, subsets.Range) or not any(
+                        self.index_after_bumps(begin, end, counter, ran, facts) for begin, end, stride in subset.ranges
+                    ):
+                        return False
+        return True
+
+    def index_after_bumps(self, begin: Any, end: Any, counter: str, ran: Any, facts: Any) -> bool:
+        """Whether ``[begin, end]``, through the counter ``c``, stays in ``[c - ran + 1, c]``."""
+        c = symbolic.pystr_to_symbolic(counter)
+        begin, end, c, ran = symbolic.equalize_symbols_across(begin, end, c, ran)
+        if c not in begin.free_symbols | end.free_symbols:
+            return False
+        first, last = sympy.expand(begin - c), sympy.expand(end - c)
+        if c in first.free_symbols or c in last.free_symbols:
+            return False
+        return symbolic.provably_le(1 - ran, first, facts) and symbolic.provably_le(last, 0, facts)
+
     def closable(self, loop: LoopRegion, region: ControlFlowRegion, assigned: set[str]) -> bool:
         """Whether a constant bump in ``region`` runs a number of times per iteration of ``loop`` that the
         induction-variable substitution closes: no guard between, and inner loops whose bounds the iteration does not
@@ -291,7 +421,7 @@ class LiftCounterScan(ppl.Pass):
                 found.append((region, edge, name, source_rhs, tree.id))
         return found
 
-    def derived_symbols(self, edges: list, counter: str, bump: Any) -> set[str]:
+    def derived_symbols(self, edges: list, counter: str, bumps: list[Any]) -> set[str]:
         """The symbols the loop assigns from the counter, directly or through another such symbol."""
         derived: set[str] = set()
         changed = True
@@ -299,7 +429,7 @@ class LiftCounterScan(ppl.Pass):
             changed = False
             for edge in edges:
                 for name, rhs in edge.data.assignments.items():
-                    if edge is bump and name == counter:
+                    if name == counter and any(edge is bump for bump in bumps):
                         continue
                     if name not in derived and names_in(rhs) & (derived | {counter}):
                         derived.add(name)
@@ -540,13 +670,15 @@ class LiftCounterScan(ppl.Pass):
                     continue
                 kept: dict[str, str] = {}
                 for name, rhs in assignments.items():
-                    if name == source:
+                    if name == source and match.multi:
+                        kept[step] = f"{step} + ({step_of(match.counter, rhs)})"
+                    elif name == source:
                         # Nested, each bump adds its step to the iteration's sum
                         kept[step] = f"{step} + ({match.step})" if match.nested else match.step
                     elif name not in match.derived and name != match.counter:
                         kept[name] = rhs
                 edge.data.assignments = kept
-                if source not in assignments or match.nested:
+                if source not in assignments or match.nested or match.multi:
                     continue
                 store = region.add_state(f"{copied.label}_store")
                 self.store(store, increments, step, position)
@@ -560,7 +692,7 @@ class LiftCounterScan(ppl.Pass):
             renames[name] = sdfg.find_new_symbol(name)
             sdfg.add_symbol(renames[name], sdfg.symbols[name])
         copied.replace_dict(renames)
-        if match.nested:
+        if match.nested or match.multi:
             # The sum starts at 0 and is stored once the iteration's body is done
             start = copied.start_block
             zero = copied.add_state(f"{copied.label}_sum", is_start_block=True)
