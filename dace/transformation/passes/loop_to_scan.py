@@ -18,10 +18,9 @@ This pass detects that shape and replaces the loop with three sibling states:
 3. **seed-add** -- a ``Map`` that writes ``out[i+1, jl, ...] = seed + _scan_out_<out>[i]``
    where ``seed = out[start, jl, ...]`` (the pre-loop value at the read end of the chain).
 
-The body's per-iteration delta is captured *as the second tasklet input* in v1 -- a
-clean array slice ``delta[i + d, ...]``. Multi-tasklet body shapes whose delta is a
-computed expression (e.g. ``out[i+1] = out[i] + a[i] * b[i] + c[i]``) are out of scope
-for v1 and stay as a follow-up; the matcher refuses those.
+A computed delta (``out[i+1] = out[i] + a[i] * b[i] + c[i]``) is built into the delta
+buffer first. A first-order LINEAR recurrence (``a[i] = a[i] + a[i-1] * b[i]``) lifts
+as ``op=AFFINE``: :func:`match_affine_scan` proves linearity in the carry symbolically.
 
 Compatibility with :class:`~dace.transformation.passes.loop_to_reduce.LoopToReduce`:
 ``LoopToReduce``'s tasklet matcher refuses any loop whose write subset depends on the
@@ -5183,6 +5182,11 @@ def affine_value_walk(state: SDFGState, sdfg: SDFG, write_edge, out_name: str, l
         subset = edge.data.subset
         if isinstance(edge.src, nodes.AccessNode) and edge.src.data == out_name:
             reads.append(edge)
+            if reads_the_pre_loop_value(edge, loop_var, k_w):
+                check_leaf_is_one_element(edge)
+                name = f"{_AFFINE_LEAF_PREFIX}{len(leaves)}"
+                leaves[name] = _AffineLeaf(edge.src, edge.src_conn, edge.data)
+                return symbolic.pystr_to_symbolic(name)
             axis, k_r, others, coef = _classify_subset(subset, loop_var)
             # The shape checks come first and short-circuit: a subset this does not classify hands
             # back ``k_r = None``, and the distance below would raise on it rather than refuse.
@@ -5242,6 +5246,10 @@ def affine_value_walk(state: SDFGState, sdfg: SDFG, write_edge, out_name: str, l
             ):
                 chain.append(src)
                 return value_of(in_edges[0])
+            writer = split_access_writer(state, src) if desc is not None and src.data != out_name else None
+            if writer is not None and len(state.out_edges(src)) == 1:
+                chain.extend([src, writer])
+                return value_of(next(e for e in state.in_edges(writer) if not e.data.is_empty()))
             return leaf_for(edge)
         if not isinstance(src, nodes.Tasklet):
             raise _AffineRefused(f"{type(src).__name__} in the value chain")
@@ -5267,6 +5275,61 @@ def affine_value_walk(state: SDFGState, sdfg: SDFG, write_edge, out_name: str, l
     if not carry:
         return None
     return expr, leaves, chain, carry[0][0], carry[0][1], reads
+
+
+def split_access_writer(state: SDFGState, node: nodes.AccessNode) -> nodes.AccessNode | None:
+    """The twin AccessNode a frontend-split transient read takes its value from, or ``None``.
+
+    Two reads of one carrier (``a[i] + a[i-1]*b[i]``) leave each slice transient as TWO nodes: one
+    written by the copy, one read by the tasklet, joined only by an ordering edge. The value walk
+    follows that edge as a wire when the twin is written exactly once and read by nothing else.
+    """
+    if not state.sdfg.arrays[node.data].transient or any(not e.data.is_empty() for e in state.in_edges(node)):
+        return None
+    twins = [e.src for e in state.in_edges(node) if isinstance(e.src, nodes.AccessNode) and e.src.data == node.data]
+    if len(twins) != 1:
+        return None
+    writer = twins[0]
+    written = [e for e in state.in_edges(writer) if not e.data.is_empty()]
+    if len(written) != 1 or any(not e.data.is_empty() for e in state.out_edges(writer)):
+        return None
+    return writer
+
+
+def affine_wire_is_private(state: SDFGState, node: nodes.AccessNode, chain: list[Any]) -> bool:
+    """:func:`_transient_is_a_wire`, extended to the split pair :func:`split_access_writer` walks.
+
+    The pair's writer may also order pure reads (no data written into them): dropping it with the
+    chain orders nothing that writes.
+    """
+    if _transient_is_a_wire(state, node):
+        return True
+    twins = [n for n in state.data_nodes() if n.data == node.data]
+    if len(twins) != 2 or not all(n in chain for n in twins) or _acc_used_outside_body(state.sdfg, node.data, state):
+        return False
+    for edge in state.out_edges(node):
+        target = edge.dst
+        if not edge.data.is_empty():
+            continue
+        pure_read = isinstance(target, nodes.AccessNode) and all(e.data.is_empty() for e in state.in_edges(target))
+        if target not in chain and not pure_read:
+            return False
+    return len([e for e in state.out_edges(node) if not e.data.is_empty()]) <= 1
+
+
+def reads_the_pre_loop_value(edge, loop_var: str, k_w: Any) -> bool:
+    """Whether a carrier read sits at or AHEAD of the write (``out[i + k]``, constant ``k >= k_w``).
+
+    No earlier iteration writes that element, so the read sees the value the loop entered with:
+    an ordinary per-iteration operand of the recurrence, not a carry. TSVC s321
+    ``a[i] = a[i] + a[i-1]*b[i]`` reads ``a[i]`` that way, and its delta is that read.
+    """
+    subset = edge.data.subset if edge.data.data == edge.src.data else edge.data.other_subset
+    axis, k_r, others, coef = _classify_subset(subset, loop_var)
+    if axis != 0 or coef != 1 or others or k_r is None:
+        return False
+    ahead = symbolic.simplify(k_r - k_w)
+    return isinstance(ahead, (int, sympy.Integer)) and int(ahead) >= 0
 
 
 def split_linear_in_carry(expr: Any, carry: str) -> tuple | None:
@@ -5361,7 +5424,7 @@ def match_affine_scan(loop: LoopRegion, sdfg: SDFG) -> _AffineScan | None:
         return None
     if _read_survives_rewrite(loop, sdfg, {out_name}, reads):
         return None
-    if not all(_transient_is_a_wire(state, n) for n in chain if isinstance(n, nodes.AccessNode)):
+    if not all(affine_wire_is_private(state, n, chain) for n in chain if isinstance(n, nodes.AccessNode)):
         return None
     return _AffineScan(
         out_name=out_name,
