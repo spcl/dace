@@ -10,9 +10,11 @@ import sympy
 import dace
 from dace import subsets, symbolic
 from dace.cpf_lowering import LoopClass
+from dace.ordered import OrderedSet
 from dace.sdfg import graph, propagation, validation
 from dace.sdfg import nodes as nodes
 from dace.sdfg import utils as sdutils
+from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.state import SymbolResolver
 from dace.transformation import helpers
 from dace.transformation.dataflow.redundant_array import same_extent
@@ -146,6 +148,28 @@ def same_range(first: tuple, second: tuple) -> bool:
     return same_extent(tuple(first), tuple(second))
 
 
+def replace_in_scope(state: dace.SDFGState, entry_node: nodes.MapEntry, mapping: dict[str, str]) -> None:
+    """Rename ``mapping`` in the scope of ``entry_node`` and in the descriptors of the data it accesses that read one
+    of the names: a map parameter sizes a transient local to its scope (a per-iteration buffer of ``M - i``), and
+    ``replace_dict`` of a subgraph leaves the SDFG's descriptors alone. Safe for swaps (``{'i': 'j', 'j': 'i'}``)."""
+    scope = state.scope_subgraph(entry_node=entry_node)
+    accessed = OrderedSet(node.data for node in scope.data_nodes())
+    # Over the data the scope accesses: those whose shape, strides or size read a renamed name
+    descs = [
+        state.sdfg.arrays[name]
+        for name in accessed
+        if not mapping.keys().isdisjoint(str(sym) for sym in state.sdfg.arrays[name].free_symbols)
+    ]
+
+    def rename(step: dict[str, str]) -> None:
+        scope.replace_dict(step)
+        # Over the descriptors that read a renamed name
+        for desc in descs:
+            replace_properties_dict(desc, step)
+
+    symbolic.safe_replace(mapping=mapping, replace_callback=rename)
+
+
 def rename_map_parameters(
     first_map: nodes.Map,
     second_map: nodes.Map,
@@ -177,17 +201,13 @@ def rename_map_parameters(
     if len(repl_dict) == 0:
         return
 
-    second_map_scope = state.scope_subgraph(entry_node=second_map_entry)
     rename_capturing_inner_params(state, second_map_entry, set(repl_dict.values()))
     # Why is this thing in symbolic and not in replace?
     # The rename parses the new names from strings; type them as the second map declares the old ones.
     declared = second_map_entry.new_symbols(state.sdfg, state, state.symbols_defined_at(second_map_entry))
     renamed_dtypes = {repl_dict[p]: dtype for p, dtype in declared.items() if p in repl_dict}
     with symbolic.serialization_symbol_dtypes(renamed_dtypes, inherit=True):
-        symbolic.safe_replace(
-            mapping=repl_dict,
-            replace_callback=second_map_scope.replace_dict,
-        )
+        replace_in_scope(state, second_map_entry, repl_dict)
 
     # For some odd reason the replace function does not modify the range and
     #  parameter of the map, so we will do it the hard way.
@@ -266,7 +286,7 @@ def rename_capturing_inner_params(state: dace.SDFGState, map_entry: nodes.MapEnt
             taken.add(repl[param])
         declared = node.new_symbols(state.sdfg, state, state.symbols_defined_at(node))
         with symbolic.serialization_symbol_dtypes({repl[p]: declared[p] for p in repl}, inherit=True):
-            symbolic.safe_replace(mapping=repl, replace_callback=state.scope_subgraph(entry_node=node).replace_dict)
+            replace_in_scope(state, node, repl)
         node.map.params = [repl.get(p, p) for p in node.map.params]
 
 
