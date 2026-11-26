@@ -108,6 +108,8 @@ def one_product_per_column(x: dace.float64[N], y: dace.float64[N], mass: dace.fl
     acc[:, 1] = (dy * dy) @ mass
 
 
+# Reproducer: MapExpansion consolidated a scope before propagating it, so the first column's reduction stored the whole
+# row (cannot convert 'double' to 'double*', extended CI on 4a8111116c)
 def test_products_into_two_columns_of_one_array_both_fuse_away_their_matrix():
     """nbody's ``ax``, ``ay``, ``az`` are columns of one array. The second product names a column the first does not
     touch, so it is no read of what its own init zeroes: both lower, and no ``N x N`` matrix is left."""

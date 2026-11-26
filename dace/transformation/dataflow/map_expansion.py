@@ -229,13 +229,15 @@ class MapExpansion(pm.SingleStateTransformation):
             )
 
         # Only the new scopes need memlets: the expanded map covers the same iterations, so what crosses its own
-        # entry and exit (and every scope around it) is unchanged. Innermost first, each scope from the one inside it.
+        # entry and exit (and every scope around it) is unchanged. Innermost first, each scope from the one inside it,
+        # propagated before it is consolidated: a union taken first replaces each lane's memlet, and a reduction into
+        # one column of an array becomes a plain store to the whole row (fuse_elementwise_into_gemv).
         symbols = SymbolResolver()
         for entry, exit_ in zip(reversed(entries), reversed(exits)):
-            consolidate_edges_scope(graph, entry, symbols)
-            consolidate_edges_scope(graph, exit_, symbols)
             propagate_node(graph, entry, symbols)
             propagate_node(graph, exit_, symbols)
+            consolidate_edges_scope(graph, entry, symbols)
+            consolidate_edges_scope(graph, exit_, symbols)
         # Two connectors of one container the inner scopes merged change what crosses the map: propagate outwards.
         if consolidate_edges_scope(graph, map_entry, symbols) + consolidate_edges_scope(graph, map_exit, symbols):
             propagate_memlets_scope(sdfg, graph, graph.scope_tree()[map_entry], symbols=symbols)
