@@ -66,7 +66,6 @@ UNTILED_KERNELS = frozenset(
         "tests_corpus_tsvc_2_5_tsvc_2_5_ext_break_capture",
         "tests_corpus_tsvc_2_5_tsvc_2_5_iv_additive",
         "tests_corpus_tsvc_2_5_tsvc_2_5_iv_multiplicative",
-        "tests_corpus_tsvc_2_5_tsvc_2_5_loop_to_map_overlap_seq",
         "tests_corpus_tsvc_2_5_tsvc_2_5_quasi_affine_reduce_even",
         "tests_corpus_tsvc_2_5_tsvc_2_5_quasi_affine_reduce_odd",
         "tests_corpus_tsvc_2_5_tsvc_2_5_reduce_inner_carry",
