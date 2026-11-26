@@ -3226,6 +3226,9 @@ class SymbolResolver:
             tuple[ControlFlowBlock, ControlFlowBlock | None], list[dict[str, dtypes.typeclass]]
         ] = {}
         self._facts: dict[tuple[ControlFlowBlock, nd.EntryNode | None], symbolic.Facts] = {}
+        #: Facts by what they state, so scopes that state the same (a map and the nest its expansion leaves) share one
+        #: solve
+        self._interned: dict[tuple, symbolic.Facts] = {}
         #: Per loop, what ``derive_facts`` reads of it: the loop, the names it binds and its range, if that holds.
         self._loop_scopes: dict[LoopRegion, tuple[Any, dict[str, Any], list[tuple[str, Any, Any, Any]]]] = {}
         self._data_facts: dict[tuple[ControlFlowBlock, str], tuple[symbolic.DataFact, ...]] = {}
@@ -3300,7 +3303,16 @@ class SymbolResolver:
         None; see ``facts_at``."""
         key = (block, entry)
         if key not in self._facts:
-            self._facts[key] = self.derive_facts(block, entry)
+            facts = self.derive_facts(block, entry)
+            content = (
+                facts.relations,
+                facts.integers,
+                facts.small,
+                facts.parameters,
+                tuple(facts.assumed or ()),
+                facts.fallback,
+            )
+            self._facts[key] = self._interned.setdefault(content, facts)
         return self._facts[key]
 
     def derive_facts(self, block: "ControlFlowBlock", entry: nd.EntryNode | None) -> symbolic.Facts:
