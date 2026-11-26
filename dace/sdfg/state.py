@@ -3267,13 +3267,18 @@ class SymbolResolver:
         return collections.OrderedDict(last[2])
 
     def sdfg_small(self, sdfg: "SDFG") -> frozenset[str]:
-        """The ``SMALL`` names of ``sdfg`` and the SDFGs around it, before any scope rebinds one: a superset of the
-        ``small`` of every ``facts_at`` inside it, from the facts derived once per SDFG."""
-        if sdfg not in self._sdfg_facts:
-            self._sdfg_facts[sdfg] = (sdfg.facts(), self.outer_facts(sdfg))
-        own, outer = self._sdfg_facts[sdfg]
-        outer_small = outer[2]
-        return frozenset(outer_small | own.small)
+        """A superset of the ``small`` of every ``facts_at`` inside ``sdfg``: its own ``SMALL`` names and each name its
+        nested SDFG node maps to an expression over the enclosing SDFG's ones, without deriving any facts (a library
+        expansion asks with a fresh resolver, and the outer facts cost a walk of every enclosing scope)."""
+        names = set(sdfg.symbol_repo.small)
+        node = sdfg.parent_nsdfg_node
+        if node is not None and sdfg.parent_sdfg is not None:
+            outer = self.sdfg_small(sdfg.parent_sdfg)
+            for name, value in node.symbol_mapping.items():
+                free = {str(x) for x in symbolic.pystr_to_symbolic(value).free_symbols}
+                if free and free <= outer:
+                    names.add(name)
+        return frozenset(names)
 
     def facts_at(self, block: "ControlFlowBlock", node: nd.Node | None = None) -> symbolic.Facts:
         """The facts that hold inside ``block`` (inside the body, for a loop), or at ``node`` of the state ``block``: the
