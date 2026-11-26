@@ -711,7 +711,7 @@ def test_set_fast_implementations_lowers_fft_to_the_cpu_vendor():
 
 
 def test_the_gpu_fast_library_list_names_the_vendor_fft():
-    """cuFFT ships with CUDA and is always listed; hipFFT is a separate ROCm package, listed only where installed."""
+    """cuFFT ships with CUDA and hipFFT with the ROCm packages that ship rocBLAS: each is listed on its backend."""
     lists = {}
     for backend in ("cuda", "hip"):
         get_gpu_backend.cache_clear()
@@ -719,7 +719,7 @@ def test_the_gpu_fast_library_list_names_the_vendor_fft():
             lists[backend] = auto_optimize.find_fast_library(dtypes.DeviceType.GPU)
     get_gpu_backend.cache_clear()
     assert "cuFFT" in lists["cuda"] and "hipFFT" not in lists["cuda"]
-    assert ("hipFFT" in lists["hip"]) == fft_environments.hipFFT.is_installed() and "cuFFT" not in lists["hip"]
+    assert "hipFFT" in lists["hip"] and "cuFFT" not in lists["hip"]
 
 
 def test_factor_of_a_computed_length_keeps_the_integer_division():

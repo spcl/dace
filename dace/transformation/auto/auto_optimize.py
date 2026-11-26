@@ -8,13 +8,11 @@ import sympy
 import dace
 from dace import Memlet, config, dtypes, symbolic
 from dace import data as dt
+from dace.libraries.blas.environments import intel_mkl as mkl
 
 # Environments
-from dace.libraries.blas.environments import hipblas, openblas
-from dace.libraries.blas.environments import intel_mkl as mkl
+from dace.libraries.blas.environments import openblas
 from dace.libraries.fft import environments as fft_environments
-from dace.libraries.lapack.environments import hipsolverdn
-from dace.libraries.linalg.environments import hiptensor
 from dace.sdfg import SDFG, infer_types, nodes
 from dace.sdfg import graph as gr
 from dace.sdfg.graph import SubgraphView
@@ -374,15 +372,8 @@ def find_fast_library(device: dtypes.DeviceType) -> list[str]:
         if backend == "cuda":
             return ["cuBLAS", "cuSolverDn", "GPUAuto", "cuTENSOR", "cuFFT", "CUB", "pure"]
         elif backend == "hip":
-            # hipBLAS, hipSOLVER, hipTensor and hipFFT are separate ROCm packages: each is listed only where installed
-            vendor = {
-                "hipBLAS": hipblas.hipBLAS,
-                "hipSolverDn": hipsolverdn.hipSolverDn,
-                "hipTensor": hiptensor.hipTensor,
-                "hipFFT": fft_environments.hipFFT,
-            }
-            order = ["hipBLAS", "hipSolverDn", "GPUAuto", "hipTensor", "hipFFT", "pure"]
-            return [name for name in order if name not in vendor or vendor[name].is_installed()]
+            # The ROCm packages that ship hipBLAS ship hipSOLVER, hipTensor and hipFFT too
+            return ["hipBLAS", "hipSolverDn", "GPUAuto", "hipTensor", "hipFFT", "pure"]
         else:
             return ["GPUAuto", "pure"]
     elif device == dtypes.DeviceType.CPU:

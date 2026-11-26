@@ -26,7 +26,3 @@ class hipBLAS:
     @staticmethod
     def handle_setup_code(node):
         return hip_dialect.to_hip(cuBLAS.handle_setup_code(node), hip_dialect.BLAS)
-
-    @staticmethod
-    def is_installed():
-        return hip_dialect.find_rocm_library("hipblas") is not None
