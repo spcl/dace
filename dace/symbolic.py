@@ -4247,9 +4247,13 @@ def simplify(expr: SymbolicType, facts: Facts | None = None) -> SymbolicType:
         return sympy.Integer(expr)
     if isinstance(expr, sympy.Number):
         return expr
-    # The facts may solve a symbol for a value (``N == 512``); only facts that rewrite nothing leave these unchanged
-    if (facts is None or not facts.substitution) and (_is_plain_symbol(expr) or _is_simplify_fixed_point(expr)):
-        return expr
+    # The facts may solve a symbol for a value (``N == 512``); only facts that rewrite nothing leave these unchanged.
+    # The relations connected to the expression's symbols decide that, as they decide ``simplify_under``: solving all
+    # of a scope's facts (QE h_psi: thousands of map scopes over the SDFG's relations) only to return early cost a
+    # fifth of its build
+    if _is_plain_symbol(expr) or _is_simplify_fixed_point(expr):
+        if facts is None or not facts.about({str(free) for free in expr.free_symbols}).substitution:
+            return expr
     return simplify_under(expr, facts if facts is not None else Facts.none())
 
 
