@@ -2031,17 +2031,14 @@ PyMod = sympy.Mod
 
 
 class CMod(DaceFunction):
-    """C's modulo, the meaning of ``%`` in an SDFG (also Fortran's ``MOD``, ``numpy.fmod``): the quotient is truncated,
-    so the result takes the sign of the dividend (``fmod`` for floating point)."""
+    """C's truncating modulo, the meaning of ``%`` in an SDFG."""
 
     @classmethod
     def eval(cls, x, y):
         if x.is_Number and y.is_Number and y != 0:
-            quotient = x / y
-            return x - y * (sympy.floor(quotient) if quotient >= 0 else sympy.ceiling(quotient))
+            return x - y * sympy.Integer(int(x / y))
         if x.is_nonnegative and y.is_positive:
-            return PyMod(x, y)  # both roundings agree, so simplification sees a single form
-        return None
+            return sympy.Mod(x, y)
 
     def _eval_is_integer(self):
         return self.args[0].is_integer and self.args[1].is_integer
