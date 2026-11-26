@@ -2757,7 +2757,11 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return f"(({self._print(expr.args[0])}) {binop[base]} ({self._print(expr.args[1])}))"
         # ``int_floor`` divides with ``//`` in Python and ``/`` in C++ (the bare name
         # keeps its ``int_floor(a, b)`` spelling in Python so it round-trips).
+        # C's ``/`` truncates and agrees with floor only on a nonnegative dividend and a positive divisor.
         if base == "int_floor" and as_operator:
+            dividend, divisor = expr.args
+            if self.cpp_mode and not (dividend.is_nonnegative and divisor.is_positive):
+                return f"py_floor({self._print(dividend)}, {self._print(divisor)})"
             op = "/" if self.cpp_mode else "//"
             return f"(({self._print(expr.args[0])}) {op} ({self._print(expr.args[1])}))"
         if str(expr.func) == "ipow" and self.cpp_mode:
