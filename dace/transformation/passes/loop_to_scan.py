@@ -5048,6 +5048,9 @@ class _AffineScan(NamedTuple):
     stride: Any
     #: Second order only (``op=LINEAR2``): the coefficient of ``out[i + k_w - 2]``.
     coef2_code: str | None = None
+    #: A reverse sweep ``out[k_w - i] = c(i) * out[k_w + 1 - i] + d(i)``: the scan runs in iteration order into a
+    #: buffer, which a map copies back reversed.
+    reverse: bool = False
 
 
 class _AffineRefused(Exception):
@@ -5160,7 +5163,14 @@ def sign_query(expr, facts: symbolic.Facts) -> tuple[Any, symbolic.Facts]:
 
 
 def affine_value_walk(
-    state: SDFGState, sdfg: SDFG, write_edge, out_name: str, loop_var: str, k_w: Any, max_carries: int = 1
+    state: SDFGState,
+    sdfg: SDFG,
+    write_edge,
+    out_name: str,
+    loop_var: str,
+    k_w: Any,
+    max_carries: int = 1,
+    direction: int = 1,
 ):
     """Compose the whole straight-line chain behind ``write_edge`` into one symbolic expression.
 
@@ -5191,7 +5201,7 @@ def affine_value_walk(
     def leaf_for(edge) -> Any:
         if isinstance(edge.src, nodes.AccessNode) and edge.src.data == out_name:
             reads.append(edge)
-            if not reads_the_pre_loop_value(edge, loop_var, k_w):
+            if not reads_the_pre_loop_value(edge, loop_var, k_w, direction):
                 return carry_leaf(edge)
         check_leaf_is_one_element(edge)
         name = f"{_AFFINE_LEAF_PREFIX}{len(leaves)}"
@@ -5199,7 +5209,7 @@ def affine_value_walk(
         return symbolic.pystr_to_symbolic(name)
 
     def carry_leaf(edge) -> Any:
-        k_r = carry_offset(edge.data.subset, loop_var, k_w, state)
+        k_r = carry_offset(edge.data.subset, loop_var, k_w, state, direction)
         if k_r is None:
             raise _AffineRefused("carrier read is not a positive-distance predecessor")
         k_r = symbolic.simplify(k_r)
@@ -5285,8 +5295,9 @@ def wire_through(state: SDFGState, src: nodes.AccessNode, out_name: str) -> tupl
     return [src, writer], next(e for e in state.in_edges(writer) if not e.data.is_empty())
 
 
-def carry_offset(subset: Any, loop_var: str, k_w: Any, state: SDFGState) -> Any | None:
-    """The offset ``k_r`` of a carrier read ``out[i + k_r]`` that is a carry, or ``None``.
+def carry_offset(subset: Any, loop_var: str, k_w: Any, state: SDFGState, direction: int = 1) -> Any | None:
+    """The offset ``k_r`` of a carrier read ``out[i + k_r]`` that is a carry, or ``None``. A reverse sweep
+    (``direction == -1``) reads ``out[k_r - i]`` after writing ``out[k_w - i]``, so its distance is ``k_r - k_w``.
 
     The shape checks come first and short-circuit: a subset this does not classify hands back
     ``k_r = None``, and the distance below would raise on it rather than refuse.
@@ -5297,9 +5308,9 @@ def carry_offset(subset: Any, loop_var: str, k_w: Any, state: SDFGState) -> Any 
     one writes -- and a distance whose sign is unknown is decided by the caller's specialization.
     """
     axis, k_r, others, coef = _classify_subset(subset, loop_var)
-    if axis != 0 or coef != 1 or others or k_r is None:
+    if axis != 0 or coef != direction or others or k_r is None:
         return None
-    if carry_distance_kind(symbolic.simplify(k_w - k_r), SymbolResolver().facts_at(state)) is None:
+    if carry_distance_kind(symbolic.simplify(direction * (k_w - k_r)), SymbolResolver().facts_at(state)) is None:
         return None
     return k_r
 
@@ -5346,7 +5357,7 @@ def affine_wire_is_private(state: SDFGState, node: nodes.AccessNode, chain: list
     return len([e for e in state.out_edges(node) if not e.data.is_empty()]) <= 1
 
 
-def reads_the_pre_loop_value(edge, loop_var: str, k_w: Any) -> bool:
+def reads_the_pre_loop_value(edge, loop_var: str, k_w: Any, direction: int = 1) -> bool:
     """Whether a carrier read sits at or AHEAD of the write (``out[i + k]``, constant ``k >= k_w``).
 
     No earlier iteration writes that element, so the read sees the value the loop entered with:
@@ -5355,9 +5366,9 @@ def reads_the_pre_loop_value(edge, loop_var: str, k_w: Any) -> bool:
     """
     subset = edge.data.subset if edge.data.data == edge.src.data else edge.data.other_subset
     axis, k_r, others, coef = _classify_subset(subset, loop_var)
-    if axis != 0 or coef != 1 or others or k_r is None:
+    if axis != 0 or coef != direction or others or k_r is None:
         return False
-    ahead = symbolic.simplify(k_r - k_w)
+    ahead = symbolic.simplify(direction * (k_r - k_w))
     return isinstance(ahead, (int, sympy.Integer)) and int(ahead) >= 0
 
 
@@ -5436,10 +5447,10 @@ def match_affine_scan(loop: LoopRegion, sdfg: SDFG) -> _AffineScan | None:
     if write_edge is None or not isinstance(write_edge.dst, nodes.AccessNode):
         return None
     write_axis, k_w, write_others, write_coef = _classify_subset(write_edge.data.subset, loop_var)
-    if write_axis != 0 or write_coef != 1 or write_others:
+    if write_axis != 0 or write_coef not in (1, -1) or write_others:
         return None
 
-    walked = affine_value_walk(state, sdfg, write_edge, out_name, loop_var, k_w, max_carries=2)
+    walked = affine_value_walk(state, sdfg, write_edge, out_name, loop_var, k_w, 2, write_coef)
     if walked is None:
         return None
     expr, leaves, chain, carries, reads = walked
@@ -5447,8 +5458,12 @@ def match_affine_scan(loop: LoopRegion, sdfg: SDFG) -> _AffineScan | None:
     if split is None:
         return None
     coef_code, coef2_code, delta_code, k_r = split
+    stride = symbolic.simplify(write_coef * (k_w - k_r))
+    # A reverse sweep (the Thomas back substitution) lifts at carry distance 1 and first order only
+    if write_coef == -1 and (coef2_code is not None or stride != 1):
+        return None
     k_r2 = symbolic.simplify(k_w - 2) if coef2_code is not None else None
-    if not carrier_reads_admissible(state, out_name, loop_var, 0, [], k_w, k_r, 1, k_r2):
+    if not carrier_reads_admissible(state, out_name, loop_var, 0, [], k_w, k_r, write_coef, k_r2):
         return None
     if _read_survives_rewrite(loop, sdfg, {out_name}, reads):
         return None
@@ -5467,8 +5482,9 @@ def match_affine_scan(loop: LoopRegion, sdfg: SDFG) -> _AffineScan | None:
         iter_end=iter_end,
         k_w=k_w,
         k_r=k_r,
-        stride=symbolic.simplify(k_w - k_r),
+        stride=stride,
         coef2_code=coef2_code,
+        reverse=write_coef == -1,
     )
 
 
@@ -5703,6 +5719,8 @@ def emit_affine_scan(
     # The second-order recurrence enters with TWO elements, (out[start + k_w - 2], out[start + k_w - 1]).
     seed_count = 2 if second_order else info.stride
     seed_axis = symbolic.simplify(info.iter_start + info.k_r - (1 if second_order else 0))
+    if info.reverse:
+        seed_axis = symbolic.simplify(info.k_r - info.iter_start)
     contiguous = symbolic.simplify(info.stride) == 1 and not second_order
     if contiguous:
         seed_name, _ = sdfg.add_scalar(
@@ -5758,10 +5776,36 @@ def emit_affine_scan(
     wire(COEF_CONNECTOR_NAME, coef_buf, direct_coef)
     if second_order:
         wire(COEF2_CONNECTOR_NAME, *coef2)
+    if info.reverse:
+        emit_reversed_store(state, sdfg, node, info, trip)
+        return
     state.add_edge(
         node,
         OUTPUT_CONNECTOR_NAME,
         state.add_write(info.out_name),
         None,
         mm.Memlet(data=info.out_name, subset=subsets.Range([(write_start, write_start + trip - 1, 1)])),
+    )
+
+
+def emit_reversed_store(state: SDFGState, sdfg: SDFG, node: Scan, info: _AffineScan, trip: Any) -> None:
+    """A reverse sweep's scan writes in iteration order into a buffer; a map stores element ``k`` to
+    ``out[k_w - start - k]``, where iteration ``start + k`` wrote it."""
+    out_desc = sdfg.arrays[info.out_name]
+    buf = sdfg.add_array(
+        f"{_SCAN_BUF_PREFIX}{info.out_name}", [trip], out_desc.dtype, transient=True, find_new_name=True
+    )[0]
+    buf_node = state.add_access(buf)
+    state.add_edge(
+        node, OUTPUT_CONNECTOR_NAME, buf_node, None, mm.Memlet(data=buf, subset=subsets.Range([(0, trip - 1, 1)]))
+    )
+    last = symbolic.simplify(info.k_w - info.iter_start)
+    state.add_mapped_tasklet(
+        f"{state.label}_reverse",
+        {"__k": subsets.Range([(0, trip - 1, 1)])},
+        {"__in": mm.Memlet(data=buf, subset="__k")},
+        "__out = __in",
+        {"__out": mm.Memlet(data=info.out_name, subset=f"{symbolic.symstr(last)} - __k")},
+        external_edges=True,
+        input_nodes={buf: buf_node},
     )
