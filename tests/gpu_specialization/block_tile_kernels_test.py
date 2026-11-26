@@ -50,6 +50,25 @@ def gemm_loops(A: dace.float64[M, K], B: dace.float64[K, N], C: dace.float64[M, 
 
 
 @dace.program
+def matvec_abs(A: dace.float64[M, N], x: dace.float64[N], y: dace.float64[M]):
+    """matvec over ``|A|``: no BLAS call computes it, so the zero fill and the reduction stay one kernel."""
+    for i in range(M):
+        y[i] = 0.0
+        for j in range(N):
+            y[i] += abs(A[i, j]) * x[j]
+
+
+@dace.program
+def gemm_abs(A: dace.float64[M, K], B: dace.float64[K, N], C: dace.float64[M, N]):
+    """GEMM over ``|A|``: no BLAS call computes it, so the zero fill and the reduction stay one kernel."""
+    for i in range(M):
+        for j in range(N):
+            C[i, j] = 0.0
+            for k in range(K):
+                C[i, j] += abs(A[i, k]) * B[k, j]
+
+
+@dace.program
 def rowsum(A: dace.float64[M, N], out: dace.float64[M]):
     for i in range(M):
         s = 0.0
@@ -181,8 +200,14 @@ def library_nodes(sdfg: dace.SDFG) -> dict:
     }
 
 
+def test_a_zero_filled_matvec_and_gemm_lift_to_blas():
+    """Distribution splits the zero fill from the accumulation; the fill folds into the call's ``beta``."""
+    assert list(library_nodes(canonical_gpu(matvec))) == ["Gemv"]
+    assert list(library_nodes(canonical_gpu(gemm_loops))) == ["Gemm"]
+
+
 def test_an_inner_reduction_runs_across_the_lanes_of_one_block():
-    sdfg = canonical_gpu(matvec)
+    sdfg = canonical_gpu(matvec_abs)
     kernels = maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_Device)
     lanes = maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)
     assert len(kernels) == 1 and kernels[0].map.gpu_block_size is None
@@ -194,7 +219,7 @@ def test_an_inner_reduction_runs_across_the_lanes_of_one_block():
 def test_an_inner_reduction_the_kernel_threads_coalesce_is_each_threads_loop():
     """GEMM's ``k`` reads ``B[k, j]`` a row apart, while the kernel's threads over ``j`` read ``B`` and ``C``
     adjacently: the block's threads tile the output, each walks ``k`` itself, and no lanes fold partials."""
-    sdfg = canonical_gpu(gemm_loops)
+    sdfg = canonical_gpu(gemm_abs)
     kernels = maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_Device)
     tiles = maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)
     assert len(kernels) == 1 and len(tiles) == 1
@@ -393,6 +418,10 @@ def test_the_block_lowerings_compute_what_numpy_does(m, n, k, nb):
     canonical_gpu(matvec)(A=cp.asarray(A), x=cp.asarray(x), y=y, M=m, N=n)
     np.testing.assert_allclose(y.get(), A @ x, rtol=1e-12)
 
+    y = cp.ones(m)
+    canonical_gpu(matvec_abs)(A=cp.asarray(-A), x=cp.asarray(x), y=y, M=m, N=n)
+    np.testing.assert_allclose(y.get(), A @ x, rtol=1e-12)
+
     # A non-identity initial value is counted once, not once per lane.
     y = cp.zeros(m)
     canonical_gpu(matvec_plus)(A=cp.asarray(A), x=cp.asarray(x), b=cp.asarray(b), y=y, M=m, N=n)
@@ -410,6 +439,10 @@ def test_the_block_lowerings_compute_what_numpy_does(m, n, k, nb):
     L, R = rng.random((m, k)), rng.random((k, n))
     C = cp.zeros((m, n))
     canonical_gpu(gemm_loops)(A=cp.asarray(L), B=cp.asarray(R), C=C, M=m, N=n, K=k)
+    np.testing.assert_allclose(C.get(), L @ R, rtol=1e-12)
+
+    C = cp.ones((m, n))
+    canonical_gpu(gemm_abs)(A=cp.asarray(-L), B=cp.asarray(R), C=C, M=m, N=n, K=k)
     np.testing.assert_allclose(C.get(), L @ R, rtol=1e-12)
 
     X, Y = rng.random((nb, n)), rng.random((nb, n))
@@ -499,6 +532,7 @@ def test_an_inner_map_the_kernel_threads_already_coalesce_is_not_strided_across_
 
 
 if __name__ == "__main__":
+    test_a_zero_filled_matvec_and_gemm_lift_to_blas()
     test_an_inner_reduction_runs_across_the_lanes_of_one_block()
     test_an_inner_reduction_the_kernel_threads_coalesce_is_each_threads_loop()
     test_a_host_map_that_only_launches_device_work_is_the_kernel()

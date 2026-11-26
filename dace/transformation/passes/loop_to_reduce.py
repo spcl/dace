@@ -44,6 +44,31 @@ _CMP_GT = (ast.Gt, ast.GtE)
 _CMP_LT = (ast.Lt, ast.LtE)
 
 
+def expose_as_input(sdfg: SDFG, name: str) -> None:
+    """Make the read of ``name`` a privatization seeds from an input of every nested SDFG around ``sdfg`` that only
+    writes it: inlined, an output-only read would sit in its map without a path through the map entry, and fusion
+    would not see the map read the data (a fill distributed off the reduction stays a kernel of its own)."""
+    node = sdfg.parent_nsdfg_node
+    state = sdfg.parent
+    if node is None or name in node.in_connectors:
+        return
+    written = [e for e in state.out_edges(node) if e.src_conn == name]
+    # Another writer of the container in that state would race the fresh read
+    others = [n for n in state.data_nodes() if n.data == name and state.in_degree(n) > 0]
+    if len(written) != 1 or len(others) != 1:
+        return
+    entries = []
+    entry = state.entry_node(node)
+    while entry is not None:
+        entries.insert(0, entry)
+        entry = state.entry_node(entry)
+    # The same name as its output connector: a nested SDFG's in/out pair is one container
+    node.add_in_connector(name, force=True)
+    inner = copy.deepcopy(state.memlet_path(written[0])[0].data)
+    state.add_memlet_path(state.add_read(name), *entries, node, dst_conn=name, memlet=inner)
+    expose_as_input(state.sdfg, name)
+
+
 def _owner_sdfg(region: ControlFlowRegion) -> SDFG:
     """The SDFG whose ``arrays``/``symbols`` the blocks inside ``region`` name.
 
@@ -1617,6 +1642,7 @@ def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reducti
         init_state.add_edge(
             seed_r, None, seed_w, None, mm.Memlet(data=info.accum, subset=copy.deepcopy(info.accum_subset))
         )
+        expose_as_input(root, info.accum)
     else:
         seed = init_state.add_tasklet("seed", set(), {"_out"}, f"_out = {info.accum}")
         init_state.add_edge(
@@ -1880,6 +1906,7 @@ def _lift_wcr_scalar_retarget(
         None,
         mm.Memlet(data=accum_name, subset=copy.deepcopy(accum_subset)),
     )
+    expose_as_input(root, accum_name)
 
     accum_sink = wcr_edge.dst
     wcr_state.remove_edge(wcr_edge)
@@ -2137,6 +2164,7 @@ def _lift_multi_state_chain(parent: ControlFlowRegion, loop: LoopRegion, info):
         None,
         mm.Memlet(data=accum_name, subset=copy.deepcopy(accum_subset)),
     )
+    expose_as_input(root, accum_name)
 
     wb_state = parent.add_state(loop.label + "_priv_wb")
     wb_state.add_edge(
