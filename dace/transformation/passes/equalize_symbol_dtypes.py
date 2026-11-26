@@ -102,8 +102,11 @@ class EqualizeSymbolDtypes(ppl.Pass):
                 if isinstance(region, LoopRegion):
                     self.declare(region.new_symbols(base))
             rewritten += self.retype_descriptors(owner, base)
+            # The states of one region share what the regions around them bind: retyping changes no region of
+            # ``owner`` and not ``base``
+            region_tables: dict[int, dict[str, dtypes.typeclass]] = {}
             for state in owner.states():
-                rewritten += self.retype_state(owner, state, base)
+                rewritten += self.retype_state(owner, state, base, region_tables)
         return rewritten or None
 
     @staticmethod
@@ -129,8 +132,14 @@ class EqualizeSymbolDtypes(ppl.Pass):
                 rewritten += 1
         return rewritten
 
-    def retype_state(self, sdfg: SDFG, state: SDFGState, base: Mapping[str, dtypes.typeclass]) -> int:
-        tables = state_scope_symbol_tables(sdfg, state, dict(base))
+    def retype_state(
+        self,
+        sdfg: SDFG,
+        state: SDFGState,
+        base: Mapping[str, dtypes.typeclass],
+        region_tables: dict[int, dict[str, dtypes.typeclass]] | None = None,
+    ) -> int:
+        tables = state_scope_symbol_tables(sdfg, state, dict(base), region_tables)
         rewritten = 0
         for node in state.nodes():
             if isinstance(node, nodes.EntryNode):
