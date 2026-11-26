@@ -321,7 +321,9 @@ def access_guard(
     return symbolic.pystr_to_symbolic(" and ".join(f"({c})" for c in kept)) if kept else None
 
 
-def exact_accesses(state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet]) -> list[Access] | None:
+def exact_accesses(
+    state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet], symbols: SymbolResolver | None = None
+) -> list[Access] | None:
     """The accesses of ``e``'s array that the nested SDFG behind ``e`` really makes, one memlet each (a reduction keeps
     its WCR), when ``e`` joins a nested SDFG to the array directly or through one map scope (a MapExit's output for
     writes, a MapEntry's input for reads), each propagated over the map; ``None`` (the caller keeps ``e``'s bounding box)
@@ -329,7 +331,8 @@ def exact_accesses(state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet]) ->
 
     Propagation unions the accesses behind one connector into a box: ``a[jm, c, jl]`` and ``a[c, jm, jl]`` in a map over
     ``jl`` leave it as ``a[Min(c, jm):Max(c, jm) + 1, ..., 0:L]``, which meets every other ``jm`` though no element is
-    shared; a reduction into one row and the zeroing of another leave as the box of both."""
+    shared; a reduction into one row and the zeroing of another leave as the box of both. ``symbols`` resolves the
+    facts of the map scope, shared by the caller's probes."""
     from dace.sdfg.propagation import propagate_memlet  # avoid an import cycle
 
     if e.data.is_empty():
@@ -415,17 +418,20 @@ def exact_accesses(state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet]) ->
             guard = None if block is None else access_guard(block, ns, bindings, assigned, scope_params)
             access = memlet.Memlet(data=e.data.data, subset=outer, wcr=wcr)
             if entry is not None:
-                access = propagate_memlet(state, access, entry, False)
+                access = propagate_memlet(state, access, entry, False, symbols=symbols)
                 access.wcr = wcr
             found[(str(access.subset), str(wcr), str(guard))] = Access(access, guard, update)
     return list(found.values()) or None
 
 
 def read_subsets(
-    state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet], closed_forms: dict[str, Any] | None
+    state: SDFGState,
+    e: gr.MultiConnectorEdge[memlet.Memlet],
+    closed_forms: dict[str, Any] | None,
+    symbols: SymbolResolver | None = None,
 ) -> list[subsets.Subset | None]:
     """The subsets to check for the read ``e``: what a nested SDFG behind it really reads, else ``e``'s own subset."""
-    exact = exact_accesses(state, e)
+    exact = exact_accesses(state, e, symbols)
     if exact is None:
         return [in_closed_form(e.data.get_src_subset(e, state), closed_forms)]
     return [in_closed_form(access.subset, closed_forms) for access in exact]
@@ -1015,7 +1021,12 @@ def counted_write(sdfg: SDFG, state: SDFGState, dn: nodes.AccessNode, e: gr.Mult
     return not (isinstance(sdfg.arrays[dn.data], dt.View) and e is sdutil.get_view_edge(state, dn))
 
 
-def carried_local_transients(loop: LoopRegion, candidates: set[str], ctx: Optional["LiftContext"] = None) -> set[str]:
+def carried_local_transients(
+    loop: LoopRegion,
+    candidates: set[str],
+    ctx: Optional["LiftContext"] = None,
+    symbols: SymbolResolver | None = None,
+) -> set[str]:
     """Among ``candidates`` -- transients that appear ONLY inside ``loop`` -- the ones an iteration
     can READ before it writes them, so their value comes from the PREVIOUS iteration.
 
@@ -1037,7 +1048,7 @@ def carried_local_transients(loop: LoopRegion, candidates: set[str], ctx: Option
     :func:`observable_locals`: dead scratch left behind by an earlier rewrite would otherwise
     cost the loop its lift.
     """
-    carried = read_before_written(loop, candidates, ctx=ctx)
+    carried = read_before_written(loop, candidates, ctx=ctx, symbols=symbols)
     if not carried:
         return carried
     return carried & observable_locals(loop, candidates, ctx)
@@ -1060,6 +1071,7 @@ def read_before_written(
     candidates: OrderedSet[str],
     holders: Iterable[SDFGState] | None = None,
     ctx: Optional["LiftContext"] = None,
+    symbols: SymbolResolver | None = None,
 ) -> OrderedSet[str]:
     """Among ``candidates``, the containers an iteration of ``loop`` can read before it writes them (see
     :func:`carried_local_transients`). Each name's verdict depends on its own accesses alone, so asking about one
@@ -1067,6 +1079,7 @@ def read_before_written(
 
     :param holders: states holding every access node of ``candidates`` in ``loop`` (a superset is fine); found by a
                     scan of the loop when ``None``. Blocks holding none of them are not walked.
+    :param symbols: resolves the facts at the reads, shared by the caller's probes; a fresh one when ``None``.
     """
     if holders is None:
         holders = [
@@ -1186,7 +1199,7 @@ def read_before_written(
                 return False
         return True
 
-    resolver = SymbolResolver()
+    resolver = SymbolResolver() if symbols is None else symbols
 
     def changed_by(block: ControlFlowBlock) -> OrderedSet[str]:
         """The names ``block`` can change: containers it writes (any written access node, no memlet analysis),
@@ -2771,6 +2784,18 @@ class LoopLift:
 
     def can_lift(self, graph: ControlFlowRegion, sdfg: SDFG, permissive: bool = False) -> bool:
         """:meth:`probe` of :attr:`loop` in ``graph`` of ``sdfg``."""
+        # A probe changes nothing, so its checks share one resolver when no pass shares one: each made its own, and QE
+        # vexx's LoopToMap spent most of its time re-deriving the facts of the same scopes
+        shared = self.symbol_resolver
+        if shared is None:
+            self.symbol_resolver = SymbolResolver()
+        try:
+            return self.lift_verdict(graph, sdfg, permissive)
+        finally:
+            self.symbol_resolver = shared
+
+    def lift_verdict(self, graph: ControlFlowRegion, sdfg: SDFG, permissive: bool) -> bool:
+        """:meth:`can_lift` under the probe's resolver."""
         # Exposed so companion passes can distinguish a genuine loop-carried
         # dependence from structural/typing inapplicability without re-running
         # the dependence analysis.
@@ -2998,7 +3023,7 @@ class LoopLift:
         ) or (local_transients & control_flow_reads(self.loop, ctx)):
             cached_carried = None if facts is None else facts.carried
             if cached_carried is UNCOMPUTED or cached_carried is None or cached_carried[0] != local_transients:
-                carried = carried_local_transients(self.loop, local_transients, ctx)
+                carried = carried_local_transients(self.loop, local_transients, ctx, self.probe_resolver())
                 if facts is not None:
                     facts.carried = (set(local_transients), carried)
             else:
@@ -3056,7 +3081,7 @@ class LoopLift:
                             write_memlets[dn.data].append(accumulated)
                             continue
                         # Each access behind a nested SDFG's bounding box is checked alone: the box meets other iterations'
-                        for access in exact_accesses(state, e) or [None]:
+                        for access in exact_accesses(state, e, self.probe_resolver()) or [None]:
                             exact = None if access is None else access.subset
                             if access is not None and access.wcr is not None:
                                 # A reduction combines the writes of any iterations; the other writes are checked against it
@@ -3139,7 +3164,7 @@ class LoopLift:
                     if e.data is None or id(e) in rmw_reads:
                         continue
                     # Each access behind a nested SDFG's bounding box is checked alone (see ``exact_accesses``)
-                    for src_subset in read_subsets(state, e, closed_forms):
+                    for src_subset in read_subsets(state, e, closed_forms, self.probe_resolver()):
                         if src_subset is None:
                             continue
                         # Loop-invariant read (no itersym) -- safe, same input every iteration.
@@ -3247,7 +3272,7 @@ class LoopLift:
 
                         # Container read AND written: match only if the locations can't race.
                         # Each access behind a nested SDFG's bounding box is checked alone (see ``exact_accesses``)
-                        for src_subset in read_subsets(state, e, closed_forms):
+                        for src_subset in read_subsets(state, e, closed_forms, self.probe_resolver()):
                             if data not in self.contract_reads and not self.test_read_memlet(
                                 sdfg,
                                 state,
@@ -3387,7 +3412,7 @@ class LoopLift:
         The loop enclosing many lifts is typically refused on such a carrier (CloudSC's level loop on
         ``zcovptot``), and the full analysis behind it walks the whole body once per lift."""
         holders = [st for st in ctx.access_states.get(name, ()) if st in loop_states]
-        if name not in read_before_written(self.loop, {name}, holders, ctx):
+        if name not in read_before_written(self.loop, {name}, holders, ctx, self.probe_resolver()):
             return False
         _, local_transients = split_loop_containers(sdfg, loop_states, ctx)
         local_transients -= flow_read_outside(sdfg, self.loop, local_transients, ctx)
