@@ -372,6 +372,10 @@ class StateFusionExtended(StateFusion):
         # We keep the recorded connections alive, such that `apply()` can use them later.
         self.connections_to_make.clear()
         self._matched_permissive = permissive
+        # A probe changes nothing: its checks share the facts of a region when no caller shares them
+        owned = self._region_facts is None
+        if owned:
+            self._region_facts = {}
         try:
             if self.check_fusible(graph, sdfg, permissive):
                 return True
@@ -380,6 +384,9 @@ class StateFusionExtended(StateFusion):
             # still trips a library invariant is an upstream defect. Refuse it, but say so, so a
             # swallowed defect stays visible instead of silently disabling fusion.
             warnings.warn(f"{type(self).__name__}: refusing match, unexpected subgraph: {e!r}")
+        finally:
+            if owned:
+                self._region_facts = None
         # A refused match must never leave a HALF-filled recorder behind: ``apply`` would then wire
         # an incomplete set of happens-before edges, i.e. drop an ordering.
         self.connections_to_make.clear()
