@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.standard.nodes.scan import Scan
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
@@ -136,17 +137,14 @@ def test_distance_check_runs_once_before_time_loop():
 
 # Reproducer: CPF: render and canonicalization fixes for v1.0.1 (6db8721f3d)
 def test_canonical_shift_add_versions_the_snapshot_fallback():
-    """The snapshot covers ``K <= 0``; its fallback is versioned again on ``K >= N``. Every ``K`` computes."""
+    """``s[i + K] += s[i]`` reads its own element before the loop wrote it and ``s[i]`` at carry distance ``K``: it
+    lifts to an affine scan, with a snapshot for the ``K`` no iteration carries. Every ``K`` computes."""
     sdfg = shift_add.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    hints = [
-        r.specialization_hint or ""
-        for r in sdfg.all_control_flow_regions(recursive=True)
-        if isinstance(r, LoopRegion) and r.loop_variable
-    ]
-    assert any(h.startswith("sequential -- the runtime check found") for h in hints)
+    scans = [n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, Scan)]
+    assert [str(n.op) for n in scans] == ["ScanOp.AFFINE"], scans
     maps = [n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
-    assert any((m.specialization_hint or "").startswith("parallel -- the runtime check found") for m in maps)
+    assert maps
     n = 8
     for k in (0, 3, 8, 16):
         rng = np.random.default_rng(k)
