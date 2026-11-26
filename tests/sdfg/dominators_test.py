@@ -95,7 +95,46 @@ def test_code_is_generated_for_a_program_with_two_maps_over_a_transient():
     assert len(sdfg.generate_code()) > 0
 
 
+def test_regions_at_the_start_and_the_end_are_the_roots():
+    """
+    A control flow region that is the SDFG's start block dominates everything, and a loop that is the SDFG's sink
+    postdominates everything: the blocks inside them keep the region as their (post)dominator instead of a block of
+    the region (which would make the dominator tree cyclic), and code generation finds the allocation points.
+    """
+    from dace.sdfg.state import ControlFlowRegion, LoopRegion
+
+    N = dace.symbol("N")
+    sdfg = dace.SDFG("region_roots")
+    sdfg.add_array("A", (N,), dace.int32)
+    sdfg.add_transient("tmp", (N,), dace.int32)
+    region = ControlFlowRegion("entry_region")
+    sdfg.add_node(region, is_start_block=True)
+    first = region.add_state("first", is_start_block=True)
+    left, right, merge = region.add_state("left"), region.add_state("right"), region.add_state("merge")
+    region.add_edge(first, left, dace.InterstateEdge(condition="N > 3"))
+    region.add_edge(first, right, dace.InterstateEdge(condition="not (N > 3)"))
+    region.add_edge(left, merge, dace.InterstateEdge())
+    region.add_edge(right, merge, dace.InterstateEdge())
+    tasklet = first.add_tasklet("init", {}, {"out"}, "out = 1")
+    first.add_edge(tasklet, "out", first.add_access("tmp"), None, dace.Memlet("tmp[0]"))
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(region, loop, dace.InterstateEdge())
+    body = loop.add_state("body", is_start_block=True)
+    read = body.add_access("tmp")
+    write = body.add_tasklet("copy", {"inp"}, {"out"}, "out = inp + i")
+    body.add_edge(read, None, write, "inp", dace.Memlet("tmp[0]"))
+    body.add_edge(write, "out", body.add_access("A"), None, dace.Memlet("A[i]"))
+
+    idom, alldom, ipostdom, allpostdom = {}, {}, {}, {}
+    sdutil.get_control_flow_block_dominators(sdfg, idom, alldom, ipostdom, allpostdom)
+    assert idom[first] is region and ipostdom[body] is loop
+    assert region in alldom[merge] and loop in allpostdom[body]
+    assert len(sdfg.generate_code()) > 0
+
+
 if __name__ == "__main__":
+    test_regions_at_the_start_and_the_end_are_the_roots()
     for shape in IDOM_BY_SHAPE:
         test_the_start_block_is_its_own_immediate_dominator(shape)
         test_the_sink_is_its_own_immediate_postdominator(shape)

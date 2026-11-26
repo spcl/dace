@@ -41,6 +41,12 @@ try:
 except ImportError:
     pass
 
+# ATen library nodes of the TorchDynamo frontend (e.g. NativeDropout) are optional
+try:
+    import dace.autodiff.implementations.torch_aten_nodes
+except ImportError:
+    pass
+
 __all__ = [
     "DaceNodeBackwardImplementations",
 ]
