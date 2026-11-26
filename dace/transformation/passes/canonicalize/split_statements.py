@@ -13,6 +13,7 @@ import sympy
 from dace import SDFG, Memlet, dtypes, properties, subsets, symbolic
 from dace import data as dt
 from dace.optionals import required
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
@@ -970,14 +971,14 @@ def guarded_groups(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex) -> list[
                 continue
             if not iteration_distinct([a.subset for a in stores], loop.loop_variable):
                 return None
-            offsets = {access_offset(r.subset, w.subset) for r in reads for w in stores}
+            offsets = OrderedSet(access_offset(r.subset, w.subset) for r in reads for w in stores)
             if offsets != {0}:
                 # A read at a constant offset from the stores sees another iteration's store: the iteration that runs
                 # it orders the clones whole, the store's clone first when it ran earlier (TSVC s161: ``c[i + 1]``
                 # stored, ``c[i]`` read in the other arm), the reader's first when it runs later.
                 if None in offsets or 0 in offsets:
                     return None
-                directions = {iteration_direction(r.subset, w.subset, loop) for r in reads for w in stores}
+                directions = OrderedSet(iteration_direction(r.subset, w.subset, loop) for r in reads for w in stores)
                 if directions == {-1}:
                     after[writer][reader] = None
                 elif directions == {1}:

@@ -33,6 +33,7 @@ import sympy
 from dace import SDFG, InterstateEdge, dtypes, properties, subsets, symbolic
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.memlet import Memlet
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.state import (
     BreakBlock,
@@ -292,7 +293,7 @@ class LiftCounterScan(ppl.Pass):
         states = list(loop.states())
         if kept is None or not any(counter in {str(f) for f in s.free_symbols} for s in states):
             return None
-        cursor_arrays = self.cursor_arrays(states, counter, set())
+        cursor_arrays = self.cursor_arrays(states, counter, OrderedSet())
         if cursor_arrays is None:
             return None
         if cursor_arrays and not (

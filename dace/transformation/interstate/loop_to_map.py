@@ -1057,10 +1057,10 @@ def unclamped_whole(desc: dt.Data) -> subsets.Range:
 
 def read_before_written(
     loop: LoopRegion,
-    candidates: set[str],
+    candidates: OrderedSet[str],
     holders: Iterable[SDFGState] | None = None,
     ctx: Optional["LiftContext"] = None,
-) -> set[str]:
+) -> OrderedSet[str]:
     """Among ``candidates``, the containers an iteration of ``loop`` can read before it writes them (see
     :func:`carried_local_transients`). Each name's verdict depends on its own accesses alone, so asking about one
     name gives that name's verdict of the whole set.
@@ -1077,25 +1077,27 @@ def read_before_written(
     # A branch condition, nested loop header or interstate edge can read a candidate without an access node.
     flow_read = control_flow_reads(loop, ctx) & candidates
 
-    def flow_reads(block: ControlFlowBlock) -> set[str]:
-        reads = set() if isinstance(block, SDFGState) else own_reads(block, ctx)
-        reads.update(*(edge_read_symbols(e.data, ctx) for e in block.parent_graph.in_edges(block)))
+    def flow_reads(block: ControlFlowBlock) -> OrderedSet[str]:
+        reads = OrderedSet() if isinstance(block, SDFGState) else OrderedSet(own_reads(block, ctx))
+        # The edges into the block read their conditions and assignment values
+        for edge in block.parent_graph.in_edges(block):
+            reads.update(edge_read_symbols(edge.data, ctx))
         return reads & flow_read
 
     if flow_read:
         holders = [*holders, *filter(flow_reads, loop.all_control_flow_blocks())]
     # The blocks on a path from ``loop`` down to an access: everything else neither reads nor writes a candidate.
-    relevant: set[ControlFlowBlock] = set()
+    relevant: OrderedSet[ControlFlowBlock] = OrderedSet()
     for state in holders:
         block = state
         while block is not loop and block not in relevant and block is not None:
             relevant.add(block)
             block = block.parent_graph
     if not relevant:
-        return set()
+        return OrderedSet()
 
-    carried: set[str] = set()
-    changes: dict[ControlFlowBlock, set[str]] = {}
+    carried: OrderedSet[str] = OrderedSet()
+    changes: dict[ControlFlowBlock, OrderedSet[str]] = {}
     moving = loop_varying_symbols(loop)
 
     def fixed_subset(subset: subsets.Subset | None) -> bool:
@@ -1104,7 +1106,7 @@ def read_before_written(
 
     def widened(state: SDFGState, dn: nodes.AccessNode, subset: subsets.Subset) -> subsets.Subset:
         """``subset`` over every iteration of the scopes around ``dn``: an axis a name they bind indexes spans whole."""
-        bound: set[str] = set()
+        bound: OrderedSet[str] = OrderedSet()
         scope = state.entry_node(dn)
         while scope is not None:
             bound |= bound_names(scope)
@@ -1121,7 +1123,7 @@ def read_before_written(
             ]
         )
 
-    def stored_by(state: SDFGState, dn: nodes.AccessNode) -> set[Store]:
+    def stored_by(state: SDFGState, dn: nodes.AccessNode) -> OrderedSet[Store]:
         """What the writes into ``dn`` guarantee: the bare name when they span the container outside any scope or a
         write has no subset, else its elements as (name, subset, scope entry). A write inside a scope stores its
         elements for the scope's own iteration only, so it holds only that same element read in that scope."""
@@ -1136,7 +1138,7 @@ def read_before_written(
         whole = unclamped_whole(state.sdfg.arrays[dn.data])
         if scope is None and subsets_cover(elements, whole, symbolic.Facts.none()):
             return {dn.data}
-        return {(dn.data, subset, scope) for subset in elements}
+        return OrderedSet((dn.data, subset, scope) for subset in elements)
 
     def same_slot(part: subsets.Subset, read: subsets.Subset) -> bool:
         """Whether ``part`` can hold ``read`` when their elements are not both known: only a dimension where each
@@ -1151,7 +1153,7 @@ def read_before_written(
                 return False
         return True
 
-    def read_covered(state: SDFGState, dn: nodes.AccessNode, stored: set[Store]) -> bool:
+    def read_covered(state: SDFGState, dn: nodes.AccessNode, stored: OrderedSet[Store]) -> bool:
         """Whether ``stored`` holds what ``dn`` reads. A read inside a scope is first widened over the scope's
         iterations, unless a store in that scope wrote the very elements. Elements a nested loop or a moving symbol
         names are not known here: such a store holds what :func:`same_slot` cannot tell apart, an unknown read needs
@@ -1186,26 +1188,26 @@ def read_before_written(
 
     resolver = SymbolResolver()
 
-    def changed_by(block: ControlFlowBlock) -> set[str]:
+    def changed_by(block: ControlFlowBlock) -> OrderedSet[str]:
         """The names ``block`` can change: containers it writes (any written access node, no memlet analysis),
         interstate assignments and loop variables inside it."""
         names = changes.get(block)
         if names is None:
             states = block.all_control_flow_blocks() if isinstance(block, AbstractControlFlowRegion) else [block]
-            names = {
+            names = OrderedSet(
                 dn.data for st in states if isinstance(st, SDFGState) for dn in st.data_nodes() if is_written(st, dn)
-            }
+            )
             if isinstance(block, AbstractControlFlowRegion):
-                names |= {name for edge in block.all_interstate_edges() for name in edge.data.assignments}
-                names |= {
+                names |= OrderedSet(name for edge in block.all_interstate_edges() for name in edge.data.assignments)
+                names |= OrderedSet(
                     r.loop_variable for r in [block, *block.all_control_flow_regions()] if isinstance(r, LoopRegion)
-                }
+                )
             changes[block] = names
         return names
 
     # Per enclosing nested loop: its iterator, its first value, and what one full iteration of its body stores in the
     # same elements every iteration. A branch false on the first iteration runs after such an iteration.
-    earlier: list[tuple[str, sp.Basic, set[Store]]] = []
+    earlier: list[tuple[str, sp.Basic, OrderedSet[Store]]] = []
 
     def false_at(cond: str, var: str, start: sp.Basic) -> bool:
         """Whether the condition ``cond`` is false when the iterator named ``var`` holds ``start``."""
@@ -1213,32 +1215,32 @@ def read_before_written(
         names = {str(x): x for x in test.free_symbols}
         return var in names and test.subs(names[var], start) == sp.false
 
-    def skips_first(cond: str) -> set[Store]:
+    def skips_first(cond: str) -> OrderedSet[Store]:
         """The stores an earlier iteration made when ``cond`` is false on an enclosing nested loop's first iteration
         (cloudsc's ``IF (JK > NCLDTOP)`` reading ``ZQXNM1``, which the end of the previous ``JK`` iteration set)."""
-        seen: set[Store] = set()
+        seen: OrderedSet[Store] = OrderedSet()
         for var, start, stores in earlier:
             if false_at(cond, var, start):
                 seen |= stores
         return seen
 
-    def skips_first_stored(cond: str, name: str) -> set[Store]:
+    def skips_first_stored(cond: str, name: str) -> OrderedSet[Store]:
         """:func:`skips_first` for a read inside a nested SDFG, when ``name`` is accessed in more than one state of the
         loop: a transient only one state touches is allocated inside that state, afresh every iteration of an inner
         loop, so the previous iteration's store is gone."""
         if sum(1 for st in holders if isinstance(st, SDFGState) and any(dn.data == name for dn in st.data_nodes())) < 2:
-            return set()
+            return OrderedSet()
         return skips_first(cond)
 
-    def iteration_stores(block: LoopRegion, written: set[Store], guarded: dict) -> set[Store]:
+    def iteration_stores(block: LoopRegion, written: OrderedSet[Store], guarded: dict) -> OrderedSet[Store]:
         """What every iteration of ``block`` stores to the same elements, when a branch in it skips the first
         iteration and nothing leaves an iteration early; empty otherwise. Walks the body once without recording."""
         var, start = block.loop_variable, loop_analysis.get_init_assignment(block)
         if not var or start is None:
-            return set()
+            return OrderedSet()
         body = list(block.all_control_flow_blocks())
         if any(isinstance(b, (BreakBlock, ContinueBlock, ReturnBlock)) for b in body):
-            return set()
+            return OrderedSet()
         changed = changed_by(block)
         if not any(
             cond is not None and false_at(cond.as_string, var, start)
@@ -1246,55 +1248,57 @@ def read_before_written(
             if isinstance(b, ConditionalBlock)
             for cond, branch in b.branches
         ):
-            return set()
-        trial, before = set(written), set(carried)
+            return OrderedSet()
+        trial, before = OrderedSet(written), OrderedSet(carried)
         scan(block, trial, dict(guarded))
         carried.clear()
         carried.update(before)
-        stores = {
+        stores = OrderedSet(
             store
             for store in trial - written
             if isinstance(store, str) or (store[2] is None and not {str(x) for x in store[1].free_symbols} & changed)
-        }
+        )
         if stores:
             earlier.append((var, start, stores))
         return stores
 
-    def first_trip_stores(region: ControlFlowRegion, block: ConditionalBlock, stored: set[Store]) -> set[Store]:
+    def first_trip_stores(
+        region: ControlFlowRegion, block: ConditionalBlock, stored: OrderedSet[Store]
+    ) -> OrderedSet[Store]:
         """What the first branch of ``block`` stores when ``region`` is a nested loop whose first trip takes that
         branch: the body runs it unconditionally, nothing leaves an iteration early, and the stores name the same
         elements every trip, so every later block of the walk runs after them (graupel's ``IF (k == kstart) vt = 0``
         at the top of the sedimentation loop)."""
         if region is loop or not isinstance(region, LoopRegion) or block.parent_graph is not region:
-            return set()
+            return OrderedSet()
         var, start = region.loop_variable, loop_analysis.get_init_assignment(region)
         cond = block.branches[0][0]
         if not var or start is None or cond is None:
-            return set()
+            return OrderedSet()
         test = symbolic.pystr_to_symbolic(cond.as_string)
         names = {str(x): x for x in test.free_symbols}
         if var not in names or test.subs(names[var], start) != sp.true:
-            return set()
+            return OrderedSet()
         if any(isinstance(b, (BreakBlock, ContinueBlock, ReturnBlock)) for b in region.all_control_flow_blocks()):
-            return set()
+            return OrderedSet()
         changed = changed_by(region)
-        if (set(names) - {var}) & changed:
-            return set()
-        return {
+        if (OrderedSet(names) - {var}) & changed:
+            return OrderedSet()
+        return OrderedSet(
             store
             for store in stored
             if isinstance(store, str) or (store[2] is None and not {str(x) for x in store[1].free_symbols} & changed)
-        }
+        )
 
-    def forget(guarded: dict[str, tuple[set[str], set[str]]], names: set[str]) -> None:
+    def forget(guarded: dict[str, tuple[OrderedSet[str], OrderedSet[str]]], names: OrderedSet[str]) -> None:
         for key in [key for key, (reads, _) in guarded.items() if reads & names]:
             del guarded[key]
 
     def scan(
         region: ControlFlowRegion,
-        written: set[str],
-        guarded: dict[str, tuple[set[str], set[str]]],
-        flags: dict[str, set[Store] | None] | None = None,
+        written: OrderedSet[str],
+        guarded: dict[str, tuple[OrderedSet[str], OrderedSet[str]]],
+        flags: dict[str, OrderedSet[Store] | None] | None = None,
     ) -> None:
         """Walk one pass through ``region``. ``guarded`` maps a condition to the names it reads and what a branch on
         it wrote earlier in this pass, while those names keep their value: a later branch on the same condition runs
@@ -1313,11 +1317,11 @@ def read_before_written(
             for edge in region.in_edges(block):
                 if edge.data.assignments:
                     if guarded:
-                        forget(guarded, set(edge.data.assignments))
+                        forget(guarded, OrderedSet(edge.data.assignments))
                     # A flag set unconditionally on the single entry keeps a meaning; any other assignment loses it
                     for name, value in edge.data.assignments.items():
                         if single_entry and edge.data.is_unconditional():
-                            flags[name] = None if value.strip() in FALSE_LITERALS else set(written)
+                            flags[name] = None if value.strip() in FALSE_LITERALS else OrderedSet(written)
                         else:
                             flags.pop(name, None)
             if flow_read:
@@ -1336,7 +1340,7 @@ def read_before_written(
                 accessed = [dn for dn in block.data_nodes() if dn.data in candidates]
                 stores = {dn: stored_by(block, dn) for dn in accessed if block.in_degree(dn) > 0}
                 stored = written.union(*stores.values())
-                reached = {writer: set(block.bfs_nodes(writer)) for writer in stores}
+                reached = {writer: OrderedSet(block.bfs_nodes(writer)) for writer in stores}
                 for dn in accessed:
                     if block.out_degree(dn) == 0:
                         continue
@@ -1363,7 +1367,7 @@ def read_before_written(
                 recorded = {}
                 for position, (cond, body) in enumerate(block.branches):
                     key = None if cond is None else cond.as_string
-                    branch_written = set(written)
+                    branch_written = OrderedSet(written)
                     if key in guarded:
                         branch_written |= guarded[key][1]
                     if cond is not None and earlier:
@@ -1371,7 +1375,7 @@ def read_before_written(
                     if cond is not None and position == 0:
                         # A flag the first branch needs true brings the stores made when it was set
                         for flag in true_flags(cond.as_string) & flags.keys():
-                            branch_written |= flags[flag] or set()
+                            branch_written |= flags[flag] or OrderedSet()
                     branch_flags = dict(flags)
                     branch_guarded = dict(guarded)
                     scan(body, branch_written, branch_guarded, branch_flags)
@@ -1379,7 +1383,7 @@ def read_before_written(
                     # ``if_cond`` before ``sig`` in one arm)
                     for flag, stores in branch_flags.items():
                         if stores is not None and stores is not flags.get(flag):
-                            branch_flags[flag] = set(branch_written)
+                            branch_flags[flag] = OrderedSet(branch_written)
                     per_branch.append(branch_written)
                     per_branch_flags.append(branch_flags)
                     per_branch_guarded.append(branch_guarded)
@@ -1394,7 +1398,7 @@ def read_before_written(
                     per_branch_flags.append(flags)
                 merge_flags(flags, per_branch_flags)
                 if per_branch and any(cond is None for cond, _ in block.branches):
-                    written |= set.intersection(*per_branch)
+                    written |= per_branch[0].intersection(*per_branch[1:])
                 elif per_branch:
                     written |= first_trip_stores(region, block, per_branch[0])
             elif isinstance(block, LoopRegion):
@@ -1414,18 +1418,18 @@ def read_before_written(
             if guarded:
                 forget(guarded, changed_by(block))
 
-    scan(loop, set(), {})
+    scan(loop, OrderedSet(), {})
     return carried
 
 
 FALSE_LITERALS = ("False", "false", "0", "0.0")
 
 
-def true_flags(cond: str) -> set[str]:
+def true_flags(cond: str) -> OrderedSet[str]:
     """The names ``cond`` needs nonzero: the condition itself, or a conjunct, is ``f``, ``f != 0``, ``f == 1`` or
     ``f == True``."""
     test = symbolic.pystr_to_symbolic(cond)
-    names: set[str] = set()
+    names: OrderedSet[str] = OrderedSet()
     # Each conjunct that names a flag on its own requires that flag nonzero
     for part in sp.And.make_args(test):
         if isinstance(part, sp.Symbol):
@@ -1456,7 +1460,7 @@ def constant_false_write(state: SDFGState, dn: nodes.AccessNode) -> bool | None:
     return code.split("=", 1)[1].strip().rstrip(";").strip() in FALSE_LITERALS
 
 
-def set_flags(state: SDFGState, written: set[Store], flags: dict[str, set[Store] | None]) -> None:
+def set_flags(state: SDFGState, written: OrderedSet[Store], flags: dict[str, OrderedSet[Store] | None]) -> None:
     """Record in ``flags`` each flag ``state`` writes: ``None`` for a constant false, else what ``written`` holds now.
     A write whose value cannot be told drops the flag."""
     # Each written container in the state is a flag candidate
@@ -1467,13 +1471,13 @@ def set_flags(state: SDFGState, written: set[Store], flags: dict[str, set[Store]
         if verdict is None:
             flags.pop(dn.data, None)
         else:
-            flags[dn.data] = None if verdict else set(written)
+            flags[dn.data] = None if verdict else OrderedSet(written)
 
 
 def merge_guards(
-    guarded: dict[str, tuple[set[str], set[Store]]],
-    paths: list[dict[str, tuple[set[str], set[Store]]]],
-    written: list[set[Store]],
+    guarded: dict[str, tuple[OrderedSet[str], OrderedSet[Store]]],
+    paths: list[dict[str, tuple[OrderedSet[str], OrderedSet[Store]]]],
+    written: list[OrderedSet[Store]],
 ) -> None:
     """``guarded`` after every arm of an exhaustive conditional: a condition an arm recorded keeps what each arm
     guarantees once it is true, its own record there or else all that arm wrote (graupel's ``IF (t < tmelt)`` arm
@@ -1485,17 +1489,17 @@ def merge_guards(
     for key in changed:
         reads = next(path[key][0] for path in paths if key in path)
         stores = [path[key][1] if key in path else arm for path, arm in zip(paths, written)]
-        guarded[key] = (reads, set.intersection(*stores))
+        guarded[key] = (reads, stores[0].intersection(*stores[1:]))
 
 
-def merge_flags(flags: dict[str, set[Store] | None], paths: list[dict[str, set[Store] | None]]) -> None:
+def merge_flags(flags: dict[str, OrderedSet[Store] | None], paths: list[dict[str, OrderedSet[Store] | None]]) -> None:
     """``flags`` after paths meet: a flag keeps a meaning only when every path gives it one; a path where it is false
     adds nothing, the others keep what they all stored."""
-    merged: dict[str, set[Store] | None] = {}
+    merged: dict[str, OrderedSet[Store] | None] = {}
     # Each flag every path knows, in the first path's order
     for name in [name for name in paths[0] if all(name in p for p in paths[1:])] if paths else []:
         stores = [p[name] for p in paths if p[name] is not None]
-        merged[name] = set.intersection(*stores) if stores else None
+        merged[name] = stores[0].intersection(*stores[1:]) if stores else None
     flags.clear()
     flags.update(merged)
 

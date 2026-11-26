@@ -637,7 +637,7 @@ def invariant_branch_storing(loop: LoopRegion, container: str) -> tuple[int, str
     ]
     if not holders:
         return None
-    guards = set()
+    guards: OrderedSet[ConditionalBlock] = OrderedSet()
     # Find the conditional that guards each store of the container
     for state in holders:
         region = state.parent_graph

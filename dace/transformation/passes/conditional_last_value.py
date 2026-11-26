@@ -17,6 +17,7 @@ from typing import Any, NamedTuple
 from dace import SDFG, InterstateEdge, data, dtypes, properties, subsets, symbolic
 from dace.libraries.standard.nodes import scan
 from dace.memlet import Memlet
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
@@ -48,10 +49,10 @@ def chain(loop: LoopRegion) -> list[ControlFlowBlock] | None:
     return order if len(order) == loop.number_of_nodes() else None
 
 
-def accessed(states: list[SDFGState]) -> tuple[set[str], set[str]]:
+def accessed(states: list[SDFGState]) -> tuple[OrderedSet[str], OrderedSet[str]]:
     """The containers ``states`` read and those they write."""
-    read: set[str] = set()
-    written: set[str] = set()
+    read: OrderedSet[str] = OrderedSet()
+    written: OrderedSet[str] = OrderedSet()
     # Collect every container each state reads or writes
     for state in states:
         # An out-edge reads the container, an in-edge writes it
@@ -92,7 +93,7 @@ def separable(before: list[ControlFlowBlock], condition: Any, after: list[SDFGSt
     """Whether the blocks up to the store (``before``, guarded by ``condition``) and those ``after`` it share no
     container other than ``name``, which only ``after`` reads."""
     read1, written1 = accessed(states_of(before))
-    read1 |= {str(s) for s in condition.get_free_symbols()}
+    read1 |= OrderedSet(str(s) for s in condition.get_free_symbols())
     read2, written2 = accessed(after)
     if name in read1 or name in written2 or name not in read2:
         return False

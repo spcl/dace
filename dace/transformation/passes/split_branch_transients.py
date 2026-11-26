@@ -10,6 +10,7 @@ allocation only, so each arm gets its own container: the allocation of each then
 import copy
 
 from dace import data, dtypes, properties
+from dace.ordered import OrderedSet
 from dace.sdfg import SDFG
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState
 from dace.transformation import pass_pipeline as ppl
@@ -64,7 +65,7 @@ class SplitBranchTransients(ppl.Pass):
                 # Every access node is a use
                 for node in state.data_nodes():
                     users.setdefault(node.data, []).append(state)
-            read_on_edges = {name for edge in sd.all_interstate_edges() for name in edge.data.free_symbols}
+            read_on_edges = OrderedSet(name for edge in sd.all_interstate_edges() for name in edge.data.free_symbols)
             # Each candidate splits when its users span two or more branches of one conditional
             for name, states in users.items():
                 desc = sd.arrays[name]
@@ -73,7 +74,7 @@ class SplitBranchTransients(ppl.Pass):
                 found = enclosing_branch(states[0])
                 # Widen to the conditional whose branches hold every user
                 while found is not None:
-                    arms = {branch_of(state, found[0]) for state in states}
+                    arms = OrderedSet(branch_of(state, found[0]) for state in states)
                     if None not in arms:
                         break
                     found = enclosing_branch(found[0])
@@ -95,10 +96,10 @@ class SplitBranchTransients(ppl.Pass):
         )
 
     @staticmethod
-    def sized_in(desc: data.Data, conditional: ConditionalBlock, arms: set[int]) -> bool:
+    def sized_in(desc: data.Data, conditional: ConditionalBlock, arms: OrderedSet[int]) -> bool:
         """Whether a branch assigns a symbol the size of ``desc`` reads: a size fixed before the conditional keeps one
         allocation for all branches."""
-        sizes = {str(symbol) for symbol in desc.free_symbols}
+        sizes = OrderedSet(str(symbol) for symbol in desc.free_symbols)
         return any(
             sizes & edge.data.assignments.keys()
             for index in arms
@@ -106,7 +107,7 @@ class SplitBranchTransients(ppl.Pass):
         )
 
     @staticmethod
-    def split(sdfg: SDFG, name: str, conditional: ConditionalBlock, arms: set[int]) -> None:
+    def split(sdfg: SDFG, name: str, conditional: ConditionalBlock, arms: OrderedSet[int]) -> None:
         """Rename ``name`` in each used branch of ``conditional`` to a copy of its own."""
         desc = sdfg.arrays[name]
         # Each used branch gets its own copy of the descriptor
