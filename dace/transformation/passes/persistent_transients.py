@@ -136,16 +136,9 @@ class MakeTransientsPersistent(ppl.Pass):
         "used inside a scope is allocated per scope entry, which persistent allocation would "
         "serialize across the threads that share the state struct.",
     )
-    device_only = properties.Property(
-        dtype=bool,
-        default=False,
-        desc="Only promote device (GPU_Global) arrays; host arrays keep their lifetime. For code without a "
-        "state struct to hold a host buffer across calls.",
-    )
 
-    def __init__(self, toplevel_only: bool = True, device_only: bool = False):
+    def __init__(self, toplevel_only: bool = True):
         self.toplevel_only = toplevel_only
-        self.device_only = device_only
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors
@@ -194,7 +187,6 @@ class MakeTransientsPersistent(ppl.Pass):
                     or not desc.transient
                     or type(desc) is not dt.Array
                     or desc.storage not in PERSISTENT_STORAGES
-                    or (self.device_only and desc.storage is not dtypes.StorageType.GPU_Global)
                     or desc.lifetime in STRONGER_THAN_PERSISTENT
                     or (
                         all(is_unit(extent, unit_extents) for extent in desc.shape)

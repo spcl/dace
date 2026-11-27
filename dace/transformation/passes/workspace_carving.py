@@ -62,26 +62,40 @@ class WorkspaceLayout:
 
 
 def mapped_and_zeroed_data(sdfg: SDFG) -> tuple[set[str], set[str]]:
-    """The data ``sdfg``'s own states access inside a map, and the data an access node zeroes on allocation."""
+    """The data ``sdfg``'s own states access inside a host map, and the data an access node zeroes on allocation.
+
+    A host map gives each iteration, each thread, its own allocation of a ``Scope`` array it touches. A kernel does
+    not: the device array a kernel touches is allocated once, outside it, so only a map whose outermost scope is not
+    a GPU schedule counts.
+    """
     in_maps: set[str] = set()
     zeroed: set[str] = set()
     for state in sdfg.states():
-        for node, scope in state.scope_dict().items():
+        scopes = state.scope_dict()
+        for node, scope in scopes.items():
             if isinstance(node, nodes.AccessNode):
-                if scope is not None:
+                outermost = scope
+                while outermost is not None and scopes[outermost] is not None:
+                    outermost = scopes[outermost]
+                if outermost is not None and outermost.map.schedule not in dtypes.ALL_GPU_SCHEDULES:
                     in_maps.add(node.data)
                 if node.setzero:
                     zeroed.add(node.data)
     return in_maps, zeroed
 
 
+def placeable_type(desc: dt.Data) -> bool:
+    """Whether ``desc`` is data an allocation points at: an array, or a device scalar (a host scalar is a value)."""
+    return type(desc) is dt.Array or (type(desc) is dt.Scalar and desc.storage is dtypes.StorageType.GPU_Global)
+
+
 @properties.make_properties
 class CarveTransientsFromWorkspace(ppl.Pass):
     """Give the transients the entry allocates once per call a slot of the workspace.
 
-    An array is placed when it is a top-level transient ``Array`` in a storage the workspace holds
+    An array is placed when it is a top-level transient (:func:`placeable_type`) in a storage the workspace holds
     (:data:`HELD_STORAGES`), sized by the entry's arguments alone, and allocated once per call: not a ``Scope``
-    array a map touches (allocated per iteration, per thread), not one zeroed on allocation unless its lifetime is
+    array a host map touches (allocated per iteration, per thread), not one zeroed on allocation unless its lifetime is
     already ``SDFG``, and not ``Global`` or ``External`` memory, which the program or the caller owns. Each placed
     array's lifetime becomes ``SDFG``: allocated on entry, whichever state or loop body allocated it before. Its slot
     is its own either way. A placed array is no longer pooled: it has no allocation for a pool to take or release.
@@ -115,7 +129,7 @@ class CarveTransientsFromWorkspace(ppl.Pass):
         for name, desc in sorted(sdfg.arrays.items()):
             if (
                 not desc.transient
-                or type(desc) is not dt.Array
+                or not placeable_type(desc)
                 or desc.storage not in held
                 or desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.External)
                 or (desc.lifetime is dtypes.AllocationLifetime.Scope and name in in_maps)

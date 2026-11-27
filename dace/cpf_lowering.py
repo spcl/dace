@@ -4225,7 +4225,7 @@ HIP_DEVICE_INLINE_DEFINITIONS: dict[str, str] = {
     "//: The runtime pre-allocates and releases it from the entry points a repeated invocation\n"
     "//: shares; one self-contained call has neither, so the buffer owns itself and frees at\n"
     "//: static destruction. It is also not keyed by stream, as the runtime pool is: a CPF unit\n"
-    "//: issues every launch on the one stream (see cpf_gpu_context), so its calls are ordered.\n"
+    "//: issues every launch on one stream, so its calls are ordered.\n"
     "struct ScanTag {};\n"
     "struct DetectFlagTag {};\n"
     "struct DetectOwnerTag {};\n"

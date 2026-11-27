@@ -6,7 +6,7 @@
 (``finalize_for_target('gpu')`` calls it).
 """
 
-from dace import SDFG, cpf_lowering
+from dace import SDFG
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.transformation.pass_pipeline import Pipeline
@@ -154,10 +154,8 @@ class GPUCodegenPreprocessPipeline(Pipeline):
                 lower_nested_maps,
                 scalar_promotion,
                 MoveArrayOutOfKernel(),
-                # A CPF unit without boilerplate has no state struct: its host buffers stay per-call allocations
-                # (here and in MinimizeTransients), its persistent device ones go to the caller's workspace.
-                MakeTransientsPersistent(device_only=cpf_lowering.no_boilerplate()),
-                MinimizeTransients(device_only=cpf_lowering.no_boilerplate()),
+                MakeTransientsPersistent(),
+                MinimizeTransients(),
                 InsertExplicitCopies(),
                 *copy_selection,
                 ExpandLibraryNodes(),

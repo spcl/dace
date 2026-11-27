@@ -2535,9 +2535,6 @@ def render_unit(
     code = drop_repeated_includes(
         keep_target_path(preamble(body, dialect, unit_environments) + body, renders_for_x86(isa))
     )
-    if cpf_lowering.no_boilerplate_in_force and device is not None:
-        # A device helper's note names the context this unit does not have; the stream it means is the default one.
-        code = code.replace("(see cpf_gpu_context)", "(the default stream)")
     names: tuple[tuple[str, str], ...] = ()
     if llm_friendly:
         entry_names = tuple(signature.order) if signature is not None else tuple(entry_arglist)

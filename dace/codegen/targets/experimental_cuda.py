@@ -573,8 +573,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         gdims = ", ".join(sym2cpp(grid_dims))
         bdims = ", ".join(sym2cpp(kernel_spec.block_dims))
         dynsmem_size = vars(scope_entry)["_cuda_dynamic_shared_memory"]  # set on the entry by gpu_shared_memory
-        # The host-side names of the arguments: the launcher's own, without the state and the stream.
-        arguments = ", ".join(kernel_spec.kernel_wrapper_args_as_input[1:-1])
+        arguments = ", ".join(kernel_spec.kernel_args_as_input)
         request = dynamic_shared_memory_request(kernel_name, scope_entry)
         launch = (
             (f"{request}\n" if request else "")
@@ -1353,7 +1352,7 @@ def place_device_transients(sdfg: SDFG) -> None:
     request.layout = CarveTransientsFromWorkspace(request.workspace, request.size).apply_pass(sdfg, {})
 
 
-def demote_persistent_transients(sdfg: SDFG) -> int:
+def demote_persistent_transients(sdfg: SDFG) -> None:
     """Give the top-level SDFG's ``Persistent`` transients ``SDFG`` lifetime, for a unit without boilerplate.
 
     ``Persistent`` means allocated once, in the init code, and kept in the state struct across calls. A unit without
@@ -1361,15 +1360,10 @@ def demote_persistent_transients(sdfg: SDFG) -> int:
     allocated once per call at the top of the entry is the same allocation, held in a local (a device one in the
     caller's workspace). Nested SDFGs keep theirs, which :func:`~dace.codegen.cpf.lift_persistent_transients` already
     moved up wherever their extent allowed.
-
-    :returns: how many transients were demoted.
     """
-    demoted = 0
     for desc in sdfg.arrays.values():
         if desc.transient and desc.lifetime is dtypes.AllocationLifetime.Persistent:
             desc.lifetime = dtypes.AllocationLifetime.SDFG
-            demoted += 1
-    return demoted
 
 
 class KernelSpec:
@@ -1464,11 +1458,11 @@ class KernelSpec:
         # expansion), launch on the default stream (CUDA stream 0 / ``nullptr``).
         stream_arg = str(gpustream_input[0].dst_conn) if gpustream_input else "nullptr"
 
-        self.kernel_wrapper_args_as_input: list[str] = (
-            ["__state"]
-            + [ptr(name, data, sdfg, cudaCodeGen._frame) for name, data in self.arglist.items()]
-            + [stream_arg]
-        )
+        #: The host-side names of the kernel's arguments, as the launcher and a launch at the call site pass them.
+        self.kernel_args_as_input: list[str] = [
+            ptr(name, data, sdfg, cudaCodeGen._frame) for name, data in self.arglist.items()
+        ]
+        self.kernel_wrapper_args_as_input: list[str] = ["__state", *self.kernel_args_as_input, stream_arg]
 
         self.kernel_wrapper_args_typed: list[str] = (
             [f"{mangle_dace_state_struct_name(cudaCodeGen._global_sdfg)} *__state"]
