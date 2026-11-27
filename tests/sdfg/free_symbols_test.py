@@ -1,6 +1,8 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import math
 
+import numpy
+
 import dace
 
 N, M, K, L, unused = (dace.symbol(s) for s in "NMKLU")
@@ -303,6 +305,31 @@ def test_non_transient_shape_symbol_stays_in_the_signature():
     assert "n" in sdfg.arglist()
 
 
+def test_a_shape_symbol_the_body_assigns_is_no_argument():
+    """Reproducer (QE h_psi): ``lb`` sizes an argument but an edge assigns it from ``bounds[0]``."""
+    sdfg = dace.SDFG("assigned_shape_symbol")
+    sdfg.add_symbol("lb", dace.int32)
+    sdfg.add_array("bounds", (2,), dace.int32)
+    sdfg.add_array("a", ("lb",), dace.float64)
+    first = sdfg.add_state(is_start_block=True)
+    body = sdfg.add_state_after(first, assignments={"lb": "bounds[0]"})
+    body.add_mapped_tasklet(
+        "map",
+        {"__i": "0:lb"},
+        {},
+        "__out = 1.0",
+        {"__out": dace.Memlet("a[__i]")},
+        external_edges=True,
+    )
+
+    assert "lb" not in sdfg.interface_symbols()
+    assert "lb" not in sdfg.arglist()
+    bounds = numpy.array([3, 0], dtype=numpy.int32)
+    a = numpy.zeros(3)
+    sdfg(bounds=bounds, a=a)
+    assert (a == 1.0).all()
+
+
 def test_descriptor_free_symbols_follow_a_reassigned_extent():
     stream = dace.data.Stream(dace.float64, buffer_size=N, transient=True)
     assert stream.free_symbols == {N}
@@ -492,3 +519,4 @@ if __name__ == "__main__":
     test_a_cpp_tasklet_local_listed_in_ignored_symbols_is_not_a_read_of_the_symbol()
     test_array_used_only_in_a_guard_keeps_its_stride_symbol()
     test_a_symbol_both_arms_of_an_if_else_assign_is_not_free()
+    test_a_shape_symbol_the_body_assigns_is_no_argument()

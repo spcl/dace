@@ -2179,7 +2179,9 @@ class SDFG(ControlFlowRegion):
         Only a top-level SDFG has an ABI. A nested one is called through its symbol mapping, which
         the parent resolves from its own defined symbols, so a name that only its shapes mention is
         nothing a caller could pass. A compile-time constant and the undefined placeholder are no
-        arguments either: the first is baked into the code, the second has no value to pass.
+        arguments either: the first is baked into the code, the second has no value to pass. Nor is a
+        symbol an interstate edge of this SDFG assigns: the body computes it, and a read of it before
+        that assignment already puts it in :meth:`used_symbols`.
         """
         if self.parent_sdfg is not None:
             return set()
@@ -2188,10 +2190,12 @@ class SDFG(ControlFlowRegion):
             if desc.transient:
                 continue
             found |= {str(s) for s in desc.free_symbols}
+        assigned = {name for edge in self.all_interstate_edges() for name in edge.data.assignments}
         return {
             name
             for name in found
             if name in self.symbols
+            and name not in assigned
             and name not in self.constants_prop
             and name != symbolic.UNDEFINED_NAME
             and not name.startswith("__dace")
