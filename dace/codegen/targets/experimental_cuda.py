@@ -55,6 +55,7 @@ from dace.sdfg.narrowing import as_access, as_range, config_int, config_str
 from dace.sdfg.scope import is_in_scope, scope_contains_scope
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView, SymbolResolver
 from dace.transformation.passes import gpu_shared_memory
+from dace.transformation.passes.gpu_specialization.bind_default_stream import BindDefaultStream
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUCodegenPreprocessPipeline
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
 from dace.transformation.passes.workspace_carving import CarveTransientsFromWorkspace
@@ -183,6 +184,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         GPUCodegenPreprocessPipeline().apply_pass(sdfg, pipeline_results)
         if cpf_lowering.no_boilerplate():
             demote_persistent_transients(sdfg)
+            BindDefaultStream().apply_pass(sdfg, {})
             place_device_transients(sdfg)
         self._globalcode.write(plan_shared_memory(sdfg))
 

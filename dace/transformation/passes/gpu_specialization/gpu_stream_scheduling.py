@@ -1010,16 +1010,21 @@ def stream_connector_name(stream_id: int) -> str:
     return f"{STREAM_CONNECTOR}_{stream_id}"
 
 
+def stream_sync_code(streams: list[str]) -> str:
+    """The body of a sync tasklet: one ``cudaStreamSynchronize`` per stream expression, in order."""
+    from dace.libraries.standard.nodes.sync import SyncScope, sync_code
+
+    backend: str = common.get_gpu_backend()
+    return "\n".join(sync_code(SyncScope.STREAM, backend, stream=stream) for stream in streams)
+
+
 def make_sync_tasklet(state: SDFGState, name: str, stream_ids) -> nodes.Tasklet:
     """Build a side-effect-only fused-sync tasklet: one ``__stream_<id>``
     in-connector (typed ``gpuStream_t``) per stream id, body chaining one
     ``cudaStreamSynchronize`` per connector. Caller wires each connector to
     the matching ``gpu_streams[<id>]`` AccessNode after construction.
     """
-    from dace.libraries.standard.nodes.sync import SyncScope, sync_code
-
-    backend: str = common.get_gpu_backend()
-    code = "\n".join(sync_code(SyncScope.STREAM, backend, stream=stream_connector_name(sid)) for sid in stream_ids)
+    code = stream_sync_code([stream_connector_name(sid) for sid in stream_ids])
     tasklet = state.add_tasklet(
         name=name, inputs={}, outputs={}, code=code, language=dtypes.Language.CPP, side_effects=True
     )

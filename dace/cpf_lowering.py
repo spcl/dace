@@ -2044,43 +2044,11 @@ def cuda_std_spell_out_lines(text: str) -> str:
     )
 
 
-#: The local that points the generated body at the context's streams, and its release at the end of the scope.
-STREAM_ARRAY_LINE: "re.Pattern" = re.compile(
-    r"^[ \t]*(?:gpuStream_t\s*\*\s*gpu_streams\s*=\s*__state->gpu_context->streams|gpu_streams\s*=\s*nullptr);[ \t]*\n",
-    re.MULTILINE,
-)
-#: A local naming one element of the stream array (``gpuStream_t __cpf_current_stream = gpu_streams[0];``).
-STREAM_LOCAL_LINE: "re.Pattern" = re.compile(
-    r"^[ \t]*gpuStream_t\s+(\w+)\s*=\s*gpu_streams\[0\];[ \t]*\n", re.MULTILINE
-)
 #: A stream wait directly before the entry's closing device synchronization, which already waits for it.
 REDUNDANT_STREAM_WAIT: "re.Pattern" = re.compile(
     r"^[ \t]*cpf_gpu_check\(\w+StreamSynchronize\(nullptr\)\);[ \t]*\n(?=[ \t]*cpf_gpu_check\(\w+DeviceSynchronize\(\)\);)",
     re.MULTILINE,
 )
-
-
-def default_stream_spell_out(code: str) -> str:
-    """``code`` with every GPU stream spelled ``nullptr``, the default stream, and the stream variables gone.
-
-    The GPU code generator reaches its streams through ``gpu_streams``, a local pointing at the state's context,
-    and through locals naming one element of it. Without boilerplate (:func:`no_boilerplate`) there is one stream,
-    the default one (``compiler.cuda.max_concurrent_streams = -1``), so each of those names is ``nullptr``.
-
-    :raises RuntimeError: if a stream other than the first is named, or ``gpu_streams`` survives: the code then
-                          relies on a stream this rendering does not have.
-    """
-    code = STREAM_ARRAY_LINE.sub("", code)
-    locals_ = STREAM_LOCAL_LINE.findall(code)
-    code = STREAM_LOCAL_LINE.sub("", code)
-    code = re.sub(r"\bgpu_streams\[0\]", "nullptr", code)
-    for name in OrderedSet(locals_):
-        code = re.sub(rf"\b{re.escape(name)}\b", "nullptr", code)
-    if re.search(r"\bgpu_streams\b", code):
-        raise RuntimeError(
-            "a rendering without boilerplate has only the default stream, but the code names gpu_streams"
-        )
-    return code
 
 
 def drop_redundant_stream_wait(code: str) -> str:

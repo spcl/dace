@@ -2521,7 +2521,7 @@ def render_unit(
                     if dialect is cpf_lowering.Dialect.STANDALONE_CUDA:
                         # nvcc refuses std::complex in a kernel; the entry keeps the caller's std::complex.
                         device_body = cpf_lowering.cuda_std_spell_out(device_body, "")
-                    body = cpf_lowering.default_stream_spell_out(f"{device_body}\n{body}" if device_body else body)
+                    body = f"{device_body}\n{body}" if device_body else body
                     device_body = ""
                 # Last of all: a pure layout change, so every pass above still sees the generator's text.
                 body = compact_blocks(body)
