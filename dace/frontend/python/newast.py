@@ -2947,6 +2947,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     or len(ssize) != len(osize)
                     or any(itertools.starmap(inequal_symbols, zip(ssize, osize)))
                     or op
+                    # A copy cannot convert: a tasklet casts each element, as numpy does
+                    or self.sdfg.arrays[target_name].dtype != self.sdfg.arrays[op_name].dtype
                 ):
                     _, all_idx_tuples, _, _, inp_idx = broadcast_to(squeezed.size(), op_subset.size())
 
@@ -5429,7 +5431,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # We also check the type of the slice attribute of the node
         # in order to distinguish between A[0] and A[0:1], which are semantically different in numpy
         # (the former is an index, the latter is a slice).
-        is_index = range_is_index(expr.subset) and not isinstance(node.slice, ast.Slice)
+        # A[1:2, 1:2] has index-shaped ranges but non-empty slice_dims forces the slice path (stays 2-D).
+        is_index = range_is_index(expr.subset) and not isinstance(node.slice, ast.Slice) and not expr.slice_dims
         other_subset = copy.deepcopy(expr.subset)
         strides = list(arrobj.strides)
 
@@ -5441,7 +5444,9 @@ class ProgramVisitor(ExtNodeVisitor):
             for i in new_axes:
                 strides.insert(i, 1)
         length = len(other_subset)
-        nsqz = other_subset.squeeze(ignore_indices=new_axes)
+        # Squeeze only scalar-index dims; a length-1 slice keeps its axis. slice_dims count the axes before new_axes.
+        subset_axes = [i for i in range(length) if i not in new_axes]
+        nsqz = other_subset.squeeze(ignore_indices=new_axes + [subset_axes[dim] for dim in expr.slice_dims])
         sqz = [i for i in range(length) if i not in nsqz]
         for i in reversed(sqz):
             strides.pop(i)

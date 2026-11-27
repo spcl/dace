@@ -1035,8 +1035,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     )
             else:
                 callsite_stream.write(f"DACE_GPU_CHECK({self.backend}Free({dataname}));\n", cfg, state_id, node)
+            # A free a loop repeats past an allocation it skipped must not free the same pointer twice
+            callsite_stream.write(f"{self.ptr(node.data, nodedesc, sdfg)} = nullptr;\n", cfg, state_id, node)
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
             callsite_stream.write(f"DACE_GPU_CHECK({self.backend}FreeHost({dataname}));\n", cfg, state_id, node)
+            callsite_stream.write(f"{self.ptr(node.data, nodedesc, sdfg)} = nullptr;\n", cfg, state_id, node)
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared or nodedesc.storage == dtypes.StorageType.Register:
             pass  # Do nothing
         else:

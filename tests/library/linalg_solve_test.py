@@ -144,6 +144,30 @@ def test_solve(implementation, dtype, size, shape):
     assert (np.linalg.norm(ref - B2[out_subset]) / np.linalg.norm(ref)) < rtol
 
 
+@pytest.mark.lapack
+@pytest.mark.parametrize("shape", [(4,), (4, 1)])
+def test_solve_of_one_right_hand_side(shape):
+    """``np.linalg.solve(A, b)`` with a 1-D ``b``: the right-hand side count read an extent ``b`` does not have."""
+    subset = ", ".join(f"0:{extent}" for extent in shape)
+    sdfg = dace.SDFG(f"linalg_solve_one_rhs_{len(shape)}")
+    state = sdfg.add_state()
+    sdfg.add_array("ain", [4, 4], dace.float64)
+    sdfg.add_array("bin", list(shape), dace.float64)
+    sdfg.add_array("bout", list(shape), dace.float64)
+    node = Solve("solve")
+    node.implementation = "OpenBLAS"
+    state.add_edge(state.add_read("ain"), None, node, "_ain", Memlet("ain"))
+    state.add_edge(state.add_read("bin"), None, node, "_bin", Memlet(f"bin[{subset}]"))
+    state.add_edge(node, "_bout", state.add_write("bout"), None, Memlet(f"bout[{subset}]"))
+
+    rng = np.random.default_rng(0)
+    a = rng.random((4, 4)) + 4 * np.eye(4)
+    b, out = rng.random(shape), np.zeros(shape)
+    sdfg(ain=a, bin=b, bout=out)
+
+    assert np.allclose(out, np.linalg.solve(a, b))
+
+
 ###############################################################################
 
 if __name__ == "__main__":
@@ -155,3 +179,5 @@ if __name__ == "__main__":
     test_solve("cuSolverDn", np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]])
     test_solve("cuSolverDn", np.float32, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]])
     test_solve("cuSolverDn", np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]])
+    test_solve_of_one_right_hand_side((4,))
+    test_solve_of_one_right_hand_side((4, 1))

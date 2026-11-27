@@ -8,3 +8,8 @@ from .batched_matmul import BatchedMatMul
 
 from .axpy import Axpy
 from .einsum import Einsum
+
+from .scal import Scal
+from .symv import Symv
+from .symm import Symm
+from .syrk import Syrk

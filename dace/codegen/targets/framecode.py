@@ -5,6 +5,7 @@ import pathlib
 import re
 from typing import Any
 
+import networkx as nx
 import numpy as np
 
 import dace
@@ -18,9 +19,17 @@ from dace.codegen.target import TargetCodeGenerator
 from dace.sdfg import SDFG, SDFGState, nodes, utils
 from dace.sdfg import scope as sdscope
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SymbolResolver
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    ConditionalBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    SymbolResolver,
+    last_condition_negates_the_others,
+)
 from dace.sdfg.type_inference import infer_expr_type
-from dace.transformation.passes.analysis import StateReachability, loop_analysis
+from dace.transformation.passes.analysis import loop_analysis
 
 
 def _get_or_eval_sdfg_first_arg(func, sdfg):
@@ -69,6 +78,8 @@ class DaCeCodeGenerator:
             list[tuple[SDFG, SDFGState | None, nodes.AccessNode | None, bool, bool, bool]],
         ] = collections.defaultdict(list)
         self.where_allocated: dict[tuple[SDFG, str], SDFG] = {}
+        #: Arrays a block frees on entry, ahead of allocating them anew at their new size, by that block.
+        self.to_reallocate: collections.defaultdict[ControlFlowBlock, list] = collections.defaultdict(list)
         self.fsyms: dict[tuple[int, bool], set[str]] = {}
         self._symbols_and_constants: dict[int, set[str]] = {}
         # The symbols visible in each state, shared by all nodes of the state (filled during code generation)
@@ -678,10 +689,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Gather shared transients, free symbols, and first/last appearance
         shared_transients = {}
         fsyms = {}
-        reachability = StateReachability().apply_pass(top_sdfg, {})
         access_instances: dict[int, dict[str, list[tuple[SDFGState, nodes.AccessNode]]]] = {}
-        # Per SDFG cfg_id, built on first need
-        dominance: dict[int, tuple[DominatorTree, DominatorTree]] = {}
         code_instances: dict[int, dict[str, list[tuple[SDFGState, nodes.Node]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             shared_transients[sdfg.cfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
@@ -948,27 +956,34 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         self.where_allocated[(sdfg, name)] = cursdfg
                         continue
 
-                    if any(inst not in reachability[sdfg.cfg_id][first_state_instance] for inst in instances):
-                        if sdfg.cfg_id not in dominance:
-                            dominance[sdfg.cfg_id] = dominator_trees(sdfg)
-                        first_state_instance, last_state_instance = _get_dominator_and_postdominator(
-                            instances, *dominance[sdfg.cfg_id]
+                    access_states = {state for state, _ in instances}
+                    first_block, last_block = paired_allocation_blocks([state for state, _ in instances])
+                    if first_block is first_state_instance:
+                        self.to_allocate[curscope].append(
+                            (sdfg, first_state_instance, first_node_instance, True, False, False)
                         )
+                    else:
                         # Declare in SDFG scope
                         # NOTE: Even if we declare the data at a common dominator, we keep the first and last node
                         # instances. This is especially needed for Views which require both the SDFGState and the
                         # AccessNode.
                         self.to_allocate[curscope].append((sdfg, None, nodes.AccessNode(name), True, False, False))
-                    else:
-                        self.to_allocate[curscope].append(
-                            (sdfg, first_state_instance, first_node_instance, True, False, False)
-                        )
 
-                    curscope = allocation_block(first_state_instance, desc, {state for state, _ in instances})
-                    self.to_allocate[curscope].append(
-                        (sdfg, first_state_instance, first_node_instance, False, True, False)
+                    alloc_state = first_block if isinstance(first_block, SDFGState) else first_state_instance
+                    sized_blocks, resized_blocks = late_allocation_block(
+                        allocation_block(first_block, desc, access_states),
+                        last_block,
+                        name,
+                        desc,
+                        access_states,
                     )
-                    curscope = last_state_instance
+                    # Over the blocks that allocate it: one, or one per arm of a conditional that sizes it
+                    for curscope in sized_blocks:
+                        self.to_allocate[curscope].append((sdfg, alloc_state, first_node_instance, False, True, False))
+                    # Over the blocks that resize it: each frees the buffer it holds before allocating anew
+                    for curscope in resized_blocks:
+                        self.to_reallocate[curscope].append((sdfg, alloc_state, first_node_instance))
+                    curscope = last_block
                     # A control flow region has no state to dispatch the deallocation through
                     dealloc_state = curscope if isinstance(curscope, SDFGState) else instances[-1][0]
                     self.to_allocate[curscope].append((sdfg, dealloc_state, last_node_instance, False, False, True))
@@ -998,6 +1013,20 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             if instr is not None:
                 instr.on_allocation_begin(sdfg, scope, callsite_stream)
         """ Dispatches allocation of all arrays in the given scope. """
+        # A resize frees the buffer of the old size first; the pointer stays declared for the new one
+        for tsdfg, state, node in self.to_reallocate.get(scope, []):
+            declared = self._dispatcher.declared_arrays.snapshot()
+            self._dispatcher.dispatch_deallocate(
+                tsdfg,
+                state.parent_graph,
+                state,
+                state.block_id,
+                node,
+                node.desc(tsdfg),
+                function_stream,
+                callsite_stream,
+            )
+            self._dispatcher.declared_arrays.restore(declared)
         for tsdfg, state, node, declare, allocate, _ in self.to_allocate[scope]:
             if state is not None:
                 state_id = state.block_id
@@ -1302,75 +1331,289 @@ def allocation_block(state: SDFGState, desc: data.Data, access_states: set[SDFGS
     return block
 
 
-class DominatorTree:
-    """The tree of ``immediate`` (a root maps to itself) with DFS entry/exit times: ``a`` dominates ``b`` iff ``b``'s
-    interval lies within ``a``'s, so no transitive closure is built."""
+def late_allocation_block(
+    alloc_block: ControlFlowBlock,
+    last_block: ControlFlowBlock,
+    name: str,
+    desc: data.Data,
+    access_states: set[SDFGState],
+) -> tuple[list[ControlFlowBlock], list[ControlFlowBlock]]:
+    """
+    The blocks whose entry allocates ``desc`` when a symbol it is sized by is assigned between ``alloc_block`` and
+    ``last_block``, inside a branch or a loop (QE's ``qgm``: one conditional sizes and fills it, a later one reads
+    it). Its declaration stays at ``alloc_block``, where the size is not yet assigned; the allocation follows the
+    assignment. Without such an assignment, the block is ``alloc_block``. When every arm of one conditional sizes it
+    (Fortran's ``allocate`` with an arm's own extents in each arm), each arm allocates: one of them runs per path.
 
-    def __init__(self, immediate: dict[ControlFlowBlock, ControlFlowBlock]) -> None:
-        self.immediate = immediate
-        children: dict[ControlFlowBlock, list[ControlFlowBlock]] = collections.defaultdict(list)
-        roots = {parent for parent in immediate.values() if immediate.get(parent, parent) is parent}
-        for block, parent in immediate.items():
-            if parent is not block:
-                children[parent].append(block)
-        self.entry: dict[ControlFlowBlock, int] = {}
-        self.exit: dict[ControlFlowBlock, int] = {}
-        clock = 0
-        for root in roots:
-            stack = [(root, iter(children[root]))]
-            self.entry[root] = clock
-            clock += 1
-            while stack:
-                block, pending = stack[-1]
-                child = next(pending, None)
-                if child is None:
-                    self.exit[block] = clock
-                    clock += 1
-                    stack.pop()
-                elif child not in self.entry:
-                    self.entry[child] = clock
-                    clock += 1
-                    stack.append((child, iter(children[child])))
+    :param alloc_block: The block :func:`allocation_block` picked.
+    :param last_block: The block whose exit frees ``desc``.
+    :param name: The name of ``desc``.
+    :param desc: The descriptor to allocate.
+    :param access_states: The states that access ``desc`` or read it on an adjacent edge.
+    A size assigned after an access keeps ``alloc_block``, as before this placement existed. A size changed between
+    two uses reallocates at each assignment, when every read after it follows a write after it (Fortran's
+    ``DEALLOCATE`` and ``ALLOCATE`` at a new size, QE ``vexxace_gamma``'s ``rmexx_d``).
+    :returns: The blocks that allocate ``desc``, and those of them that free the buffer of the old size first.
 
-    def dominates(self, a: ControlFlowBlock, b: ControlFlowBlock) -> bool:
-        if a is b:
+    :raises NotImplementedError: When the size is assigned at more than one place or in a loop the free does not run
+                                 in, or changes while a value of ``desc`` lives across it.
+    """
+    sizes = {str(sym) for sym in desc.free_symbols}
+    region = alloc_block.parent_graph
+    while not any(last_block is block for block in region.nodes()):
+        if isinstance(last_block, SDFG):
+            return [alloc_block], []
+        last_block = last_block.parent_graph
+
+    def accesses(graph: ControlFlowBlock) -> bool:
+        return (
+            graph in access_states if isinstance(graph, SDFGState) else any(s in access_states for s in graph.states())
+        )
+
+    span = reachable(alloc_block, region.successors) & reachable(last_block, region.predecessors)
+    edges = [e for e in region.edges() if e.src in span and e.dst in span]
+    edges += [e for b in span if isinstance(b, AbstractControlFlowRegion) for e in b.all_interstate_edges()]
+
+    def sized_after(edge) -> ControlFlowBlock:
+        """The first block after ``edge`` that runs once its assignment is final, lifted out of regions that do not
+        access ``desc`` (a loop summing the size)."""
+        graph, block = edge.src.parent_graph, edge.dst
+        while graph is not region and not accesses(graph):
+            outer = graph.parent_graph
+            if isinstance(outer, ConditionalBlock):
+                graph, outer = outer, outer.parent_graph
+            out_edges = outer.out_edges(graph)
+            # The last block of a region that does not access desc (a loop body): the size is final after that region
+            if not out_edges and outer is not region and not accesses(outer):
+                graph = outer
+                continue
+            if len(out_edges) != 1:
+                raise NotImplementedError(f"No single block follows {graph} to allocate {desc} after its size")
+            graph, block = outer, out_edges[0].dst
+        return allocation_block(block, desc, access_states)
+
+    sizing_edges = [e for e in edges if e.data.assignments.keys() & sizes]
+    blocks = list({id(block): block for block in map(sized_after, sizing_edges)}.values())
+    if not blocks:
+        return [alloc_block], []
+    # The size is final at the block every other assignment runs before (QE's nij: set to 0, then summed in a loop)
+    last = [b for b in blocks if all(o is b or precedes(o, b) for o in blocks)]
+    if len(last) != 1:
+        # Or at the last assignment in each arm of one conditional that sizes it on every path (QE h_psi's tg_v)
+        last = [b for b in blocks if not any(o is not b and precedes(b, o) for o in blocks)]
+        if not one_per_arm(last):
+            raise NotImplementedError(f"{desc} is sized at {len(blocks)} places: it would need a reallocation")
+    refuse_loops(last, region, desc)
+    # Accessed before the assignment: the earlier accesses use the size in force at the dominating block, as before;
+    # accessed on both sides of a size that changes in between needs a reallocation, however many places assign it (a
+    # buffer sized N + 2, read, then filled to N + 3 overflowed when the first size lay before the span)
+    if any(precedes(state, block) for state in access_states for block in last):
+        # An in-edge read runs before that edge's assignments and is recorded on its source state too (tmp1 in N = tmp1[0])
+        later = [state for state in access_states if uses_in_state_or_after(state, name)]
+        if not any(after(block, state) for state in later for block in last):
+            return [alloc_block], []
+        # Each assignment frees and allocates anew: no value may cross it, nor may a register be resized
+        refuse_loops(blocks, region, desc)
+        if getattr(desc.storage, "force", False) or not all(
+            written_before_read(block, name, [state for state in later if after(block, state)]) for block in blocks
+        ):
+            raise NotImplementedError(f"{desc} is sized at {len(blocks)} places: it would need a reallocation")
+        return [alloc_block, *blocks], blocks
+    return last, []
+
+
+def refuse_loops(blocks: list[ControlFlowBlock], region: ControlFlowRegion, desc: data.Data) -> None:
+    """Refuse a block of ``blocks`` that sits in a loop inside ``region``, where the free does not run."""
+    for block in blocks:
+        outer = block.parent_graph
+        while outer is not region:
+            if isinstance(outer, LoopRegion):
+                raise NotImplementedError(f"{desc} is sized in {outer}, which reallocates it per iteration")
+            outer = outer.parent_graph
+
+
+def after(block: ControlFlowBlock, state: SDFGState) -> bool:
+    """Whether ``state`` is ``block``, lies in it, or runs after it on some path."""
+    return block is state or precedes(block, state) or contains(block, state)
+
+
+def written_before_read(block: ControlFlowBlock, name: str, states: list[SDFGState]) -> bool:
+    """Whether each of ``states`` that reads ``name`` follows another of them that writes it: the buffer ``block``
+    allocates anew carries no value from before. A read on a path that skips every write reads undefined values, as
+    Fortran's does after ``ALLOCATE`` (QE matcalc's ``rmexx`` when ``calbec`` is skipped)."""
+    writes = [s for s in states if any(n.data == name and s.in_degree(n) > 0 for n in s.data_nodes())]
+    reads = [
+        s
+        for s in states
+        if any(n.data == name and s.out_degree(n) > 0 for n in s.data_nodes())
+        or any(name in n.free_symbols for n in s.nodes() if not isinstance(n, nodes.AccessNode))
+        or any(name in e.data.used_arrays(s.sdfg.arrays) for e in s.parent_graph.out_edges(s))
+    ]
+    return all(any(w is not r and precedes(w, r) for w in writes) for r in reads)
+
+
+def uses_in_state_or_after(state: SDFGState, name: str) -> bool:
+    """Whether ``state`` uses container ``name`` in its own graph or on an out-edge, not only on an in-edge."""
+    if any(node.data == name for node in state.data_nodes()):
+        return True
+    if any(name in node.free_symbols for node in state.nodes() if not isinstance(node, nodes.AccessNode)):
+        return True
+    arrays = state.sdfg.arrays
+    return any(name in edge.data.used_arrays(arrays) for edge in state.parent_graph.out_edges(state))
+
+
+def one_per_arm(blocks: list[ControlFlowBlock]) -> bool:
+    """Whether ``blocks`` lie one in each arm of one conditional that has an else, so exactly one of them runs on every
+    path through it."""
+    if len(blocks) < 2:
+        return False
+    # The conditional holding the first block, climbing out until one holds every block
+    owner = blocks[0].parent_graph
+    while owner is not None and not (
+        isinstance(owner, ConditionalBlock) and all(contains(owner, b) for b in blocks[1:])
+    ):
+        owner = owner.parent_graph if not isinstance(owner, SDFG) else None
+    if owner is None:
+        return False
+    arms = [region for condition, region in owner.branches]
+    conditions = tuple(c.as_string for c, region in owner.branches if c is not None)
+    if len(conditions) == len(arms) and not last_condition_negates_the_others(conditions):
+        return False
+    # Over the arms: each holds exactly one of the blocks
+    return len(blocks) == len(arms) and all(sum(contains(arm, b) for b in blocks) == 1 for arm in arms)
+
+
+def contains(block: ControlFlowBlock, state: SDFGState) -> bool:
+    """Whether ``state`` lies inside the region ``block``."""
+    graph = state.parent_graph
+    while graph is not None and not isinstance(graph, SDFG):
+        if graph is block:
             return True
-        if a not in self.entry or b not in self.entry:
-            return False
-        return self.entry[a] <= self.entry[b] and self.exit[b] <= self.exit[a]
+        graph = graph.parent_graph
+    return False
 
 
-def dominator_trees(sdfg: SDFG) -> tuple[DominatorTree, DominatorTree]:
-    """The dominator and post-dominator trees of the blocks of ``sdfg``, across its control flow regions."""
-    idom: dict[ControlFlowBlock, ControlFlowBlock] = {}
-    ipostdom: dict[ControlFlowBlock, ControlFlowBlock] = {}
-    utils.get_control_flow_block_dominators(sdfg, idom, None, ipostdom, None)
-    return DominatorTree(idom), DominatorTree(ipostdom)
+def precedes(first: ControlFlowBlock, block: ControlFlowBlock) -> bool:
+    """Whether ``first`` runs before ``block`` is entered on some path, in one iteration of the loops around both."""
+    chain = [first]
+    while not isinstance(chain[-1], SDFG):
+        chain.append(chain[-1].parent_graph)
+    if any(block is other for other in chain):
+        return False
+    inner = block
+    while not any(inner.parent_graph is other for other in chain):
+        inner = inner.parent_graph
+    common = inner.parent_graph
+    if isinstance(common, ConditionalBlock):
+        return False
+    start = chain[next(i for i, r in enumerate(chain) if r is common) - 1]
+    return inner in reachable(start, common.successors)
 
 
-def _get_dominator_and_postdominator(
-    accesses: list[tuple[SDFGState, nodes.AccessNode]], dom: DominatorTree, postdom: DominatorTree
-):
+def reachable(start: ControlFlowBlock, step) -> set[ControlFlowBlock]:
+    """``start`` and every block ``step`` (a region's ``successors`` or ``predecessors``) reaches from it."""
+    seen, stack = {start}, [start]
+    while stack:
+        for nxt in step(stack.pop()):
+            if nxt not in seen:
+                seen.add(nxt)
+                stack.append(nxt)
+    return seen
+
+
+def common_dominator(idom: dict, blocks) -> Any:
+    """The nearest block that dominates every one of ``blocks`` in the tree of ``idom`` (a root maps to itself)."""
+    paths = []
+    for block in blocks:
+        path = [block]
+        while idom[path[-1]] is not path[-1]:
+            path.append(idom[path[-1]])
+        paths.append(path)
+    return next(block for block in paths[0] if all(any(block is other for other in path) for path in paths[1:]))
+
+
+def region_dominators(region: ControlFlowRegion) -> tuple[dict, dict, object]:
+    """The immediate dominators and post-dominators of ``region``'s own blocks, and the exit node its sinks lead to."""
+    exit_node = object()
+    graph = nx.DiGraph()
+    graph.add_nodes_from(region.nodes())
+    graph.add_edges_from((edge.src, edge.dst) for edge in region.edges())
+    graph.add_edges_from((sink, exit_node) for sink in region.sink_nodes())
+    return (
+        utils.immediate_dominators(graph, region.start_block),
+        utils.immediate_dominators(graph.reverse(), exit_node),
+        exit_node,
+    )
+
+
+def paired_blocks_in(region: ControlFlowRegion, blocks: list[ControlFlowBlock]) -> tuple | None:
+    """Blocks ``(first, last)`` of ``region`` where ``first`` dominates and ``last`` post-dominates ``blocks`` and
+    each other in ``region``'s own graph, or ``None`` when no block of ``region`` post-dominates them."""
+    idom, ipostdom, exit_node = region_dominators(region)
+    if any(block not in idom or block not in ipostdom for block in blocks):
+        return None
+    first, last = common_dominator(idom, blocks), common_dominator(ipostdom, blocks)
+    while True:
+        new_first = common_dominator(idom, [*blocks, last]) if last is not exit_node else first
+        new_last = common_dominator(ipostdom, [*blocks, new_first])
+        if new_first is first and new_last is last:
+            return None if last is exit_node else (first, last)
+        first, last = new_first, new_last
+
+
+def paired_allocation_blocks(states: list[SDFGState]) -> tuple[ControlFlowBlock, ControlFlowBlock]:
+    """The block whose entry allocates and the block whose exit frees a container accessed in ``states``.
+
+    Both are blocks of one control flow region, the first dominating and the second post-dominating every access and
+    each other there, so each allocation is freed exactly once, wherever the accesses sit in branches or loop bodies.
+    The region is the innermost one holding every access; a conditional counts as one block of its parent.
     """
-    Gets the closest common dominator and post-dominator for a list of states.
-    Used for determining allocation of data used in branched states.
-    """
-    states = [a for a, _ in accesses]
-    data_name = accesses[0][1].data
+    chains = []
+    for state in states:
+        chain = [state]
+        while not isinstance(chain[-1], SDFG):
+            chain.append(chain[-1].parent_graph)
+        chains.append(chain)
+    region = next(
+        r
+        for r in chains[0][1:]
+        if not isinstance(r, ConditionalBlock) and all(any(r is other for other in chain) for chain in chains[1:])
+    )
+    blocks = []
+    for chain in chains:
+        block = chain[next(i for i, r in enumerate(chain) if r is region) - 1]
+        if not any(block is other for other in blocks):
+            blocks.append(block)
+    while True:
+        pair = paired_blocks_in(region, blocks)
+        if pair is not None:
+            return entered_block(pair[0], chains), pair[1]
+        if isinstance(region, SDFG):
+            raise NotImplementedError(f"No block pair allocates and frees a container accessed in {states}")
+        blocks = [region]
+        region = region.parent_graph
+        while isinstance(region, ConditionalBlock):
+            blocks, region = [region], region.parent_graph
 
-    start_state = states[0]
-    while any(not dom.dominates(start_state, n) for n in states):
-        if dom.immediate[start_state] is start_state:
-            raise NotImplementedError(f'Could not find an appropriate dominator for allocation of "{data_name}"')
-        start_state = dom.immediate[start_state]
 
-    end_state = states[-1]
-    while any(not postdom.dominates(end_state, n) for n in states):
-        if postdom.immediate[end_state] is end_state:
-            raise NotImplementedError(f'Could not find an appropriate post-dominator for deallocation of "{data_name}"')
-        end_state = postdom.immediate[end_state]
-
-    # TODO(later): If any of the symbols were not yet defined, or have changed afterwards, fail
-    # raise NotImplementedError
-
-    return start_state, end_state
+def entered_block(block: ControlFlowBlock, chains: list[list[ControlFlowBlock]]) -> ControlFlowBlock:
+    """Descends from a region that runs its body once per entry (not a loop or a conditional) to the block in it that
+    every entry passes and that dominates the accesses on ``chains`` there: an allocation at that block follows the
+    assignments the region makes first (a call region binding the size symbols of its result)."""
+    while isinstance(block, ControlFlowRegion) and not isinstance(block, LoopRegion):
+        inner = []
+        for chain in chains:
+            at = next((i for i, r in enumerate(chain) if r is block), None)
+            if at is not None and not any(chain[at - 1] is other for other in inner):
+                inner.append(chain[at - 1])
+        idom, ipostdom, _ = region_dominators(block)
+        if not inner or any(b not in idom for b in inner):
+            return block
+        dom = common_dominator(idom, inner)
+        passed = block.start_block
+        while passed is not dom and ipostdom[passed] is not passed:
+            passed = ipostdom[passed]
+        if passed is not dom:
+            return block
+        block = dom
+    return block
