@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Map Fission transformation."""
 
+import ast
 from collections import Counter, defaultdict
 from copy import deepcopy as dcpy
 from functools import reduce
@@ -15,7 +16,7 @@ from dace.sdfg import graph as gr
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.propagation import propagate_memlets_state, propagate_subset
-from dace.sdfg.state import ConditionalBlock, LoopRegion, SymbolResolver, is_written
+from dace.sdfg.state import ConditionalBlock, LoopRegion, SymbolResolver
 from dace.symbolic import int_floor, pystr_to_symbolic
 from dace.transformation import helpers, transformation
 
@@ -413,6 +414,46 @@ class MapFission(transformation.SingleStateTransformation):
             for node in inner_state.nodes():
                 if isinstance(node, nodes.NestedSDFG):
                     MapFission.widen_integrated_connectors(node, inner_state, inner_widened, idx, ptypes)
+        MapFission.widen_control_flow_reads(inner_sdfg, inner_widened, idx)
+
+    @staticmethod
+    def widen_control_flow_reads(body: sd.SDFG, widened: dict, idx: list) -> None:
+        """Index the reads of widened containers in the conditions and assignments of ``body`` by the map indices
+        ``idx``, as :meth:`widen_integrated_connectors` does for memlets: a condition reading ``j`` reads ``j[i]``."""
+        prefix = [ast.parse(symbolic.symstr(i), mode="eval").body for i in idx]
+
+        class Widen(ast.NodeTransformer):
+            def visit_Subscript(self, node: ast.Subscript):
+                if not isinstance(node.value, ast.Name) or node.value.id not in widened:
+                    return self.generic_visit(node)
+                old = list(node.slice.elts) if isinstance(node.slice, ast.Tuple) else [node.slice]
+                node.slice = ast.Tuple([*prefix, *([] if widened[node.value.id][2] else old)], ast.Load())
+                return node
+
+            def visit_Name(self, node: ast.Name):
+                if node.id not in widened:
+                    return node
+                return ast.Subscript(node, ast.Tuple(list(prefix), ast.Load()), ast.Load())
+
+        def rewrite(code: str) -> str:
+            tree = ast.parse(code)
+            if not any(isinstance(n, ast.Name) and n.id in widened for n in ast.walk(tree)):
+                return code
+            return ast.unparse(ast.fix_missing_locations(Widen().visit(tree)))
+
+        for region in body.all_control_flow_regions():
+            codes = (
+                [cond for cond, branch in region.branches if cond is not None]
+                if isinstance(region, ConditionalBlock)
+                else []
+            )
+            if isinstance(region, LoopRegion):
+                codes.append(region.loop_condition)
+            codes.extend(edge.data.condition for edge in region.edges())
+            for code in codes:
+                code.as_string = rewrite(code.as_string)
+            for edge in region.edges():
+                edge.data.assignments = {k: rewrite(v) for k, v in edge.data.assignments.items()}
 
     @staticmethod
     def _outside_map(node, scope_dict, entry_nodes):
@@ -552,6 +593,13 @@ class MapFission(transformation.SingleStateTransformation):
         total_components = []
         for sg in subgraphs:
             components = self._components(sg)
+            # An ordering edge out of a component carries no data to widen (``apply`` would look up its ``None``)
+            if any(
+                e.data.is_empty() and isinstance(e.dst, nodes.CodeNode)
+                for first, out in components
+                for e in sg.out_edges(out)
+            ):
+                return False
             snodes = sg.nodes()
             # Test that the subgraphs have more than one computational component
             if expr_index == 0 and len(snodes) > 0 and len(components) <= 1:
@@ -638,9 +686,10 @@ class MapFission(transformation.SingleStateTransformation):
 
         Fission nests each top-level region of the body whole, so a ``ConditionalBlock`` lands in one map with all
         its branches and no component is split across it. That is only sound while its conditions mean the same in
-        that map: they must read neither a map parameter, nor a symbol the body assigns on an interstate edge, nor a
-        container the body writes (the assignment or write would end up in another map). All are followed into nested
-        SDFGs through their symbol mappings and connectors.
+        that map: they must read neither a map parameter nor a symbol the body assigns on an interstate edge (the
+        assignment would end up in another map). Both are followed into nested SDFGs through their symbol mappings
+        and connectors. A container the body writes may be read: it is a border array, widened by the map, and
+        :meth:`widen_control_flow_reads` indexes the condition's read of it by the map indices.
 
         :param body: The nested SDFG that is the body of the map (or a nested SDFG inside it).
         :param blocked: The names in ``body`` whose value may differ between the fissioned maps: the map parameters,
@@ -648,7 +697,6 @@ class MapFission(transformation.SingleStateTransformation):
         :returns: ``False`` if a conditional in ``body`` reads a blocked name.
         """
         blocked = set(blocked) | {name for edge in body.all_interstate_edges() for name in edge.data.assignments}
-        blocked |= {node.data for state in body.states() for node in state.data_nodes() if is_written(state, node)}
         for block in body.all_control_flow_blocks():
             if isinstance(block, ConditionalBlock) and any(
                 {str(sym) for sym in cond.get_free_symbols()} & blocked for cond, region in block.branches if cond
