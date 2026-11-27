@@ -57,6 +57,7 @@ from dace.sdfg.state import ControlFlowRegion, StateSubgraphView, SymbolResolver
 from dace.transformation.passes import gpu_shared_memory
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUCodegenPreprocessPipeline
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
+from dace.transformation.passes.workspace_carving import CarveTransientsFromWorkspace
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -182,6 +183,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         GPUCodegenPreprocessPipeline().apply_pass(sdfg, pipeline_results)
         if cpf_lowering.no_boilerplate():
             demote_persistent_transients(sdfg)
+            place_device_transients(sdfg)
         self._globalcode.write(plan_shared_memory(sdfg))
 
         # AddThreadBlockMaps returns the kernel-dimension map and the set of kernels it
@@ -1073,12 +1075,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # call that needs more, freed at exit. The entry drains the device before it returns, so the next call never
         # races the last one's kernels.
         holder = self.persistent_device_holder(node.data, nodedesc)
-        if self.carves_from_workspace(sdfg, node.data, nodedesc):
-            # A no-boilerplate unit points the array into the caller's workspace: no allocation, nothing to free.
-            slot = cpf_lowering.workspace_slot(
-                dataname, node.data, nodedesc, nodedesc.dtype.ctype, sym2cpp(nodedesc.total_size)
-            )
-            assert slot is not None  # carves_from_workspace placed it
+        slot = cpf_lowering.workspace_slot(dataname, node.data, nodedesc, nodedesc.dtype.ctype)
+        if slot is not None:
+            # A slot of the caller's workspace (``CarveTransientsFromWorkspace``): no allocation, nothing to free.
             allocation_stream.write(slot, cfg, state_id, node)
         elif holder is not None:
             holder = self.register_persistent_device_holder(holder, nodedesc, function_stream, cfg, state_id, node)
@@ -1114,30 +1113,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             )
         if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
             allocation_stream.write(f"{dataname} += {sym2cpp(nodedesc.start_offset)};\n", cfg, state_id, node)
-
-    def carves_from_workspace(self, sdfg: SDFG, name: str, nodedesc: dt.Data) -> bool:
-        """Whether a no-boilerplate unit places device array ``name`` of ``sdfg`` in the caller's device workspace
-        (``cpf_lowering.carve_into_workspace``) instead of allocating it.
-
-        Only an array the entry allocates exactly once per call, at its top, takes a slot: a persistent one (allocated
-        on entry), or one of the entry's own ``SDFG`` lifetime -- a nested SDFG's is allocated per call of the nested
-        function, which a loop may repeat. Its extent must read the entry's arguments alone, since the entry checks the
-        workspace's size before it allocates anything. Any other device array keeps its allocation, and a slot taken
-        once per iteration would run past the workspace.
-        """
-        workspace = self._global_sdfg.arrays.get(cpf_lowering.carved_workspace_name)
-        once = nodedesc.lifetime is dtypes.AllocationLifetime.Persistent or (
-            nodedesc.lifetime is dtypes.AllocationLifetime.SDFG and sdfg.parent_sdfg is None
-        )
-        return (
-            cpf_lowering.no_boilerplate()
-            and nodedesc.transient
-            and once
-            and workspace is not None
-            and workspace.storage is dtypes.StorageType.GPU_Global
-            and {str(s) for s in symbolic.symlist(nodedesc.total_size)} <= self._frame.arglist.keys()
-            and cpf_lowering.carve_into_workspace(name, nodedesc)
-        )
 
     @staticmethod
     def persistent_device_holder(name: str, nodedesc: dt.Data) -> str | None:
@@ -1364,6 +1339,18 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
     def process_out_memlets(self, *args, **kwargs):
         self._cpu_codegen.process_out_memlets(*args, codegen=self, **kwargs)
+
+
+def place_device_transients(sdfg: SDFG) -> None:
+    """Lay out the device workspace of a unit without boilerplate (:func:`~dace.cpf_lowering.no_boilerplate`).
+
+    Here rather than with the rendering's host layout: the GPU pipeline that just ran still adds device buffers
+    (``MoveArrayOutOfKernel``) and promotes them, so only now are the ones the entry allocates known.
+    """
+    request = cpf_lowering.workspace_request()
+    if request is None or sdfg.arrays[request.workspace].storage is not dtypes.StorageType.GPU_Global:
+        return
+    request.layout = CarveTransientsFromWorkspace(request.workspace, request.size).apply_pass(sdfg, {})
 
 
 def demote_persistent_transients(sdfg: SDFG) -> int:

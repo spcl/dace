@@ -37,6 +37,7 @@ Names absent from all three tables are NOT silently passed through: see :func:`l
 
 import contextlib
 import ctypes.util
+import dataclasses
 import enum
 import functools
 import os
@@ -522,103 +523,81 @@ def provenance_scope(provenance: dict[str, tuple[str, str]]):
         _provenance = previous
 
 
-#: The heap transients a standalone rendering places in the caller's workspace instead of allocating, as data
-#: name -> descriptor, and the workspace's name; empty outside :func:`workspace_carve_scope`.
-carved_workspace_arrays: dict[str, Any] = {}
-carved_workspace_name: str = ""
+@dataclasses.dataclass
+class WorkspaceRequest:
+    """The caller's workspace pair of the rendering in force (:func:`workspace_scope`), and the layout chosen for it.
 
-#: The workspace's size argument and the entry's name, for the size check of a :func:`no_boilerplate` entry
-#: (:func:`workspace_offset_declaration`); empty outside :func:`workspace_carve_scope`.
-carved_workspace_size_name: str = ""
-carved_workspace_entry: str = ""
+    The layout (a :class:`~dace.transformation.passes.workspace_carving.WorkspaceLayout`) is chosen once the arrays it
+    places are known: by the rendering for a host workspace, by the GPU generator after its own pipeline for a device
+    one, since that pipeline still adds and promotes device buffers. ``None`` until then, and when nothing is placed.
+    """
 
-#: Each array placed in the workspace starts on this boundary, the alignment its own allocation had.
-WORKSPACE_ALIGNMENT = 64
+    workspace: str
+    size: str
+    layout: Any = None
+
+
+#: The workspace of the rendering in force; ``None`` outside :func:`workspace_scope` or without a workspace.
+workspace_request_in_force: WorkspaceRequest | None = None
 
 
 @contextlib.contextmanager
-def workspace_carve_scope(workspace: str, carve: dict[str, Any], size: str = "", entry: str = ""):
-    """Make ``carve`` the ambient workspace layout for the duration of the block (:func:`workspace_slot`); ``size``
-    and ``entry`` name the workspace's size argument and the entry the size check reports (:func:`no_boilerplate`)."""
-    global carved_workspace_arrays, carved_workspace_name, carved_workspace_size_name, carved_workspace_entry
-    previous = carved_workspace_arrays, carved_workspace_name, carved_workspace_size_name, carved_workspace_entry
-    carved_workspace_arrays, carved_workspace_name = carve, workspace
-    carved_workspace_size_name, carved_workspace_entry = size, entry
+def workspace_scope(request: WorkspaceRequest | None):
+    """Make ``request`` the ambient workspace for the duration of the block (:func:`workspace_slot`)."""
+    global workspace_request_in_force
+    previous = workspace_request_in_force
+    workspace_request_in_force = request
     try:
-        yield carve
+        yield request
     finally:
-        carved_workspace_arrays, carved_workspace_name, carved_workspace_size_name, carved_workspace_entry = previous
+        workspace_request_in_force = previous
 
 
-def workspace_bound(carve: dict[str, Any]) -> Any:
-    """An upper bound on the bytes the arrays of ``carve`` take in the workspace, as a symbolic expression over the
-    entry's scalar arguments: each array's bytes plus one :data:`WORKSPACE_ALIGNMENT` of padding; ``0`` for none."""
-    return sum(desc.total_size * desc.dtype.bytes + WORKSPACE_ALIGNMENT for desc in carve.values())
+def workspace_request() -> WorkspaceRequest | None:
+    """The workspace of the standalone rendering in force, else ``None``."""
+    return workspace_request_in_force if standalone() else None
 
 
-def workspace_bytes(carve: dict[str, Any]) -> str:
-    """:func:`workspace_bound` as the text ``Rendering.workspace_bytes`` holds (``'0'`` for none)."""
-    return str(workspace_bound(carve)) if carve else "0"
+def workspace_layout() -> Any:
+    """The layout chosen for the workspace in force, else ``None``."""
+    request = workspace_request()
+    return request.layout if request is not None else None
 
 
-def carve_into_workspace(name: str, desc: Any) -> bool:
-    """Add device array ``name`` to the workspace layout in force when a :func:`no_boilerplate` entry allocates it, so
-    its allocation becomes a :func:`workspace_slot`; whether it is placed.
-
-    The GPU generator decides some of its buffers only while generating code (``MakeTransientsPersistent``), after the
-    rendering planned the workspace, so a device entry grows the layout as it allocates; the caller has checked that
-    the entry allocates the array once per call. A name another descriptor holds already keeps its allocation, since
-    :func:`workspace_slot` matches the name and the descriptor together.
-    """
-    if not no_boilerplate() or not carved_workspace_name or carved_workspace_arrays.get(name, desc) is not desc:
-        return False
-    carved_workspace_arrays[name] = desc
-    return True
-
-
-def workspace_offset_name(workspace: str) -> str:
-    """The running byte offset into ``workspace`` the entry carves its arrays at."""
-    return f"{workspace}_off"
-
-
-def workspace_offset_declaration() -> str:
-    """``size_t <workspace>_off = 0;`` at the top of an entry that carves arrays out of its workspace, else ``''``;
-    a :func:`no_boilerplate` entry also checks there that the workspace holds them."""
-    if not standalone() or not carved_workspace_arrays:
-        return ""
-    declaration = f"size_t {workspace_offset_name(carved_workspace_name)} = 0;\n"
-    if not no_boilerplate() or not carved_workspace_size_name:
-        return declaration
-    # A no-boilerplate entry refuses a workspace smaller than the bound it reports (``Rendering.workspace_bytes``),
-    # before any slot is taken, rather than writing past the caller's buffer.
+def workspace_slot(alloc_name: str, name: str | None, desc: Any, ctype: str) -> str | None:
+    """The statement pointing ``alloc_name`` at its slot of the workspace, for an array the layout placed under
+    ``name``; ``None`` for any other array. Matched on the descriptor too, so a nested SDFG's array of the same name
+    keeps its own allocation."""
+    layout = workspace_layout()
+    offset = layout.offset(name, desc) if layout is not None else None
+    if offset is None:
+        return None
     from dace.codegen.common import sym2cpp  # the code generators import this module
 
-    needed, size = sym2cpp(workspace_bound(carved_workspace_arrays)), carved_workspace_size_name
-    return declaration + (
-        f"if ({size} < (int64_t)({needed})) {{\n"
-        f'fprintf(stderr, "{carved_workspace_entry}: workspace needs %lld bytes, got %lld\\n", '
-        f"(long long)({needed}), (long long){size});\n"
-        "abort();\n"
-        "}\n"
-    )
+    address = f"{layout.workspace} + {sym2cpp(offset)}"
+    if standalone_c():
+        return f"{alloc_name} = ({ctype} *)({address});\n"
+    return f"{alloc_name} = reinterpret_cast<{ctype} *>({address});\n"
 
 
-def workspace_slot(alloc_name: str, name: str | None, desc: Any, ctype: str, count: str) -> str | None:
-    """The statement pointing ``alloc_name`` at the next free slot of the workspace and moving the running offset
-    past it, rounded up to :data:`WORKSPACE_ALIGNMENT`, for a heap transient the rendering carves out of the
-    workspace; ``None`` for any other array.
+def carved_from_workspace(desc: Any) -> bool:
+    """Whether ``desc`` lives in the workspace, so freeing it frees nothing."""
+    layout = workspace_layout()
+    return layout is not None and layout.holds(desc)
 
-    Matched on the descriptor itself, so a nested SDFG's array of the same name keeps its own allocation. The
-    rendering allocates every carved array once, at the top of the entry (``cpf.render_unit``), so each slot is
-    taken exactly once per call.
-    """
-    if not standalone() or name is None or carved_workspace_arrays.get(name) is not desc:
-        return None
-    offset = workspace_offset_name(carved_workspace_name)
-    align = WORKSPACE_ALIGNMENT
+
+def workspace_check() -> str:
+    """The entry's refusal of a workspace smaller than its layout needs (``Rendering.workspace_bytes``), before any
+    array points into it; ``''`` when nothing is placed."""
+    layout = workspace_layout()
+    if layout is None or not layout.offsets:
+        return ""
+    from dace.codegen.common import sym2cpp  # the code generators import this module
+
+    abort = "abort()" if standalone_c() else "std::abort()"
     return (
-        f"{alloc_name} = ({ctype} *)({carved_workspace_name} + {offset}); "
-        f"{offset} += (sizeof({ctype}) * (size_t)({count}) + {align - 1}) / {align} * {align};\n"
+        f"// {layout.workspace} holds the arrays that point into it below.\n"
+        f"if ({layout.size} < {sym2cpp(layout.size_bytes)}) {{\n{abort};\n}}\n"
     )
 
 
@@ -649,11 +628,6 @@ def persistent_static(name: str | None, desc: Any) -> str | None:
 def persistent_static_desc(desc: Any) -> bool:
     """Whether ``desc`` lives in a persistent ``static`` pointer, so freeing it at the end of a call frees nothing."""
     return standalone() and any(held is desc for held in _persistent_static.values())
-
-
-def carved_from_workspace(desc: Any) -> bool:
-    """Whether ``desc`` lives in the workspace, so freeing it frees nothing."""
-    return standalone() and any(carved is desc for carved in carved_workspace_arrays.values())
 
 
 #: Runtime function -> the ``std`` function with identical semantics and arity.

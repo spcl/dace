@@ -6,7 +6,7 @@ every call: cloudsc's column tiles each allocated 29 full-size buffers inside th
 one tile of them. :func:`dace.codegen.cpf.lift_persistent_transients` moves the buffer to the entry. Without a
 workspace the entry keeps it in a file-scope ``static`` pointer that lives across calls, only grows, and is freed when
 the program exits or the library is unloaded; with one, the
-workspace holds it (:func:`dace.codegen.cpf.plan_workspace`).
+workspace holds it (:class:`dace.transformation.passes.workspace_carving.CarveTransientsFromWorkspace`).
 """
 
 import copy
@@ -86,7 +86,7 @@ def test_with_a_workspace_the_buffer_lives_in_it(language):
     order = ("x", "y", "N", "workspace", "workspace_size")
     result = render(persistent_sdfg(name), language=language, signature=EntrySignature(order, *order[3:]))
     assert "__cpf_persistent_" not in result.code
-    assert re.search(r"buf = \(double \*\)\(workspace \+", result.code)
+    assert re.search(r"buf = (?:\(double \*\)\(|reinterpret_cast<double \*>\()workspace \+", result.code)
     n = 70
     needed = int(eval(result.workspace_bytes, {"N": n}))  # noqa: S307 -- an expression the renderer wrote
     assert needed >= 8 * n

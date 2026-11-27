@@ -87,6 +87,7 @@ from dace.transformation.passes.readable_names import ReadableNames
 from dace.transformation.passes.scalar_fission import AccessIndex, MustDefinition, SubsetAccesses, edge_subset
 from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
 from dace.transformation.passes.scatter_conflict_guard import names_are_free_symbols
+from dace.transformation.passes.workspace_carving import CarveTransientsFromWorkspace
 
 #: The storage types CPF can render, as an ALLOWLIST. Ordinary host memory, plain locals and Arm SVE
 #: registers (``arm_sve.h`` is a system header of every aarch64 compiler), and nothing else:
@@ -1156,7 +1157,8 @@ def lift_persistent_transients(sdfg: SDFG) -> int:
     call allocated, and freed, a private copy. Under a team each thread then filled only its own ``omp for``
     share and read the rest uninitialized (bfs's ``frontier``); under a parallel map over tiles each tile
     allocated full-size buffers it used one tile of (cloudsc: 29 per tile). At the entry the buffer is one
-    allocation again (:func:`plan_workspace`, :func:`dace.cpf_lowering.persistent_static`). A buffer whose
+    allocation again (:class:`~dace.transformation.passes.workspace_carving.CarveTransientsFromWorkspace`,
+    :func:`dace.cpf_lowering.persistent_static`). A buffer whose
     extent names a symbol the caller sets (a map parameter, a loop iterator, an interstate assignment) stays where
     it is: at the caller's entry that symbol has no value yet.
 
@@ -1464,9 +1466,10 @@ class EntrySignature:
     applied by :func:`reorder_entry_parameters`, so each parameter keeps CPF's type and qualifiers.
     ``workspace`` / ``workspace_size`` add a caller-owned scratch buffer: a non-transient ``uint8_t``
     array of ``workspace_size`` (``int64_t``) bytes, which ``order`` must name too, a writable
-    ``uint8_t *`` as the caller declares it. A host unit places its heap transients in it
-    (:func:`plan_workspace`) rather than allocating them, so all its memory is the caller's; it needs
-    :attr:`Rendering.workspace_bytes` bytes, 64-byte aligned.
+    ``uint8_t *`` as the caller declares it. The entry places the transients it allocates once per call in it
+    (:class:`~dace.transformation.passes.workspace_carving.CarveTransientsFromWorkspace`): a host unit its heap
+    arrays, a device unit without boilerplate its device arrays. It needs :attr:`Rendering.workspace_bytes` bytes,
+    64-byte aligned.
     """
 
     order: Sequence[str]
@@ -1481,10 +1484,9 @@ class EntrySignature:
 def add_workspace(sdfg: SDFG, workspace: str, size: str) -> None:
     """Add the caller-owned scratch pair to ``sdfg``'s entry, device-resident when any argument is.
 
-    :raises ValueError: if a name it adds -- the pair, or the running offset the entry carves the workspace at --
-                        is already one of ``sdfg``'s data or symbols.
+    :raises ValueError: if a name of the pair is already one of ``sdfg``'s data or symbols.
     """
-    names = (workspace, size, cpf_lowering.workspace_offset_name(workspace))
+    names = (workspace, size)
     taken = [name for name in names if name in sdfg.arrays or name in sdfg.symbols]
     if taken:
         raise ValueError(f"CPF cannot add the workspace pair to {sdfg.name}: {taken} already name something in it")
@@ -1498,68 +1500,6 @@ def add_workspace(sdfg: SDFG, workspace: str, size: str) -> None:
         dtypes.uint8,
         storage=dtypes.StorageType.GPU_Global if on_device else dtypes.StorageType.Default,
     )
-
-
-def mapped_and_zeroed_data(sdfg: SDFG) -> tuple[OrderedSet[str], OrderedSet[str]]:
-    """The data ``sdfg``'s own states access inside a map, and the data an access node zeroes on allocation."""
-    in_maps: OrderedSet[str] = OrderedSet()
-    zeroed: OrderedSet[str] = OrderedSet()
-    for state in sdfg.states():
-        for node, scope in state.scope_dict().items():
-            if isinstance(node, nodes.AccessNode):
-                if scope is not None:
-                    in_maps.add(node.data)
-                if node.setzero:
-                    zeroed.add(node.data)
-    return in_maps, zeroed
-
-
-def plan_workspace(sdfg: SDFG, workspace: str) -> tuple[dict[str, dt.Data], str]:
-    """Choose ``sdfg``'s heap transients the workspace holds: ``(carve, workspace_bytes)``, in place.
-
-    ``carve`` maps each placed array to its descriptor; ``workspace_bytes`` is an arithmetic expression over the
-    entry's scalar arguments, an upper bound on the bytes the arrays need (``'0'`` when nothing is placed). An
-    array is placed when the host allocates it once per use, at the entry's level: a top-level host array
-    (``CPU_Heap``, or ``Default``, which the host generator puts there) sized by the arguments alone, unless its
-    lifetime is ``Scope`` and a map touches it -- that one is allocated per iteration, per thread, and keeps its
-    allocation. One the generator keeps on the stack takes no slot. The persistent buffers of nested SDFGs are
-    at the entry by now (:func:`lift_persistent_transients`); the rest of a nested SDFG's arrays keep their
-    allocations.
-
-    The entry takes each slot at a running offset (:func:`~dace.cpf_lowering.workspace_slot`), which is only
-    sound when every placed array is allocated exactly once per call, so each one's lifetime becomes ``SDFG``:
-    allocated on entry, whichever state or loop body it was allocated in before. Its slot is its own either way,
-    so only an array zeroed on allocation could tell the difference, and that one is not placed unless it
-    already had ``SDFG`` lifetime.
-
-    A device workspace (``GPU_Global``) holds device arrays, and only under
-    :func:`~dace.cpf_lowering.no_boilerplate`: the same rule makes the top-level ``GPU_Global`` transients ``SDFG``
-    lifetime, but the GPU generator places them as it allocates them
-    (:func:`~dace.cpf_lowering.carve_into_workspace`), together with the buffers its own pipeline makes persistent,
-    so ``carve`` stays empty here.
-    """
-    storage = sdfg.arrays[workspace].storage
-    device = storage is dtypes.StorageType.GPU_Global and cpf_lowering.no_boilerplate()
-    if storage is not dtypes.StorageType.Default and not device:
-        return {}, "0"
-    placed = (dtypes.StorageType.GPU_Global,) if device else (dtypes.StorageType.CPU_Heap, dtypes.StorageType.Default)
-    arguments = set(sdfg.arglist())
-    in_maps, zeroed = mapped_and_zeroed_data(sdfg)
-    carve: dict[str, dt.Data] = {}
-    for name, desc in sorted(sdfg.arrays.items()):
-        if (
-            not desc.transient
-            or type(desc) is not dt.Array
-            or desc.storage not in placed
-            or (desc.lifetime is dtypes.AllocationLifetime.Scope and name in in_maps)
-            or (desc.lifetime is not dtypes.AllocationLifetime.SDFG and name in zeroed)
-            or not {str(s) for s in symbolic.symlist(desc.total_size)} <= arguments
-        ):
-            continue
-        desc.lifetime = dtypes.AllocationLifetime.SDFG
-        if not device:
-            carve[name] = desc
-    return carve, cpf_lowering.workspace_bytes(carve)
 
 
 #: ``language`` argument -> the dialect that renders it. ``'c++'`` is the default and stays the
@@ -2158,7 +2098,8 @@ class Rendering(NamedTuple):
     #: name has to load for :attr:`link` to resolve (:func:`~dace.cpf_lowering.vendor_families`).
     libraries: tuple[str, ...] = ()
     #: The bytes the unit needs in its workspace, as an arithmetic expression over the entry's scalar
-    #: arguments (:func:`plan_workspace`); ``'0'`` without a workspace or with nothing placed in it.
+    #: arguments (:class:`~dace.transformation.passes.workspace_carving.CarveTransientsFromWorkspace`); ``'0'``
+    #: without a workspace or with nothing placed in it.
     workspace_bytes: str = "0"
     #: Under ``llm_friendly``, short name -> the generated name it stands for (:mod:`dace.codegen.cpf_compact`);
     #: empty otherwise.
@@ -2518,32 +2459,32 @@ def render_unit(
             with cpf_lowering.provenance_scope(provenance):
                 # Same reasoning as the prepare() call above: codegen's own lowering passes (copy
                 # lifting, library expansion) add nodes whose debuginfo nothing here reads.
-                carve, workspace_bytes = {}, "0"
-                if signature is not None and signature.workspace is not None:
-                    carve, workspace_bytes = plan_workspace(prepared, signature.workspace)
+                # The caller's workspace: a host one is laid out now, a device one by the GPU generator after its
+                # pipeline, which still adds device buffers (``place_device_transients``).
+                request = None
+                if signature is not None and signature.workspace is not None and signature.workspace_size is not None:
+                    request = cpf_lowering.WorkspaceRequest(signature.workspace, signature.workspace_size)
+                    if prepared.arrays[signature.workspace].storage is not dtypes.StorageType.GPU_Global:
+                        carving = CarveTransientsFromWorkspace(signature.workspace, signature.workspace_size)
+                        request.layout = carving.apply_pass(prepared, {})
                 # What the workspace does not hold of the persistent buffers stays allocated across calls; without
                 # boilerplate nothing does: a host buffer is the entry's per-call allocation, a device one is carved.
                 held: dict[str, dt.Data] = {}
                 if not cpf_lowering.no_boilerplate():
-                    held = {name: prepared.arrays[name] for name in persistent if name not in carve}
-                # A device entry without boilerplate also carves the device arrays the GPU generator allocates.
-                workspace = ""
-                if carve or (cpf_lowering.no_boilerplate() and signature is not None and signature.workspace):
-                    workspace = signature.workspace
+                    placed = request.layout.descriptors if request is not None and request.layout is not None else {}
+                    held = {name: prepared.arrays[name] for name in persistent if name not in placed}
                 # ``ReadableNames`` gave every nested SDFG its function name; ``hash`` would add id suffixes.
                 with (
                     set_temporary("compiler", "lineinfo", value="none"),
                     set_temporary("compiler", "unique_functions", value="unique_name"),
                     fftw3.single_threaded_planner(),
-                    cpf_lowering.workspace_carve_scope(
-                        workspace, carve, signature.workspace_size if workspace else "", sdfg.name
-                    ),
+                    cpf_lowering.workspace_scope(request),
                     cpf_lowering.persistent_static_scope(held),
                 ):
                     objects = codegen.generate_code(prepared, validate=validate)
-                if cpf_lowering.no_boilerplate():
-                    # the entry's size check reads the same bound (cpf_lowering.workspace_offset_declaration)
-                    workspace_bytes = cpf_lowering.workspace_bytes(carve)
+                workspace_bytes = "0"
+                if request is not None and request.layout is not None and request.layout.offsets:
+                    workspace_bytes = str(request.layout.size_bytes)
                 frame, device = split_units(objects, sdfg.name)
                 body = frame.clean_code
                 # Type names reach the text from the entry signature and from declarations, neither
