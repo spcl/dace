@@ -355,7 +355,16 @@ class Range(Subset):
         # Symbols reduced to bare names, matching __eq__: two Ranges that compare equal must hash
         # equal, or they miss each other in every dict and set they are keyed by. Equalizing inside
         # one expression is not enough -- the two instances live in DIFFERENT objects here.
-        return hash(tuple(tuple(_hashable_bound(b) for b in r) for r in self.ranges))
+        # The reduction rebuilds every bound, so the hash is kept while the bounds are the same objects (sympy
+        # expressions are immutable; ``ranges`` is reassigned or edited in place): LoopToMap's read_before_written
+        # copies sets of accesses per block, and rehashing them was 87% of CloudSC's optimize
+        bounds = tuple(b for r in self.ranges for b in r)
+        cached = self.__dict__.get("hash_cache")
+        if cached is not None and len(cached[0]) == len(bounds) and all(a is b for a, b in zip(cached[0], bounds)):
+            return cached[1]
+        value = hash(tuple(tuple(_hashable_bound(b) for b in r) for r in self.ranges))
+        self.hash_cache = (bounds, value)
+        return value
 
     def __add__(self, other):
         return Range(

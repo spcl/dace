@@ -199,6 +199,17 @@ def test_contradicting_relations_raise():
         facts_of(Relation(RelationKind.LT, N, K), Relation(RelationKind.LT, K, N))
 
 
+def test_facts_contradicting_in_one_group_of_symbols_know_their_fallback():
+    contradiction = [Relation(RelationKind.LT, N, K), Relation(RelationKind.LT, K, N)]
+    unrelated = Relation(RelationKind.LE, ZERO, M)
+    fallback = (unrelated,)
+    contradicting = Facts([*contradiction, unrelated], INTEGERS, check=False, fallback=fallback)
+    assert contradicting.known() == fallback
+    consistent = Facts([contradiction[0], unrelated], INTEGERS, check=False, fallback=fallback)
+    assert consistent.known() == consistent.relations
+    assert ask(Relation(RelationKind.LT, N, K), consistent) is Truth.TRUE
+
+
 def test_comparisons_become_relations_with_the_smaller_side_first():
     assert comparison_relation(sympy.Gt(N, K)) == Relation(RelationKind.LT, K, N)
     assert comparison_relation(sympy.Le(N, K)) == Relation(RelationKind.LE, N, K)
@@ -309,6 +320,7 @@ if __name__ == "__main__":
     test_tiled_range_bounds_the_index()
     test_contradicting_predicates_raise()
     test_contradicting_relations_raise()
+    test_facts_contradicting_in_one_group_of_symbols_know_their_fallback()
     test_comparisons_become_relations_with_the_smaller_side_first()
     test_divisibility_fact_proves_divisibility_by_a_factor()
     test_exact_division_folds()

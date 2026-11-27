@@ -218,6 +218,11 @@ class InlineTaskletConnectors(ppl.Pass):
             return {}
 
         candidates = [name for name in in_acc if name not in inout and name in accesses]
+        # Only an input sharing its container with another output can alias: the facts of the scope (a derivation per
+        # state) are needed for no other tasklet
+        written = {out_acc[other][0] for other in out_acc}
+        if not any(in_acc[name][0] in written for name in candidates):
+            return accesses
         for name in reads_after_aliased_writes(
             node,
             candidates,

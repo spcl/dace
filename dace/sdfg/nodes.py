@@ -677,6 +677,12 @@ class Tasklet(CodeNode):
             for stmt in self.code.code:
                 for n in ast.walk(stmt):
                     if isinstance(n, ast.Call):
+                        # A method of a computed value (``(a * b).real()``, QE h_psi) names no callback
+                        root = n.func
+                        while isinstance(root, ast.Attribute):
+                            root = root.value
+                        if not isinstance(root, ast.Name):
+                            continue
                         cname = rname(n.func)
                         # If the function name is a symbol or a Scalar data descriptor, it may be a dace.callback,
                         # which means side effects are possible unless otherwise mentioned
