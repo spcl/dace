@@ -1049,7 +1049,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 # A reducing producer stays separate: fused, its reduction runs inside every consumer iteration (an
                 #  8-column sum: 19x slower on GH200, no gain at 64 columns). MapWCRFusion and MapPartialReduceFusion
                 #  take the reduction cases.
-                if producer_edge.data.wcr is not None:
+                # So does one folding onto its prior value, which a fresh intermediate never holds (a split-off seed
+                #  would be dropped as dead).
+                from dace.transformation.passes.analysis import analysis  # Avoid import loop
+
+                if analysis.resolved_at_leaf(producer_edge):
                     return None
                 # A conditional writer fused into a consumer under another guard wraps the consumer's statements in the
                 #  writer's guard, one nested SDFG each: warpx's per-particle maps went from 37 to 1603 nested SDFGs,
@@ -2118,6 +2122,18 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     e.data.data == name and e.data.wcr
                     for x in (first_map_exit, second_map_exit)
                     for e in state.out_edges(x)
+                )
+                # A copy from another buffer into the first exit writes at the exit, after every node of the fused body:
+                #  only a read through the second entry, which the rewiring routes to the copied value, sees it first
+                or (
+                    name not in real_read_map_2
+                    and any(
+                        isinstance(e.src, nodes.AccessNode)
+                        and e.src.data != name
+                        and state.memlet_path(e)[-1].dst.data == name
+                        for e in state.in_edges(first_map_exit)
+                        if not e.data.is_empty()
+                    )
                 )
             ):
                 return True

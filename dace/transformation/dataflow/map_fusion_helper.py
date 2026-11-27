@@ -1297,6 +1297,14 @@ def analyze_happens_before_fusion(
                 for second_node, second_subset in second_side.get(data, []):
                     if not _is_iteration_private(first_subset, second_subset, params):
                         return None
+                    # A copy from another buffer into the exit runs at the exit: an edge from that buffer orders the
+                    #  second body after the buffer's producer, not after the copy (a split-off seed would land last).
+                    if (
+                        first_side is first_writes
+                        and isinstance(first_node, nodes.AccessNode)
+                        and first_node.data != data
+                    ):
+                        return None
                     ordered_pair = (order_source(first_node), order_target(second_node))
                     # A broken nested scope leaves nothing to attach the ordering edge to.
                     if ordered_pair[0] is None or ordered_pair[1] is None:

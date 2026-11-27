@@ -11,6 +11,7 @@ always acceptable; changing the numbers never is.
 """
 
 import numpy as np
+import pytest
 
 import dace
 from dace.sdfg import nodes
@@ -658,6 +659,84 @@ def test_writes_through_a_view_do_not_count_as_written_disjointly():
     assert not dftrans.MapFusionVertical.written_disjointly("X", first, second, state, sdfg.facts())
 
 
+def seeded_row_max(copies_row: bool) -> dace.SDFG:
+    """The first Map seeds ``mx[i] = x[i, 0]`` through a scalar copied into ``mx`` at its exit. The second folds row
+    ``i`` onto ``mx[i]`` with a nested Reduce without an identity, ordered after the seed by an empty Memlet, and
+    ``y[i] = mx[i]``. With ``copies_row`` the first Map also copies the row into ``sc``, which the fold reads: an
+    intermediate for vertical fusion, else the fold reads ``x``."""
+    sdfg = dace.SDFG(unique_name("seeded_row_max"))
+    sdfg.add_array("x", [N, N], dace.float64)
+    sdfg.add_array("y", [N], dace.float64)
+    sdfg.add_array("sc", [N, N], dace.float64, transient=True)
+    sdfg.add_array("mx", [N], dace.float64, transient=True)
+    sdfg.add_scalar("seed", dace.float64, transient=True)
+    state = sdfg.add_state("s", is_start_block=True)
+    x = state.add_read("x")
+    sc = state.add_access("sc") if copies_row else x
+    seeded, folded = state.add_access("mx"), state.add_access("mx")
+
+    seed_entry, seed_exit = state.add_map("seed_map", dict(i=f"0:{N}"))
+    if copies_row:
+        row_entry, row_exit = state.add_map("row_copy", dict(j=f"0:{N}"))
+        row = state.add_tasklet("row", {"a"}, {"o"}, "o = a")
+        state.add_memlet_path(x, seed_entry, row_entry, row, dst_conn="a", memlet=dace.Memlet("x[i, j]"))
+        state.add_memlet_path(row, row_exit, seed_exit, sc, src_conn="o", memlet=dace.Memlet("sc[i, j]"))
+    first_column = state.add_tasklet("first_column", {"a"}, {"o"}, "o = a")
+    seed = state.add_access("seed")
+    state.add_memlet_path(x, seed_entry, first_column, dst_conn="a", memlet=dace.Memlet("x[i, 0]"))
+    state.add_edge(first_column, "o", seed, None, dace.Memlet("seed[0]"))
+    seed_exit.add_in_connector("IN_mx")
+    seed_exit.add_out_connector("OUT_mx")
+    state.add_edge(seed, None, seed_exit, "IN_mx", dace.Memlet(data="seed", subset="0", other_subset="i"))
+    state.add_edge(seed_exit, "OUT_mx", seeded, None, dace.Memlet(f"mx[0:{N}]"))
+
+    # The fold sits in a nested SDFG that has ``mx`` as an output only, as LoopToMap leaves a reduction loop's body
+    inner = dace.SDFG("row_max_body")
+    inner.add_symbol("i", dace.int64)
+    inner.add_array(sc.data, [N, N], dace.float64)
+    inner.add_array("mx", [N], dace.float64)
+    inner_state = inner.add_state("fold", is_start_block=True)
+    reduce = dace.libraries.standard.Reduce("row_max", "lambda a, b: max(a, b)", None, None)
+    inner_state.add_node(reduce)
+    inner_state.add_edge(inner_state.add_read(sc.data), None, reduce, "_in", dace.Memlet(f"{sc.data}[i, 0:{N}]"))
+    inner_state.add_edge(reduce, "_out", inner_state.add_write("mx"), None, dace.Memlet("mx[i]"))
+    fold_entry, fold_exit = state.add_map("fold_map", dict(i=f"0:{N}"))
+    body = state.add_nested_sdfg(inner, {sc.data}, {"mx"}, symbol_mapping={"i": "i"})
+    state.add_nedge(seeded, fold_entry, dace.Memlet())
+    state.add_memlet_path(sc, fold_entry, body, dst_conn=sc.data, memlet=dace.Memlet(f"{sc.data}[i, 0:{N}]"))
+    state.add_memlet_path(body, fold_exit, folded, src_conn="mx", memlet=dace.Memlet("mx[i]"))
+    _pointwise_map(state, "read_max", [(folded, "i")], state.add_write("y"), "i", "o = a0")
+    sdfg.validate()
+    return sdfg
+
+
+def run_seeded_row_max(sdfg) -> np.ndarray:
+    # Column 0 never holds the row maximum: a seed that lands after the fold shows as y = x[:, 0]
+    x = np.arange(N * N, dtype=np.float64).reshape(N, N) - N * N
+    y = np.zeros(N)
+    sdfg(x=x, y=y)
+    return y
+
+
+# Reproducer: tactics sdpa's row max kept x[i, 0] once distribution split the seed off (2cc31c5efb): fusion ordered
+# the Reduce after the seed's scalar, not after the copy at the exit that stores it
+@pytest.mark.parametrize(
+    "xform, copies_row",
+    [(dftrans.MapFusionHorizontal(), False), (dftrans.MapFusionVertical(relaxed_dataflow=True), True)],
+    ids=["horizontal", "vertical"],
+)
+def test_a_seed_stored_by_an_exit_copy_stays_before_the_fold(xform, copies_row):
+    """The seed reaches ``mx`` through ``seed[0] -> mx[i]`` on its exit edge, which runs at the exit: inside one fused
+    scope no edge can put the fold after it, so the two Maps stay apart."""
+    sdfg = seeded_row_max(copies_row)
+    seed_entry = next(n for n in sdfg.start_block.nodes() if isinstance(n, nodes.MapEntry) and n.label == "seed_map")
+    sdfg.apply_transformations_repeated(xform, validate_all=True)
+
+    assert seed_entry in sdfg.start_block.nodes()
+    assert sdfg.start_block.exit_node(seed_entry).map.label == "seed_map"
+    np.testing.assert_array_equal(run_seeded_row_max(sdfg), np.arange(N) * N - N * N + N - 1)
+
+
 if __name__ == "__main__":
     test_copy_memlet_naming_the_inner_container_hides_the_write()
     test_view_of_the_same_array_is_not_a_different_array()
@@ -673,3 +752,5 @@ if __name__ == "__main__":
     test_vertical_fusion_orders_a_side_read_before_the_tasklet_behind_the_written_node()
     test_vertical_fusion_sees_a_read_through_a_view_of_what_the_second_map_writes()
     test_writes_through_a_view_do_not_count_as_written_disjointly()
+    test_a_seed_stored_by_an_exit_copy_stays_before_the_fold(dftrans.MapFusionHorizontal(), False)
+    test_a_seed_stored_by_an_exit_copy_stays_before_the_fold(dftrans.MapFusionVertical(relaxed_dataflow=True), True)
