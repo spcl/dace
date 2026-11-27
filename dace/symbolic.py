@@ -2882,17 +2882,6 @@ def sympy_divide_fix(expr):
 
     # Rewrites each occurrence in place: ``subs`` would also rewrite an equal quotient inside an exponent
     def rewrite(node):
-        # ``n/256 + 255/256`` is one quotient sympy split: ``(n + 255) / 256`` read as true division. Split, each
-        # term would print as its own floor and the constant as a double, so QE's block count ``(n + 255) / 256``
-        # lost its last block. A constant fraction says the terms divide as one: one quotient, an integer one where
-        # the numerator is integral, else as written, which C divides by its operands' types.
-        constant = next((arg for arg in node.args if isinstance(arg, sympy.Rational) and arg.q > 1), None)
-        if isinstance(node, sympy.Add) and constant is not None:
-            numerator = sympy.expand(node * constant.q)
-            if integral_index_expression(numerator):
-                return int_floor(numerator, constant.q, evaluate=False)
-            if all(arg.is_Integer for arg in sympy.Add.make_args(numerator) if arg.is_Number):
-                return sympy.Mul(sympy.Rational(1, constant.q), numerator, evaluate=False)
         if isinstance(node, sympy.Pow) and not node.exp.is_integer:
             # The printer lowers a non-integer exponent's exact quotient itself
             base = rewrite(node.base)

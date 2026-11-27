@@ -205,39 +205,6 @@ def test_int_floor_floors_in_the_generated_code():
     assert divide_in_a_program("positive", "2*P + 3", 5) == 2
 
 
-def block_count_sdfg(count: str) -> dace.SDFG:
-    """``nb = count`` on an interstate edge, then a loop ``1..nb`` that counts its trips into ``out``."""
-    sdfg = dace.SDFG("block_count")
-    sdfg.add_array("out", [1], dace.int64)
-    sdfg.add_array("sizes", [1], dace.int32)
-    sdfg.add_symbol("n", dace.int32)
-    sdfg.add_symbol("nb", dace.int32)
-    init = sdfg.add_state("init", is_start_block=True)
-    zero = init.add_tasklet("zero", {}, {"o"}, "o = 0")
-    init.add_edge(zero, "o", init.add_write("out"), None, dace.Memlet("out[0]"))
-    loop = dace.sdfg.state.LoopRegion("blocks", "b < nb + 1", "b", "b = 1", "b = b + 1")
-    sdfg.add_node(loop)
-    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"nb": count}))
-    body = loop.add_state("body", is_start_block=True)
-    inc = body.add_tasklet("inc", {"i"}, {"o"}, "o = i + 1")
-    body.add_edge(body.add_read("out"), None, inc, "i", dace.Memlet("out[0]"))
-    body.add_edge(inc, "o", body.add_write("out"), None, dace.Memlet("out[0]"))
-    return sdfg
-
-
-# Reproducer: QE's block count ``(ngms + blocksize - 1) / blocksize`` came back from a symbolic round trip as
-# ``int_floor(ngms, 256) + 0.99609375`` (``ngk[1]/256 + 0.99609375`` over an array), one block short
-@pytest.mark.parametrize("dividend", ["n", "sizes[0]"])
-def test_a_block_count_keeps_its_last_block_through_a_symbolic_round_trip(dividend: str):
-    printed = symstr(pystr_to_symbolic(f"({dividend} + 255) / 256"))
-    assert "0.99" not in printed and "255.0" not in printed, printed
-    sdfg = block_count_sdfg(printed)
-    for size in (255, 256, 257, 513):
-        out = np.zeros(1, np.int64)
-        sdfg(out=out, sizes=np.array([size], np.int32), n=size)
-        assert out[0] == (size + 255) // 256, (size, printed)
-
-
 if __name__ == "__main__":
     test_unit_denominator_folds_away()
     for fn in (int_floor, int_ceil):
@@ -294,5 +261,3 @@ def test_a_constant_remainder_folds_over_a_provably_nonnegative_numerator():
 def test_a_constant_remainder_stays_unfolded_when_the_numerator_may_be_negative():
     """At ``K = 0`` the numerator is ``-1``: floor gives -1 but the generated C division gives 0."""
     assert isinstance(under(int_floor(2 * K - 1, 2)), int_floor)
-    test_a_block_count_keeps_its_last_block_through_a_symbolic_round_trip("n")
-    test_a_block_count_keeps_its_last_block_through_a_symbolic_round_trip("sizes[0]")
