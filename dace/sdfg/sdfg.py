@@ -1205,7 +1205,8 @@ class SDFG(ControlFlowRegion):
             {
                 base.name
                 for desc in self._arrays.values()
-                for dim in getattr(desc, "shape", ())
+                if isinstance(desc, (dt.Array, dt.Scalar, dt.Structure, dt.Stream))
+                for dim in desc.shape
                 if symbolic.issymbolic(dim)
                 for coefficient, base in [dim.as_coeff_Mul()]
                 # An undefined symbol is a placeholder with no facts

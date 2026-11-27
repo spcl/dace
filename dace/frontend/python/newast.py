@@ -4226,7 +4226,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # fcopy = copy.copy(func)
             fcopy = func
-            own_globals = func.global_vars if hasattr(fcopy, "global_vars") else None
+            own_globals = func.global_vars if isinstance(fcopy, DaceProgram) else None
             if own_globals is not None:
                 fcopy.global_vars = {**self.globals, **own_globals}
 

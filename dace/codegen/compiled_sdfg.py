@@ -648,7 +648,7 @@ with open(r"{temp_path}", "wb") as f:
             return
         relation = self._assumptions[broken - 1]
         values = ", ".join(
-            f"{name}={getattr(value, 'value', value)}"
+            f"{name}={value.value if isinstance(value, ctypes._SimpleCData) else value}"
             for name, value in zip(self._initarg_names, initargs)
             if name in symbolic.relation_names(relation)
         )
