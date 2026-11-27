@@ -254,7 +254,7 @@ def test_a_transient_sized_in_a_loop_body_is_allocated_and_freed_there():
     code = sdfg.generate_code()[0].clean_code
     assert code.index("d0 = (d0 + 1)") < code.index("buf = dace::aligned_new_array"), code
     # Freed at the end of the loop body, before the braces closing the loop and the function
-    assert re.search(r"aligned_delete_array\(buf, 64\);\s*\}\s*\}", code), code
+    assert re.search(r"aligned_delete_array\(buf, 64\);\s*buf = nullptr;\s*\}\s*\}", code), code
     for flag in (0, 1):
         out = np.zeros(5)
         sdfg(out=out, flag=np.int32(flag), N=5)

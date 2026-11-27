@@ -747,6 +747,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     callsite_stream.write(f"delete[] {alloc_name};\n", cfg, state_id, node)
             else:
                 callsite_stream.write(f"delete {alloc_name};\n", cfg, state_id, node)
+            # A free a loop repeats past an allocation it skipped must not free the same pointer twice
+            callsite_stream.write(f"{self.ptr(node.data, nodedesc, sdfg)} = nullptr;\n", cfg, state_id, node)
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
             if isinstance(nodedesc, data.Array):
