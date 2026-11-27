@@ -226,7 +226,10 @@ def test_the_workspace_is_carved_at_fixed_offsets_taken_once_per_call(language):
     code = result.code
     cast = r"\(double \*\)\(" if language == "c" else r"reinterpret_cast<double \*>\("
     for scratch in ("tmp", "tmp2"):
-        slots = re.findall(rf"^\s*{scratch} = {cast}workspace \+ .*\);$", code, re.MULTILINE)
+        # The carve declares the slot pointer where it takes it: ``double* restrict tmp = (double *)(workspace + 0);``
+        slots = re.findall(
+            rf"^\s*(?:double\* (?:__restrict__|restrict) )?{scratch} = {cast}workspace \+ .*\);$", code, re.MULTILINE
+        )
         assert len(slots) == 1 and code.index(slots[0].strip()) < code.index("for (int64_t t ="), code
     a, out = run_with_canary(result, name, language, n=33)
     assert_matches({"out": sum(a[::-1] + t for t in range(3))}, {"out": out}, name)
