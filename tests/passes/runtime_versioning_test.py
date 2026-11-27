@@ -22,6 +22,7 @@ N = dace.symbol("N", dtype=dace.int64)
 M = dace.symbol("M", dtype=dace.int64)
 T = dace.symbol("T", dtype=dace.int64)
 K = dace.symbol("K", dtype=dace.int64)
+LDA = dace.symbol("LDA", dtype=dace.int64)
 
 
 @dace.program
@@ -60,6 +61,14 @@ def segment_scale(ptr: dace.int64[N + 1], val: dace.float64[M], d: dace.float64[
 def offset_scatter(s: dace.float64[2 * N], idx: dace.int64[N], a: dace.float64[N]):
     for i in range(N):
         s[i + idx[i]] += a[i]
+
+
+@dace.program
+def two_spin_halves(h: dace.float64[N + LDA, M], a: dace.float64[N, M], b: dace.float64[N, M]):
+    for j in range(M):
+        for i in range(N):
+            h[i, j] = a[i, j]
+            h[i + LDA, j] = b[i, j]
 
 
 def segment_scale_reference(ptr, val, d, z, steps: int) -> None:
@@ -218,6 +227,34 @@ def test_offset_scatter_is_a_reduction():
         assert np.allclose(s, expected)
 
 
+# Reproducer: QE h_psi's hpsi(i, j) and hpsi(lda + i, j) loop stayed sequential (OVERLAPPING_WRITES)
+@pytest.mark.parametrize("lda", [8, 5])
+def test_two_writes_a_symbolic_distance_apart_version_on_it(lda: int):
+    """``LDA >= N`` (8) takes the parallel arm, ``LDA < N`` (5) the fallback: the halves then overlap."""
+    n, m = 8, 3
+    sdfg = two_spin_halves.to_sdfg(simplify=True)
+    assert ParallelizeUnderConstraint().apply_pass(sdfg, {}) == 1
+    # Canonicalization runs the pass more than once: the fallback is not versioned again on the test it failed
+    assert ParallelizeUnderConstraint().apply_pass(sdfg, {}) is None
+    (conditional,) = conditionals(sdfg)
+    assert len(conditional.branches) == 2
+    assert has_map(conditional.branches[0][1]), "the checked arm runs the loop as a map"
+    flag = conditional.branches[0][0].as_string.strip()
+    (check,) = [
+        e.data.assignments[flag] for e in sdfg.all_interstate_edges(recursive=True) if flag in e.data.assignments
+    ]
+    assert "LDA" in check and "N" in check, "an O(1) test of the distance against the trip count"
+    rng = np.random.default_rng(lda)
+    h, a, b = rng.random((n + lda, m)), rng.random((n, m)), rng.random((n, m))
+    expected = h.copy()
+    for j in range(m):
+        for i in range(n):
+            expected[i, j] = a[i, j]
+            expected[i + lda, j] = b[i, j]
+    sdfg(h=h, a=a, b=b, N=n, M=m, LDA=lda)
+    assert np.array_equal(h, expected)
+
+
 if __name__ == "__main__":
     test_symbolic_distance_versions_loop()
     test_symbolic_distance_both_arms_compute(0)
@@ -229,3 +266,5 @@ if __name__ == "__main__":
     test_convolution_keeps_reduction_across_outer_map()
     test_segment_writes_versioned_on_one_hoisted_pointer_check()
     test_offset_scatter_is_a_reduction()
+    test_two_writes_a_symbolic_distance_apart_version_on_it(8)
+    test_two_writes_a_symbolic_distance_apart_version_on_it(5)
