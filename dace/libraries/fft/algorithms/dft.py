@@ -150,6 +150,14 @@ def add_dft_axis_state(
     # Divide by a FLOATING denominator: ``1/(M*N)`` over integer symbols is C integer division, i.e. zero. In the
     # element's own precision: ``complex64 * double`` multiplies to zero.
     scale = "" if is_unit(factor) else f"o *= {real}({floating_text(factor)});"
+    if dace.symbolic.equal_valued(1, shape[axis]):
+        # A one-point DFT is a (scaled) copy: the one-element memlet binds a value, which has no subscript
+        index = ", ".join(f"__i{d}" for d in range(ndim))
+        ranges = index_ranges(shape, "__i")
+        code = f"o = i;\n{scale}"
+        return add_elementwise_state(
+            sdfg, after, f"dft_axis{axis}", src, dst, ranges, index, index, code, dace.Language.CPP
+        )
     # ``sum`` is copy-initialized from a real zero: the direct initialization ``T sum(0, 0)`` has no C spelling, and
     # the C dialect of CPF renders this text as written.
     # The angle's integer part is reduced modulo the length first, as an FFT's twiddle factors are
