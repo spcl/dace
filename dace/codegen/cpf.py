@@ -2406,6 +2406,10 @@ def drop_repeated_includes(code: str) -> str:
     return "\n".join(kept)
 
 
+#: The top-level lines the frame's and the device unit's file headers both write: constants and size helpers.
+FILEHEADER_DEFINITIONS = ("constexpr ", "[[maybe_unused]] static __host__ __device__ consteval ")
+
+
 def render_unit(
     sdfg: SDFG,
     validate: bool,
@@ -2517,6 +2521,9 @@ def render_unit(
                     if dialect is cpf_lowering.Dialect.STANDALONE_CUDA:
                         # nvcc refuses std::complex in a kernel; the entry keeps the caller's std::complex.
                         device_body = cpf_lowering.cuda_std_spell_out(device_body, "")
+                    # Both units' file headers define the constants and size helpers; the device part comes first
+                    defined = {line for line in device_body.splitlines() if line.startswith(FILEHEADER_DEFINITIONS)}
+                    body = "\n".join(line for line in body.splitlines() if line not in defined)
                     body = f"{device_body}\n{body}" if device_body else body
                     device_body = ""
                 # Last of all: a pure layout change, so every pass above still sees the generator's text.

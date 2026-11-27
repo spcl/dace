@@ -153,6 +153,22 @@ def test_persistent_transients_of_the_top_level_sdfg_are_demoted():
     assert nested.arrays["inner"].lifetime is persistent
 
 
+def test_a_constant_the_kernel_and_the_entry_share_is_defined_once():
+    """The device unit and the frame each wrote the SDFG's constants and size helpers; one unit holds them once
+    (ext_break_capture, tsvc_2_s3112: hipcc refused the redefinition)."""
+    sdfg = padded_transient_sdfg("cpf_nb_constant")
+    sdfg.add_constant("SCALE", 2.0)
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, dace.sdfg.nodes.Tasklet) and node.label == "fill":
+                node.code = dace.properties.CodeBlock("b = SCALE * a")
+    rendering = render(sdfg, language="hip", signature=PADDED_SIGNATURE, no_boilerplate=True, check_compiles=False)
+    definitions = [
+        line for line in rendering.code.splitlines() if line.startswith(("constexpr ", "[[maybe_unused]] static"))
+    ]
+    assert definitions and len(definitions) == len(set(definitions)), rendering.code
+
+
 if __name__ == "__main__":
     test_the_carve_sizes_a_padded_transient_by_its_strides()
     test_the_entry_carves_the_padded_transient_and_waits_once("cuda")
@@ -160,3 +176,4 @@ if __name__ == "__main__":
     test_the_padded_transient_runs_in_a_workspace_of_exactly_the_bound()
     test_only_the_wait_that_ends_the_program_is_dropped()
     test_persistent_transients_of_the_top_level_sdfg_are_demoted()
+    test_a_constant_the_kernel_and_the_entry_share_is_defined_once()
