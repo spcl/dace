@@ -228,7 +228,7 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
     # Dynamic thread-block maps not lowered before code generation become thread-block maps that drive a work queue
-    from dace.transformation.passes.lower_dynamic_thread_block_maps import LowerDynamicThreadBlockMaps
+    from dace.transformation.passes.codegen.lower_dynamic_thread_block_maps import LowerDynamicThreadBlockMaps
 
     LowerDynamicThreadBlockMaps().apply_pass(sdfg, {})
 

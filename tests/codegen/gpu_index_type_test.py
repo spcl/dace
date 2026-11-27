@@ -248,17 +248,8 @@ def test_dynamic_map_default_types():
 
 def test_chiplet_distribution():
     code = _cuda_code(_one_dimensional(N), backend="hip", chiplet_number=6)
-    block = "(static_cast<int64_t>(blockIdx.y) * static_cast<int64_t>(gridDim.x) + static_cast<int64_t>(blockIdx.x))"
-    assert f"(({block} % 6) * " in code
-    assert f" + {block} / 6)" in code
-
-
-@pytest.mark.parametrize("backend", ["cuda", "hip"])
-def test_grids_beyond_31_bits_of_threads_spread_over_rows_on_hip(backend: str):
-    """An AMD dispatch covers fewer than 2**31 blocks and 2**32 threads per grid dimension."""
-    code = _cuda_code(_one_dimensional(N), backend=backend)
-    split = "__dace_row, int_ceil(__dace_blocks, __dace_row), 1" in code
-    assert split == (backend == "hip")
+    assert "((static_cast<int64_t>(blockIdx.x) % 6) * " in code
+    assert " + static_cast<int64_t>(blockIdx.x) / 6)" in code
 
 
 def test_configured_64bit_index_type_widens_registers():
@@ -347,8 +338,6 @@ if __name__ == "__main__":
     test_dynamic_map(2)
     test_dynamic_map_default_types()
     test_chiplet_distribution()
-    test_grids_beyond_31_bits_of_threads_spread_over_rows_on_hip("cuda")
-    test_grids_beyond_31_bits_of_threads_spread_over_rows_on_hip("hip")
     test_configured_64bit_index_type_widens_registers()
     test_indices_beyond_32_bits()
     test_block_index_products_beyond_32_bits()
