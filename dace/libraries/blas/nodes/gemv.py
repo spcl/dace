@@ -35,9 +35,10 @@ def zero_extent_may_occur(extent) -> bool:
 
 
 def coefficient_str(value, dtype) -> str:
-    """``value`` spelled in ``dtype`` when it is a number, and as written when it is symbolic."""
-    if symbolic.issymbolic(value) and not symbolic.pystr_to_symbolic(value).is_number:
-        return str(value)
+    """``value`` spelled in ``dtype`` when it is a number, and as written, parenthesized, when it is symbolic: ``s + 1``
+    scales as a whole."""
+    if (isinstance(value, str) or symbolic.issymbolic(value)) and not symbolic.pystr_to_symbolic(value).is_number:
+        return f"({value})"
     return _cast_to_dtype_str(complex(value) if _is_complex(dtype) else value, dtype)
 
 
@@ -485,7 +486,9 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         super().__init__(
             name,
             location=location,
-            inputs=OrderedSet(("_A", "_x")) if symbolic.equal_valued(0, beta) else OrderedSet(("_A", "_x", "_y")),
+            inputs=OrderedSet(("_A", "_x"))
+            if symbolic.equal_valued(0, symbolic.pystr_to_symbolic(beta))
+            else OrderedSet(("_A", "_x", "_y")),
             outputs={"_y"},
         )
         self.transA = transA
