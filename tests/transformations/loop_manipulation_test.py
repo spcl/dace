@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import pytest
 
@@ -41,7 +41,7 @@ def test_unroll():
 
     # HACK: Workaround to deal with bug in frontend (See PR #161)
     if "i" in sdfg.symbols:
-        del sdfg.symbols["i"]
+        sdfg.symbol_repo.remove("i")
 
     sdfg(A=A, B=B)
     assert np.allclose(B, reg)
@@ -59,7 +59,7 @@ def test_peeling_start():
 
     # HACK: Workaround to deal with bug in frontend (See PR #161)
     if "i" in sdfg.symbols:
-        del sdfg.symbols["i"]
+        sdfg.symbol_repo.remove("i")
 
     sdfg(A=A, B=B)
     assert np.allclose(B, reg)
@@ -77,7 +77,7 @@ def test_peeling_end():
 
     # HACK: Workaround to deal with bug in frontend (See PR #161)
     if "i" in sdfg.symbols:
-        del sdfg.symbols["i"]
+        sdfg.symbol_repo.remove("i")
 
     sdfg(A=A, B=B)
     assert np.allclose(B, reg)

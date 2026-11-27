@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 from scipy import ndimage
 
@@ -13,7 +13,7 @@ MAXITER = dace.symbol("MAXITER")
 def create_sdfg():
 
     sdfg = dace.SDFG("stencil_sdfg_api")
-    sdfg.add_symbol("MAXITER", MAXITER.dtype)
+    sdfg.add_symbol("MAXITER", MAXITER.declaration.dtype)
     _, arr = sdfg.add_array("A", (H, W), dace.float32)
     _, tmparr = sdfg.add_transient("tmp", (H, W), dace.float32)
 

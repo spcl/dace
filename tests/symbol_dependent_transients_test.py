@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import pytest
 
@@ -186,9 +186,6 @@ def test_symbol_dependent_array_in_map():
     sdfg = symbol_dependent_array_in_map.to_sdfg(simplify=False)
     sdfg.apply_transformations_repeated(interstate.StateFusion)
     sdfg.apply_transformations_repeated(interstate.InlineSDFG)
-    # NOTE: Temporary fix for issue with symbols/free_symbols
-    if "i" in sdfg.free_symbols:
-        sdfg.remove_symbol("i")
     func = sdfg.compile()
     A = np.random.randn(10).astype(np.float32)
     val = func(A=A)

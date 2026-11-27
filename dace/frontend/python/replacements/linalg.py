@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Contains linear algebra function and operator replacements.
 """
@@ -157,7 +157,7 @@ def dot(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str, 
             raise SyntaxError
     else:
         # Infer result type
-        restype, _ = result_type([arr_a, arr_b], "Mul")
+        restype, _ = result_type([arr_a, arr_b], "Mul", symbols=pv.symbol_types())
         op_out = pv.get_target_name()
         op_out, _ = sdfg.add_scalar(op_out, restype, transient=True, storage=arr_a.storage, find_new_name=True)
 

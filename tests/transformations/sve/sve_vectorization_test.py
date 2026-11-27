@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace import SDFG, dtypes
 from dace.transformation.dataflow.sve.vectorization import SVEVectorization
@@ -31,6 +31,7 @@ def test_basic_stride():
 
     sdfg = program.to_sdfg(simplify=True)
     assert sdfg.apply_transformations(SVEVectorization) == 1
+    assert sdfg.symbols["__dace_sve_len"] == dace.symbolic.DEFAULT_SYMBOL_TYPE
 
 
 def test_irregular_stride():
@@ -145,3 +146,14 @@ def test_stream_pop():
     sdfg = program.to_sdfg(simplify=True)
     # Stream pop is not implemented yet
     assert sdfg.apply_transformations(SVEVectorization) == 0
+
+
+if __name__ == "__main__":
+    test_basic_stride()
+    test_irregular_stride()
+    test_diagonal_stride()
+    test_unsupported_type()
+    test_supported_wcr()
+    test_first_level_vectorization()
+    test_stream_push()
+    test_stream_pop()

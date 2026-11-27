@@ -12,6 +12,8 @@ from dace.transformation.passes.consolidate_edges import ConsolidateEdges
 N = dace.symbol("N")
 i = dace.symbol("i")
 j = dace.symbol("j")
+# Nothing is assumed about the symbols
+NO_FACTS = dace.symbolic.Facts.none()
 
 
 def test_find_contiguous_subsets():
@@ -22,7 +24,7 @@ def test_find_contiguous_subsets():
         Range([(i - 2, i - 1, 1), (j, j + 3, 1)]),
     ]
 
-    result = helpers.find_contiguous_subsets(subset_list)
+    result = helpers.find_contiguous_subsets(subset_list, NO_FACTS)
     assert len(result) == 1
     assert list(result)[0] == Range([(i - 2, i, 1), (j, j + 3, 1)])
 
@@ -41,14 +43,14 @@ def test_find_contiguous_subsets_nonsquare():
     ]
 
     # Prioritize on first dimension
-    result2 = helpers.find_contiguous_subsets(subset_list, 0)
-    result2 = helpers.find_contiguous_subsets(result2, None)
+    result2 = helpers.find_contiguous_subsets(subset_list, NO_FACTS, 0)
+    result2 = helpers.find_contiguous_subsets(result2, NO_FACTS, None)
     assert len(result2) == 2
 
     # Prioritize on second dimension
-    result3 = helpers.find_contiguous_subsets(subset_list, 1)
+    result3 = helpers.find_contiguous_subsets(subset_list, NO_FACTS, 1)
     assert len(result3) == 3
-    result3 = helpers.find_contiguous_subsets(result3, None)
+    result3 = helpers.find_contiguous_subsets(result3, NO_FACTS, None)
     assert len(result3) == 3
 
 

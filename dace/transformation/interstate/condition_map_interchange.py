@@ -13,7 +13,7 @@ from dace.sdfg import dealias
 from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import MapEntry, MapExit, NestedSDFG
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SymbolResolver
 from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import transformation
 
@@ -85,6 +85,9 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                     if edge.data.data is not None:
                         outputs.add(edge.data.data)
 
+                # The windows are united inside the map, which runs if they are accessed
+                facts = SymbolResolver().facts_in_scope(state, node)
+
                 # Create the nested SDFG and add all symbols
                 sym_mapping = {s: s for s in list(state.sdfg.symbols.keys()) + node.map.params}
                 nsdfg = state.add_nested_sdfg(
@@ -114,7 +117,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                     if name is None or boundary_edge.data.subset is None:
                         continue
                     if name in windows:
-                        windows[name] = sbs.union(windows[name], boundary_edge.data.subset)
+                        windows[name] = sbs.union(windows[name], boundary_edge.data.subset, facts)
                     else:
                         windows[name] = copy.deepcopy(boundary_edge.data.subset)
 

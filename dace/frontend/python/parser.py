@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """DaCe Python parsing functionality and entry point to Python frontend."""
 
 import ast
@@ -151,8 +151,12 @@ def infer_symbols_from_datadescriptor(
     if len(symbols) == 0:
         return {}
 
-    # Solve for all at once
-    results = sympy.solve(equations, *symbols, dict=True, exclude=exclude)
+    # Dimensions, strides, and offsets are integers; symbols no longer carry that assumption globally
+    integer_names = frozenset(str(free) for equation in equations for free in equation.free_symbols)
+    integer_equations = [symbolic.with_integers(equation, integer_names) for equation in equations]
+    integer_symbols = [symbolic.with_integers(sym, integer_names) for sym in symbols]
+    integer_exclude = {symbolic.with_integers(sym, integer_names) for sym in exclude}
+    results = sympy.solve(integer_equations, *integer_symbols, dict=True, exclude=integer_exclude)
     if len(results) > 1:
         raise ValueError(f"Ambiguous values for symbols in inference. Options: {str(results)}")
     if len(results) == 0:
@@ -162,8 +166,13 @@ def infer_symbols_from_datadescriptor(
     if not result:
         raise ValueError("Cannot infer values for symbols in inference.")
 
-    # Remove __SOLVE_ prefix
-    return {str(k)[8:]: v for k, v in result.items()}
+    originals = {str(free): free for equation in equations for free in equation.free_symbols}
+    # Remove __SOLVE_ prefix; a solution still in terms of a placeholder determines no runtime value
+    return {
+        str(k)[8:]: symbolic.replace_symbols(v, originals)
+        for k, v in result.items()
+        if not any(str(s).startswith("__SOLVE_") for s in v.free_symbols)
+    }
 
 
 class DaceProgram(pycommon.SDFGConvertible):
@@ -437,6 +446,13 @@ class DaceProgram(pycommon.SDFGConvertible):
             return self.closure_arg_mapping[arg]()
         return eval(arg, self.global_vars, extra_constants)
 
+    def _descriptor_of(self, value: Any) -> Data:
+        """The descriptor of an argument; only the program's own symbols type an expression."""
+        if symbolic.issymbolic(value) and not isinstance(value, symbolic.symbol):
+            symbols = {k: v.declaration.dtype for k, v in self.global_vars.items() if isinstance(v, symbolic.symbol)}
+            return data.Scalar(symbolic.symtype(value, symbols))
+        return create_datadescriptor(value)
+
     def _create_sdfg_args(self, sdfg: SDFG, args: tuple[Any], kwargs: dict[str, Any]) -> dict[str, Any]:
         # Start with default arguments, then add other arguments
         result = {**self.default_args}
@@ -453,7 +469,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Update arguments with symbols in data shapes
         result.update(
             infer_symbols_from_datadescriptor(
-                sdfg, {k: create_datadescriptor(v) for k, v in result.items() if k not in self.constant_args}
+                sdfg, {k: self._descriptor_of(v) for k, v in result.items() if k not in self.constant_args}
             )
         )
         return result
@@ -808,7 +824,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                     continue  # Skip argument
 
                 # Set type
-                types[aname] = create_datadescriptor(curarg)
+                types[aname] = self._descriptor_of(curarg)
                 if is_optional is True and isinstance(types[aname], data.Array):
                     types[aname].optional = True
 
@@ -990,8 +1006,11 @@ class DaceProgram(pycommon.SDFGConvertible):
         global_vars.update(gvars)
 
         argtypes = {k: v for k, v in argtypes.items() if k not in removed_args}
+        # A symbol is its name: an annotation's free symbol may be a same-named object built elsewhere (SymPy's cache
+        # hands it back), so it names a symbol the program does not declare itself and never replaces its global
         for argtype in argtypes.values():
-            global_vars.update({v.name: v for v in argtype.free_symbols})
+            for v in argtype.free_symbols:
+                global_vars.setdefault(v.name, v)
 
         # Parse AST to create the SDFG
         parsed_ast, closure = preprocessing.preprocess_dace_program(

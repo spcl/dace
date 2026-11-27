@@ -520,7 +520,6 @@ def _boundary_tree_control_flow() -> tn.ScheduleTreeRoot:
     return tn.ScheduleTreeRoot(
         name="tester",
         containers={"A": data.Array(dace.float64, [10])},
-        symbols={"i": dace.int64},
         children=[
             _tasklet_node("out = 1", {}, {"out": "A[0]"}),
             _tasklet_node("out = 2", {}, {"out": "A[0]"}),
@@ -1739,7 +1738,6 @@ def test_create_loop_control_block(control_block: str) -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={"A": data.Array(dace.float64, [10])},
-        symbols={"i": dace.int64},
         children=[
             tn.ForScope(
                 loop=LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1"),
@@ -1826,7 +1824,6 @@ def test_goto_exit_in_loop() -> None:
             "A": data.Array(dace.float64, [10]),
             "B": data.Array(dace.float64, [1]),
         },
-        symbols={"i": dace.int64},
         children=[
             tn.ForScope(
                 loop=LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1"),
@@ -1884,7 +1881,6 @@ def test_forward_goto_at_sdfg_end() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={"A": data.Array(dace.float64, [10])},
-        symbols={"i": dace.int64},
         children=[
             tn.ForScope(
                 loop=LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1"),
@@ -2023,7 +2019,6 @@ def test_gblock_goto_to_loop() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={"A": data.Array(dace.float64, [10])},
-        symbols={"i": dace.int64},
         children=[
             tn.GBlock(
                 children=[
@@ -2095,7 +2090,7 @@ def test_trailing_assignment_in_body(scope: str) -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={"A": data.Array(dace.float64, [1])},
-        symbols={"i": dace.int64, "k": dace.int64, "n": dace.int64},
+        symbols={"k": dace.int64, "n": dace.int64},
         children=[
             tn.AssignNode("k", CodeBlock("0"), dace.InterstateEdge(assignments={"k": "0"})),
             tn.StateBoundaryNode(),
@@ -2108,7 +2103,8 @@ def test_trailing_assignment_in_body(scope: str) -> None:
     # Convert without inserting state boundaries after assignments
     sdfg = dace.SDFG("tester")
     sdfg._arrays.update(copy.deepcopy(stree.containers))
-    sdfg.symbols.update(stree.symbols)
+    for name, dtype in stree.symbols.items():
+        sdfg.add_symbol(name, dtype)
     t2s._StreeToSDFG().visit(stree, sdfg=sdfg)
     sdfg.validate()
 

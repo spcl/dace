@@ -6,6 +6,7 @@ import copy
 import itertools
 import warnings
 from collections.abc import Iterable
+from collections.abc import Set as AbstractSet
 
 from networkx import MultiDiGraph
 from ordered_set import OrderedSet
@@ -23,6 +24,7 @@ from dace.sdfg.state import (
     ControlFlowRegion,
     LoopRegion,
     ReturnBlock,
+    SymbolResolver,
 )
 
 
@@ -286,7 +288,11 @@ def nest_sdfg_control_flow(sdfg: SDFG):
 
 
 def nest_state_subgraph(
-    sdfg: SDFG, state: SDFGState, subgraph: SubgraphView, name: str | None = None
+    sdfg: SDFG,
+    state: SDFGState,
+    subgraph: SubgraphView,
+    name: str | None = None,
+    bound_inside: AbstractSet[str] = frozenset(),
 ) -> nodes.NestedSDFG:
     """Turns a state subgraph into a nested SDFG. Operates in-place.
 
@@ -294,6 +300,8 @@ def nest_state_subgraph(
     :param state: The state containing the subgraph.
     :param subgraph: Subgraph to nest.
     :param name: An optional name for the nested SDFG.
+    :param bound_inside: Symbols the caller binds inside the nested SDFG next; they are neither mapped nor
+                         declared (see ``SDFGState.add_nested_sdfg``).
     :return: The nested SDFG node.
     :raise KeyError: Some or all nodes in the subgraph are not located in
                      this state, or the state does not belong to the given
@@ -384,6 +392,19 @@ def nest_state_subgraph(
     # Create the nested SDFG
     nsdfg = SDFG(name or "nested_" + state.label)
 
+    # Add scope symbols to the nested SDFG with their original data types, before the
+    # descriptors that name them
+    symbols_at_top = state.symbols_defined_at(top_scopenode)
+    if isinstance(top_scopenode, nodes.EntryNode):
+        symbols_at_top.update(top_scopenode.new_symbols(sdfg, state, symbols_at_top))
+    for v in symbols_at_top.keys() | sdfg.symbols.keys():
+        if v in nsdfg.symbols or v in bound_inside:
+            continue
+        if v in sdfg.symbols:
+            nsdfg.add_symbol(v, sdfg.symbols[v].dtype)
+        elif v in symbols_at_top:
+            nsdfg.add_symbol(v, symbols_at_top[v].dtype)
+
     # Transients are added to the nested graph as-is
     for name in subgraph_transients:
         nsdfg.add_datadesc(name, sdfg.arrays[name])
@@ -421,18 +442,6 @@ def nest_state_subgraph(
         new_name = nested_names[name]
         output_names[edge] = new_name
     ###################
-
-    # Add scope symbols to the nested SDFG with their original data types
-    symbols_at_top = state.symbols_defined_at(top_scopenode)
-    if isinstance(top_scopenode, nodes.EntryNode):
-        symbols_at_top.update(top_scopenode.new_symbols(sdfg, state, symbols_at_top))
-    for v in symbols_at_top.keys() | sdfg.symbols.keys():
-        if v in nsdfg.symbols:
-            continue
-        if v in sdfg.symbols:
-            nsdfg.add_symbol(v, sdfg.symbols[v].dtype)
-        elif v in symbols_at_top:
-            nsdfg.add_symbol(v, symbols_at_top[v].dtype)
 
     # Add constants to nested SDFG
     for cstname, cstval in sdfg.constants.items():
@@ -477,7 +486,10 @@ def nest_state_subgraph(
 
     # Add nested SDFG node to the input state
     nested_sdfg = state.add_nested_sdfg(
-        nsdfg, set(input_names.values()) | input_arrays, set(output_names.values()) | output_arrays.keys()
+        nsdfg,
+        set(input_names.values()) | input_arrays,
+        set(output_names.values()) | output_arrays.keys(),
+        bound_inside=bound_inside,
     )
 
     # Reconnect memlets to nested SDFG
@@ -1161,7 +1173,9 @@ def is_symbol_unused(sdfg: SDFG, sym: str) -> bool:
     return True
 
 
-def are_subsets_contiguous(subset_a: subsets.Subset, subset_b: subsets.Subset, dim: int = None) -> bool:
+def are_subsets_contiguous(
+    subset_a: subsets.Subset, subset_b: subsets.Subset, facts: symbolic.Facts, dim: int = None
+) -> bool:
 
     if dim is not None:
         # A version that only checks for contiguity in certain
@@ -1185,7 +1199,7 @@ def are_subsets_contiguous(subset_a: subsets.Subset, subset_b: subsets.Subset, d
         return ab == True or a_overlap_b == True or ba == True or b_overlap_a == True
 
     # General case
-    bbunion = subsets.bounding_box_union(subset_a, subset_b)
+    bbunion = subsets.bounding_box_union(subset_a, subset_b, facts)
     try:
         if bbunion.num_elements() == (subset_a.num_elements() + subset_b.num_elements()):
             return True
@@ -1195,7 +1209,9 @@ def are_subsets_contiguous(subset_a: subsets.Subset, subset_b: subsets.Subset, d
     return False
 
 
-def find_contiguous_subsets(subset_list: list[subsets.Subset], dim: int = None) -> set[subsets.Subset]:
+def find_contiguous_subsets(
+    subset_list: list[subsets.Subset], facts: symbolic.Facts, dim: int = None
+) -> set[subsets.Subset]:
     """
     Finds the set of largest contiguous subsets in a list of subsets.
 
@@ -1209,16 +1225,16 @@ def find_contiguous_subsets(subset_list: list[subsets.Subset], dim: int = None) 
         for sa, sb in itertools.product(subset_set, subset_set):
             if sa is sb:
                 continue
-            if sa.covers(sb):
+            if sa.covers(sb, facts):
                 subset_set.remove(sb)
                 break
-            elif sb.covers(sa):
+            elif sb.covers(sa, facts):
                 subset_set.remove(sa)
                 break
-            elif are_subsets_contiguous(sa, sb, dim):
+            elif are_subsets_contiguous(sa, sb, facts, dim):
                 subset_set.remove(sa)
                 subset_set.remove(sb)
-                subset_set.add(subsets.bounding_box_union(sa, sb))
+                subset_set.add(subsets.bounding_box_union(sa, sb, facts))
                 break
         else:  # No modification performed
             break
@@ -1613,6 +1629,7 @@ def make_map_internal_write_external(
         return
 
     # Compute the union of the destination subsets of the edges that write to `access.`
+    facts = SymbolResolver().facts_at(state, access)
     in_union = None
     map_dependency = False
     for e in state.in_edges(access):
@@ -1622,7 +1639,7 @@ def make_map_internal_write_external(
         if in_union is None:
             in_union = subset
         else:
-            in_union = in_union.union(subset)
+            in_union = subsets.union(in_union, subset, facts)
 
     # If none of the input subsets depend on the map parameters, then abort, since the array is thread-local.
     if not map_dependency:
@@ -1635,7 +1652,7 @@ def make_map_internal_write_external(
     else:
         for e in state.out_edges(access):
             subset = e.data.get_src_subset(e, state)
-            if not in_union.covers(subset):
+            if not in_union.covers(subset, facts):
                 covers_out = False
                 break
 
@@ -1968,7 +1985,7 @@ def _change_sdfg_type(sdfg: SDFG, from_type: typeclass, to_type: typeclass, swap
     # Swap symbols
     for sym_name, sym_type in sdfg.symbols.items():
         if sym_type == from_type:
-            sdfg.symbols[sym_name] = to_type
+            sdfg.symbol_repo.set_type(sym_name, to_type)
             swaps_count += 1
 
     # Swap array types

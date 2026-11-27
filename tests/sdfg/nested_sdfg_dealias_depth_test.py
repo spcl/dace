@@ -119,7 +119,7 @@ def _check(kinds, symbolic_top: bool = False):
     memlet = _innermost_write(sdfg)
     assert memlet.data == "A", f"{'/'.join(kinds)}: writes {memlet.data}, not the top container"
     begin = memlet.subset[0][0]
-    assert symbolic.simplify(begin - symbolic.pystr_to_symbolic(expected)) == 0, (
+    assert symbolic.simplify(begin - symbolic.pystr_to_symbolic(expected), sdfg.facts()) == 0, (
         f"{'/'.join(kinds)}: writes A[{begin}], expected A[{expected}]"
     )
 
@@ -143,6 +143,23 @@ def test_three_levels_under_a_map(kinds):
     level is a window here.
     """
     _check(("window",) + kinds, symbolic_top=True)
+
+
+def test_restating_with_an_unknown_symbol_type_uses_the_default():
+    top = SDFG("unknown_restate_symbol_type")
+    top.add_array("A", [4], dace.float64)
+    inner = SDFG("inner")
+    inner.add_array("A", [4], dace.float64)
+    inner.add_state(is_start_block=True)
+    state = top.add_state(is_start_block=True)
+    node = state.add_nested_sdfg(inner, {}, {"A"})
+    state.add_edge(node, "A", state.add_write("A"), None, dace.Memlet("A[0:4]"))
+
+    old = top.arrays["A"]
+    new = dace.data.Array(dace.float64, [dace.symbol("N")], transient=False)
+    window = dace.Memlet("A[0:4]")
+    dealias._widen_container(top, "A", old, new, window, {})
+    assert inner.symbols["N"] == symbolic.DEFAULT_SYMBOL_TYPE
 
 
 def test_three_levels_run():
@@ -171,4 +188,5 @@ if __name__ == "__main__":
         test_three_levels(kinds)
     for kinds in itertools.product(["whole", "window"], repeat=2):
         test_three_levels_under_a_map(kinds)
+    test_restating_with_an_unknown_symbol_type_uses_the_default()
     test_three_levels_run()

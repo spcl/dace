@@ -385,7 +385,7 @@ class GlobalPath:
             value = value if isinstance(value, sp.Basic) else symbolic.pystr_to_symbolic(value)
             if isinstance(value, sp.Symbol) and value.name == sym.name and str(key) in inner.symbols:
                 return symbolic.symbol(str(key), inner.symbols[str(key)])
-        dtype = self.levels[level].sdfg.symbols.get(sym.name, getattr(sym, "dtype", symbolic.DEFAULT_SYMBOL_TYPE))
+        dtype = self.levels[level].sdfg.symbols.get(sym.name, symbolic.DEFAULT_SYMBOL_TYPE)
         base = sym.name if sym.name.startswith("__dace_") else f"__dace_ap_{sym.name}"
         name, n = base, 1
         while name in inner.symbols or name in inner.arrays or name in node.symbol_mapping:

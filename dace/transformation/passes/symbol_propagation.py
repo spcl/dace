@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
 import itertools
@@ -356,7 +356,7 @@ class SymbolPropagation(ppl.Pass):
             still_bound = {k for ie in sd.all_interstate_edges() for k in ie.data.assignments.keys()}
             for name in eliminated:
                 if name in sd.symbols and name not in still_bound and name not in used_in_ir:
-                    del sd.symbols[name]
+                    sd.symbol_repo.remove(name)
         return eliminated
 
     # Given a cfg_blk, builds the incoming set of symbols

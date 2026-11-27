@@ -1,4 +1,4 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import itertools
 from dataclasses import dataclass
@@ -98,6 +98,10 @@ class RemoveUnusedSymbols(ppl.Pass):
         # Add symbols in global/init/exit code
         for code in itertools.chain(sdfg.global_code.values(), sdfg.init_code.values(), sdfg.exit_code.values()):
             result |= symbolic.symbols_in_code(code.as_string)
+
+        # A declared relation refuses the removal of the names it holds
+        for relation in sdfg.symbol_repo.params.relations:
+            result |= symbolic.relation_names(relation)
 
         for desc in sdfg.arrays.values():
             result |= set(map(str, desc.free_symbols))

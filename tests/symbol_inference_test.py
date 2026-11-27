@@ -1,7 +1,8 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 
 import dace
+from dace.frontend.python import parser
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -53,6 +54,17 @@ def test_symbol_inference_joint():
     assert np.allclose(B, np.full_like(B, real_M))
 
 
+def test_symbolic_array_strides_infer_an_integer_shape():
+    sdfg = dace.SDFG("symbolic_array_strides")
+    sdfg.add_symbol("N", dace.int32)
+    sdfg.add_array("A", [N, N], dace.float64)
+    array = sdfg.arrays["A"]
+
+    mapping = parser.infer_symbols_from_datadescriptor(sdfg, {"A": array})
+
+    assert mapping == {"N": N}
+
+
 def test_dynamic_range_bound_types_the_map_parameter():
     """A dynamic-range connector is the declared type of the bound that names it.
 
@@ -69,7 +81,7 @@ def test_dynamic_range_bound_types_the_map_parameter():
 
     # Parsed from a string, so the bound carries an untyped ``lo`` -- the unstable dtype.
     bound = dace.symbolic.pystr_to_symbolic("lo")
-    assert all(s.dtype is not dace.uint64 for s in bound.free_symbols)
+    assert all(s.declaration.dtype is not dace.uint64 for s in bound.free_symbols)
 
     entry, exit_node = state.add_map("m", {"i": dace.subsets.Range([(bound, 127, 1)])})
     entry.add_in_connector("lo", dace.uint64)
@@ -87,4 +99,5 @@ def test_dynamic_range_bound_types_the_map_parameter():
 if __name__ == "__main__":
     test_symbol_inference()
     test_symbol_inference_joint()
+    test_symbolic_array_strides_infer_an_integer_shape()
     test_dynamic_range_bound_types_the_map_parameter()

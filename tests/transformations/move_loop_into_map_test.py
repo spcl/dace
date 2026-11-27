@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
 
@@ -133,6 +133,27 @@ def test_non_injective_index():
     sdfg = should_not_apply_3.to_sdfg(simplify=True)
     count = sdfg.apply_transformations(MoveLoopIntoMap)
     assert count == 0
+
+
+def test_scaled_index_is_injective_for_a_nonzero_multiplier():
+    """``data[S * i, j]`` names a different row in each iteration only if ``S`` is nonzero, as declared for ``P``."""
+    S = dace.symbol("S")
+    P = dace.symbol("P", positive=True)
+
+    @dace.program
+    def unknown_multiplier(data: dace.float64[I, J]):
+        for i in range(I):
+            for j in dace.map[0:J]:
+                data[S * i, j] = data[S * i, j] + 1
+
+    @dace.program
+    def positive_multiplier(data: dace.float64[I, J]):
+        for i in range(I):
+            for j in dace.map[0:J]:
+                data[P * i, j] = data[P * i, j] + 1
+
+    assert unknown_multiplier.to_sdfg(simplify=True).apply_transformations(MoveLoopIntoMap) == 0
+    assert positive_multiplier.to_sdfg(simplify=True).apply_transformations(MoveLoopIntoMap) == 1
 
 
 def test_apply_multiple_times():
@@ -374,6 +395,7 @@ if __name__ == "__main__":
     test_itervar_in_map_range()
     test_itervar_in_data()
     test_non_injective_index()
+    test_scaled_index_is_injective_for_a_nonzero_multiplier()
     test_apply_multiple_times()
     test_apply_multiple_times_1()
     test_more_than_a_map()

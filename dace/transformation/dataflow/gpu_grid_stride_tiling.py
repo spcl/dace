@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """This module contains classes and functions that implement the grid-strided map tiling
 transformation."""
 
@@ -108,7 +108,7 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
         tile_o_dim_new = self._find_new_dim(sdfg, graph, o_entry, new_dim_prefix, o_entry.map.params[0])
         tile_i_dim_new = self._find_new_dim(sdfg, graph, i_entry, new_dim_prefix, i_entry.map.params[0])
 
-        grid_dim = sympy.Min(max_grid_dim, (o_to + 1 - o_from) // o_step)
+        grid_dim = sympy.Min(max_grid_dim, dace.symbolic.int_floor(o_to + 1 - o_from, o_step))
 
         # TODO: how to deal with approximated values?
         # begin, end, step of all four maps
