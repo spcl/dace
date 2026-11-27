@@ -429,6 +429,29 @@ def test_an_inner_loop_shadowing_the_outer_iterator_keeps_its_own_iterator():
     assert np.allclose(A, 6.0)
 
 
+def test_zero_trip_loop_leaves_the_iterator_at_init():
+    """A loop that runs no iteration leaves its iterator at ``init``, not below it."""
+    sdfg = dace.SDFG("zero_trip_loop_exit_value")
+    sdfg.add_array("out", [1], dace.int64)
+    sdfg.add_symbol("i", dace.int64)
+    sdfg.add_symbol("n", dace.int64)
+    loop = LoopRegion("loop", condition_expr="i < n", loop_var="i", initialize_expr="i = 3", update_expr="i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    loop.add_state("body", is_start_block=True)
+    after = sdfg.add_state("after")
+    sdfg.add_edge(loop, after, dace.InterstateEdge())
+    t = after.add_tasklet("read", set(), {"_o"}, "_o = i")
+    after.add_edge(t, "_o", after.add_access("out"), None, dace.Memlet("out[0]"))
+
+    UniqueLoopIterators().apply_pass(sdfg, None)
+    sdfg.validate()
+    csdfg = sdfg.compile()
+    for n, expected in ((0, 3), (1, 3), (3, 3), (7, 7)):
+        out = np.zeros(1, dtype=np.int64)
+        csdfg(out=out, n=n)
+        assert out[0] == expected, (n, out[0])
+
+
 if __name__ == "__main__":
     test_nested_sdfg_symbol_mapping()
     test_loop_var_reconstruction()
@@ -442,3 +465,4 @@ if __name__ == "__main__":
     test_negative_step_loop_value_preserving()
     test_seeds_counter_past_existing_map_params()
     test_an_inner_loop_shadowing_the_outer_iterator_keeps_its_own_iterator()
+    test_zero_trip_loop_leaves_the_iterator_at_init()
