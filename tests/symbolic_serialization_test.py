@@ -718,12 +718,12 @@ def test_sdfg_json_roundtrip_is_fixed_point():
 
 
 def test_operator_derived_int_floor_roundtrip_preserves_integerness():
-    """The ``__int_floor`` class that Python ``//`` parses to must survive
+    """The ``py_floor`` class that Python ``//`` parses to must survive
     ``serialize_symbolic`` -> ``deserialize_symbolic`` with its ``is_integer``
     assumption intact, so downstream simplifications and type inferences that
     rely on the floor being an integer are not silently lost."""
     expr = symbolic.pystr_to_symbolic("upper_i // 2")
-    assert expr.func.__name__ == "__int_floor"
+    assert expr.func.__name__ == "py_floor"
     assert expr.is_integer is True
 
     restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
@@ -732,7 +732,7 @@ def test_operator_derived_int_floor_roundtrip_preserves_integerness():
     assert restored.is_integer is True
 
 
-@pytest.mark.parametrize("expr_str", ["a // b", "a & b", "a | b", "a ^ b", "~a", "a << b", "a >> b"])
+@pytest.mark.parametrize("expr_str", ["a & b", "a | b", "a ^ b", "~a", "a << b", "a >> b"])
 def test_operator_derived_function_roundtrip_preserves_class_identity(expr_str):
     """Every ``__``-prefixed operator-derived class must round-trip through
     serialization to the same class (not an opaque ``sympy.Function``),
@@ -747,14 +747,14 @@ def test_operator_derived_function_roundtrip_preserves_class_identity(expr_str):
 
 
 def test_ceiling_of_roundtripped_floor_division_simplifies():
-    """The symbolic expression: ``ceiling(__int_floor(a, b) - c)`` must collapse
-    back to ``__int_floor(a, b) - c`` after a serialize/deserialize round-trip,
-    because the round-tripped ``__int_floor`` still carries ``is_integer=True``
+    """The symbolic expression: ``ceiling(py_floor(a, b) - c)`` must collapse
+    back to ``py_floor(a, b) - c`` after a serialize/deserialize round-trip,
+    because the round-tripped ``py_floor`` still carries ``is_integer=True``
     and sympy's ``ceiling._eval`` returns a known-integer argument unchanged."""
     # ``symbol // 2`` is SymPy's ``floor`` (only ``SymExpr`` defines ``__floordiv__``), which is
     # integer on its own; the operator class only appears when the expression is parsed.
     expr = symbolic.pystr_to_symbolic("upper_i // 2 - lower_i")
-    assert any(type(f).__name__ == "__int_floor" for f in expr.atoms(sympy.Function))
+    assert any(type(f).__name__ == "py_floor" for f in expr.atoms(sympy.Function))
 
     restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
     ceiling_of_restored = sympy.ceiling(restored)

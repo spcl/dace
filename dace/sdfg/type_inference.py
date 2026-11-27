@@ -31,6 +31,7 @@ KNOWN_FUNCTIONS: dict[str, Callable[[list[dtypes.typeclass]], dtypes.typeclass]]
     "Min": lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
     "Max": lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
     "int_floor": lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
+    "py_floor": lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
     "int_ceil": lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
 }
 

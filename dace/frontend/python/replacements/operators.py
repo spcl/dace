@@ -796,7 +796,7 @@ _pyop2symtype = {
     ">": sp.StrictGreaterThan,
     "<": sp.StrictLessThan,
     # Binary ops
-    "//": symbolic.int_floor,
+    "//": symbolic.py_floor,
 }
 
 

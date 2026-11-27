@@ -72,10 +72,10 @@ def test_ceiling_of_an_integer_prints_as_its_argument():
     assert isinstance(stored, sympy.ceiling)
     assert stored.args[0].is_integer
 
-    assert symstr(stored, cpp_mode=True) == "(((N) / (2)))"
+    assert symstr(stored, cpp_mode=True) == "(py_floor(N, 2))"
 
 
-@pytest.mark.parametrize("rounding,name", [(sympy.floor, "int_floor"), (sympy.ceiling, "int_ceil")])
+@pytest.mark.parametrize("rounding,name", [(sympy.floor, "py_floor"), (sympy.ceiling, "int_ceil")])
 def test_division_by_an_integer_still_rewrites(rounding, name):
     """The integer-division rewrite is unchanged where a real denominator is present."""
     assert sympy_intdiv_fix(rounding(N / 8)).func.__name__ == name
