@@ -115,6 +115,15 @@ class DefinedMemlets:
 
         self._scopes[0][1][name] = (dtype, ctype)
 
+    def snapshot(self) -> list[tuple[dict, dict]]:
+        """Each scope with a copy of its definitions, for :meth:`restore`."""
+        return [(entry[1], dict(entry[1])) for entry in self._scopes]
+
+    def restore(self, snapshot: list[tuple[dict, dict]]) -> None:
+        """Define again what was removed from each scope since ``snapshot``."""
+        for scope, entries in snapshot:
+            scope.update({name: entry for name, entry in entries.items() if name not in scope})
+
     def remove(self, name: str, ancestor: int = 0, is_global: bool = False) -> None:
         for parent, scope, can_access_parent in reversed(self._scopes):
             last_parent = parent

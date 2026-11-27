@@ -121,6 +121,8 @@ class DaCeCodeGenerator:
         self.where_allocated: dict[tuple[SDFG, str], SDFG] = {}
         #: Forced register arrays of a split declaration at an allocation site no loop repeats: on the function's frame.
         self.frame_allocated: set[tuple[SDFG, str]] = set()
+        #: Arrays a block frees on entry, ahead of allocating them anew at their new size, by that block.
+        self.to_reallocate: collections.defaultdict[ControlFlowBlock, list] = collections.defaultdict(list)
         #: Forced register arrays a loop iteration allocates, by the block they are declared ahead of as a VLA.
         self.allocated_ahead: collections.defaultdict[ControlFlowBlock, list] = collections.defaultdict(list)
         #: ``(cfg_id, name)`` of a persistent array -> the local pointer a CPU reduction clause names it by, while bound.
@@ -1236,7 +1238,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     first_block, last_block = paired_allocation_blocks([state for state, _ in instances])
                     alloc_state = first_block if isinstance(first_block, SDFGState) else first_state_instance
                     alloc_block = allocation_block(first_block, desc, access_states)
-                    sized_blocks = late_allocation_block(alloc_block, last_block, name, desc, access_states)
+                    sized_blocks, resized_blocks = late_allocation_block(
+                        alloc_block, last_block, name, desc, access_states
+                    )
                     if (
                         len(sized_blocks) == 1
                         and sized_blocks[0] is alloc_block
@@ -1268,6 +1272,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         ):
                             self.frame_allocated.add((sdfg, name))
                         self.to_allocate[curscope].append((sdfg, alloc_state, first_node_instance, False, True, False))
+                    # Over the blocks that resize it: each frees the buffer it holds before allocating anew
+                    for curscope in resized_blocks:
+                        self.to_reallocate[curscope].append((sdfg, alloc_state, first_node_instance))
                     curscope = last_block
                     # A control flow region has no state to dispatch the deallocation through
                     dealloc_state = curscope if isinstance(curscope, SDFGState) else instances[-1][0]
@@ -1337,6 +1344,20 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             if instr is not None:
                 instr.on_allocation_begin(sdfg, scope, callsite_stream)
         """ Dispatches allocation of all arrays in the given scope. """
+        # A resize frees the buffer of the old size first; the pointer stays declared for the new one
+        for tsdfg, state, node in self.to_reallocate.get(scope, []):
+            declared = self._dispatcher.declared_arrays.snapshot()
+            self._dispatcher.dispatch_deallocate(
+                tsdfg,
+                state.parent_graph,
+                state,
+                state.block_id,
+                node,
+                node.desc(tsdfg),
+                function_stream,
+                callsite_stream,
+            )
+            self._dispatcher.declared_arrays.restore(declared)
         entries = self.to_allocate[scope]
         for index in self.order_views_after_their_sources(entries):
             tsdfg, state, node, declare, allocate, _ = entries[index]
@@ -1738,7 +1759,7 @@ def late_allocation_block(
     name: str,
     desc: data.Data,
     access_states: set[SDFGState],
-) -> list[ControlFlowBlock]:
+) -> tuple[list[ControlFlowBlock], list[ControlFlowBlock]]:
     """
     The blocks whose entry allocates ``desc`` when a symbol it is sized by is assigned between ``alloc_block`` and
     ``last_block``, inside a branch or a loop (QE's ``qgm``: one conditional sizes and fills it, a later one reads
@@ -1751,16 +1772,19 @@ def late_allocation_block(
     :param name: The name of ``desc``.
     :param desc: The descriptor to allocate.
     :param access_states: The states that access ``desc`` or read it on an adjacent edge.
-    A size assigned after an access keeps ``alloc_block``, as before this placement existed.
+    A size assigned after an access keeps ``alloc_block``, as before this placement existed. A size changed between
+    two uses reallocates at each assignment, when every read after it follows a write after it (Fortran's
+    ``DEALLOCATE`` and ``ALLOCATE`` at a new size, QE ``vexxace_gamma``'s ``rmexx_d``).
+    :returns: The blocks that allocate ``desc``, and those of them that free the buffer of the old size first.
 
     :raises NotImplementedError: When the size is assigned at more than one place or in a loop the free does not run
-                                 in: each would need a reallocation.
+                                 in, or changes while a value of ``desc`` lives across it.
     """
     sizes = {str(sym) for sym in desc.free_symbols}
     region = alloc_block.parent_graph
     while not any(last_block is block for block in region.nodes()):
         if isinstance(last_block, SDFG):
-            return [alloc_block]
+            return [alloc_block], []
         last_block = last_block.parent_graph
 
     def accesses(graph: ControlFlowBlock) -> bool:
@@ -1786,9 +1810,10 @@ def late_allocation_block(
             graph, block = outer, out_edges[0].dst
         return allocation_block(block, desc, access_states)
 
-    blocks = {sized_after(e) for e in edges if e.data.assignments.keys() & sizes}
+    sizing_edges = [e for e in edges if e.data.assignments.keys() & sizes]
+    blocks = list({id(block): block for block in map(sized_after, sizing_edges)}.values())
     if not blocks:
-        return [alloc_block]
+        return [alloc_block], []
     # The size is final at the block every other assignment runs before (QE's nij: set to 0, then summed in a loop)
     last = [b for b in blocks if all(o is b or precedes(o, b) for o in blocks)]
     if len(last) != 1:
@@ -1796,23 +1821,54 @@ def late_allocation_block(
         last = [b for b in blocks if not any(o is not b and precedes(b, o) for o in blocks)]
         if not one_per_arm(last):
             raise NotImplementedError(f"{desc} is sized at {len(blocks)} places: it would need a reallocation")
-    # Over the allocating blocks: none may sit in a loop the free does not run in
-    for block in last:
-        outer = block.parent_graph
-        while outer is not region:
-            if isinstance(outer, LoopRegion):
-                raise NotImplementedError(f"{desc} is sized in {outer}, which reallocates it per iteration")
-            outer = outer.parent_graph
+    refuse_loops(last, region, desc)
     # Accessed before the assignment: the earlier accesses use the size in force at the dominating block, as before;
     # accessed on both sides of a size that changes in between needs a reallocation, however many places assign it (a
     # buffer sized N + 2, read, then filled to N + 3 overflowed when the first size lay before the span)
     if any(precedes(state, block) for state in access_states for block in last):
         # An in-edge read runs before that edge's assignments and is recorded on its source state too (tmp1 in N = tmp1[0])
         later = [state for state in access_states if uses_in_state_or_after(state, name)]
-        if any(block is state or precedes(block, state) or contains(block, state) for state in later for block in last):
+        if not any(after(block, state) for state in later for block in last):
+            return [alloc_block], []
+        # Each assignment frees and allocates anew: no value may cross it, nor may a register be resized
+        refuse_loops(blocks, region, desc)
+        if getattr(desc.storage, "force", False) or not all(
+            written_before_read(block, name, [state for state in later if after(block, state)]) for block in blocks
+        ):
             raise NotImplementedError(f"{desc} is sized at {len(blocks)} places: it would need a reallocation")
-        return [alloc_block]
-    return last
+        return [alloc_block, *blocks], blocks
+    return last, []
+
+
+def refuse_loops(blocks: list[ControlFlowBlock], region: ControlFlowRegion, desc: data.Data) -> None:
+    """Refuse a block of ``blocks`` that sits in a loop inside ``region``, where the free does not run."""
+    for block in blocks:
+        outer = block.parent_graph
+        while outer is not region:
+            if isinstance(outer, LoopRegion):
+                raise NotImplementedError(f"{desc} is sized in {outer}, which reallocates it per iteration")
+            outer = outer.parent_graph
+
+
+def after(block: ControlFlowBlock, state: SDFGState) -> bool:
+    """Whether ``state`` is ``block``, lies in it, or runs after it on some path."""
+    return block is state or precedes(block, state) or contains(block, state)
+
+
+def written_before_read(block: ControlFlowBlock, name: str, states: list[SDFGState]) -> bool:
+    """Whether each of ``states`` that reads ``name`` follows another of them that writes it, as
+    :meth:`~dace.transformation.passes.split_branch_transients.SplitBranchTransients.sequential_blocks` asks of a
+    split: the buffer ``block`` allocates anew carries no value from before. A read on a path that skips every write
+    reads undefined values, as Fortran's does after ``ALLOCATE`` (QE matcalc's ``rmexx`` when ``calbec`` is skipped)."""
+    writes = [s for s in states if any(n.data == name and s.in_degree(n) > 0 for n in s.data_nodes())]
+    reads = [
+        s
+        for s in states
+        if any(n.data == name and s.out_degree(n) > 0 for n in s.data_nodes())
+        or any(name in n.free_symbols for n in s.nodes() if not isinstance(n, nodes.AccessNode))
+        or any(name in e.data.used_arrays(s.sdfg.arrays) for e in s.parent_graph.out_edges(s))
+    ]
+    return all(any(w is not r and precedes(w, r) for w in writes) for r in reads)
 
 
 def uses_in_state_or_after(state: SDFGState, name: str) -> bool:

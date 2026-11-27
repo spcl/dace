@@ -178,8 +178,9 @@ def test_a_buffer_read_before_its_allocation_keeps_one_container():
 
 
 # Reproducer: a buffer sized N + 2, read, then filled to N + 3 was allocated once at N + 2 and overflowed: the size was
-# assigned at one place in the span the allocation searched, which the refusal took for a single size
-def test_a_buffer_resized_after_a_read_refuses():
+# assigned at one place in the span the allocation searched, which the refusal took for a single size. The second fill
+# writes every value the second copy reads, so the resize reallocates.
+def test_a_buffer_resized_after_a_read_is_reallocated():
     sdfg = dace.SDFG("grown_after_a_read")
     sdfg.add_array("out", [N], dace.float64)
     sdfg.add_symbol("d0", dace.int64)
@@ -201,8 +202,46 @@ def test_a_buffer_resized_after_a_read_refuses():
             {"o": dace.Memlet("out[i]")},
             external_edges=True,
         )
-    with pytest.raises(NotImplementedError, match="would need a reallocation"):
-        sdfg.generate_code()
+    code = sdfg.generate_code()[0].clean_code
+    assert code.count("aligned_delete_array(buf") == 2, code
+    out = np.zeros(5)
+    sdfg(out=out, N=5)
+    assert np.allclose(out, np.arange(5) + 1)
+
+
+def build_resized_in_an_if() -> dace.SDFG:
+    """QE ``vexxace_gamma``'s ``rmexx_d``: ``buf(N)`` is filled and copied to ``o0``; ``IF (flag)`` zeroes it,
+    reallocates it to ``N + 3``, fills and copies it to ``o1``; after the ``IF`` a zero fill uses the size in force."""
+    sdfg = dace.SDFG("resized_in_an_if")
+    for target in ("o0", "o1"):
+        sdfg.add_array(target, [N], dace.float64)
+    sdfg.add_scalar("flag", dace.int32)
+    sdfg.add_symbol("d0", dace.int64)
+    sdfg.add_transient("buf", ["d0"], dace.float64)
+    init = sdfg.add_state("init", is_start_block=True)
+    fill = sdfg.add_state("fill")
+    sdfg.add_edge(init, fill, InterstateEdge(assignments={"d0": "N"}))
+    fill.add_mapped_tasklet("fill", {"i": "0:d0"}, {}, "o = i", {"o": dace.Memlet("buf[i]")}, external_edges=True)
+    copy = sdfg.add_state_after(fill, "cp")
+    copy.add_mapped_tasklet(
+        "cp", {"i": "0:N"}, {"x": dace.Memlet("buf[i]")}, "o = x", {"o": dace.Memlet("o0[i]")}, external_edges=True
+    )
+    zero = sdfg.add_state_after(copy, "zero")
+    zero.add_mapped_tasklet("zero", {"i": "0:d0"}, {}, "o = 0", {"o": dace.Memlet("buf[i]")}, external_edges=True)
+    allocate_fill_copy(sdfg, "r", "flag != 0", "N + 3", 10, "o1", False)
+    tail = next(iter(sdfg.sink_nodes()))
+    tail.add_mapped_tasklet("zero_tail", {"i": "0:d0"}, {}, "o = 0", {"o": dace.Memlet("buf[i]")}, external_edges=True)
+    return sdfg
+
+
+# Reproducer: QE h_psi failed in codegen: "Array (dtype=double, shape=(rmexx_d_d0, rmexx_d_d1)) is sized at 1 places:
+# it would need a reallocation" -- vexxace_gamma reallocates rmexx_d in an IF without else between two uses
+def test_a_buffer_resized_in_an_if_without_else_is_reallocated():
+    sdfg = build_resized_in_an_if()
+    for flag in (0, 1):
+        o0, o1 = np.zeros(5), np.zeros(5)
+        sdfg(o0=o0, o1=o1, flag=np.int32(flag), N=5)
+        assert np.allclose(o0, np.arange(5)) and np.allclose(o1, (np.arange(5) + 10) * flag), flag
 
 
 if __name__ == "__main__":
@@ -211,4 +250,5 @@ if __name__ == "__main__":
     test_a_conditional_without_else_still_refuses_to_size_in_its_arms()
     test_allocations_in_sequence_take_a_container_each()
     test_a_buffer_read_before_its_allocation_keeps_one_container()
-    test_a_buffer_resized_after_a_read_refuses()
+    test_a_buffer_resized_after_a_read_is_reallocated()
+    test_a_buffer_resized_in_an_if_without_else_is_reallocated()
