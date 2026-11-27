@@ -306,9 +306,7 @@ class ExpandArgReduceCUDA(ExpandTransformation):
 
         in_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == "_in")
         val_edge = next((e for e in parent_state.out_edges(node) if e.src_conn == "_out_val"), None)
-        idx_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_out_idx")
         in_dtype = required(parent_sdfg.arrays[required(in_edge.data.data)]).dtype
-        idx_dtype = required(parent_sdfg.arrays[required(idx_edge.data.data)]).dtype
 
         # A raw pointer only when the read is PROVABLY contiguous and untransformed -- that is the
         # shape CUB can issue vectorised loads for. ``symbolic.equal`` is tri-valued, and a stride it
@@ -318,7 +316,7 @@ class ExpandArgReduceCUDA(ExpandTransformation):
         gathers = symbolic.equal(step, 1) is not True or bool(node.transform)
 
         idstr = global_code_id(parent_sdfg, parent_state, node)
-        vt, it = in_dtype.ctype, idx_dtype.ctype
+        vt = in_dtype.ctype
         # The stride reaches the wrapper as an ARGUMENT, not baked into it: the wrapper is a free
         # function in the CUDA unit, where the symbol the stride is written in is not in scope. The
         # host tasklet is where it is, so the tasklet evaluates it and passes the number down.
@@ -348,14 +346,14 @@ class ExpandArgReduceCUDA(ExpandTransformation):
         )
 
         items = sym2cpp(_count(in_edge))
-        stride_arg = f", (long long)({sym2cpp(step)})" if gathers else ""
+        stride_arg = f", {sym2cpp(step)}" if gathers else ""
         val_out = "&__ar_val" if val_edge is not None else "nullptr"
         code = (
             (f"{vt} __ar_val;\n" if val_edge is not None else "") + f"long long __ar_idx;\n"
             f"DACE_GPU_CHECK(__dace_argreduce_{idstr}(_in{stride_arg}, {val_out}, &__ar_idx, "
-            f"(long long)({items}), __dace_current_stream));\n"
+            f"{items}, __dace_current_stream));\n"
             + ("_out_val = __ar_val;\n" if val_edge is not None else "")
-            + f"_out_idx = ({it})__ar_idx;"
+            + "_out_idx = __ar_idx;"
         )
         return nodes.Tasklet(
             label=f"{node.label}_cuda",
@@ -415,12 +413,12 @@ class ExpandArgReduceCUDABlock(ExpandTransformation):
             f"(__arr.__ar_i < 0 ? __arl : dace::arg_{kind}_combine(__arl, __arr)); }}"
         )
         code = (
-            f"{pair} __ar_best = {{{vt}(), ({it})-1}};\n"
-            f"for (long long __ari = threadIdx.x; __ari < (long long)({symbolic.symstr(_count(edges['_in']))}); "
+            f"{pair} __ar_best = {{{vt}(), static_cast<{it}>(-1)}};\n"
+            f"for (int64_t __ari = threadIdx.x; __ari < ({symbolic.symstr(_count(edges['_in']))}); "
             f"__ari += {BLOCK_LANES}) {{\n"
             f"    const {vt} __arx = {element if fn is None else f'{fn}({element})'};\n"
-            f"    if (__ar_best.__ar_i >= 0) __ar_best = dace::arg_{kind}_step(__ar_best, __arx, ({it})__ari);\n"
-            f"    else if (__ari == 0 || __arx == __arx) __ar_best = {{__arx, ({it})__ari}};\n"
+            f"    if (__ar_best.__ar_i >= 0) __ar_best = dace::arg_{kind}_step(__ar_best, __arx, static_cast<{it}>(__ari));\n"
+            f"    else if (__ari == 0 || __arx == __arx) __ar_best = {{__arx, static_cast<{it}>(__ari)}};\n"
             f"}}\n"
             + block_allreduce_code(idstr, pair, BLOCK_LANES, "__ar_best", fold, "__ar_best")
             + "\n"
