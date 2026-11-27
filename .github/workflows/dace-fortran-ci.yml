@@ -22,6 +22,8 @@ env:
   # The dace-fortran commit the frontend comes from (v1.3-fixes, to be tagged v1.4). A commit, so a dace-fortran push cannot
   # change what this job tests.
   DACE_FORTRAN_REF: 0621456935002164473567bdd161685b44f986d7
+  # This job tests the DaCe of this checkout: dace-fortran must not swap it for its pinned FaCe build
+  DACE_FORTRAN_NO_DACE_SETUP: 1
   LLVM_VERSION: '22'
   OMPI_MCA_pml: ob1
   OMPI_MCA_btl: self,vader
