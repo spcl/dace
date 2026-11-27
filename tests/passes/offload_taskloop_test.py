@@ -401,13 +401,18 @@ def offloaded(sdfg: dace.SDFG, heuristics: bool) -> dace.SDFG:
     return sdfg
 
 
-def map_schedule(sdfg: dace.SDFG, fragment: str) -> dtypes.ScheduleType:
-    """The schedule of the one map in the tree whose label contains ``fragment``."""
-    found = [
+def map_schedules(sdfg: dace.SDFG, fragment: str) -> list[dtypes.ScheduleType]:
+    """The schedules of the maps in the tree whose label contains ``fragment``."""
+    return [
         node.map.schedule
-        for node, _ in sdfg.all_nodes_recursive()
+        for node, parent in sdfg.all_nodes_recursive()
         if isinstance(node, nodes.MapEntry) and fragment in node.map.label
     ]
+
+
+def map_schedule(sdfg: dace.SDFG, fragment: str) -> dtypes.ScheduleType:
+    """The schedule of the one map in the tree whose label contains ``fragment``."""
+    found = map_schedules(sdfg, fragment)
     assert len(found) == 1, f"{fragment!r} matched {len(found)} maps"
     return found[0]
 
@@ -641,7 +646,9 @@ def test_a_map_that_computes_in_its_own_scope_is_not_a_taskloop():
     state = next(iter(sdfg.states()))
     outer = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry) and n.map.label == "outer")
     assert not is_taskloop_map(state, outer, state.scope_children())
-    assert map_schedule(offloaded(sdfg, heuristics=True), "outer") == dtypes.ScheduleType.GPU_Device
+    # The kernel splits into one per part: the side tasklet's, and the inner map's collapsed with it
+    schedules = map_schedules(offloaded(sdfg, heuristics=True), "outer")
+    assert len(schedules) == 2 and set(schedules) == {dtypes.ScheduleType.GPU_Device}
 
 
 def triangular_nest() -> dace.SDFG:
@@ -685,11 +692,12 @@ def test_a_block_map_over_a_nested_sdfg_launches_its_states_kernels():
     assert map_schedule(sdfg, "shift") == dtypes.ScheduleType.GPU_Device
 
 
-def test_a_block_maps_body_is_sequential_without_the_heuristics():
+def test_a_block_maps_body_splits_into_kernels_over_blocks_and_columns_without_the_heuristics():
+    """The block map is the kernel; each map of its body becomes a kernel of its own, collapsed with it, so no map
+    over the columns runs sequentially on one thread per block."""
     sdfg = offloaded(blocked_nest(), heuristics=False)
-    assert map_schedule(sdfg, "nblks") == dtypes.ScheduleType.GPU_Device
-    assert map_schedule(sdfg, "scale") == dtypes.ScheduleType.Sequential
-    assert map_schedule(sdfg, "shift") == dtypes.ScheduleType.Sequential
+    assert map_schedules(sdfg, "nblks") == [dtypes.ScheduleType.GPU_Device] * 2
+    assert not map_schedules(sdfg, "scale") and not map_schedules(sdfg, "shift"), "collapsed into the block kernels"
 
 
 def test_the_body_of_a_block_map_copies_nothing_of_its_own():
@@ -1199,7 +1207,7 @@ if __name__ == "__main__":
     test_a_map_that_computes_in_its_own_scope_is_not_a_taskloop()
     test_a_map_whose_body_extent_names_it_is_not_a_taskloop()
     test_a_block_map_over_a_nested_sdfg_launches_its_states_kernels()
-    test_a_block_maps_body_is_sequential_without_the_heuristics()
+    test_a_block_maps_body_splits_into_kernels_over_blocks_and_columns_without_the_heuristics()
     test_the_body_of_a_block_map_copies_nothing_of_its_own()
     test_taskloop_maps_finds_the_launchers_of_a_whole_tree()
     test_a_launched_nest_computes_what_the_single_kernel_computes(True)

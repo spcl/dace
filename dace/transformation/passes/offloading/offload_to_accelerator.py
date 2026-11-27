@@ -41,6 +41,8 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow import MapCollapse, MapFission, TrivialMapElimination
 from dace.transformation.helpers import isolate_nested_sdfg, isolate_small_map_axes
 from dace.transformation.interstate.map_loop_interchange import isolate_map
+from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
+from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 from dace.transformation.passes import FuseMaps
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.cpu_specialization.decide_cpu_parallel_axes import sequential_reason
@@ -1116,12 +1118,15 @@ class OffloadToAccelerator(ppl.Pass):
         return kernels
 
     def fission_kernels_over_maps(self, sdfg: SDFG) -> bool:
-        """Split a kernel whose body holds two or more maps side by side into one kernel per part, each collapsed with
-        the map it holds.
+        """Split a kernel whose body holds a map beside other work into one kernel per part, each collapsed with the
+        map it holds.
 
         Under one kernel the inner maps run in order on each thread: ICON VT's ``z_ekinh`` and ``z_w_concorr_mc``
         fused into one kernel over ``jc`` looped ``nlev`` levels per thread. Split, each is a kernel over ``jc`` and
-        its own levels. The CPU form, not offloaded, keeps them in one parallel region.
+        its own levels. A body nested whole splits per block: VT's clipping kernel over ``jk`` counts the clipped
+        cells of a level in one ``jc`` map and clips them in another under a guard on that count; split, the count
+        is one per level and each map a kernel over ``jk`` and ``jc``. The CPU form, not offloaded, keeps them in one
+        parallel region.
 
         :returns: whether any kernel was split.
         """
@@ -1129,26 +1134,85 @@ class OffloadToAccelerator(ppl.Pass):
         for state, entry in self.kernel_maps(sdfg):
             children = state.scope_children()[entry]
             inner = [node for node in children if isinstance(node, nodes.MapEntry)]
-            # Only parts that share no data inside the kernel and accumulate nothing: an argmax's maximum and index
-            # maps hand a row's maximum through a transient, and stay one kernel
-            independent = not any(isinstance(node, nodes.AccessNode) for node in children) and not any(
-                edge.data.wcr is not None for edge in state.in_edges(state.exit_node(entry))
-            )
-            if len(inner) < 2 or not independent or not MapFission.can_be_applied_to(state.sdfg, map_entry=entry):
-                continue
-            parent, params = state.entry_node(entry), list(entry.map.params)
-            MapFission.apply_to(state.sdfg, map_entry=entry)
-            changed = True
-            # Over the parts: each that holds one map and nothing else becomes one kernel over both
-            for part in list(state.scope_children()[parent]):
-                if not isinstance(part, nodes.MapEntry) or part.map.params != params:
+            body = self.nested_body_with_maps(children)
+            if body is not None:
+                # A body nested whole, its blocks in order: each block becomes a kernel, and fission widens what
+                # one hands the next (ICON VT's per-level clip count, read by the guard of the clipping map)
+                if not MapFission.can_be_applied_to(state.sdfg, map_entry=entry, nested_sdfg=body, expr_index=1):
                     continue
-                held = [node for node in state.scope_children()[part] if isinstance(node, nodes.MapEntry)]
-                if len(held) == 1 and MapCollapse.can_be_applied_to(
-                    state.sdfg, outer_map_entry=part, inner_map_entry=held[0]
-                ):
-                    MapCollapse.apply_to(state.sdfg, outer_map_entry=part, inner_map_entry=held[0])
+            else:
+                # Only parts that share no data inside the kernel and accumulate nothing: an argmax's maximum and
+                # index maps hand a row's maximum through a transient, and stay one kernel
+                independent = not any(isinstance(node, nodes.AccessNode) for node in children) and not any(
+                    edge.data.wcr is not None for edge in state.in_edges(state.exit_node(entry))
+                )
+                # A map beside other work (VT: the jc kernel's surface write beside its level map) splits as well
+                parts = [node for node in children if not isinstance(node, nodes.MapExit)]
+                if not inner or len(parts) < 2 or not independent:
+                    continue
+                if not MapFission.can_be_applied_to(state.sdfg, map_entry=entry):
+                    continue
+            parent, params = state.entry_node(entry), list(entry.map.params)
+            if body is not None:
+                MapFission.apply_to(state.sdfg, map_entry=entry, nested_sdfg=body, expr_index=1)
+            else:
+                MapFission.apply_to(state.sdfg, map_entry=entry)
+            changed = True
+            # Over the parts: each that holds one map and nothing else becomes one kernel over both. Fission of a
+            # nested body puts the parts inside it, one per block
+            places = [(state, parent)] if body is None else [(part_state, None) for part_state in body.sdfg.states()]
+            for part_state, scope in places:
+                for part in list(part_state.scope_children()[scope]):
+                    if not isinstance(part, nodes.MapEntry) or part.map.params != params:
+                        continue
+                    self.inline_part_body(part_state, part)
+                    held = [node for node in part_state.scope_children()[part] if isinstance(node, nodes.MapEntry)]
+                    if len(held) == 1 and MapCollapse.can_be_applied_to(
+                        part_state.sdfg, outer_map_entry=part, inner_map_entry=held[0]
+                    ):
+                        MapCollapse.apply_to(part_state.sdfg, outer_map_entry=part, inner_map_entry=held[0])
         return changed
+
+    @staticmethod
+    def nested_body_with_maps(children: list[nodes.Node]) -> nodes.NestedSDFG | None:
+        """The nested SDFG that is a kernel's whole body, if two or more of its top-level blocks hold maps and no
+        transient of the body links two of them: fission would widen that kernel-local buffer into a global one per
+        kernel instance (the column buffer a zero fill hands the level loop)."""
+        inside = [node for node in children if not isinstance(node, nodes.MapExit)]
+        if len(inside) != 1 or not isinstance(inside[0], nodes.NestedSDFG):
+            return None
+        body = inside[0]
+        holding = [
+            block
+            for block in body.sdfg.nodes()
+            if any(isinstance(node, nodes.MapEntry) for node, parent in block.all_nodes_recursive())
+        ]
+        if len(holding) < 2:
+            return None
+        seen: set[str] = set()
+        for block in body.sdfg.nodes():
+            names = {
+                node.data
+                for node, parent in block.all_nodes_recursive()
+                if isinstance(node, nodes.AccessNode)
+                and parent.sdfg is body.sdfg
+                and body.sdfg.arrays[node.data].transient
+            }
+            if names & seen:
+                return None
+            seen |= names
+        return body
+
+    @staticmethod
+    def inline_part_body(state: SDFGState, part: nodes.MapEntry) -> None:
+        """Push the guards of the nested SDFG a fissioned kernel part holds into its maps and inline it, so the map
+        it holds sits right under the part."""
+        held = [node for node in state.scope_children()[part] if isinstance(node, nodes.NestedSDFG)]
+        if len(held) != 1:
+            return
+        held[0].sdfg.apply_transformations_repeated([MoveIfIntoMap, InlineSDFG], validate=False)
+        if InlineSDFG.can_be_applied_to(state.sdfg, nested_sdfg=held[0]):
+            InlineSDFG.apply_to(state.sdfg, nested_sdfg=held[0])
 
     def assign_schedules(self, sdfg: SDFG, host_level: bool = True) -> None:
         """``GPU_Device`` at a host level, ``Sequential`` below one; a taskloop keeps its body host-level.

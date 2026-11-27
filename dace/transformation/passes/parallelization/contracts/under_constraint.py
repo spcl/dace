@@ -35,6 +35,7 @@ Constraint types:
   make that data-parallel.
 """
 
+from copy import deepcopy as dcpy
 from dataclasses import dataclass
 
 from dace import SDFG, Memlet, dtypes, subsets, symbolic
@@ -42,6 +43,7 @@ from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_expr
+from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
@@ -217,10 +219,16 @@ class ParallelizeUnderConstraint(ppl.Pass):
         from dace.transformation.interstate.loop_to_map import LoopToMap, Refusal
         from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
-        if refusal is not None and refusal.kind not in (Refusal.CARRIED_DEPENDENCE, Refusal.PINNED):
+        if refusal is not None and refusal.kind not in (
+            Refusal.CARRIED_DEPENDENCE,
+            Refusal.PINNED,
+            Refusal.OVERLAPPING_WRITES,
+            # A map's edge holds the hull of two writes a distance apart, which reads as one non-unique write
+            Refusal.NON_UNIQUE_WRITE,
+        ):
             return False
         distance = carried_distance(loop)
-        if distance is None:
+        if distance is None or (loop.pinned_sequential and guarded_by(loop, distance.condition)):
             return False
         pinned = loop.pinned_sequential
         if refusal is None and not pinned and ParallelizeLoops().accepts(loop, LoopToMap()):
@@ -428,14 +436,15 @@ class ParallelizeUnderConstraint(ppl.Pass):
 
 @dataclass(frozen=True, slots=True)
 class CarriedDistance:
-    """The one carried dependence of a loop: iteration ``n`` reads the element of ``array`` that iteration
-    ``source`` writes, ``distance`` apart in the index. The loop is parallel exactly when ``distance`` is 0 or
-    reaches ``limit``, past every other iteration."""
+    """The one carried dependence of a loop: iteration ``n`` reads (or, ``access`` ``"writes"``, also writes) the
+    element of ``array`` that iteration ``source`` writes, ``distance`` apart in the index. The loop is parallel
+    exactly when ``distance`` is 0 or reaches ``limit``, past every other iteration."""
 
     array: str
     distance: str
     limit: str
     source: str
+    access: str = "reads"
 
     @property
     def condition(self) -> str:
@@ -450,29 +459,77 @@ class CarriedDistance:
         if flag is not None and host is not None:
             check = f"the runtime check {flag} (evaluated once, before the {host.loop_variable} loop)"
         return (
-            f"parallel -- {check} found {d} == 0 or {d} >= {lim} or {d} <= -{lim}: no iteration reads an element "
-            f"of {self.array} another one writes",
-            f"sequential -- {check} found {d} != 0 and -{lim} < {d} < {lim}: iteration n reads the element of "
-            f"{self.array} that iteration {self.source} writes; this arm keeps the order",
+            f"parallel -- {check} found {d} == 0 or {d} >= {lim} or {d} <= -{lim}: no iteration {self.access} an "
+            f"element of {self.array} another one writes",
+            f"sequential -- {check} found {d} != 0 and -{lim} < {d} < {lim}: iteration n {self.access} the element "
+            f"of {self.array} that iteration {self.source} writes; this arm keeps the order",
         )
 
 
-def non_transient_accesses(loop: LoopRegion) -> tuple[dict, dict]:
-    """``(writes, reads)``: per non-transient array, its subsets in ``loop`` keyed by spelling."""
+def guarded_by(loop: LoopRegion, condition: str) -> bool:
+    """Whether ``loop`` is the fallback of a version on ``condition`` itself, or on a flag saved from it: a second
+    pass over the pipeline would version it again on the very test it failed."""
+    tested = {symbolic.symstr(symbolic.pystr_to_symbolic(condition))}
+    for edge in loop.sdfg.all_interstate_edges(recursive=False):
+        for name, value in edge.data.assignments.items():
+            if symbolic.symstr(symbolic.pystr_to_symbolic(value)) in tested:
+                tested.add(name)
+    block = loop.parent_graph
+    while block is not None and not isinstance(block, SDFG):
+        if isinstance(block, ConditionalBlock) and any(
+            cond is not None and symbolic.symstr(symbolic.pystr_to_symbolic(cond.as_string)) in tested
+            for cond, branch in block.branches
+        ):
+            return True
+        block = block.parent_graph
+    return False
+
+
+def non_transient_accesses(loop: LoopRegion, per_access: bool = False) -> tuple[dict, dict]:
+    """``(writes, reads)``: per non-transient array, its subsets in ``loop`` keyed by spelling.
+
+    :param per_access: Take the accesses inside a map one by one, each propagated out of the map on its own, instead
+                       of the hull the map's edge holds: two writes ``i - 1`` and ``lda + i - 1`` in a map over ``j``
+                       stay two subsets, not one ``i - 1:lda + i``.
+    """
     writes: dict[str, dict[str, subsets.Range]] = {}
     reads: dict[str, dict[str, subsets.Range]] = {}
     for state in loop.states():
         for e in state.edges():
             if e.data.is_empty():
                 continue
-            for node, table, subset in (
-                (e.src, reads, e.data.get_src_subset(e, state)),
-                (e.dst, writes, e.data.get_dst_subset(e, state)),
+            for node, table, subset, scope in (
+                (e.src, reads, e.data.get_src_subset(e, state), e.dst),
+                (e.dst, writes, e.data.get_dst_subset(e, state), e.src),
             ):
                 if isinstance(node, nodes.AccessNode) and subset is not None:
-                    if not state.sdfg.arrays[node.data].transient:
-                        table.setdefault(node.data, {})[str(subset)] = subset
+                    desc = state.sdfg.arrays[node.data]
+                    if desc.transient:
+                        continue
+                    found = [subset]
+                    if per_access and isinstance(scope, (nodes.MapEntry, nodes.MapExit)):
+                        found = access_subsets(state, e, desc, table is writes)
+                    for each in found:
+                        table.setdefault(node.data, {})[str(each)] = each
     return writes, reads
+
+
+def access_subsets(state: SDFGState, edge, desc, write: bool) -> list[subsets.Range]:
+    """The subsets of the accesses inside the map scope ``edge`` leaves or enters, each propagated out on its own."""
+    found = []
+    name = edge.data.data
+    for leaf in state.memlet_tree(edge).leaves():
+        # A copy names the other container (``h_slice[0] -> h[i - 1, j]``): its subset of ``name`` is the other one
+        subset = leaf.data.subset if leaf.data.data == name else leaf.data.other_subset
+        if subset is None:
+            return [edge.data.subset]
+        memlet = Memlet(data=name, subset=dcpy(subset))
+        scope = state.entry_node(leaf.src if write else leaf.dst)
+        while scope is not None:
+            memlet = propagate_memlet(state, memlet, scope, False, arr=desc)
+            scope = state.entry_node(scope)
+        found.append(memlet.subset)
+    return found
 
 
 def read_in_control_flow(loop: LoopRegion, array: str) -> bool:
@@ -490,23 +547,27 @@ def read_in_control_flow(loop: LoopRegion, array: str) -> bool:
 
 def carried_distance(loop: LoopRegion) -> CarriedDistance | None:
     """The :class:`CarriedDistance` of a loop writing one array at one point ``a[c*i + d1]`` and reading it at one
-    other point ``a[c*i + d2]``, with ``c`` a nonzero number and ``d2 - d1`` symbolic and fixed before the loop
-    (``s[i + k] += s[i]``); ``None`` for any other shape. The other dimensions of the two points must match."""
+    other point ``a[c*i + d2]``, or writing it at both and reading it nowhere else (QE ``h_psi``'s two spin halves
+    ``hpsi(i, j)`` and ``hpsi(lda + i, j)``), with ``c`` a nonzero number and ``d2 - d1`` symbolic and fixed before
+    the loop (``s[i + k] += s[i]``); ``None`` for any other shape. The other dimensions of the two points must
+    match."""
     from dace.transformation.interstate.loop_to_map import loop_varying_symbols  # avoid an import cycle
 
     first, last = loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop)
     stride = loop_analysis.get_loop_stride(loop)
     if first is None or last is None or stride is None or not (stride.is_number and stride > 0):
         return None
-    writes, reads = non_transient_accesses(loop)
+    writes, reads = non_transient_accesses(loop, per_access=True)
     pairs = []
     for array, written in writes.items():
         other = [subset for key, subset in reads.get(array, {}).items() if key not in written]
         if len(written) == 1 and len(other) == 1:
-            pairs.append((array, next(iter(written.values())), other[0]))
+            pairs.append((array, next(iter(written.values())), other[0], "reads"))
+        elif len(written) == 2 and not other:
+            pairs.append((array, *written.values(), "writes"))
     if len(pairs) != 1:
         return None
-    array, write, read = pairs[0]
+    array, write, read, access = pairs[0]
     if write.dims() != read.dims() or read_in_control_flow(loop, array):
         return None
     differ = [dim for dim in range(write.dims()) if str(write[dim]) != str(read[dim])]
@@ -532,7 +593,7 @@ def carried_distance(loop: LoopRegion) -> CarriedDistance | None:
     shown = -distance if distance.could_extract_minus_sign() else distance
     step = symbolic.simplify(distance / affine[0])
     source = f"n - {symbolic.symstr(-step)}" if step.could_extract_minus_sign() else f"n + {symbolic.symstr(step)}"
-    return CarriedDistance(array, symbolic.symstr(shown), symbolic.symstr(limit), source)
+    return CarriedDistance(array, symbolic.symstr(shown), symbolic.symstr(limit), source, access)
 
 
 def segment_write(loop: LoopRegion, sdfg: SDFG) -> tuple[str, OrderedSet[str]] | None:

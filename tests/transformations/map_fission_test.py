@@ -7,6 +7,7 @@ import dace
 from dace.sdfg import dealias, nodes
 from dace.sdfg import utils as sdutils
 from dace.sdfg.graph import SubgraphView
+from dace.sdfg.state import ConditionalBlock
 from dace.transformation.dataflow import MapFission
 from dace.transformation.helpers import nest_state_subgraph
 from dace.transformation.interstate import InlineSDFG
@@ -421,6 +422,32 @@ def test_if_scope_2():
     val1 = np.ndarray((10,), dtype=np.int32)
     sdfg(A=val1)
     assert np.array_equal(val1, ref)
+
+
+# Reproducer: ICON VT's clipping kernel stayed one map over the levels: its guard reads the count the first part writes
+def test_a_condition_reading_a_container_the_body_writes_fissions_with_the_read_widened():
+    @dace.program
+    def guard_on_a_computed_flag(A: dace.int32[10]):
+        for i in dace.map[0:10]:
+            j = i < 5
+            if j:
+                A[i] = 0
+            else:
+                A[i] = 1
+
+    sdfg = guard_on_a_computed_flag.to_sdfg(simplify=False)
+    assert sdfg.apply_transformations_repeated(MapFission) > 0
+    conditions = [
+        cond.as_string
+        for block in sdfg.all_control_flow_blocks(recursive=True)
+        if isinstance(block, ConditionalBlock)
+        for cond, branch in block.branches
+        if cond is not None
+    ]
+    assert conditions and all("[" in cond for cond in conditions), conditions
+    out = np.full(10, 7, dtype=np.int32)
+    sdfg(A=out)
+    assert np.array_equal(out, np.array([0] * 5 + [1] * 5, dtype=np.int32))
 
 
 def test_array_copy_outside_scope():
@@ -1682,6 +1709,7 @@ if __name__ == "__main__":
     test_two_edges_through_map()
     test_if_scope()
     test_if_scope_2()
+    test_a_condition_reading_a_container_the_body_writes_fissions_with_the_read_widened()
     test_array_copy_outside_scope()
     test_single_data_multiple_connectors()
     test_dependent_symbol()

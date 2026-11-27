@@ -28,7 +28,7 @@ CONFIG_NAMES = tuple(DOMAINS)
 #: pruning the configuration branches buys, so a change here is a change in what the pipeline removes.
 MAPS = {(0, 1): 34, (0, 2): 26, (1, 1): 27, (1, 2): 19}
 #: Block maps kept on the host and the kernels they launch, per (lvn_only, istep).
-OFFLOADED = {(0, 1): (8, 25), (0, 2): (7, 18), (1, 1): (6, 20), (1, 2): (5, 13)}
+OFFLOADED = {(0, 1): (8, 27), (0, 2): (7, 20), (1, 1): (6, 22), (1, 2): (5, 15)}
 
 
 def launches(sdfg: dace.SDFG, host: dace.nodes.MapEntry) -> bool:
