@@ -17,7 +17,6 @@ import os
 os.environ.setdefault("OMP_NUM_THREADS", "4")
 
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg import nodes
@@ -27,11 +26,12 @@ from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
 N = dace.symbol("N")
 
 
-def _nested_reduction_sdfg(reduce_over_i: bool) -> dace.SDFG:
+def _nested_reduction_sdfg(reduce_over_i: bool, triangular: bool = False) -> dace.SDFG:
     """Outer ``map[i]`` over a NestedSDFG holding an inner ``map[k]`` that WCR-writes ``C``.
 
     ``reduce_over_i=True``  -> inner writes ``C[k]``    (invariant over outer ``i`` = reduction over ``i``).
     ``reduce_over_i=False`` -> inner writes ``C[i, k]`` (every outer/inner param in the index = injective).
+    ``triangular`` -> ``k`` runs over ``0:i``, so the boundary ``C[0:i]`` names ``i`` in its extent only.
     """
     cshape = [N] if reduce_over_i else [N, N]
     cidx = "c[k]" if reduce_over_i else "c[i, k]"
@@ -40,7 +40,7 @@ def _nested_reduction_sdfg(reduce_over_i: bool) -> dace.SDFG:
     inner.add_array("arow", [N], dace.float64)
     inner.add_array("c", cshape, dace.float64)
     ist = inner.add_state("compute")
-    ime, imx = ist.add_map("kmap", {"k": "0:N"})
+    ime, imx = ist.add_map("kmap", {"k": "0:i" if triangular else "0:N"})
     t = ist.add_tasklet("acc", {"__in"}, {"__out"}, "__out = __in")
     ist.add_memlet_path(ist.add_read("arow"), ime, t, dst_conn="__in", memlet=dace.Memlet("arow[k]"))
     ist.add_memlet_path(
@@ -54,7 +54,7 @@ def _nested_reduction_sdfg(reduce_over_i: bool) -> dace.SDFG:
     me, mx = state.add_map("outer", {"i": "0:N"})
     nsdfg = state.add_nested_sdfg(inner, {"arow"}, {"c"}, {"N": "N", "i": "i"})
     state.add_memlet_path(state.add_read("A"), me, nsdfg, dst_conn="arow", memlet=dace.Memlet("A[i, 0:N]"))
-    cbound = "C[0:N]" if reduce_over_i else "C[i, 0:N]"
+    cbound = ("C[0:i]" if triangular else "C[0:N]") if reduce_over_i else "C[i, 0:N]"
     state.add_memlet_path(
         nsdfg, mx, state.add_write("C"), src_conn="c", memlet=dace.Memlet(cbound, wcr="lambda x, y: x + y")
     )
@@ -94,6 +94,22 @@ def test_nested_cross_iteration_reduction_keeps_wcr():
     Cw = C.copy()
     sdfg(A=A.copy(), C=Cw, N=n)
     assert np.allclose(Cw, ref), f"maxdiff {np.max(np.abs(Cw - ref))}"
+
+
+# Reproducer: loop_to_symm's descending deviating nest raced at OMP_NUM_THREADS=4: the boundary ``C[0:M - i - 1, j]``
+# names the outer ``i`` only in its extent, which read as ``i`` varying the written element (WCRToAugAssign)
+def test_triangular_nested_reduction_keeps_wcr():
+    """``C[k] += A[i, k]`` for ``k < i`` reaches the parent as ``C[0:i]``: the outer ``i`` sets how far the write
+    reaches, not where it lands, so different ``i`` write the same ``C[k]`` and the WCR stays."""
+    sdfg = _nested_reduction_sdfg(reduce_over_i=True, triangular=True)
+    sdfg.apply_transformations_repeated(WCRToAugAssign)
+    assert _inner_wcr_edges(sdfg) == 1, "the cross-iteration reduction WCR must be preserved"
+
+    n = 64
+    A = np.random.default_rng(2).random((n, n))
+    C = np.zeros(n)
+    sdfg(A=A.copy(), C=C, N=n)
+    np.testing.assert_allclose(C, np.tril(A, -1).sum(axis=0))
 
 
 def _toplevel_injective_sdfg() -> dace.SDFG:
@@ -137,4 +153,6 @@ def test_toplevel_injective_write_still_reverts():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_nested_cross_iteration_reduction_keeps_wcr()
+    test_triangular_nested_reduction_keeps_wcr()
+    test_toplevel_injective_write_still_reverts()
