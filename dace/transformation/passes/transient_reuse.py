@@ -274,6 +274,8 @@ class BufferSharing:
 
     sdfg: SDFG
     storages: tuple
+    #: Lift only device (``GPU_Global``) buffers to ``Persistent`` (``MinimizeTransients.device_only``).
+    device_only: bool = False
     uses: dict[str, dict[SDFGState, list[nodes.AccessNode]]] = field(default_factory=dict)
     #: Candidates with an access node inside a map scope.
     scoped: OrderedSet = field(default_factory=OrderedSet)
@@ -308,7 +310,8 @@ class BufferSharing:
         for group in groups:
             desc = self.sdfg.arrays[group.rep]
             # At the root, symbols bound on entry are known at init: a buffer sized by them alone is allocated there.
-            if desc.lifetime != persistent and root and self.hoistable(desc):
+            liftable = not self.device_only or desc.storage is dtypes.StorageType.GPU_Global
+            if desc.lifetime != persistent and root and liftable and self.hoistable(desc):
                 desc.lifetime = persistent
             # Below the root the SDFG may be inlined into a parallel map, whose iterations each keep their own buffer.
             elif len(group.members) > 1 and desc.lifetime != persistent and root:

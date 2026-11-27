@@ -379,7 +379,9 @@ class DaCeCodeGenerator:
         # every copy is issued on. So the struct is emitted, the entry function declares it as a
         # local (:func:`~dace.cpf_lowering.device_entry_prologue`), and the generated body reaches
         # it through the same ``__state`` it always did.
-        if not standalone or (cpf_lowering.device() and backend == "frame"):
+        # Without boilerplate the struct is emitted only while something still lives in it.
+        keep_struct = not cpf_lowering.no_boilerplate() or bool(self.statestruct)
+        if not standalone or (cpf_lowering.device() and backend == "frame" and keep_struct):
             structstr = "\n".join(self.statestruct)
             global_stream.write(
                 f"""
@@ -715,6 +717,9 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
                 + ", which runs outside the entry function and has no place to run in a "
                 "single self-contained translation unit"
             )
+        if cpf_lowering.no_boilerplate():
+            # What the drain guard did: nothing the entry launched is still running when it returns.
+            callsite_stream.write("DACE_GPU_CHECK(gpuDeviceSynchronize());\n", sdfg)
         callsite_stream.write("}", sdfg)
 
     def generate_external_memory_management(self, sdfg: SDFG, callsite_stream: CodeIOStream):
@@ -1623,7 +1628,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     # nothing downstream of this line knows the state is a local.
                     function_signature += "\n" + cpf_lowering.workspace_offset_declaration()
                     function_signature += cpf_lowering.device_entry_prologue(
-                        mangle_dace_state_struct_name(sdfg), self._initcode.getvalue(), self._exitcode.getvalue()
+                        mangle_dace_state_struct_name(sdfg),
+                        self._initcode.getvalue(),
+                        self._exitcode.getvalue(),
+                        has_state=bool(self.statestruct),
                     )
             else:
                 if params:

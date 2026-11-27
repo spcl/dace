@@ -411,6 +411,33 @@ def tasklet_labels_scope(on: bool):
         labels_in_force = previous
 
 
+#: Whether a device rendering leaves out the DaCe runtime scaffolding (see :func:`no_boilerplate_scope`).
+no_boilerplate_in_force = False
+
+
+def no_boilerplate() -> bool:
+    """Whether the device rendering in force is one unit without DaCe scaffolding (:func:`no_boilerplate_scope`)."""
+    return no_boilerplate_in_force and device()
+
+
+@contextlib.contextmanager
+def no_boilerplate_scope(on: bool):
+    """Render a device form without the DaCe runtime scaffolding for the duration of the block.
+
+    The unit then has no GPU context, no stream variables (every launch, copy and wait is on the default stream,
+    ``nullptr``), no state struct, no ``__cpf_runkernel_*`` launchers (each kernel launches where the entry calls
+    it) and no persistent buffers: a device array the entry allocates lives in the caller's workspace. The host
+    entry and the kernels are one translation unit.
+    """
+    global no_boilerplate_in_force
+    previous = no_boilerplate_in_force
+    no_boilerplate_in_force = on
+    try:
+        yield on
+    finally:
+        no_boilerplate_in_force = previous
+
+
 def hint_detail() -> HintDetail:
     """The hint detail currently in force (see :func:`hint_detail_scope`)."""
     return _hint_detail
@@ -500,20 +527,53 @@ def provenance_scope(provenance: dict[str, tuple[str, str]]):
 carved_workspace_arrays: dict[str, Any] = {}
 carved_workspace_name: str = ""
 
+#: The workspace's size argument and the entry's name, for the size check of a :func:`no_boilerplate` entry
+#: (:func:`workspace_offset_declaration`); empty outside :func:`workspace_carve_scope`.
+carved_workspace_size_name: str = ""
+carved_workspace_entry: str = ""
+
 #: Each array placed in the workspace starts on this boundary, the alignment its own allocation had.
 WORKSPACE_ALIGNMENT = 64
 
 
 @contextlib.contextmanager
-def workspace_carve_scope(workspace: str, carve: dict[str, Any]):
-    """Make ``carve`` the ambient workspace layout for the duration of the block (:func:`workspace_slot`)."""
-    global carved_workspace_arrays, carved_workspace_name
-    previous = carved_workspace_arrays, carved_workspace_name
+def workspace_carve_scope(workspace: str, carve: dict[str, Any], size: str = "", entry: str = ""):
+    """Make ``carve`` the ambient workspace layout for the duration of the block (:func:`workspace_slot`); ``size``
+    and ``entry`` name the workspace's size argument and the entry the size check reports (:func:`no_boilerplate`)."""
+    global carved_workspace_arrays, carved_workspace_name, carved_workspace_size_name, carved_workspace_entry
+    previous = carved_workspace_arrays, carved_workspace_name, carved_workspace_size_name, carved_workspace_entry
     carved_workspace_arrays, carved_workspace_name = carve, workspace
+    carved_workspace_size_name, carved_workspace_entry = size, entry
     try:
         yield carve
     finally:
-        carved_workspace_arrays, carved_workspace_name = previous
+        carved_workspace_arrays, carved_workspace_name, carved_workspace_size_name, carved_workspace_entry = previous
+
+
+def workspace_bound(carve: dict[str, Any]) -> Any:
+    """An upper bound on the bytes the arrays of ``carve`` take in the workspace, as a symbolic expression over the
+    entry's scalar arguments: each array's bytes plus one :data:`WORKSPACE_ALIGNMENT` of padding; ``0`` for none."""
+    return sum(desc.total_size * desc.dtype.bytes + WORKSPACE_ALIGNMENT for desc in carve.values())
+
+
+def workspace_bytes(carve: dict[str, Any]) -> str:
+    """:func:`workspace_bound` as the text ``Rendering.workspace_bytes`` holds (``'0'`` for none)."""
+    return str(workspace_bound(carve)) if carve else "0"
+
+
+def carve_into_workspace(name: str, desc: Any) -> bool:
+    """Add device array ``name`` to the workspace layout in force when a :func:`no_boilerplate` entry allocates it, so
+    its allocation becomes a :func:`workspace_slot`; whether it is placed.
+
+    The GPU generator decides some of its buffers only while generating code (``MakeTransientsPersistent``), after the
+    rendering planned the workspace, so a device entry grows the layout as it allocates; the caller has checked that
+    the entry allocates the array once per call. A name another descriptor holds already keeps its allocation, since
+    :func:`workspace_slot` matches the name and the descriptor together.
+    """
+    if not no_boilerplate() or not carved_workspace_name or carved_workspace_arrays.get(name, desc) is not desc:
+        return False
+    carved_workspace_arrays[name] = desc
+    return True
 
 
 def workspace_offset_name(workspace: str) -> str:
@@ -522,10 +582,25 @@ def workspace_offset_name(workspace: str) -> str:
 
 
 def workspace_offset_declaration() -> str:
-    """``size_t <workspace>_off = 0;`` at the top of an entry that carves arrays out of its workspace, else ``''``."""
+    """``size_t <workspace>_off = 0;`` at the top of an entry that carves arrays out of its workspace, else ``''``;
+    a :func:`no_boilerplate` entry also checks there that the workspace holds them."""
     if not standalone() or not carved_workspace_arrays:
         return ""
-    return f"size_t {workspace_offset_name(carved_workspace_name)} = 0;\n"
+    declaration = f"size_t {workspace_offset_name(carved_workspace_name)} = 0;\n"
+    if not no_boilerplate() or not carved_workspace_size_name:
+        return declaration
+    # A no-boilerplate entry refuses a workspace smaller than the bound it reports (``Rendering.workspace_bytes``),
+    # before any slot is taken, rather than writing past the caller's buffer.
+    from dace.codegen.common import sym2cpp  # the code generators import this module
+
+    needed, size = sym2cpp(workspace_bound(carved_workspace_arrays)), carved_workspace_size_name
+    return declaration + (
+        f"if ({size} < (int64_t)({needed})) {{\n"
+        f'fprintf(stderr, "{carved_workspace_entry}: workspace needs %lld bytes, got %lld\\n", '
+        f"(long long)({needed}), (long long){size});\n"
+        "abort();\n"
+        "}\n"
+    )
 
 
 def workspace_slot(alloc_name: str, name: str | None, desc: Any, ctype: str, count: str) -> str | None:
@@ -1993,6 +2068,56 @@ def cuda_std_spell_out_lines(text: str) -> str:
     )
 
 
+#: The local that points the generated body at the context's streams, and its release at the end of the scope.
+STREAM_ARRAY_LINE: "re.Pattern" = re.compile(
+    r"^[ \t]*(?:gpuStream_t\s*\*\s*gpu_streams\s*=\s*__state->gpu_context->streams|gpu_streams\s*=\s*nullptr);[ \t]*\n",
+    re.MULTILINE,
+)
+#: A local naming one element of the stream array (``gpuStream_t __cpf_current_stream = gpu_streams[0];``).
+STREAM_LOCAL_LINE: "re.Pattern" = re.compile(
+    r"^[ \t]*gpuStream_t\s+(\w+)\s*=\s*gpu_streams\[0\];[ \t]*\n", re.MULTILINE
+)
+#: A stream wait directly before the entry's closing device synchronization, which already waits for it.
+REDUNDANT_STREAM_WAIT: "re.Pattern" = re.compile(
+    r"^[ \t]*cpf_gpu_check\(\w+StreamSynchronize\(nullptr\)\);[ \t]*\n(?=[ \t]*cpf_gpu_check\(\w+DeviceSynchronize\(\)\);)",
+    re.MULTILINE,
+)
+
+
+def default_stream_spell_out(code: str) -> str:
+    """``code`` with every GPU stream spelled ``nullptr``, the default stream, and the stream variables gone.
+
+    The GPU code generator reaches its streams through ``gpu_streams``, a local pointing at the state's context,
+    and through locals naming one element of it. Without boilerplate (:func:`no_boilerplate`) there is one stream,
+    the default one (``compiler.cuda.max_concurrent_streams = -1``), so each of those names is ``nullptr``.
+
+    :raises RuntimeError: if a stream other than the first is named, or ``gpu_streams`` survives: the code then
+                          relies on a stream this rendering does not have.
+    """
+    code = STREAM_ARRAY_LINE.sub("", code)
+    locals_ = STREAM_LOCAL_LINE.findall(code)
+    code = STREAM_LOCAL_LINE.sub("", code)
+    code = re.sub(r"\bgpu_streams\[0\]", "nullptr", code)
+    for name in OrderedSet(locals_):
+        code = re.sub(rf"\b{re.escape(name)}\b", "nullptr", code)
+    if re.search(r"\bgpu_streams\b", code):
+        raise RuntimeError(
+            "a rendering without boilerplate has only the default stream, but the code names gpu_streams"
+        )
+    return code
+
+
+def drop_redundant_stream_wait(code: str) -> str:
+    """``code`` without a wait on the default stream directly before the device synchronization that ends the entry
+    without boilerplate (:func:`no_boilerplate`), which waits for it too. Run on the compacted unit: before
+    :func:`~dace.codegen.cpf.compact_blocks` the closing braces of the generator's blocks sit between the two."""
+    return REDUNDANT_STREAM_WAIT.sub("", code)
+
+
+#: The name one line of :data:`DEVICE_TYPES` defines.
+DEVICE_ALIAS: "re.Pattern" = re.compile(r"(?:using|inline constexpr gpuError_t) (\w+)")
+
+
 def device_preamble(code: str, dialect: Dialect) -> str:
     """``dialect``'s :data:`DEVICE_TYPES` and :data:`DEVICE_CORE`, plus the blocks ``code`` reaches for.
 
@@ -2010,15 +2135,22 @@ def device_preamble(code: str, dialect: Dialect) -> str:
             continue
         needed.add(name)
         pending.extend(dep for dep in DEVICE_BLOCK_DEPENDENCIES.get(name, ()) if dep not in needed)
+    types, core = DEVICE_TYPES[dialect], DEVICE_CORE
+    # The flag itself, not :func:`no_boilerplate`: the preamble is written after the dialect's scope has closed.
+    if no_boilerplate_in_force:
+        # No context; of the backend aliases, only those the unit or the check names.
+        core = core.partition("\n//: The one stream")[0] + "\n"
+        used = code + core + "".join(blocks[name] for name in needed)
+        types = "".join(
+            line + "\n" for line in types.splitlines() if re.search(rf"\b{DEVICE_ALIAS.match(line).group(1)}\b", used)
+        )
     return device_spell_out(
-        "\n".join(
-            [DEVICE_TYPES[dialect] + DEVICE_CORE] + [blocks[name] for name in DEVICE_BLOCK_ORDER if name in needed]
-        ),
+        "\n".join([types + core] + [blocks[name] for name in DEVICE_BLOCK_ORDER if name in needed]),
         dialect,
     )
 
 
-def device_entry_prologue(state_struct: str, init_code: str = "", exit_code: str = "") -> str:
+def device_entry_prologue(state_struct: str, init_code: str = "", exit_code: str = "", has_state: bool = True) -> str:
     """The device setup CPF's single entry function opens with.
 
     An ordinary build does this in ``__dace_init_<name>`` and undoes it in ``__dace_exit_<name>``,
@@ -2038,6 +2170,8 @@ def device_entry_prologue(state_struct: str, init_code: str = "", exit_code: str
     :param state_struct: the mangled state struct name the generated body dereferences.
     :param init_code: the state's setup, the code ``__dace_init`` would run.
     :param exit_code: the state's teardown, the code ``__dace_exit`` would run.
+    :param has_state: whether the state struct has any field; without boilerplate (:func:`no_boilerplate`) an empty
+                      one is not emitted, so there is no state to declare.
     :returns: the prologue lines, indented one level.
     """
     teardown = ""
@@ -2050,6 +2184,12 @@ def device_entry_prologue(state_struct: str, init_code: str = "", exit_code: str
         }}
     }} __cpf_exit_guard{{__state}};
 """
+    if no_boilerplate():
+        # No context and no drain guard: every stream is ``nullptr`` and the footer synchronizes the device.
+        state = (
+            f"    {state_struct} __cpf_state{{}};\n    {state_struct} *__state = &__cpf_state;\n" if has_state else ""
+        )
+        return f"{state}{init_code}{teardown}"
     return f"""\
     // The device handshake, which a single entry point has nowhere else to put.
     cpf_gpu_context __cpf_context{{}};

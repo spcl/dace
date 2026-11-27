@@ -431,6 +431,16 @@ class MinimizeTransients(ppl.Pass):
 
     CATEGORY: str = "Memory Footprint Reduction"
 
+    device_only = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Lift only device (GPU_Global) buffers to Persistent; host ones keep a per-call lifetime. For code "
+        "without a state struct to hold a host buffer across calls.",
+    )
+
+    def __init__(self, device_only: bool = False):
+        self.device_only = device_only
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes | ppl.Modifies.Edges | ppl.Modifies.Memlets
 
@@ -447,5 +457,5 @@ class MinimizeTransients(ppl.Pass):
             changed += Coalescing(sd).run()
             shared = sharing_storages(sd, tuple(storages))
             if shared:
-                changed += len(BufferSharing(sd, shared).run())
+                changed += len(BufferSharing(sd, shared, self.device_only).run())
         return changed or None

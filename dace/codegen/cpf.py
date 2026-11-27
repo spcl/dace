@@ -1531,27 +1531,35 @@ def plan_workspace(sdfg: SDFG, workspace: str) -> tuple[dict[str, dt.Data], str]
     allocated on entry, whichever state or loop body it was allocated in before. Its slot is its own either way,
     so only an array zeroed on allocation could tell the difference, and that one is not placed unless it
     already had ``SDFG`` lifetime.
+
+    A device workspace (``GPU_Global``) holds device arrays, and only under
+    :func:`~dace.cpf_lowering.no_boilerplate`: the same rule makes the top-level ``GPU_Global`` transients ``SDFG``
+    lifetime, but the GPU generator places them as it allocates them
+    (:func:`~dace.cpf_lowering.carve_into_workspace`), together with the buffers its own pipeline makes persistent,
+    so ``carve`` stays empty here.
     """
-    if sdfg.arrays[workspace].storage is not dtypes.StorageType.Default:
+    storage = sdfg.arrays[workspace].storage
+    device = storage is dtypes.StorageType.GPU_Global and cpf_lowering.no_boilerplate()
+    if storage is not dtypes.StorageType.Default and not device:
         return {}, "0"
+    placed = (dtypes.StorageType.GPU_Global,) if device else (dtypes.StorageType.CPU_Heap, dtypes.StorageType.Default)
     arguments = set(sdfg.arglist())
     in_maps, zeroed = mapped_and_zeroed_data(sdfg)
     carve: dict[str, dt.Data] = {}
-    bound: list[symbolic.SymExpr] = []
     for name, desc in sorted(sdfg.arrays.items()):
         if (
             not desc.transient
             or type(desc) is not dt.Array
-            or desc.storage not in (dtypes.StorageType.CPU_Heap, dtypes.StorageType.Default)
+            or desc.storage not in placed
             or (desc.lifetime is dtypes.AllocationLifetime.Scope and name in in_maps)
             or (desc.lifetime is not dtypes.AllocationLifetime.SDFG and name in zeroed)
             or not {str(s) for s in symbolic.symlist(desc.total_size)} <= arguments
         ):
             continue
         desc.lifetime = dtypes.AllocationLifetime.SDFG
-        carve[name] = desc
-        bound.append(desc.total_size * desc.dtype.bytes + cpf_lowering.WORKSPACE_ALIGNMENT)
-    return carve, str(sum(bound)) if bound else "0"
+        if not device:
+            carve[name] = desc
+    return carve, cpf_lowering.workspace_bytes(carve)
 
 
 #: ``language`` argument -> the dialect that renders it. ``'c++'`` is the default and stays the
@@ -1575,6 +1583,18 @@ def dialect_for(language: str) -> cpf_lowering.Dialect:
     except KeyError:
         raise ValueError(f"CPF renders {sorted(LANGUAGES)}, not {language!r}") from None
 
+
+#: Headers a unit without boilerplate includes only when it names what they declare, by header.
+NAMED_HEADERS: dict[str, re.Pattern[str]] = {
+    "<hip/hip_bf16.h>": re.compile(r"\b(?:__hip_bfloat16|hip_bfloat16)\b"),
+    "<cuda_bf16.h>": re.compile(r"\b(?:__nv_bfloat16|nv_bfloat16)\b"),
+    "<hipcub/hipcub.hpp>": re.compile(r"\b(?:gpucub|hipcub)\b"),
+    "<cub/cub.cuh>": re.compile(r"\b(?:gpucub|cub)::"),
+    "<hip/hip_cooperative_groups.h>": re.compile(r"\bcooperative_groups\b"),
+    "<cooperative_groups.h>": re.compile(r"\bcooperative_groups\b"),
+    "<complex>": re.compile(r"\bstd::complex\b"),
+    "<cassert>": re.compile(r"\bassert\s*\("),
+}
 
 #: A call into the OpenMP runtime API in emitted code.
 OPENMP_CALL = re.compile(r"\bomp_[a-z_]+\s*\(")
@@ -1604,6 +1624,20 @@ def preamble(
     # alone does not, and the inline helpers that call it include the header in their own text.
     if OPENMP_CALL.search(code) and "<omp.h>" not in headers:
         headers = headers + ("<omp.h>",)
+    # code PLUS the definitions: a scan expansion's inline helper is emitted BELOW the device block
+    # and calls ``gpucub::DeviceScan`` itself, so gating on ``code`` alone dropped the namespace
+    # alias out from under it and the unit failed to compile on an undeclared ``gpucub``.
+    device_block = (
+        cpf_lowering.device_preamble(code + "\n".join(definitions), dialect)
+        if dialect in cpf_lowering.DEVICE_DIALECTS
+        else ""
+    )
+    if cpf_lowering.no_boilerplate_in_force and device_block:
+        # One unit without boilerplate, which the agent reads whole: a toolkit header only when the unit names it.
+        named = "\n".join([code, device_block, *definitions])
+        headers = tuple(
+            header for header in headers if header not in NAMED_HEADERS or NAMED_HEADERS[header].search(named)
+        )
     vendors = cpf_lowering.vendor_libraries(environments, code, dialect)
     # The legend follows once every loop carries its comment (:func:`with_legend`).
     lines = [RENDERED_BY]
@@ -1629,10 +1663,7 @@ def preamble(
     if dialect in cpf_lowering.DEVICE_DIALECTS:
         lines.append("")
         lines.append("// What dace/dace.h would define for the device side.")
-        # code PLUS the definitions: a scan expansion's inline helper is emitted BELOW this block
-        # and calls ``gpucub::DeviceScan`` itself, so gating on ``code`` alone dropped the namespace
-        # alias out from under it and the unit failed to compile on an undeclared ``gpucub``.
-        lines.append(cpf_lowering.device_preamble(code + "\n".join(definitions), dialect))
+        lines.append(device_block)
     if definitions:
         lines.append("")
         lines.append("// Functions the DaCe runtime headers would otherwise provide.")
@@ -1784,11 +1815,12 @@ BANNED_C: tuple[tuple[re.Pattern, str], ...] = BANNED + (
 
 
 #: A statement line at a block's own level that declares nothing: a comment, a preprocessor line, a brace, a
-#: control or jump statement, or an expression statement (an assignment, a call, an increment). Anything else is
-#: taken to declare -- ``double x;``, ``const int64_t n = ...``, a label, a wrapped line -- and keeps its block.
+#: control or jump statement, or an expression statement (an assignment, a call, an increment, a kernel launch).
+#: Anything else is taken to declare -- ``double x;``, ``const int64_t n = ...``, a label, a wrapped line -- and keeps
+#: its block.
 NON_DECLARING_LINE = re.compile(
     r"^(?:$|//|/\*|#|[{}]|(?:if|for|while|do|switch|return|break|continue|goto|else)\b"
-    r"|[*(]|\+\+|--|[A-Za-z_]\w*\s*(?:\[|\(|\.|->|\+\+|--|(?:[-+*/%&|^]|<<|>>)?=(?!=)))"
+    r"|[*(]|\+\+|--|[A-Za-z_]\w*\s*(?:\[|\(|\.|->|\+\+|--|<<<|(?:[-+*/%&|^]|<<|>>)?=(?!=)))"
 )
 
 
@@ -2147,6 +2179,7 @@ def render(
     hints: str = cpf_lowering.HintDetail.PROOFS.value,
     llm_friendly: bool = False,
     tasklet_labels: bool = False,
+    no_boilerplate: bool = False,
 ) -> Rendering:
     """Render ``sdfg`` and return the text together with the SDFG it describes.
 
@@ -2179,6 +2212,11 @@ def render(
                          their names, and :attr:`Rendering.names` maps each short name back. Host dialects only.
     :param tasklet_labels: end each tasklet statement with ``// <tasklet label>``, for a tool that maps the unit's
                            lines (a compiler's line table) back to the SDFG's tasklets. Comments only: same code.
+    :param no_boilerplate: under a device dialect, render ONE unit (:attr:`Rendering.code`; ``device_code`` stays
+                           empty) without the DaCe runtime scaffolding: no GPU context or stream variables (the
+                           default stream, ``nullptr``), no state struct, no ``__cpf_runkernel_*`` launchers, and
+                           every device array the entry allocates placed in the workspace
+                           (:func:`dace.cpf_lowering.no_boilerplate_scope`). Ignored under a host dialect.
     :returns: the :class:`Rendering`.
     :raises NotImplementedError: if the SDFG needs anything the dialect's units cannot hold; the
                                  message names the construct.
@@ -2190,6 +2228,7 @@ def render(
     with (
         cpf_lowering.hint_detail_scope(cpf_lowering.HintDetail(hints)),
         cpf_lowering.tasklet_labels_scope(tasklet_labels),
+        cpf_lowering.no_boilerplate_scope(no_boilerplate),
     ):
         return render_unit(sdfg, validate, language, signature, check_compiles, isa, llm_friendly)
 
@@ -2426,6 +2465,10 @@ def drop_repeated_includes(code: str) -> str:
     return "\n".join(kept)
 
 
+#: The comment the frame generator opens every unit with.
+FRAME_BANNER = "/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n"
+
+
 def render_unit(
     sdfg: SDFG,
     validate: bool,
@@ -2478,17 +2521,29 @@ def render_unit(
                 carve, workspace_bytes = {}, "0"
                 if signature is not None and signature.workspace is not None:
                     carve, workspace_bytes = plan_workspace(prepared, signature.workspace)
-                # What the workspace does not hold of the persistent buffers stays allocated across calls.
-                held = {name: prepared.arrays[name] for name in persistent if name not in carve}
+                # What the workspace does not hold of the persistent buffers stays allocated across calls; without
+                # boilerplate nothing does: a host buffer is the entry's per-call allocation, a device one is carved.
+                held: dict[str, dt.Data] = {}
+                if not cpf_lowering.no_boilerplate():
+                    held = {name: prepared.arrays[name] for name in persistent if name not in carve}
+                # A device entry without boilerplate also carves the device arrays the GPU generator allocates.
+                workspace = ""
+                if carve or (cpf_lowering.no_boilerplate() and signature is not None and signature.workspace):
+                    workspace = signature.workspace
                 # ``ReadableNames`` gave every nested SDFG its function name; ``hash`` would add id suffixes.
                 with (
                     set_temporary("compiler", "lineinfo", value="none"),
                     set_temporary("compiler", "unique_functions", value="unique_name"),
                     fftw3.single_threaded_planner(),
-                    cpf_lowering.workspace_carve_scope(signature.workspace if carve else "", carve),
+                    cpf_lowering.workspace_carve_scope(
+                        workspace, carve, signature.workspace_size if workspace else "", sdfg.name
+                    ),
                     cpf_lowering.persistent_static_scope(held),
                 ):
                     objects = codegen.generate_code(prepared, validate=validate)
+                if cpf_lowering.no_boilerplate():
+                    # the entry's size check reads the same bound (cpf_lowering.workspace_offset_declaration)
+                    workspace_bytes = cpf_lowering.workspace_bytes(carve)
                 frame, device = split_units(objects, sdfg.name)
                 body = frame.clean_code
                 # Type names reach the text from the entry signature and from declarations, neither
@@ -2499,9 +2554,9 @@ def render_unit(
                     body = cpf_lowering.share_library_handles(body)
                 device_body = ""
                 if device is not None:
-                    device_body = state_struct(body, sdfg.name) + cpf_lowering.rewrite_ctypes(
-                        device.clean_code, dialect
-                    )
+                    # One unit without boilerplate: the kernels sit above the entry and take no state.
+                    shared = "" if cpf_lowering.no_boilerplate() else state_struct(body, sdfg.name)
+                    device_body = shared + cpf_lowering.rewrite_ctypes(device.clean_code, dialect)
                 # Nothing below changes the prepared SDFG, so one argument list serves both uses.
                 entry_arglist = prepared.arglist()
                 caller_writable = (signature.workspace,) if signature is not None and signature.workspace else ()
@@ -2521,12 +2576,27 @@ def render_unit(
                         cpf_lowering.device_spell_out(device_body, dialect)
                     )
                 body = cpf_lowering.respell_vendor_namespaces(body)
+                if cpf_lowering.no_boilerplate():
+                    if dialect is cpf_lowering.Dialect.STANDALONE_CUDA:
+                        # nvcc refuses std::complex in a kernel; the entry keeps the caller's std::complex.
+                        device_body = cpf_lowering.cuda_std_spell_out(device_body, "")
+                    body = cpf_lowering.default_stream_spell_out(f"{device_body}\n{body}" if device_body else body)
+                    device_body = ""
                 # Last of all: a pure layout change, so every pass above still sees the generator's text.
                 body = compact_blocks(body)
+                if cpf_lowering.no_boilerplate():
+                    # The generator's banner, which promised a file nobody edits; this one is the agent's to edit.
+                    body = cpf_lowering.drop_redundant_stream_wait(body.replace(FRAME_BANNER, ""))
                 device_body = compact_blocks(device_body) if device_body else ""
+    unit_environments = set(frame.environments)
+    if cpf_lowering.no_boilerplate_in_force and device is not None:
+        unit_environments |= set(device.environments)
     code = drop_repeated_includes(
-        keep_target_path(preamble(body, dialect, frame.environments) + body, renders_for_x86(isa))
+        keep_target_path(preamble(body, dialect, unit_environments) + body, renders_for_x86(isa))
     )
+    if cpf_lowering.no_boilerplate_in_force and device is not None:
+        # A device helper's note names the context this unit does not have; the stream it means is the default one.
+        code = code.replace("(see cpf_gpu_context)", "(the default stream)")
     names: tuple[tuple[str, str], ...] = ()
     if llm_friendly:
         entry_names = tuple(signature.order) if signature is not None else tuple(entry_arglist)

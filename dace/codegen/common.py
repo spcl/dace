@@ -166,7 +166,8 @@ def gpu_stream_expr(stream: int | str) -> str:
     stream lives outside it. Going through here keeps that stream an ordinary one, passed to work
     and synchronized like any other.
     """
-    if stream == "nullptr":
+    # A CPF unit without boilerplate has no context: every stream is the default one.
+    if stream == "nullptr" or cpf_lowering.no_boilerplate():
         return "nullptr"
     return f"__state->gpu_context->streams[{stream}]"
 
