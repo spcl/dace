@@ -9,7 +9,7 @@ from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.transformation.passes.lower_dynamic_thread_block_maps import LowerDynamicThreadBlockMaps
+from dace.transformation.passes.codegen.lower_dynamic_thread_block_maps import LowerDynamicThreadBlockMaps
 
 H = dace.symbol("H")
 W = dace.symbol("W")
