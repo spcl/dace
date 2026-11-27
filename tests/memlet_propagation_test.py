@@ -270,6 +270,39 @@ def test_nested_sdfg_connector_offset():
         assert edge.data.subset == dace.subsets.Range([(1, 2, 1)]), edge.data.subset
 
 
+def own_symbol_write(outer_has_symbol: bool):
+    """A nested SDFG assigns ``s`` on an interstate edge, then writes ``b[s]``; ``s`` is not in its symbol mapping."""
+    outer = dace.SDFG(f"prop_own_symbol_{int(outer_has_symbol)}")
+    outer.add_array("B", [10], dace.float64)
+    if outer_has_symbol:
+        outer.add_symbol("s", dace.int64)
+    state = outer.add_state()
+    inner = dace.SDFG("inner")
+    inner.add_array("b", [10], dace.float64)
+    inner.add_symbol("s", dace.int64)
+    first = inner.add_state()
+    second = inner.add_state()
+    inner.add_edge(first, second, dace.InterstateEdge(assignments={"s": "3"}))
+    second.add_edge(second.add_tasklet("w", {}, {"o"}, "o = 1"), "o", second.add_write("b"), None, dace.Memlet("b[s]"))
+    node = state.add_nested_sdfg(inner, set(), {"b"})
+    state.add_edge(node, "b", state.add_write("B"), None, dace.Memlet("B[3]"))
+    propagate_memlets_sdfg(outer)
+    return next(iter(state.out_edges(node))).data
+
+
+def test_nested_sdfg_own_symbol_is_not_the_outer_symbol_of_the_same_name():
+    """A symbol the nested SDFG assigns itself is not the outer symbol of the same name: the range widens."""
+    memlet = own_symbol_write(outer_has_symbol=True)
+    assert memlet.subset == dace.subsets.Range([(0, 9, 1)]), memlet.subset
+
+
+def test_widened_border_memlet_is_dynamic():
+    """A range widened because its bound is unknown outside only bounds where the writes land."""
+    memlet = own_symbol_write(outer_has_symbol=False)
+    assert memlet.subset == dace.subsets.Range([(0, 9, 1)]), memlet.subset
+    assert memlet.dynamic
+
+
 if __name__ == "__main__":
     test_conditional()
     test_conditional_nested()
@@ -280,3 +313,5 @@ if __name__ == "__main__":
     test_typed_parameter_symbol()
     test_nested_sdfg_connector_in_mapped_symbols()
     test_nested_sdfg_connector_offset()
+    test_nested_sdfg_own_symbol_is_not_the_outer_symbol_of_the_same_name()
+    test_widened_border_memlet_is_dynamic()
