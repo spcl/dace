@@ -38,7 +38,7 @@ from dace.sdfg.state import (
 )
 from dace.sdfg.utils import require_structured_control_flow
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.dataflow import TrivialMapElimination
+from dace.transformation.dataflow import MapCollapse, MapFission, TrivialMapElimination
 from dace.transformation.helpers import isolate_nested_sdfg, isolate_small_map_axes
 from dace.transformation.interstate.map_loop_interchange import isolate_map
 from dace.transformation.passes import FuseMaps
@@ -218,6 +218,8 @@ class OffloadToAccelerator(ppl.Pass):
         # step 1: set schedule of maps and library nodes -> heuristic only!
         self.find_taskloops(sdfg)
         if self.isolate_small_kernel_axes(sdfg):
+            self.cache_scopes(sdfg)
+        if self.fission_kernels_over_maps(sdfg):
             self.cache_scopes(sdfg)
         self.assign_schedules(sdfg)
         if self.isolate_host_library_nodes(sdfg):
@@ -1088,6 +1090,14 @@ class OffloadToAccelerator(ppl.Pass):
             root = root.parent_sdfg
         if not any(nested.symbol_repo.small for nested in root.all_sdfgs_recursive()):
             return False
+        resolver = SymbolResolver()
+        changed = False
+        for state, entry in self.kernel_maps(sdfg):
+            changed |= isolate_small_map_axes(state, entry, resolver) is not None
+        return changed
+
+    def kernel_maps(self, sdfg: SDFG) -> list[tuple[SDFGState, nodes.MapEntry]]:
+        """Every map :meth:`assign_schedules` will make a kernel, with its state, nested SDFGs included."""
         kernels: list[tuple[SDFGState, nodes.MapEntry]] = []
 
         def walk(state: SDFGState, entry, host_level: bool) -> None:
@@ -1103,10 +1113,41 @@ class OffloadToAccelerator(ppl.Pass):
 
         for state in sdfg.states():
             walk(state, None, True)
-        resolver = SymbolResolver()
+        return kernels
+
+    def fission_kernels_over_maps(self, sdfg: SDFG) -> bool:
+        """Split a kernel whose body holds two or more maps side by side into one kernel per part, each collapsed with
+        the map it holds.
+
+        Under one kernel the inner maps run in order on each thread: ICON VT's ``z_ekinh`` and ``z_w_concorr_mc``
+        fused into one kernel over ``jc`` looped ``nlev`` levels per thread. Split, each is a kernel over ``jc`` and
+        its own levels. The CPU form, not offloaded, keeps them in one parallel region.
+
+        :returns: whether any kernel was split.
+        """
         changed = False
-        for state, entry in kernels:
-            changed |= isolate_small_map_axes(state, entry, resolver) is not None
+        for state, entry in self.kernel_maps(sdfg):
+            children = state.scope_children()[entry]
+            inner = [node for node in children if isinstance(node, nodes.MapEntry)]
+            # Only parts that share no data inside the kernel and accumulate nothing: an argmax's maximum and index
+            # maps hand a row's maximum through a transient, and stay one kernel
+            independent = not any(isinstance(node, nodes.AccessNode) for node in children) and not any(
+                edge.data.wcr is not None for edge in state.in_edges(state.exit_node(entry))
+            )
+            if len(inner) < 2 or not independent or not MapFission.can_be_applied_to(state.sdfg, map_entry=entry):
+                continue
+            parent, params = state.entry_node(entry), list(entry.map.params)
+            MapFission.apply_to(state.sdfg, map_entry=entry)
+            changed = True
+            # Over the parts: each that holds one map and nothing else becomes one kernel over both
+            for part in list(state.scope_children()[parent]):
+                if not isinstance(part, nodes.MapEntry) or part.map.params != params:
+                    continue
+                held = [node for node in state.scope_children()[part] if isinstance(node, nodes.MapEntry)]
+                if len(held) == 1 and MapCollapse.can_be_applied_to(
+                    state.sdfg, outer_map_entry=part, inner_map_entry=held[0]
+                ):
+                    MapCollapse.apply_to(state.sdfg, outer_map_entry=part, inner_map_entry=held[0])
         return changed
 
     def assign_schedules(self, sdfg: SDFG, host_level: bool = True) -> None:
