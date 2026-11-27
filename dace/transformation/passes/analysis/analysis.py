@@ -231,8 +231,11 @@ def has_wcr_in_edge(state: SDFGState, anode: nd.AccessNode) -> bool:
 
 
 def resolved_at_leaf(leaf: Edge[Memlet]) -> bool:
-    """Whether the innermost edge of a write's memlet path resolves conflicts, on itself or in the NestedSDFG it leaves."""
+    """Whether the innermost edge of a write's memlet path resolves conflicts: on itself, as a library node folding onto
+    its output, or in the NestedSDFG it leaves."""
     if leaf.data.wcr is not None:
+        return True
+    if isinstance(leaf.src, nd.LibraryNode) and leaf.src.folds_onto_output():
         return True
     return isinstance(leaf.src, nd.NestedSDFG) and accumulates_into(leaf.src.sdfg, leaf.src_conn)
 

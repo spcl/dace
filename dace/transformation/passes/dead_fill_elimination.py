@@ -78,7 +78,7 @@ from dace.sdfg.state import (
 )
 from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis import analysis, loop_analysis
 
 #: Axes a write must fix to one index instead of covering: ``{axis: index}`` for the loop around it.
 Fixed = dict[int, symbolic.SymbolicType]
@@ -160,7 +160,7 @@ def covers_every_element(
     exit_node = outer.src
     entry = state.entry_node(exit_node)
     inner = list(state.in_edges_by_connector(exit_node, "IN_" + outer.src_conn[len("OUT_") :]))
-    if len(inner) != 1 or inner[0].data.dynamic or inner[0].data.wcr is not None or inner[0].data.subset is None:
+    if len(inner) != 1 or inner[0].data.dynamic or analysis.resolved_at_leaf(inner[0]) or inner[0].data.subset is None:
         return False
     ranges = dict(zip(entry.map.params, entry.map.range.ranges))
     seen = set()

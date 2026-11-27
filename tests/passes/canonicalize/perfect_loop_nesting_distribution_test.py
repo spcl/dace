@@ -41,6 +41,7 @@ from dace.transformation.passes.canonicalize.perfect_loop_nesting import (
     level_parallel,
     parallel_level_diagnostic,
 )
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.loop_fission import LoopFission, _linear_blocks
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.simplify import SimplifyPass
@@ -617,6 +618,64 @@ def test_distribution_order_is_stable_across_runs():
         UniqueLoopIterators().apply_pass(sdfg, {})
         orders.append(emitted_write_order(sdfg))
     assert orders[0] == orders[1] == orders[2] == [["s"], ["p"], ["q"], ["r"]]
+
+
+@dace.program
+def row_max_and_sum(x: dace.float64[N, N], shifted: dace.float64[N, N], scaled: dace.float64[N, N]):
+    mx = np.empty((N,), np.float64)
+    for i in range(N):
+        mx[i] = x[i, 0]
+        for j in range(N):
+            if x[i, j] > mx[i]:
+                mx[i] = x[i, j]
+    sm = np.empty((N,), np.float64)
+    for i in range(N):
+        sm[i] = 0
+        for j in range(N):
+            sm[i] = sm[i] + x[i, j]
+    for i in range(N):
+        for j in range(N):
+            shifted[i, j] = x[i, j] - mx[i]
+            scaled[i, j] = x[i, j] / sm[i]
+
+
+def folded_containers(sdfg):
+    """The containers each Reduce without an identity folds onto, at the end of its write's memlet path."""
+    found = []
+    for node, state in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.libraries.standard.Reduce) and node.folds_onto_output():
+            found += [state.memlet_path(e)[-1].dst.data for e in state.out_edges(node)]
+    return sorted(found)
+
+
+def writers_of(sdfg, name):
+    return [
+        e.src
+        for node, state in sdfg.all_nodes_recursive()
+        if isinstance(node, nodes.AccessNode) and node.data == name
+        for e in state.in_edges(node)
+        if not e.data.is_empty()
+    ]
+
+
+# Reproducer: tactics sdpa read uninitialized row max and row sum once distribution split their seeds off the
+# reductions (2cc31c5efb): fusion folded each Reduce onto a fresh map-local copy, and the zero fill died as dead
+def test_seeds_split_off_a_row_max_and_a_row_sum_reach_their_reductions():
+    """Distribution splits ``mx[i] = x[i, 0]`` and ``sm[i] = 0`` off their reduction loops. Each lifts to a Reduce
+    without an identity that folds onto the seeded container; fusion and dead-fill elimination must keep the seed
+    in front of the fold. Negative data makes an unseeded max visible."""
+    sdfg = row_max_and_sum.to_sdfg()
+    canonicalize(sdfg)
+    sdfg.validate()
+
+    assert folded_containers(sdfg) == ["mx", "sm"]
+    assert len(writers_of(sdfg, "sm")) >= 2, "the zero fill of sm is gone"
+    n = 7
+    x = np.random.default_rng(3).random((n, n)) - 2.0
+    shifted, scaled = np.zeros((n, n)), np.zeros((n, n))
+    sdfg(x=x, shifted=shifted, scaled=scaled, N=n)
+    np.testing.assert_allclose(shifted, x - x.max(axis=1, keepdims=True), rtol=1e-12)
+    np.testing.assert_allclose(scaled, x / x.sum(axis=1, keepdims=True), rtol=1e-12)
 
 
 @pytest.mark.parametrize("name", SIBLING_NESTS)
