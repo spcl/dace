@@ -786,8 +786,8 @@ def test_an_allocation_block_the_free_lies_outside_of_is_returned_as_a_list():
     write.add_mapped_tasklet("fill", {"i": "0:n"}, {}, "o = i", {"o": dace.Memlet("t[i]")}, external_edges=True)
     read = sdfg.add_state_after(branches, "read")
     read.add_access("t")
-    blocks = framecode.late_allocation_block(write, read, sdfg.arrays["t"], {write, read})
-    assert blocks == [write]
+    blocks = framecode.late_allocation_block(write, read, "t", sdfg.arrays["t"], {write, read})
+    assert blocks == ([write], [])
 
 
 if __name__ == "__main__":
