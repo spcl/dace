@@ -5,6 +5,7 @@ import pathlib
 import re
 from typing import Any
 
+import networkx as nx
 import numpy as np
 
 import dace
@@ -28,7 +29,7 @@ from dace.sdfg.state import (
     last_condition_negates_the_others,
 )
 from dace.sdfg.type_inference import infer_expr_type
-from dace.transformation.passes.analysis import StateReachability, loop_analysis
+from dace.transformation.passes.analysis import loop_analysis
 
 
 def _get_or_eval_sdfg_first_arg(func, sdfg):
@@ -688,10 +689,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Gather shared transients, free symbols, and first/last appearance
         shared_transients = {}
         fsyms = {}
-        reachability = StateReachability().apply_pass(top_sdfg, {})
         access_instances: dict[int, dict[str, list[tuple[SDFGState, nodes.AccessNode]]]] = {}
-        # Per SDFG cfg_id, built on first need
-        dominance: dict[int, tuple[DominatorTree, DominatorTree]] = {}
         code_instances: dict[int, dict[str, list[tuple[SDFGState, nodes.Node]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             shared_transients[sdfg.cfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
@@ -958,39 +956,34 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         self.where_allocated[(sdfg, name)] = cursdfg
                         continue
 
-                    if any(inst not in reachability[sdfg.cfg_id][first_state_instance] for inst in instances):
-                        if sdfg.cfg_id not in dominance:
-                            dominance[sdfg.cfg_id] = dominator_trees(sdfg)
-                        first_state_instance, last_state_instance = _get_dominator_and_postdominator(
-                            instances, *dominance[sdfg.cfg_id]
+                    access_states = {state for state, _ in instances}
+                    first_block, last_block = paired_allocation_blocks([state for state, _ in instances])
+                    if first_block is first_state_instance:
+                        self.to_allocate[curscope].append(
+                            (sdfg, first_state_instance, first_node_instance, True, False, False)
                         )
+                    else:
                         # Declare in SDFG scope
                         # NOTE: Even if we declare the data at a common dominator, we keep the first and last node
                         # instances. This is especially needed for Views which require both the SDFGState and the
                         # AccessNode.
                         self.to_allocate[curscope].append((sdfg, None, nodes.AccessNode(name), True, False, False))
-                    else:
-                        self.to_allocate[curscope].append(
-                            (sdfg, first_state_instance, first_node_instance, True, False, False)
-                        )
 
-                    access_states = {state for state, _ in instances}
+                    alloc_state = first_block if isinstance(first_block, SDFGState) else first_state_instance
                     sized_blocks, resized_blocks = late_allocation_block(
-                        allocation_block(first_state_instance, desc, access_states),
-                        last_state_instance,
+                        allocation_block(first_block, desc, access_states),
+                        last_block,
                         name,
                         desc,
                         access_states,
                     )
                     # Over the blocks that allocate it: one, or one per arm of a conditional that sizes it
                     for curscope in sized_blocks:
-                        self.to_allocate[curscope].append(
-                            (sdfg, first_state_instance, first_node_instance, False, True, False)
-                        )
+                        self.to_allocate[curscope].append((sdfg, alloc_state, first_node_instance, False, True, False))
                     # Over the blocks that resize it: each frees the buffer it holds before allocating anew
                     for curscope in resized_blocks:
-                        self.to_reallocate[curscope].append((sdfg, first_state_instance, first_node_instance))
-                    curscope = last_state_instance
+                        self.to_reallocate[curscope].append((sdfg, alloc_state, first_node_instance))
+                    curscope = last_block
                     # A control flow region has no state to dispatch the deallocation through
                     dealloc_state = curscope if isinstance(curscope, SDFGState) else instances[-1][0]
                     self.to_allocate[curscope].append((sdfg, dealloc_state, last_node_instance, False, False, True))
@@ -1390,6 +1383,10 @@ def late_allocation_block(
             if isinstance(outer, ConditionalBlock):
                 graph, outer = outer, outer.parent_graph
             out_edges = outer.out_edges(graph)
+            # The last block of a region that does not access desc (a loop body): the size is final after that region
+            if not out_edges and outer is not region and not accesses(outer):
+                graph = outer
+                continue
             if len(out_edges) != 1:
                 raise NotImplementedError(f"No single block follows {graph} to allocate {desc} after its size")
             graph, block = outer, out_edges[0].dst
@@ -1524,75 +1521,99 @@ def reachable(start: ControlFlowBlock, step) -> set[ControlFlowBlock]:
     return seen
 
 
-class DominatorTree:
-    """The tree of ``immediate`` (a root maps to itself) with DFS entry/exit times: ``a`` dominates ``b`` iff ``b``'s
-    interval lies within ``a``'s, so no transitive closure is built."""
-
-    def __init__(self, immediate: dict[ControlFlowBlock, ControlFlowBlock]) -> None:
-        self.immediate = immediate
-        children: dict[ControlFlowBlock, list[ControlFlowBlock]] = collections.defaultdict(list)
-        roots = {parent for parent in immediate.values() if immediate.get(parent, parent) is parent}
-        for block, parent in immediate.items():
-            if parent is not block:
-                children[parent].append(block)
-        self.entry: dict[ControlFlowBlock, int] = {}
-        self.exit: dict[ControlFlowBlock, int] = {}
-        clock = 0
-        for root in roots:
-            stack = [(root, iter(children[root]))]
-            self.entry[root] = clock
-            clock += 1
-            while stack:
-                block, pending = stack[-1]
-                child = next(pending, None)
-                if child is None:
-                    self.exit[block] = clock
-                    clock += 1
-                    stack.pop()
-                elif child not in self.entry:
-                    self.entry[child] = clock
-                    clock += 1
-                    stack.append((child, iter(children[child])))
-
-    def dominates(self, a: ControlFlowBlock, b: ControlFlowBlock) -> bool:
-        if a is b:
-            return True
-        if a not in self.entry or b not in self.entry:
-            return False
-        return self.entry[a] <= self.entry[b] and self.exit[b] <= self.exit[a]
+def common_dominator(idom: dict, blocks) -> Any:
+    """The nearest block that dominates every one of ``blocks`` in the tree of ``idom`` (a root maps to itself)."""
+    paths = []
+    for block in blocks:
+        path = [block]
+        while idom[path[-1]] is not path[-1]:
+            path.append(idom[path[-1]])
+        paths.append(path)
+    return next(block for block in paths[0] if all(any(block is other for other in path) for path in paths[1:]))
 
 
-def dominator_trees(sdfg: SDFG) -> tuple[DominatorTree, DominatorTree]:
-    """The dominator and post-dominator trees of the blocks of ``sdfg``, across its control flow regions."""
-    idom: dict[ControlFlowBlock, ControlFlowBlock] = {}
-    ipostdom: dict[ControlFlowBlock, ControlFlowBlock] = {}
-    utils.get_control_flow_block_dominators(sdfg, idom, None, ipostdom, None)
-    return DominatorTree(idom), DominatorTree(ipostdom)
+def region_dominators(region: ControlFlowRegion) -> tuple[dict, dict, object]:
+    """The immediate dominators and post-dominators of ``region``'s own blocks, and the exit node its sinks lead to."""
+    exit_node = object()
+    graph = nx.DiGraph()
+    graph.add_nodes_from(region.nodes())
+    graph.add_edges_from((edge.src, edge.dst) for edge in region.edges())
+    graph.add_edges_from((sink, exit_node) for sink in region.sink_nodes())
+    return (
+        utils.immediate_dominators(graph, region.start_block),
+        utils.immediate_dominators(graph.reverse(), exit_node),
+        exit_node,
+    )
 
 
-def _get_dominator_and_postdominator(
-    accesses: list[tuple[SDFGState, nodes.AccessNode]], dom: DominatorTree, postdom: DominatorTree
-):
+def paired_blocks_in(region: ControlFlowRegion, blocks: list[ControlFlowBlock]) -> tuple | None:
+    """Blocks ``(first, last)`` of ``region`` where ``first`` dominates and ``last`` post-dominates ``blocks`` and
+    each other in ``region``'s own graph, or ``None`` when no block of ``region`` post-dominates them."""
+    idom, ipostdom, exit_node = region_dominators(region)
+    if any(block not in idom or block not in ipostdom for block in blocks):
+        return None
+    first, last = common_dominator(idom, blocks), common_dominator(ipostdom, blocks)
+    while True:
+        new_first = common_dominator(idom, [*blocks, last]) if last is not exit_node else first
+        new_last = common_dominator(ipostdom, [*blocks, new_first])
+        if new_first is first and new_last is last:
+            return None if last is exit_node else (first, last)
+        first, last = new_first, new_last
+
+
+def paired_allocation_blocks(states: list[SDFGState]) -> tuple[ControlFlowBlock, ControlFlowBlock]:
+    """The block whose entry allocates and the block whose exit frees a container accessed in ``states``.
+
+    Both are blocks of one control flow region, the first dominating and the second post-dominating every access and
+    each other there, so each allocation is freed exactly once, wherever the accesses sit in branches or loop bodies.
+    The region is the innermost one holding every access; a conditional counts as one block of its parent.
     """
-    Gets the closest common dominator and post-dominator for a list of states.
-    Used for determining allocation of data used in branched states.
-    """
-    states = [a for a, _ in accesses]
-    data_name = accesses[0][1].data
+    chains = []
+    for state in states:
+        chain = [state]
+        while not isinstance(chain[-1], SDFG):
+            chain.append(chain[-1].parent_graph)
+        chains.append(chain)
+    region = next(
+        r
+        for r in chains[0][1:]
+        if not isinstance(r, ConditionalBlock) and all(any(r is other for other in chain) for chain in chains[1:])
+    )
+    blocks = []
+    for chain in chains:
+        block = chain[next(i for i, r in enumerate(chain) if r is region) - 1]
+        if not any(block is other for other in blocks):
+            blocks.append(block)
+    while True:
+        pair = paired_blocks_in(region, blocks)
+        if pair is not None:
+            return entered_block(pair[0], chains), pair[1]
+        if isinstance(region, SDFG):
+            raise NotImplementedError(f"No block pair allocates and frees a container accessed in {states}")
+        blocks = [region]
+        region = region.parent_graph
+        while isinstance(region, ConditionalBlock):
+            blocks, region = [region], region.parent_graph
 
-    start_state = states[0]
-    while any(not dom.dominates(start_state, n) for n in states):
-        if dom.immediate[start_state] is start_state:
-            raise NotImplementedError(f'Could not find an appropriate dominator for allocation of "{data_name}"')
-        start_state = dom.immediate[start_state]
 
-    end_state = states[-1]
-    while any(not postdom.dominates(end_state, n) for n in states):
-        if postdom.immediate[end_state] is end_state:
-            raise NotImplementedError(f'Could not find an appropriate post-dominator for deallocation of "{data_name}"')
-        end_state = postdom.immediate[end_state]
-
-    # TODO(later): If any of the symbols were not yet defined, or have changed afterwards, fail
-    # raise NotImplementedError
-
-    return start_state, end_state
+def entered_block(block: ControlFlowBlock, chains: list[list[ControlFlowBlock]]) -> ControlFlowBlock:
+    """Descends from a region that runs its body once per entry (not a loop or a conditional) to the block in it that
+    every entry passes and that dominates the accesses on ``chains`` there: an allocation at that block follows the
+    assignments the region makes first (a call region binding the size symbols of its result)."""
+    while isinstance(block, ControlFlowRegion) and not isinstance(block, LoopRegion):
+        inner = []
+        for chain in chains:
+            at = next((i for i, r in enumerate(chain) if r is block), None)
+            if at is not None and not any(chain[at - 1] is other for other in inner):
+                inner.append(chain[at - 1])
+        idom, ipostdom, _ = region_dominators(block)
+        if not inner or any(b not in idom for b in inner):
+            return block
+        dom = common_dominator(idom, inner)
+        passed = block.start_block
+        while passed is not dom and ipostdom[passed] is not passed:
+            passed = ipostdom[passed]
+        if passed is not dom:
+            return block
+        block = dom
+    return block

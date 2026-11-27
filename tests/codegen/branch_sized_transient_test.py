@@ -6,13 +6,15 @@ Fortran allocates a local array in each arm of an ``IF`` with the arm's own size
 assign has no single place to be allocated; a copy per arm has.
 """
 
+import re
+
 import numpy as np
 import pytest
 
 import dace
 from dace import InterstateEdge
 from dace.properties import CodeBlock
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 
 N = dace.symbol("N")
 
@@ -198,9 +200,71 @@ def test_a_buffer_resized_in_an_if_without_else_is_reallocated():
         assert np.allclose(o0, np.arange(5)) and np.allclose(o1, (np.arange(5) + 10) * flag), flag
 
 
+def build_sized_in_a_loop_body() -> dace.SDFG:
+    """QE ``qvan_init``/``qvan_clean`` in ``vexx``'s ``iq`` loop: each iteration's ``IF (flag)`` sums ``d0`` in a loop
+    whose body ends in an ``IF``, allocates ``buf(d0)`` and fills it; a second ``IF (flag)`` ending the loop body copies
+    it out."""
+    sdfg = dace.SDFG("sized_in_a_loop_body")
+    sdfg.add_array("out", [N], dace.float64)
+    sdfg.add_scalar("flag", dace.int32)
+    sdfg.add_symbol("d0", dace.int64)
+    sdfg.add_transient("buf", ["d0"], dace.float64)
+    init = sdfg.add_state("init", is_start_block=True)
+    outer = LoopRegion("iq", "k < 2", "k", "k = 0", "k = k + 1")
+    sdfg.add_node(outer)
+    sdfg.add_edge(init, outer, InterstateEdge(assignments={"d0": "0"}))
+    sdfg.add_state_after(outer, "done")
+    start = outer.add_state("start", is_start_block=True)
+    init_cond = ConditionalBlock("if_init")
+    outer.add_node(init_cond)
+    outer.add_edge(start, init_cond, InterstateEdge())
+    arm = ControlFlowRegion("arm_init", sdfg)
+    init_cond.add_branch(CodeBlock("flag != 0"), arm)
+    reset = arm.add_state("reset", is_start_block=True)
+    count = LoopRegion("nt", "j < N", "j", "j = 0", "j = j + 1")
+    arm.add_node(count)
+    arm.add_edge(reset, count, InterstateEdge(assignments={"d0": "0"}))
+    # The size is summed in an IF that ends the counting loop's body
+    step = ConditionalBlock("if_step")
+    count.add_node(step, is_start_block=True)
+    step_arm = ControlFlowRegion("arm_step", sdfg)
+    step.add_branch(CodeBlock("j >= 0"), step_arm)
+    before = step_arm.add_state("before", is_start_block=True)
+    step_arm.add_edge(before, step_arm.add_state("after"), InterstateEdge(assignments={"d0": "d0 + 1"}))
+    fill = arm.add_state("fill")
+    arm.add_edge(count, fill, InterstateEdge())
+    fill.add_mapped_tasklet("fill", {"i": "0:d0"}, {}, "o = i + k", {"o": dace.Memlet("buf[i]")}, external_edges=True)
+    clean = ConditionalBlock("if_clean")
+    outer.add_node(clean)
+    outer.add_edge(init_cond, clean, InterstateEdge())
+    clean_arm = ControlFlowRegion("arm_clean", sdfg)
+    clean.add_branch(CodeBlock("flag != 0"), clean_arm)
+    copy = clean_arm.add_state("cp", is_start_block=True)
+    copy.add_mapped_tasklet(
+        "cp", {"i": "0:N"}, {"x": dace.Memlet("buf[i]")}, "o = x", {"o": dace.Memlet("out[i]")}, external_edges=True
+    )
+    return sdfg
+
+
+# Reproducer: QE vexx_bp_k_gpu (USPP) aborted with "malloc_consolidate(): invalid chunk size": qgm was allocated in the
+# iq loop body ahead of the IF that sizes it, at the size of the previous iteration (0: one byte), and freed after the
+# loop, as the post-dominator of an IF that ends the loop body lies outside the loop
+def test_a_transient_sized_in_a_loop_body_is_allocated_and_freed_there():
+    sdfg = build_sized_in_a_loop_body()
+    code = sdfg.generate_code()[0].clean_code
+    assert code.index("d0 = (d0 + 1)") < code.index("buf = dace::aligned_new_array"), code
+    # Freed at the end of the loop body, before the braces closing the loop and the function
+    assert re.search(r"aligned_delete_array\(buf, 64\);\s*\}\s*\}", code), code
+    for flag in (0, 1):
+        out = np.zeros(5)
+        sdfg(out=out, flag=np.int32(flag), N=5)
+        assert np.allclose(out, (np.arange(5) + 1) * flag), flag
+
+
 if __name__ == "__main__":
     test_a_transient_sized_in_each_branch_is_allocated_per_branch()
     test_a_transient_each_arm_sizes_and_later_code_reads_is_allocated_in_each_arm()
     test_a_conditional_without_else_still_refuses_to_size_in_its_arms()
     test_a_buffer_resized_after_a_read_is_reallocated()
     test_a_buffer_resized_in_an_if_without_else_is_reallocated()
+    test_a_transient_sized_in_a_loop_body_is_allocated_and_freed_there()
