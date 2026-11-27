@@ -113,8 +113,6 @@ class CUDACodeGen(TargetCodeGenerator):
         self._kernel_chiplet_count = 1
         # Number of thread-blocks of the first grid dimension every chiplet owns (see ``chiplet_count``)
         self._kernel_chiplet_chunk = 1
-        # Whether the blocks of the kernel being generated are spread over ``gridDim.y`` (see ``get_kernel_dimensions``)
-        self._kernel_split_blocks = False
         self._kernel_map = None
         self._kernel_state = None
         self._kernel_grid_conditions: list[str] = []
@@ -1951,8 +1949,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                 callsite_stream.write("}  // subgraph end", cfg, state.block_id)
 
-            # A lowered kernel synchronizes through its own Sync nodes
-            if can_sync and not self._kernel_map.map.gpu_grid_syncs_lowered:
+            if can_sync:
                 callsite_stream.write(sync_code(SyncScope.GRID, self.backend), cfg, state.block_id)
 
             # done here, code is generated
@@ -2020,7 +2017,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         # Comprehend grid/block dimensions from scopes
         grid_dims, block_dims, tbmap, _ = self.get_kernel_dimensions(dfg_scope)
-        split_blocks = self._kernel_split_blocks
         is_persistent = dfg_scope.source_nodes()[0].map.schedule == dtypes.ScheduleType.GPU_Persistent
 
         # Get parameters of subgraph
@@ -2316,18 +2312,6 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 state_id,
                 scope_entry,
             )
-
-        if split_blocks:
-            # As many blocks per row of the grid as fit below 2**31 threads, and as many rows as needed
-            self._localcode.write(
-                f"""
-                const int64_t __dace_blocks = {_topy(grid_dims[0])};
-                const int64_t __dace_row = std::min<int64_t>(__dace_blocks, 2147483647 / ({_topy(prod(block_dims))}));""",
-                cfg,
-                state_id,
-                scope_entry,
-            )
-            gdims = "__dace_row, int_ceil(__dace_blocks, __dace_row), 1"
 
         # Beyond the limit, devices only grant dynamic shared memory to kernels that opt in
         limit = common.gpu_max_static_shared_memory()
@@ -2646,21 +2630,6 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
                     f"{grid_size}."
                 )
 
-        # An AMD dispatch covers fewer than 2**32 threads and 2**31 blocks per grid dimension, so a one-dimensional grid
-        # that may need more spreads its blocks over ``gridDim.y`` (see ``generate_kernel_scope`` and the kernel launch)
-        index_type = common.gpu_map_index_types(dfg_scope.graph.sdfg, dfg_scope.graph, kernelmap_entry)[
-            kernelmap_entry.map.params[-1]
-        ]
-        self._kernel_split_blocks = (
-            self.backend == "hip"
-            and not is_persistent
-            and not extra_grid_dims
-            and index_type.bytes > 4
-            and grid_size[1] == 1
-            and grid_size[2] == 1
-            and (grid_size[0] * prod(block_size) >= 2**31) != False
-        )
-
         return grid_size, block_size, dims.has_tbmap, extra_dim_offsets
 
     def generate_kernel_scope(
@@ -2717,7 +2686,6 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         # do not generate an index if the kernel map is persistent
         chiplet_count = self._kernel_chiplet_count
         chiplet_chunk = self._kernel_chiplet_chunk
-        split_blocks = self._kernel_split_blocks
         if node.map.schedule != dtypes.ScheduleType.GPU_Persistent:
             # First three dimensions are evaluated directly
             for i in range(min(len(krange), 3)):
@@ -2725,13 +2693,6 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
                 index_type = index_types[varname]
 
                 bidx_x = _widen_register("blockIdx.x", index_type)
-                if split_blocks and i == 0:
-                    # The blocks are spread over ``gridDim.y`` (see ``get_kernel_dimensions``)
-                    bidx_x = "(%s * %s + %s)" % (
-                        _widen_register("blockIdx.y", index_type),
-                        _widen_register("gridDim.x", index_type),
-                        bidx_x,
-                    )
                 if chiplet_count > 1 and i == 0:
                     # Contiguous partitioning: the chiplet of a block is ``blockIdx.x % chiplets`` and its
                     # slot within that chiplet is ``blockIdx.x / chiplets``, so chiplet k owns the blocks
@@ -2807,7 +2768,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
                 # chiplets, so its trailing blocks always have to be masked out
                 if (
                     i >= 3
-                    or ((chiplet_count > 1 or split_blocks) and i == 0)
+                    or (chiplet_count > 1 and i == 0)
                     or ((dsym_end[i] < maxel) != False and not symbolic.is_multiple(dsym_end[i], self._block_dims[i]))
                     or (self._block_dims[i] > maxel) == True
                 ):
@@ -2826,9 +2787,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         # It is not added to ``_kernel_grid_conditions`` because those are only re-emitted around grid
         # synchronization, which requires nested device maps, and those disable the distribution.
         emit_chiplet_condition = (
-            (chiplet_count > 1 or split_blocks)
-            and has_tbmap
-            and node.map.schedule != dtypes.ScheduleType.GPU_Persistent
+            chiplet_count > 1 and has_tbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent
         )
         if emit_chiplet_condition:
             kernel_stream.write(
@@ -2856,7 +2815,6 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         self._grid_dims = None
         self._kernel_chiplet_count = 1
         self._kernel_chiplet_chunk = 1
-        self._kernel_split_blocks = False
 
     def get_next_scope_entries(self, dfg, scope_entry):
         parent_scope_entry = dfg.entry_node(scope_entry)

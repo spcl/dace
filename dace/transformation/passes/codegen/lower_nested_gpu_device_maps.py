@@ -10,20 +10,15 @@ from ordered_set import OrderedSet
 
 import dace
 from dace import SDFG, dtypes, properties, subsets, symbolic
-from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.sdfg import nodes, propagation
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, SDFGState, StateSubgraphView
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState, StateSubgraphView
 from dace.transformation import helpers, transformation
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.map_fission import MapFission
-from dace.transformation.passes.lower_dynamic_thread_block_maps import guard_block
 
 InnerMap = tuple[SDFGState, nodes.MapEntry]
-
-#: ``absorb`` split the kernel instead: its state holds new kernels
-SPLIT = -1
 
 
 def is_gpu_device_map(node: nodes.Node) -> typing.TypeGuard[nodes.MapEntry]:
@@ -61,31 +56,6 @@ def has_map(nodes_: typing.Iterable[nodes.Node], schedules: tuple[dtypes.Schedul
         ):
             return True
     return False
-
-
-def write_scope(sdfg: SDFG, state: SDFGState, component: list[nodes.Node]) -> str:
-    """Who runs a map-free part of a persistent kernel: one thread of the ``grid`` if it writes global memory, one
-    thread of each ``block`` if it writes shared memory, else every ``thread`` (e.g., one that updates a register)."""
-    written = [n for n in component if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0]
-    storages = {sdfg.arrays[n.data].storage for n in written}
-    if dtypes.StorageType.Register in storages:
-        return "thread"
-    if dtypes.StorageType.GPU_Shared in storages:
-        return "block"
-    if storages & {dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned}:
-        return "grid"
-    return "thread"
-
-
-def add_sync_after(region: ControlFlowRegion, block: ControlFlowBlock, scope: SyncScope) -> SDFGState:
-    """A state of ``region`` that holds a barrier of ``scope`` and runs right after ``block``."""
-    sync = region.add_state(f"{block.label}_sync")
-    sync.add_node(Sync(sync.label, scope=scope))
-    for edge in region.out_edges(block):
-        region.add_edge(sync, edge.dst, edge.data)
-        region.remove_edge(edge)
-    region.add_edge(block, sync, dace.InterstateEdge())
-    return sync
 
 
 def inner_accesses(state: SDFGState, entry: nodes.MapEntry) -> dict[str, list[tuple[str, bool, object]]]:
@@ -162,10 +132,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
     Bounds must be evaluable where the kernel is launched.
 
     In a ``GPU_Persistent`` kernel, whose blocks run its whole body, every one-dimensional ``GPU_Device`` map becomes a
-    sequential grid-stride loop: over the threads of the grid, or over its blocks if the map has thread-block maps of
-    its own. The parts without maps run where codegen would run them (one thread of the grid if they write global
-    memory, one thread of each block if they write shared memory, else every thread), and a grid ``Sync`` follows
-    every state of the body.
+    sequential grid-stride loop: over the threads of the grid, or over its blocks if the map has thread-block maps.
     """
 
     def modifies(self) -> ppl.Modifies:
@@ -264,9 +231,8 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
             inner_map.map.params = [fresh.get(p, p) for p in inner_map.map.params]
             inner_map.map.range = outer_range
 
-    def split(self, state: SDFGState, kernel: nodes.MapEntry) -> int:
-        """Splits ``kernel``, which would need a grid barrier between its maps, into one kernel per part; returns
-        ``SPLIT``, or 0 if the maps stay nested."""
+    def split(self, state: SDFGState, kernel: nodes.MapEntry) -> bool:
+        """Splits ``kernel`` into one kernel per part; returns whether the split succeeded."""
         children = [n for n in state.scope_children()[kernel] if n is not state.exit_node(kernel)]
         matched = {"map_entry": kernel}
         if len(children) == 1 and isinstance(children[0], nodes.NestedSDFG):
@@ -280,16 +246,11 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                 f"The device maps nested in {kernel.map.label} depend on each other across iterations and the "
                 "kernel cannot be split; they stay nested"
             )
-            return 0
-        return SPLIT
+            return False
+        return True
 
-    def absorb(self, state: SDFGState, kernel: nodes.MapEntry) -> int:
-        """Absorb the outermost ``GPU_Device`` maps below ``kernel``; returns how many."""
-        inner_maps = list(gpu_maps_below(state, kernel))
-        if not inner_maps:
-            return 0
-        if not same_iteration(inner_maps):
-            return self.split(state, kernel)
+    def absorb(self, state: SDFGState, kernel: nodes.MapEntry, inner_maps: list[InnerMap]) -> int:
+        """Absorbs independent ``inner_maps`` into ``kernel``; returns how many."""
         hoisted = self.hoisted_ranges(state, kernel, inner_maps)
         self.rename_params(inner_maps, self.fresh_param_names(state, kernel, inner_maps))
 
@@ -321,12 +282,11 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         return len(inner_maps)
 
     def lower_persistent(self, state: SDFGState, kernel: nodes.MapEntry) -> int:
-        """Lower the ``GPU_Device`` maps and the grid barriers of the persistent kernel ``kernel``; returns how many
-        maps."""
-        if kernel.map.gpu_grid_syncs_lowered:
-            return 0
+        """Lowers the ``GPU_Device`` maps of persistent ``kernel``; returns how many."""
         kernel_exit = state.exit_node(kernel)
         inside = list(state.all_nodes_between(kernel, kernel_exit))
+        if not has_map(inside, (dtypes.ScheduleType.GPU_Device,)):
+            return 0
         if len(inside) == 1 and isinstance(inside[0], nodes.NestedSDFG):
             body_node = inside[0]
         else:
@@ -340,8 +300,6 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         if has_map([n for s in body.states() for n in s.nodes()], (dtypes.ScheduleType.GPU_Device,)):
             raise NotImplementedError(f"The persistent kernel {kernel.map.label} has device maps nested in others")
 
-        self.synchronize(body, id_state, ids)
-        kernel.map.gpu_grid_syncs_lowered = True
         return lowered
 
     def add_grid_position(self, body: SDFG) -> tuple[SDFGState, dict[str, str]]:
@@ -399,37 +357,6 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
             propagation.propagate_memlets_state(body, region_state)
         return lowered
 
-    def synchronize(self, sdfg: SDFG, id_state: SDFGState | None, ids: dict[str, str]) -> None:
-        """Runs the map-free parts of the states of ``sdfg`` where codegen would and puts a grid barrier after every
-        state, also in the NestedSDFGs that hold maps."""
-        conditions = {"grid": f"{ids['blk']} == 0 and {ids['tid']} == 0", "block": f"{ids['tid']} == 0"}
-        for state in [s for s in sdfg.states() if s is not id_state]:
-            region = state.parent_graph
-            # The block of ``region`` the barrier follows
-            last = state
-            for component in dace.sdfg.concurrent_subgraphs(state):
-                component_nodes = list(component.nodes())
-                if has_map(component_nodes, (dtypes.ScheduleType.Sequential, dtypes.ScheduleType.GPU_ThreadBlock)):
-                    for node in component_nodes:
-                        if isinstance(node, nodes.NestedSDFG) and state.entry_node(node) is None:
-                            for name in ids.values():
-                                if name not in node.sdfg.symbols:
-                                    node.sdfg.add_symbol(name, dtypes.int32)
-                                node.symbol_mapping.setdefault(name, name)
-                            self.synchronize(node.sdfg, None, ids)
-                    continue
-                scope = write_scope(sdfg, state, component_nodes)
-                if scope == "thread":
-                    continue
-                # Guarded ahead of the rest of the state, which it does not depend on
-                whole = len(component_nodes) == state.number_of_nodes()
-                part = state if whole else helpers.state_fission(SubgraphView(state, component_nodes))
-                guard = guard_block(region, part, conditions[scope])
-                if whole:
-                    last = guard
-                    break
-            add_sync_after(region, last, SyncScope.GRID)
-
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, object]) -> int | None:
         """Lower every nested ``GPU_Device`` map; returns how many, or ``None`` if there were none.
 
@@ -442,12 +369,16 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                 while kernels:
                     kernel = kernels.pop(0)
                     # Each layer's bodies become NestedSDFGs holding the next layer.
-                    while absorbed := self.absorb(state, kernel):
-                        if absorbed == SPLIT:
-                            # Lower the kernels the split left in the state
-                            kernels = [n for n in state.scope_children()[None] if is_gpu_device_map(n)]
+                    while True:
+                        inner_maps = list(gpu_maps_below(state, kernel))
+                        if not inner_maps:
                             break
-                        lowered += absorbed
+                        if not same_iteration(inner_maps):
+                            if self.split(state, kernel):
+                                # Lower the kernels the split left in the state
+                                kernels = [n for n in state.scope_children()[None] if is_gpu_device_map(n)]
+                            break
+                        lowered += self.absorb(state, kernel, inner_maps)
                 for kernel in [
                     n
                     for n in state.scope_children()[None]

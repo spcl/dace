@@ -7,10 +7,9 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, StateSubgraphView
 from dace.transformation import helpers
-from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
+from dace.transformation.passes.codegen.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
 
 GPU_DEVICE = dace.dtypes.ScheduleType.GPU_Device
 GPU_GLOBAL = dace.dtypes.StorageType.GPU_Global
@@ -393,7 +392,6 @@ def strided_map(sdfg: dace.SDFG) -> dace.nodes.MapEntry:
 def test_a_device_map_of_a_persistent_kernel_becomes_a_grid_stride_loop(tiled: bool):
     sdfg = persistent_kernel(tiled)
     assert lower(sdfg) == 1
-    assert kernel_of(sdfg).map.gpu_grid_syncs_lowered
     assert lower(sdfg) is None
     loop = strided_map(sdfg)
     assert loop.map.schedule == dace.dtypes.ScheduleType.Sequential
@@ -404,9 +402,6 @@ def test_a_device_map_of_a_persistent_kernel_becomes_a_grid_stride_loop(tiled: b
         assert (first, step) == (32 * blk, 32 * nblk)
     else:
         assert (first, step) == (blk * nthr + tid, nblk * nthr)
-    # A grid barrier ends every state of the kernel body
-    syncs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Sync)]
-    assert syncs and all(s.scope == SyncScope.GRID for s in syncs)
 
 
 @dace.program
@@ -451,7 +446,7 @@ def test_a_thread_block_map_with_a_dynamic_range_runs_in_each_thread_of_a_thread
 
 
 def test_a_persistent_kernel_writes_global_memory_outside_its_maps_from_one_thread():
-    """The map-free parts run where codegen would run them: global writes on one thread, register updates on all."""
+    """Lowering keeps codegen's existing guard around global writes outside maps."""
     sdfg = persistent_kernel(tiled=False)
     sdfg.add_array("flag", [1], dace.int32, storage=GPU_GLOBAL)
     state = sdfg.start_state
@@ -460,16 +455,10 @@ def test_a_persistent_kernel_writes_global_memory_outside_its_maps_from_one_thre
     tasklet = state.add_tasklet("raise_flag", {}, {"f"}, "f = 1")
     state.add_nedge(kernel, tasklet, dace.Memlet())
     state.add_memlet_path(tasklet, exit_, state.add_write("flag"), src_conn="f", memlet=dace.Memlet("flag[0]"))
-    sdfg.validate()
-    lower(sdfg)
-    guards = [
-        condition.as_string
-        for region in sdfg.all_control_flow_regions(recursive=True)
-        if isinstance(region, ConditionalBlock)
-        for condition, _ in region.branches
-    ]
-    expected = dace.symbolic.pystr_to_symbolic("(__dace_blk == 0) and (__dace_tid == 0)")
-    assert [dace.symbolic.pystr_to_symbolic(g) for g in guards] == [expected], guards
+
+    code = next(obj.clean_code for obj in sdfg.generate_code() if obj.language == "cu")
+
+    assert "if (blockIdx.x == 0 && threadIdx.x == 0)" in code
 
 
 @pytest.mark.gpu
