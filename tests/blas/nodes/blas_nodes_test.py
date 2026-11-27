@@ -203,6 +203,11 @@ def test_a_scaled_matmul_of_two_vectors_is_refused():
         sdfg.expand_library_nodes()
 
 
+def test_gemv_beta_expression_is_parsed_before_it_is_compared_with_zero():
+    assert "_y" not in Gemv("gemv", beta="1 - 1").in_connectors
+    assert "_y" in Gemv("gemv", beta="s - 3").in_connectors
+
+
 ALIASED_OUTPUTS = {
     "symv": (lambda: Symv("symv", beta=0), {"_A": "A", "_x": "y", "_yin": "y"}, {"_yout": "y"}),
     "symm": (lambda: Symm("symm"), {"_A": "A", "_B": "B", "_Cin": "B"}, {"_Cout": "B"}),
@@ -261,6 +266,7 @@ if __name__ == "__main__":
     test_openblas_gemv_prints_a_symbolic_extent_as_cpp()
     test_openblas_gemm_of_integers_falls_back_to_pure()
     test_a_scaled_matmul_of_two_vectors_is_refused()
+    test_gemv_beta_expression_is_parsed_before_it_is_compared_with_zero()
     for name in ALIASED_OUTPUTS:
         test_an_output_proved_to_overlap_an_input_is_refused(name)
     test_outputs_not_proved_to_overlap_stay_allowed()
