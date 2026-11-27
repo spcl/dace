@@ -1482,6 +1482,11 @@ def propagate_memlets_nested_sdfg(
 
         symbols = SymbolResolver()
     outer_symbols = symbols.defined_at(parent_state, nsdfg_node)
+    # The nest sees an outer symbol only through its mapping; a same-named symbol it assigns itself is its own
+    visible = {
+        str(s) for value in nsdfg_node.symbol_mapping.values() for s in symbolic.pystr_to_symbolic(value).free_symbols
+    }
+    visible |= sdfg.constants.keys()
 
     # Collect contributions from top-level CFG blocks. Plain states contribute
     # directly, while control-flow regions aggregate their child blocks via
@@ -1523,11 +1528,16 @@ def propagate_memlets_nested_sdfg(
                         for i, rng in enumerate(subset):
                             fall_back = False
                             for item in rng:
-                                if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
+                                if any(
+                                    str(s) not in outer_symbols.keys() or str(s) not in visible
+                                    for s in item.free_symbols
+                                ):
                                     fall_back = True
                                     break
                             if fall_back:
                                 subset[i] = fallback_subset[i]
+                                # The widened range bounds where the writes land, not that each element is written
+                                border_memlet.dynamic = True
 
                 # A volume counted in a symbol assigned inside the nested SDFG means nothing out here
                 if any(str(s) not in outer_symbols for s in symbolic.symlist(border_memlet.volume)):
