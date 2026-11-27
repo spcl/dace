@@ -349,32 +349,6 @@ def test_a_write_inside_a_map_stores_only_its_own_elements():
     assert "t" in read_before_written(outer, {"t"})
 
 
-@dace.program
-def scratch_also_cleared_before_the_loop(A: dace.float64[N, M], B: dace.float64[N]):
-    row = np.ndarray((M,), dtype=np.float64)
-    row[:] = 0.0
-    for i in range(N):
-        for j in range(M):
-            row[j] = A[i, j] * 3.0
-        B[i] = row[0] + row[M - 1]
-
-
-# Reproducer: QE newdxx_g ih loop: a write-only store of the scratch outside the loop kept it shared
-def test_a_scratch_only_written_outside_the_loop_is_still_private():
-    """``row`` is also cleared before the loop, but nothing outside reads it: every iteration refills it before
-    reading, so the loop maps and the outer clear survives beside the private copy."""
-    sdfg = scratch_also_cleared_before_the_loop.to_sdfg(simplify=False)
-    sdfg.apply_transformations_repeated(LoopToMap)
-    sdfg.validate()
-    assert not any(isinstance(region, dace.sdfg.state.LoopRegion) for region in sdfg.all_control_flow_regions())
-
-    rng = np.random.default_rng(5)
-    a = rng.random((6, 4))
-    b = np.zeros(6)
-    sdfg(A=a, B=b, N=6, M=4)
-    assert np.allclose(b, 3.0 * (a[:, 0] + a[:, 3]))
-
-
 if __name__ == "__main__":
     import sys
 

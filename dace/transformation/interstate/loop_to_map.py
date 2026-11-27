@@ -1666,21 +1666,9 @@ def observable_locals(loop: LoopRegion, candidates: set[str], ctx: Optional["Lif
     return observable
 
 
-def read_outside_loop(name: str, holders: Iterable[SDFGState], loop_states: OrderedSet) -> bool:
-    """Whether a state of ``holders`` outside the loop reads ``name``: an access node with an out edge, or a WCR store
-    that reads the old value. A plain store outside leaves no value the loop's private copy must keep: QE newdxx_g
-    clears its scratch once before the loop that refills it on every iteration."""
-    return any(
-        dn.data == name and (state.out_degree(dn) > 0 or any(e.data.wcr is not None for e in state.in_edges(dn)))
-        for state in holders
-        if state not in loop_states
-        for dn in state.data_nodes()
-    )
-
-
 def split_loop_containers(sdfg: SDFG, loop_states: OrderedSet, ctx: "LiftContext") -> tuple[set[str], set[str]]:
     """The containers the loop's states access, split into the ones live outside the loop (every non-transient, and
-    each transient a state outside reads, see :func:`read_outside_loop`) and the loop-local transients."""
+    each transient ``ctx.access_states`` finds outside) and the loop-local transients."""
     shared: set[str] = set()
     local: set[str] = set()
     for state in loop_states:
@@ -1691,7 +1679,7 @@ def split_loop_containers(sdfg: SDFG, loop_states: OrderedSet, ctx: "LiftContext
                 # ``.get``, not ``[]``: ``access_states`` is a ``defaultdict`` and indexing
                 # it would INSERT an empty entry for every name probed.
                 holders = ctx.access_states.get(n.data)
-                if holders is not None and read_outside_loop(n.data, holders, loop_states):
+                if holders is not None and any(st not in loop_states for st in holders):
                     shared.add(n.data)
                 else:
                     local.add(n.data)
@@ -3005,11 +2993,7 @@ class LoopLift:
             for state in sdfg.states():
                 if state in loop_states:
                     continue
-                other_access_nodes |= {
-                    n.data
-                    for n in state.data_nodes()
-                    if sdfg.arrays[n.data].transient and read_outside_loop(n.data, [state], loop_states)
-                }
+                other_access_nodes |= {n.data for n in state.data_nodes() if sdfg.arrays[n.data].transient}
             # Add non-transient nodes from loop state
             for state in loop_states:
                 other_access_nodes |= {n.data for n in state.data_nodes() if not sdfg.arrays[n.data].transient}
@@ -3367,9 +3351,7 @@ class LoopLift:
             holders = ctx.access_states.get(name)
             if holders is None:
                 return None
-            if not read_outside_loop(name, holders, loop_states) and not self.carried_witness(
-                sdfg, name, loop_states, ctx
-            ):
+            if all(st in loop_states for st in holders) and not self.carried_witness(sdfg, name, loop_states, ctx):
                 return None
         if facts.read_write is UNCOMPUTED:
             facts.read_write = self.loop.read_and_write_sets()
@@ -3692,8 +3674,6 @@ class LoopLift:
         # through a connector is an argument here, and stays one.
         constant_set = {name for name in rw_set if name in sdfg.constants_prop and sdfg.arrays[name].transient}
         unique_set = set()
-        # Private to the body, but stored outside too: the body gets its own copy, the parent keeps the descriptor.
-        stored_outside: set[str] = set()
         outside_reads: set[str] | None = None
         for name in rw_set - constant_set:
             if not sdfg.arrays[name].transient:
@@ -3716,13 +3696,15 @@ class LoopLift:
                 # per transient over every state and node of the SDFG, and it does not even stop at
                 # the first hit: the ``break`` leaves the node loop, not the state loop.
                 holders = lift_ctx.access_states.get(name)
-                found = holders is not None and read_outside_loop(name, holders, states)
-                if holders is not None and any(st not in states for st in holders):
-                    stored_outside.add(name)
+                found = holders is not None and any(st not in states for st in holders)
             else:
-                found = read_outside_loop(name, sdfg.states(), states)
-                if any(dn.data == name for st in sdfg.states() if st not in states for dn in st.data_nodes()):
-                    stored_outside.add(name)
+                found = False
+                for state in sdfg.states():
+                    if state in states:
+                        continue
+                    if any(isinstance(node, nodes.AccessNode) and node.data == name for node in state.nodes()):
+                        found = True
+                        break
 
             iatl_name = name
             if name in view_to_data:
@@ -4101,7 +4083,7 @@ class LoopLift:
         # and the loop's states just left the SDFG, so ``body`` is the only state that can still name
         # one. Scan it, and let ``remove_data`` rescan the whole SDFG only when it would raise anyway.
         body_data = None if lift_ctx is None else {n.data for n in body.data_nodes()}
-        for name in unique_set - stored_outside:
+        for name in unique_set:
             if name in sdfg.arrays:
                 sdfg.remove_data(name, validate=body_data is None or name in body_data)
                 internalized.add(name)
