@@ -239,7 +239,8 @@ def test_an_array_zeroed_on_each_allocation_keeps_its_own_allocation():
     """Allocated once at the top it would be zeroed once, and the loop would accumulate into stale values."""
     name = "cpf_compact_carve_zeroed"
     result = render(loop_scratch_sdfg(name, zeroed=True), language="c", signature=WORKSPACE)
-    assert re.search(r"\btmp2 = \(double \*\)\(workspace \+ workspace_off\)", result.code), result.code
+    # The carve takes the slot at its fixed offset: ``double* restrict tmp2 = (double *)(workspace + 0);``
+    assert re.search(r"\btmp2 = \(double \*\)\(workspace \+ \d+\)", result.code), result.code
     assert not re.search(r"\btmp = \(double \*\)\(workspace", result.code), result.code
     a, out = run_with_canary(result, name, "c", n=33)
     assert_matches({"out": 3 * a}, {"out": out}, name)
