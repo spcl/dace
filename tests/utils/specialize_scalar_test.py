@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import dace.sdfg.utils as sdutil
 from dace.codegen.control_flow import LoopRegion
@@ -52,6 +52,7 @@ def _get_sdfg_with_symbol_use_in_if():
         dtype=dace.float64,
         transient=False,
     )
+    sdfg.add_symbol("nlev", dace.int32)
     cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
     sdfg.add_node(cb, is_start_block=True)
     cfg = dace.ControlFlowRegion(label="cfg1", sdfg=cb.sdfg, parent=cb)

@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Contains replacements for filtering functions. This module includes functions from both
 NumPy's Indexing Routines and Sorting, Searching, and Counting Functions.
@@ -79,7 +79,7 @@ def _array_array_where(
     # Implicit Python coversion implemented as casting
     arguments = [cond_arr, left_arr or left_type, right_arr or right_type]
     tasklet_args = ["__incond", "__in1" if left_arr else left_operand, "__in2" if right_arr else right_operand]
-    result_type, casting = result_type(arguments[1:])
+    result_type, casting = result_type(arguments[1:], symbols=visitor.symbol_types())
     left_cast = casting[0]
     right_cast = casting[1]
 

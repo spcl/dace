@@ -109,8 +109,14 @@ def create_datadescriptor(obj, no_custom_desc=False):
         dtype = dtypes.typeclass(obj.dtype.type)
         itemsize = obj.itemsize
         return Array(dtype=dtype, shape=obj.shape, strides=tuple(s // itemsize for s in obj.strides), storage=storage)
+    elif isinstance(obj, symbolic.symbol):
+        # A symbol object passed as a value is its creator's (e.g., a program iterator passed to a nested program)
+        return Scalar(obj.declaration.dtype)
     elif symbolic.issymbolic(obj):
-        return Scalar(symbolic.symtype(obj))
+        raise TypeError(
+            f'Cannot create a data descriptor for the symbolic expression "{obj}" without the types of '
+            "its symbols; use Scalar(symbolic.symtype(expr, symbols))"
+        )
     elif isinstance(obj, dtypes.typeclass):
         return Scalar(obj)
     elif obj is int or obj is float or obj is complex or obj is bool or obj is None:

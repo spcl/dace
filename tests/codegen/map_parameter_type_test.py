@@ -135,15 +135,13 @@ def default_conditional(out: dace.int64[M32]):
             out[i] = i
 
 
-def _nested_symbol_types(sdfg: dace.SDFG, name: str) -> list[dace.typeclass]:
-    return [n.sdfg.symbols[name] for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
-
-
 def test_frontend_declares_map_parameter_with_its_range_type():
-    """The body of a map is a nested SDFG, which receives the parameter as a symbol of the type the frontend infers
-    from the range (``start:stop:step``); it must match the map's, or the call narrows the parameter."""
-    assert _nested_symbol_types(strided_conditional.to_sdfg(simplify=True), "i") == [dace.int64]
-    assert _nested_symbol_types(default_conditional.to_sdfg(simplify=True), "i") == [dace.int32]
+    """The emitted map declaration types its parameter from ``start:stop:step``, even when simplification inlines
+    its body into the parent instead of leaving a nested SDFG with an ``i`` parameter."""
+    strided_headers = _loop_headers(strided_conditional.to_sdfg(simplify=True))
+    assert strided_headers and all(header.startswith("for (int64_t i = ") for header in strided_headers)
+    default_headers = _loop_headers(default_conditional.to_sdfg(simplify=True))
+    assert default_headers and all(header.startswith("for (int i = ") for header in default_headers)
 
 
 def test_frontend_map_parameter_beyond_32_bits():

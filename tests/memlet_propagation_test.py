@@ -2,9 +2,12 @@
 import itertools
 
 import numpy as np
+import pytest
+import sympy
 
 import dace
-from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_subset
+from dace.sdfg.propagation import ascending_range, propagate_memlets_sdfg, propagate_subset
+from dace.sdfg.state import SymbolResolver
 
 
 def test_conditional():
@@ -155,6 +158,68 @@ def test_nested_conditional_in_loop_in_map():
     assert np.allclose(a_test, a_valid)
 
 
+def test_union_around_loop_does_not_assume_it_runs():
+    """A read before a loop and the loop's reads are united where the loop may not run: ``A[1]`` stays covered when
+    ``range(2, N)`` is empty, so the bound is ``Max(1, N - 1)``, not ``N - 1``."""
+    N = dace.symbol("N")
+    M = dace.symbol("M")
+
+    @dace.program
+    def read_before_loop(A: dace.float64[M], B: dace.float64[M]):
+        for i in dace.map[0:M]:
+            s = A[1]
+            for j in range(2, N):
+                s += A[j]
+            B[i] = s
+
+    sdfg = read_before_loop.to_sdfg(simplify=True)
+    propagate_memlets_sdfg(sdfg)
+
+    state, nsdfg_node = next((s, n) for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG))
+    (edge,) = [e for e in state.in_edges(nsdfg_node) if e.data.data == "A"]
+    assert edge.data.subset.ranges == [(1, sympy.Max(1, N - 1), 1)], edge.data.subset
+
+
+def test_wrapped_index_covers_the_modulo():
+    """``A[(i + 3) % N]`` over ``i in 0:N`` wraps, so it reads all of ``A[0:N]``, not ``A[3 % N:2 % N + 1]``."""
+    N = dace.symbol("N")
+
+    @dace.program
+    def wrapped_read(A: dace.float64[N], B: dace.float64[N]):
+        for i in dace.map[0:N]:
+            B[i] = A[(i + 3) % N]
+
+    sdfg = wrapped_read.to_sdfg(simplify=True)
+    (edge,) = [e for e in sdfg.start_state.edges() if e.data.data == "A" and isinstance(e.src, dace.nodes.AccessNode)]
+    assert edge.data.subset.ranges == [(0, N - 1, 1)], edge.data.subset
+
+
+def test_multiplier_of_unknown_sign():
+    """``A[K * i]`` may run either way through ``A``, so it reads all of it; ``A[P * i]`` with a positive ``P`` reads
+    every ``P``-th element up to ``P * (N - 1)``."""
+    N = dace.symbol("N")
+    K = dace.symbol("K")
+    P = dace.symbol("P", positive=True)
+
+    @dace.program
+    def unknown_sign_read(A: dace.float64[N], B: dace.float64[N]):
+        for i in dace.map[0:N]:
+            B[i] = A[K * i]
+
+    @dace.program
+    def positive_read(A: dace.float64[N], B: dace.float64[N]):
+        for i in dace.map[0:N]:
+            B[i] = A[P * i]
+
+    for program, expected in ((unknown_sign_read, (0, N - 1, 1)), (positive_read, (0, P * (N - 1), P))):
+        sdfg = program.to_sdfg(simplify=True)
+        (edge,) = [
+            e for e in sdfg.start_state.edges() if e.data.data == "A" and isinstance(e.src, dace.nodes.AccessNode)
+        ]
+        ((begin, end, step),) = edge.data.subset.ranges
+        assert all(sympy.expand(a - b) == 0 for a, b in zip((begin, end, step), expected)), edge.data.subset
+
+
 def test_strided_write_keeps_the_multiplier():
     """``C[2 * i]`` covers every second element, not the first ``N``.
 
@@ -178,18 +243,21 @@ def test_strided_write_keeps_the_multiplier():
     propagate_memlets_sdfg(sdfg)
 
     state = next(s for s in sdfg.states() if any(isinstance(n, dace.sdfg.nodes.MapExit) for n in s.nodes()))
-    out = next(
-        e.data
+    out_edge = next(
+        e
         for e in state.edges()
         if isinstance(e.src, dace.sdfg.nodes.MapExit)
         and isinstance(e.dst, dace.sdfg.nodes.AccessNode)
         and e.dst.data == "C"
     )
+    out = out_edge.data
 
     assert out.subset.ranges == [(0, 2 * N - 2, 2)], out.subset
     assert out.subset.num_elements() == N, out.subset.num_elements()
     # The written elements must be inside the propagated set; the bug put 2*N-2 outside it.
-    assert out.subset.covers(dace.subsets.Range([(2 * N - 2, 2 * N - 2, 1)]))
+    # The element is written inside the map, so the map runs
+    facts = SymbolResolver().facts_at(state, out_edge.src)
+    assert out.subset.covers(dace.subsets.Range([(2 * N - 2, 2 * N - 2, 1)]), facts)
 
 
 def test_typed_parameter_symbol():
@@ -207,11 +275,15 @@ def test_typed_parameter_symbol():
     memlet = dace.Memlet(data="A", subset=dace.subsets.Range([(i, i, 1), (j, j, 1)]))
 
     # Scope-local range: only ``i`` and ``N`` are defined outside, so the dimension over ``j`` is overapproximated
-    local = propagate_subset([memlet], arr, ["j"], dace.subsets.Range([(b, e - 1, 1)]), defined_variables={i, N})
+    local = propagate_subset(
+        [memlet], arr, ["j"], dace.subsets.Range([(b, e - 1, 1)]), dace.symbolic.Facts.none(), defined_variables={i, N}
+    )
     assert local.subset == dace.subsets.Range([(i, i, 1), (0, N - 1, 1)]), local.subset
 
     # Defined range: the typed ``j`` is still the parameter and is propagated exactly
-    defined = propagate_subset([memlet], arr, ["j"], dace.subsets.Range([(0, N - 1, 1)]), defined_variables={i, N})
+    defined = propagate_subset(
+        [memlet], arr, ["j"], dace.subsets.Range([(0, N - 1, 1)]), dace.symbolic.Facts.none(), defined_variables={i, N}
+    )
     assert defined.subset == dace.subsets.Range([(i, i, 1), (0, N - 1, 1)]), defined.subset
     assert "j" not in defined.subset.free_symbols
 
@@ -270,13 +342,48 @@ def test_nested_sdfg_connector_offset():
         assert edge.data.subset == dace.subsets.Range([(1, 2, 1)]), edge.data.subset
 
 
+def propagated(subset: str, length: int, rng: tuple) -> dace.subsets.Range:
+    memlet = dace.Memlet(f"A[{subset}]")
+    arr = dace.data.Array(dace.float64, [length])
+    return propagate_subset([memlet], arr, ["i"], dace.subsets.Range([rng]), dace.symbolic.Facts.none()).subset
+
+
+@pytest.mark.parametrize(
+    "subset, length, rng, expected",
+    [
+        ("i % 5", 8, (0, 4, 1), (0, 4, 1)),  # every point counts, the last one included
+        ("i % 5", 8, (3, 3, 1), (3, 3, 1)),  # a single point
+        ("50 - i:50 - i + 2", 60, (0, 9, 1), (41, 51, 1)),  # negative multiplier over a range subset
+        ("50 - i", 60, (10, 0, -4), (40, 48, 1)),  # the lattice starts at 10, not at 0
+        ("i % 4", 8, (10, 3, -1), (0, 3, 1)),  # a descending image wraps
+    ],
+)
+def test_propagated_extent(subset, length, rng, expected):
+    got = propagated(subset, length, rng)
+    assert [(int(b), int(e)) for b, e, _ in got.ranges] == [expected[:2]], got
+
+
+def test_ascending_range_ends_on_the_last_index():
+    assert ascending_range(10, 1, -4) == (2, 10, 4)
+    assert ascending_range(9, 0, -1) == (0, 9, 1)
+
+
 if __name__ == "__main__":
     test_conditional()
     test_conditional_nested()
     test_runtime_conditional()
     test_nsdfg_memlet_propagation_with_one_sparse_dimension()
     test_nested_conditional_in_loop_in_map()
+    test_union_around_loop_does_not_assume_it_runs()
+    test_wrapped_index_covers_the_modulo()
+    test_multiplier_of_unknown_sign()
     test_strided_write_keeps_the_multiplier()
     test_typed_parameter_symbol()
     test_nested_sdfg_connector_in_mapped_symbols()
     test_nested_sdfg_connector_offset()
+    test_propagated_extent("i % 5", 8, (0, 4, 1), (0, 4, 1))
+    test_propagated_extent("i % 5", 8, (3, 3, 1), (3, 3, 1))
+    test_propagated_extent("50 - i:50 - i + 2", 60, (0, 9, 1), (41, 51, 1))
+    test_propagated_extent("50 - i", 60, (10, 0, -4), (40, 48, 1))
+    test_propagated_extent("i % 4", 8, (10, 3, -1), (0, 3, 1))
+    test_ascending_range_ends_on_the_last_index()

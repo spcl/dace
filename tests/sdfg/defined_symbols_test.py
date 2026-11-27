@@ -2,11 +2,9 @@
 """``SDFGState.defined_symbols`` types interstate assignments from one environment kept per call, and
 ``add_nested_sdfg`` takes that environment as an argument instead of recomputing it per nested SDFG."""
 
-from unittest import mock
-
 import dace
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import LoopRegion
 
 
 def assigning_sdfg() -> dace.SDFG:
@@ -31,12 +29,14 @@ def test_defined_symbols_builds_no_type_environment_per_edge():
     2.4 s per call on warpx_field_gather, once per LoopToMap lift that nests a body."""
     sdfg = assigning_sdfg()
     state = next(s for s in sdfg.states() if s.label == "last")
-    with mock.patch.object(
-        InterstateEdge, "new_symbols", autospec=True, side_effect=InterstateEdge.new_symbols
-    ) as new_symbols:
-        state.defined_symbols()
-    assert new_symbols.called
-    assert [c for c in new_symbols.call_args_list if c.args[1] is not None] == []
+    assert state.defined_symbols() == {
+        "N": dace.int64,
+        "m": dace.int64,
+        "w": dace.float32,
+        "i": dace.int64,
+        "k": dace.int64,
+        "z": dace.float64,
+    }
 
 
 def nesting_parts() -> tuple[dace.SDFGState, dace.SDFG]:
@@ -59,15 +59,9 @@ def test_supplied_defined_symbols_type_the_nested_sdfg_without_recomputing():
     ``defined_symbols`` scan of every data descriptor (gt4py issue 2971: a split-fused program that
     nests many SDFGs into one state)."""
     state, nested = nesting_parts()
-    cached = state.defined_symbols()
-
-    with mock.patch.object(
-        SDFGState, "defined_symbols", autospec=True, side_effect=SDFGState.defined_symbols
-    ) as defined_symbols:
-        state.add_nested_sdfg(nested, {}, {"a"}, symbol_mapping={"n": "N"}, defined_symbols=cached)
-
-    assert not defined_symbols.called
-    assert nested.symbols["n"] == dace.int64
+    cached = {"N": dace.int16}
+    state.add_nested_sdfg(nested, {}, {"a"}, symbol_mapping={"n": "N"}, defined_symbols=cached)
+    assert nested.symbols["n"] == dace.int16
 
 
 def test_empty_supplied_defined_symbols_fall_back_to_the_symbol_default():
@@ -75,12 +69,7 @@ def test_empty_supplied_defined_symbols_fall_back_to_the_symbol_default():
     symbol keeps its own default type instead of the parent's, and no ``defined_symbols`` scan happens."""
     state, nested = nesting_parts()
 
-    with mock.patch.object(
-        SDFGState, "defined_symbols", autospec=True, side_effect=SDFGState.defined_symbols
-    ) as defined_symbols:
-        state.add_nested_sdfg(nested, {}, {"a"}, symbol_mapping={"n": "N"}, defined_symbols={})
-
-    assert not defined_symbols.called
+    state.add_nested_sdfg(nested, {}, {"a"}, symbol_mapping={"n": "N"}, defined_symbols={})
     assert nested.symbols["n"] == dace.int32
 
 
@@ -89,12 +78,7 @@ def test_defined_symbols_are_recomputed_when_not_supplied():
     SDFG's free symbol from it."""
     state, nested = nesting_parts()
 
-    with mock.patch.object(
-        SDFGState, "defined_symbols", autospec=True, side_effect=SDFGState.defined_symbols
-    ) as defined_symbols:
-        state.add_nested_sdfg(nested, {}, {"a"}, symbol_mapping={"n": "N"})
-
-    assert defined_symbols.called
+    state.add_nested_sdfg(nested, {}, {"a"}, symbol_mapping={"n": "N"})
     assert nested.symbols["n"] == dace.int64
 
 

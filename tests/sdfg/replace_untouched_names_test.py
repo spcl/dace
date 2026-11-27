@@ -52,17 +52,16 @@ def test_map_range_replacement_renames_bounds_and_tile_sizes_together():
     assert map_entry.map.range.tile_sizes == [dace.symbol("U")]
 
 
-def test_mapped_symbols_keep_dtype_and_assumptions_when_another_symbol_is_replaced():
+def test_mapped_symbols_keep_their_declarations_when_another_symbol_is_replaced():
     sdfg, nsdfg = nested_mapping_sdfg()
     untouched = nsdfg.symbol_mapping["Q"]
 
     sdfg.replace_dict({"M": "K"})
 
     assert nsdfg.symbol_mapping["Q"] is untouched
-    touched = {s.name: s for s in nsdfg.symbol_mapping["P"].free_symbols}
-    assert sorted(touched) == ["K", "N"]
-    assert touched["N"].dtype == dace.int64
-    assert touched["N"].is_nonnegative
+    assert sorted(s.name for s in nsdfg.symbol_mapping["P"].free_symbols) == ["K", "N"]
+    # The declaration of a symbol is the SDFG's, not the symbol object's
+    assert sdfg.symbols["N"] == dace.int64
 
 
 def test_interstate_edge_without_a_replaced_name_is_left_untouched():
@@ -89,6 +88,6 @@ def test_interstate_edge_with_a_replaced_name_is_rewritten():
 if __name__ == "__main__":
     test_map_keeps_its_tile_sizes_when_an_unrelated_symbol_is_replaced()
     test_map_range_replacement_renames_bounds_and_tile_sizes_together()
-    test_mapped_symbols_keep_dtype_and_assumptions_when_another_symbol_is_replaced()
+    test_mapped_symbols_keep_their_declarations_when_another_symbol_is_replaced()
     test_interstate_edge_without_a_replaced_name_is_left_untouched()
     test_interstate_edge_with_a_replaced_name_is_rewritten()

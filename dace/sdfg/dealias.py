@@ -14,7 +14,7 @@ from dace.sdfg import nodes as nd
 from dace.sdfg import utils as sdutil
 from dace.sdfg.memlet_utils import MemletReplacer
 from dace.sdfg.replace import replace_datadesc_names
-from dace.sdfg.sdfg import SDFG
+from dace.sdfg.sdfg import SDFG, scope_bound_names
 from dace.sdfg.state import SymbolResolver
 from dace.transformation.helpers import unsqueeze_memlet
 
@@ -193,7 +193,7 @@ def dealias_sdfg(sdfg: SDFG, symbols: SymbolResolver | None = None):
             for sym in new_syms:
                 if str(sym) not in sdfg.symbols:
                     symtype = defined_symbols.get(str(sym))
-                    sdfg.add_symbol(str(sym), symtype or dtypes.typeclass(int))
+                    sdfg.add_symbol(str(sym), symtype or symbolic.DEFAULT_SYMBOL_TYPE)
                     parent_node.symbol_mapping[str(sym)] = symbolic.pystr_to_symbolic(str(sym))
 
             if isinstance(parent_arr, data.ArrayView):
@@ -502,7 +502,7 @@ def rebase_descendants(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: dat
                 for sym in replacement.free_symbols:
                     sym_name = str(sym)
                     if sym_name not in node.sdfg.symbols:
-                        sym_type = defined_here.get(sym_name) or dtypes.typeclass(int)
+                        sym_type = defined_here.get(sym_name) or symbolic.DEFAULT_SYMBOL_TYPE
                         node.sdfg.add_symbol(sym_name, sym_type)
                         if sym_name not in node.symbol_mapping:
                             node.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)
@@ -700,7 +700,7 @@ def _restate_container(
                 # The nested SDFG has to know the parent's symbols, which are passed down unchanged
                 for sym in passed_symbols:
                     if sym not in node.sdfg.symbols:
-                        node.sdfg.add_symbol(sym, symbol_types.get(sym, dtypes.int64))
+                        node.sdfg.add_symbol(sym, symbol_types.get(sym, symbolic.DEFAULT_SYMBOL_TYPE))
                     if sym not in node.symbol_mapping:
                         node.symbol_mapping[sym] = symbolic.pystr_to_symbolic(sym)
                 replacement = copy.deepcopy(new_desc)
@@ -868,7 +868,7 @@ def rebase_connector(
         return False
     for sym in passed_symbols:
         if sym not in sdfg.symbols:
-            sdfg.add_symbol(sym, symbol_types.get(sym, dtypes.int64))
+            sdfg.add_symbol(sym, symbol_types.get(sym, symbolic.DEFAULT_SYMBOL_TYPE))
         if sym not in node.symbol_mapping:
             node.symbol_mapping[sym] = symbolic.pystr_to_symbolic(sym)
 
@@ -1079,7 +1079,7 @@ def widen_windowed_connectors(sdfg: SDFG, symbols: SymbolResolver | None = None)
         window = Memlet(data=connector, subset=copy.deepcopy(memlet.subset))
         for sym in passed_symbols:
             if sym not in sdfg.symbols:
-                sdfg.add_symbol(sym, symbol_types.get(sym, dtypes.int64))
+                sdfg.add_symbol(sym, symbol_types.get(sym, symbolic.DEFAULT_SYMBOL_TYPE))
             if sym not in parent_node.symbol_mapping:
                 parent_node.symbol_mapping[sym] = symbolic.pystr_to_symbolic(sym)
         _widen_container(sdfg, connector, old_desc, new_desc, window, symbol_types)
@@ -1145,7 +1145,7 @@ def fold_symbol_mapping(sdfg: SDFG, symbols: SymbolResolver | None = None) -> di
     for outer, replacement in replacements.items():
         parent_node.symbol_mapping[outer] = replacement
         if outer in parent_types and outer in sdfg.symbols:
-            sdfg.symbols[outer] = parent_types[outer]
+            sdfg.symbol_repo.set_type(outer, parent_types[outer])
 
     # The nested SDFGs below are connected to containers whose descriptors were just restated
     integrate_nested_sdfgs_within(sdfg)
@@ -1452,9 +1452,11 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: SymbolResolver | None = None):
     # Only the ones the nested SDFG reads: a mapping entry is a read, so mapping a symbol the parent assigns further
     # down would make it free in the parent.
     needed = {str(s) for s in sdfg.free_symbols}
+    shadowed = scope_bound_names(sdfg)
     for sym_name, sym_type in symbol_types.items():
-        # Skip parent symbols that are shadowed by unrelated internal data containers or constants
-        if sym_name not in needed or sym_name in sdfg.arrays or sym_name in sdfg.constants_prop:
+        # Skip parent symbols that are shadowed by unrelated internal data containers, constants or the nested SDFG's
+        # own loop and map scopes
+        if sym_name not in needed or sym_name in sdfg.arrays or sym_name in sdfg.constants_prop or sym_name in shadowed:
             continue
         if sym_name not in sdfg.symbols:
             # Add the symbol to the SDFG and the parent node's symbol mapping
