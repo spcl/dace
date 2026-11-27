@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.comm.nodes import redistribute
 from dace.sdfg import utils
 
 
@@ -249,8 +250,42 @@ def test_redistribute_vector_2d_2d():
             assert np.array_equal(lB, np.zeros_like(lB))
 
 
+def test_redistribute_uses_the_communicator_of_the_node():
+    """The expansion sends and receives over the communicator given to the node, not over the world."""
+    P = dace.symbol("P", dace.int32)
+
+    @dace.program
+    def vector_2d_2d(A: dace.int32[8 * P]):
+        a_grid = dace.comm.Cart_create([2, P // 2])
+        a_scatter_grid = dace.comm.Cart_sub(a_grid, [False, True], exact_grid=0)
+        a_bcast_grid = dace.comm.Cart_sub(a_grid, [True, False])
+        b_grid = dace.comm.Cart_create([P // 2, 2])
+        b_scatter_grid = dace.comm.Cart_sub(b_grid, [True, False], exact_grid=0)
+        lA = np.empty_like(A, shape=(16,))
+        a_subarr = dace.comm.BlockScatter(A, lA, a_scatter_grid, a_bcast_grid)
+        lB = np.zeros_like(A, shape=(16,))
+        b_subarr = dace.comm.Subarray((8 * P,), lB, process_grid=b_scatter_grid)
+        dace.comm.Redistribute(lA, a_subarr, lB, b_subarr)
+        return lB
+
+    sdfg = vector_2d_2d.to_sdfg()
+    state, node = next(
+        (st, n) for st in sdfg.states() for n in st.nodes() if isinstance(n, dace.libraries.comm.Redistribute)
+    )
+    default = redistribute.ExpandRedistribute.expansion(node, state, sdfg).code.as_string
+    assert "MPI_COMM_WORLD" in default
+
+    sdfg.add_scalar("comm", dace.int64)
+    node.add_in_connector("_comm")
+    state.add_edge(state.add_read("comm"), None, node, "_comm", dace.Memlet("comm[0]"))
+    code = redistribute.ExpandRedistribute.expansion(node, state, sdfg).code.as_string
+    assert "MPI_COMM_WORLD" not in code
+    assert code.count("((MPI_Comm)(_comm))") == 3
+
+
 if __name__ == "__main__":
     test_redistribute_matrix_2d_2d()
     test_redistribute_matrix_2d_2d_2()
     test_redistribute_matrix_2d_2d_3()
     test_redistribute_vector_2d_2d()
+    test_redistribute_uses_the_communicator_of_the_node()
