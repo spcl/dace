@@ -1758,9 +1758,11 @@ class CPUCodeGen(TargetCodeGenerator):
             and not register_array_on_stack(sdfg, nodedesc, arrsize, nodedesc.lifetime, declared)
             and (sdfg, node.data) not in self._frame.frame_allocated
         ):
-            callsite_stream.write(
-                self.heap_free_stmt(alloc_name, isinstance(nodedesc, data.Array), nodedesc), cfg, state_id, node
-            )
+            free_stmt = self.heap_free_stmt(alloc_name, isinstance(nodedesc, data.Array), nodedesc)
+            # A free a loop repeats past an allocation it skipped must not free the same pointer twice
+            if free_stmt:
+                free_stmt += f"{self.ptr(node.data, nodedesc, sdfg)} = nullptr;\n"
+            callsite_stream.write(free_stmt, cfg, state_id, node)
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread, through the same statement builder as the allocation.
             delete_stmt = self.heap_free_stmt(alloc_name, isinstance(nodedesc, data.Array), nodedesc)
