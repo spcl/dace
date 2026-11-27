@@ -55,10 +55,10 @@ from dace.sdfg.narrowing import as_access, as_range, config_int, config_str
 from dace.sdfg.scope import is_in_scope, scope_contains_scope
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView, SymbolResolver
 from dace.transformation.passes import gpu_shared_memory
-from dace.transformation.passes.gpu_specialization.bind_default_stream import BindDefaultStream
+from dace.transformation.passes.gpu_specialization.bind_default_stream import BindDefaultStream, DropExitStreamSync
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUCodegenPreprocessPipeline
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
-from dace.transformation.passes.workspace_carving import CarveTransientsFromWorkspace
+from dace.transformation.passes.workspace_carving import CarveTransientsFromWorkspace, DemotePersistentTransients
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -183,8 +183,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         pipeline_results: dict[str, Any] = {}
         GPUCodegenPreprocessPipeline().apply_pass(sdfg, pipeline_results)
         if cpf_lowering.no_boilerplate():
-            demote_persistent_transients(sdfg)
+            DemotePersistentTransients().apply_pass(sdfg, {})
             BindDefaultStream().apply_pass(sdfg, {})
+            # The entry's closing device synchronization waits for the default stream.
+            DropExitStreamSync().apply_pass(sdfg, {})
             place_device_transients(sdfg)
         self._globalcode.write(plan_shared_memory(sdfg))
 
@@ -1352,20 +1354,6 @@ def place_device_transients(sdfg: SDFG) -> None:
     if request is None or sdfg.arrays[request.workspace].storage is not dtypes.StorageType.GPU_Global:
         return
     request.layout = CarveTransientsFromWorkspace(request.workspace, request.size).apply_pass(sdfg, {})
-
-
-def demote_persistent_transients(sdfg: SDFG) -> None:
-    """Give the top-level SDFG's ``Persistent`` transients ``SDFG`` lifetime, for a unit without boilerplate.
-
-    ``Persistent`` means allocated once, in the init code, and kept in the state struct across calls. A unit without
-    boilerplate (:func:`~dace.cpf_lowering.no_boilerplate`) has neither: its one entry is the whole program, so
-    allocated once per call at the top of the entry is the same allocation, held in a local (a device one in the
-    caller's workspace). Nested SDFGs keep theirs, which :func:`~dace.codegen.cpf.lift_persistent_transients` already
-    moved up wherever their extent allowed.
-    """
-    for desc in sdfg.arrays.values():
-        if desc.transient and desc.lifetime is dtypes.AllocationLifetime.Persistent:
-            desc.lifetime = dtypes.AllocationLifetime.SDFG
 
 
 class KernelSpec:

@@ -142,3 +142,29 @@ class CarveTransientsFromWorkspace(ppl.Pass):
             nbytes = desc.total_size * desc.dtype.bytes
             end, bound = end + aligned(nbytes), bound + nbytes + WORKSPACE_ALIGNMENT
         return WorkspaceLayout(self.workspace, self.size, offsets, descriptors, bound)
+
+
+class DemotePersistentTransients(ppl.Pass):
+    """Give the top-level SDFG's ``Persistent`` transients ``SDFG`` lifetime, for an entry that is the whole program.
+
+    ``Persistent`` means allocated once, in the init code, and kept in the state struct across calls. An entry with
+    neither (a CPF unit without boilerplate, :func:`~dace.cpf_lowering.no_boilerplate`) allocates such an array once
+    per call at its top, held in a local, or carves it (:class:`CarveTransientsFromWorkspace`). Nested SDFGs keep
+    theirs, which :func:`~dace.codegen.cpf.lift_persistent_transients` already moved up wherever their extent allowed.
+    """
+
+    CATEGORY: str = "Memory"
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Descriptors
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
+        demoted = 0
+        for desc in sdfg.arrays.values():
+            if desc.transient and desc.lifetime is dtypes.AllocationLifetime.Persistent:
+                desc.lifetime = dtypes.AllocationLifetime.SDFG
+                demoted += 1
+        return demoted or None

@@ -419,10 +419,10 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         # standalone preamble (system headers plus the inline definitions the unit actually calls)
         # is prepended afterwards by :func:`~dace.codegen.cpf.render`, which is the only place that
         # can see the finished text and therefore which helpers it uses.
-        if cpf_lowering.standalone():
-            global_stream.write("/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n", sdfg)
-        else:
+        if not cpf_lowering.standalone():
             global_stream.write("/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n" + "#include <dace/dace.h>\n", sdfg)
+        elif not cpf_lowering.no_boilerplate():  # a unit without boilerplate is the agent's to edit
+            global_stream.write("/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n", sdfg)
 
         # Write header required by environments
         for env in self.environments:

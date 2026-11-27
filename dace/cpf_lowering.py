@@ -2044,20 +2044,6 @@ def cuda_std_spell_out_lines(text: str) -> str:
     )
 
 
-#: A stream wait directly before the entry's closing device synchronization, which already waits for it.
-REDUNDANT_STREAM_WAIT: "re.Pattern" = re.compile(
-    r"^[ \t]*cpf_gpu_check\(\w+StreamSynchronize\(nullptr\)\);[ \t]*\n(?=[ \t]*cpf_gpu_check\(\w+DeviceSynchronize\(\)\);)",
-    re.MULTILINE,
-)
-
-
-def drop_redundant_stream_wait(code: str) -> str:
-    """``code`` without a wait on the default stream directly before the device synchronization that ends the entry
-    without boilerplate (:func:`no_boilerplate`), which waits for it too. Run on the compacted unit: before
-    :func:`~dace.codegen.cpf.compact_blocks` the closing braces of the generator's blocks sit between the two."""
-    return REDUNDANT_STREAM_WAIT.sub("", code)
-
-
 #: The name one line of :data:`DEVICE_TYPES` defines.
 DEVICE_ALIAS: "re.Pattern" = re.compile(r"(?:using|inline constexpr gpuError_t) (\w+)")
 

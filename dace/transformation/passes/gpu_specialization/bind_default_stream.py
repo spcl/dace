@@ -12,7 +12,7 @@ constant of that name.
 
 from typing import Any
 
-from dace import SDFG, dtypes
+from dace import SDFG, SDFGState, dtypes
 from dace.libraries.standard.helper import CURRENT_STREAM_NAME
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
@@ -88,4 +88,41 @@ class BindDefaultStream(ppl.Pass):
             nested.remove_data(name, validate=False)
         if names_current_stream:
             sdfg.append_global_code(f"constexpr gpuStream_t {CURRENT_STREAM_NAME} = {DEFAULT_STREAM};\n")
+        return removed or None
+
+
+@transformation.explicit_cf_compatible
+class DropExitStreamSync(ppl.Pass):
+    """Remove the default-stream waits that end the program, for an entry whose last statement synchronizes the
+    device (a CPF unit without boilerplate): that synchronization already waits for the default stream.
+
+    A wait ends the program when it is a sink tasklet of a sink state of the top-level SDFG whose code is
+    :func:`stream_sync_code` of :data:`DEFAULT_STREAM` (:class:`BindDefaultStream` wrote it). A state left empty is
+    removed when its in-edges carry neither a condition nor an assignment.
+    """
+
+    CATEGORY: str = "GPU"
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Tasklets | ppl.Modifies.States
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
+        wait = stream_sync_code([DEFAULT_STREAM])
+        removed = 0
+        for state in [block for block in sdfg.nodes() if isinstance(block, SDFGState) and sdfg.out_degree(block) == 0]:
+            waits = [
+                node
+                for node in state.sink_nodes()
+                if isinstance(node, nodes.Tasklet) and node.code.as_string == wait and not node.in_connectors
+            ]
+            if not waits:
+                continue
+            state.remove_nodes_from(waits)
+            removed += len(waits)
+            plain = all(edge.data.is_unconditional() and not edge.data.assignments for edge in sdfg.in_edges(state))
+            if state.is_empty() and state is not sdfg.start_block and plain:
+                sdfg.remove_node(state)
         return removed or None

@@ -2406,10 +2406,6 @@ def drop_repeated_includes(code: str) -> str:
     return "\n".join(kept)
 
 
-#: The comment the frame generator opens every unit with.
-FRAME_BANNER = "/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n"
-
-
 def render_unit(
     sdfg: SDFG,
     validate: bool,
@@ -2525,9 +2521,6 @@ def render_unit(
                     device_body = ""
                 # Last of all: a pure layout change, so every pass above still sees the generator's text.
                 body = compact_blocks(body)
-                if cpf_lowering.no_boilerplate():
-                    # The generator's banner, which promised a file nobody edits; this one is the agent's to edit.
-                    body = cpf_lowering.drop_redundant_stream_wait(body.replace(FRAME_BANNER, ""))
                 device_body = compact_blocks(device_body) if device_body else ""
     unit_environments = set(frame.environments)
     if cpf_lowering.no_boilerplate_in_force and device is not None:
