@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import pathlib
 
 import numpy as np
@@ -87,7 +87,7 @@ def _load_precompiled_impl(test_name: str, folder_mode: str) -> None:
 
     lib1_path = pathlib.Path(func1.filename)
     lib2_path = pathlib.Path(func2.filename)
-    assert lib1_path != lib2_path
+    assert lib1_path == lib2_path
     assert lib1_path.parent == lib2_path.parent
 
     assert np.allclose(output_one, output_two)
