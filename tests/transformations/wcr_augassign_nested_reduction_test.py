@@ -112,7 +112,7 @@ def test_triangular_nested_reduction_keeps_wcr():
     np.testing.assert_allclose(C, np.tril(A, -1).sum(axis=0))
 
 
-def _toplevel_injective_sdfg() -> dace.SDFG:
+def toplevel_injective_sdfg() -> dace.SDFG:
     """Top-level ``map[i] { C[i] += A[i] }`` -- injective, not nested. The guard must
     leave this exactly as before (revert to RMW)."""
     sdfg = dace.SDFG("toplevel_injective")
@@ -137,7 +137,7 @@ def _toplevel_wcr_edges(sdfg: dace.SDFG) -> int:
 def test_toplevel_injective_write_still_reverts():
     """The nested-SDFG guard must not disturb the ordinary top-level path: an injective
     ``C[i] += A[i]`` map (``sdfg.parent is None``) still reverts to a plain RMW."""
-    sdfg = _toplevel_injective_sdfg()
+    sdfg = toplevel_injective_sdfg()
     assert _toplevel_wcr_edges(sdfg) > 0
     sdfg.apply_transformations_repeated(WCRToAugAssign)
     assert _toplevel_wcr_edges(sdfg) == 0, "an injective top-level write should revert to RMW"

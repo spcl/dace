@@ -256,7 +256,7 @@ def boundary_write_index_syms(sdfg: SDFG, data_name: str) -> set:
         if subset is None:
             break
         # Where each dimension starts, not how far it reaches: ``C[0:M - i - 1, j]`` over an outer ``i`` overlaps
-        syms |= {str(s) for begin, _, _ in subset.ndrange() for s in symbolic.pystr_to_symbolic(begin).free_symbols}
+        syms |= {str(s) for dim in subset.ndrange() for s in symbolic.pystr_to_symbolic(dim[0]).free_symbols}
         cur, conn = cur.parent_sdfg, edge.data.data
     return syms
 
