@@ -151,8 +151,12 @@ def infer_symbols_from_datadescriptor(
     if len(symbols) == 0:
         return {}
 
-    # Solve for all at once
-    results = sympy.solve(equations, *symbols, dict=True, exclude=exclude)
+    # Dimensions, strides, and offsets are integers; symbols no longer carry that assumption globally
+    integer_names = frozenset(str(free) for equation in equations for free in equation.free_symbols)
+    integer_equations = [symbolic.with_integers(equation, integer_names) for equation in equations]
+    integer_symbols = [symbolic.with_integers(sym, integer_names) for sym in symbols]
+    integer_exclude = {symbolic.with_integers(sym, integer_names) for sym in exclude}
+    results = sympy.solve(integer_equations, *integer_symbols, dict=True, exclude=integer_exclude)
     if len(results) > 1:
         raise ValueError(f"Ambiguous values for symbols in inference. Options: {str(results)}")
     if len(results) == 0:
@@ -162,8 +166,13 @@ def infer_symbols_from_datadescriptor(
     if not result:
         raise ValueError("Cannot infer values for symbols in inference.")
 
+    originals = {str(free): free for equation in equations for free in equation.free_symbols}
     # Remove __SOLVE_ prefix; a solution still in terms of a placeholder determines no runtime value
-    return {str(k)[8:]: v for k, v in result.items() if not any(str(s).startswith("__SOLVE_") for s in v.free_symbols)}
+    return {
+        str(k)[8:]: symbolic.replace_symbols(v, originals)
+        for k, v in result.items()
+        if not any(str(s).startswith("__SOLVE_") for s in v.free_symbols)
+    }
 
 
 class DaceProgram(pycommon.SDFGConvertible):
