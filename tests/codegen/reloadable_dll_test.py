@@ -44,19 +44,20 @@ def test_a_leftover_copy_is_not_loaded_in_place_of_the_new_library():
     assert run(first) == 1
 
 
-def test_a_leftover_copy_of_the_same_build_is_reused():
-    first = constant_sdfg("reloadable_dll_same_copy", 3).compile()
+def test_loading_the_same_loaded_build_adds_no_copy():
+    first = constant_sdfg("reloadable_dll_same_library", 4).compile()
     library = pathlib.Path(first._lib._library_filename)
-    # A copy an earlier run left behind of the build that is loaded now.
+    # A leftover identical copy must not displace the already loaded original.
     shutil.copyfile(library, f"{library}_0")
 
     second = compiler.get_program_handle(library, first.sdfg)
 
-    assert pathlib.Path(second._lib._library_filename) == pathlib.Path(f"{library}_0")
+    assert pathlib.Path(second._lib._library_filename) == library
     assert not pathlib.Path(f"{library}_1").exists()
-    assert run(second) == 3
+    assert run(first) == 4
+    assert run(second) == 4
 
 
 if __name__ == "__main__":
     test_a_leftover_copy_is_not_loaded_in_place_of_the_new_library()
-    test_a_leftover_copy_of_the_same_build_is_reused()
+    test_loading_the_same_loaded_build_adds_no_copy()

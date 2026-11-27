@@ -1,8 +1,9 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains functionality to load, use, and invoke compiled SDFG libraries."""
 
 import ctypes
 import filecmp
+import hashlib
 import os
 import pathlib
 import pickle
@@ -29,6 +30,16 @@ class ReloadableDLL:
     A reloadable shared object (or dynamically linked library), which
     bypasses Python's dynamic library reloading issues.
     """
+
+    loaded_contents: dict[str, bytes] = {}
+
+    @staticmethod
+    def content_hash(filename: str) -> bytes:
+        digest = hashlib.sha256()
+        with open(filename, "rb") as library:
+            for chunk in iter(lambda: library.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.digest()
 
     def __init__(self, library_filename, **kwargs):
         """Creates a new reloadable shared object.
@@ -112,6 +123,7 @@ class ReloadableDLL:
         is_loaded = True
         lib_cfilename = None
         lib_filename = self._library_filename
+        library_contents = self.content_hash(lib_filename)
         counter = 0
         while is_loaded:
             # Convert library filename to string according to OS
@@ -122,8 +134,10 @@ class ReloadableDLL:
                 # As UTF-8
                 lib_cfilename = ctypes.c_char_p(lib_filename.encode("utf-8"))
 
-            # Test if the library is loaded.
+            # A library already loaded by this class can be shared if its bytes have not changed.
             is_loaded = self._stub.is_library_loaded(lib_cfilename)
+            if is_loaded == 1 and self.loaded_contents.get(lib_filename) == library_contents:
+                break
 
             if is_loaded == 1:
                 warnings.warn(f"Library {self._library_filename} already loaded, renaming file")
@@ -170,6 +184,7 @@ class ReloadableDLL:
                 stderr = result.stderr.decode("utf-8")
                 reason = "Reason:\n" + "\n".join([l for l in stderr.split("\n") if "_start" not in l])
             raise RuntimeError(f"Could not load library {os.path.basename(self._library_filename)}. {reason}")
+        self.loaded_contents[lib_filename] = library_contents
 
     def unload(self):
         """Unloads the internal library using the stub."""
