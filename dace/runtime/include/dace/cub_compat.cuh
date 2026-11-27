@@ -6,6 +6,7 @@
 #ifndef __DACE_CUB_COMPAT_CUH
 #define __DACE_CUB_COMPAT_CUH
 
+#include <cstdint>
 #include <iterator>
 
 #include "arg_reduction.h"
@@ -271,12 +272,12 @@ struct ArgPairOp {
 };
 
 template <typename T>
-inline void arg_answer(const ArgBuf<T>& got, T* val_out, long long* idx_out) {
+inline void arg_answer(const ArgBuf<T>& got, T* val_out, int64_t* idx_out) {
   if (val_out != nullptr) *val_out = got.value;
-  *idx_out = (long long)got.key;
+  *idx_out = static_cast<int64_t>(got.key);
 }
 template <typename T>
-inline void arg_answer(const ::dace::arg_pair<T, long long>& got, T* val_out, long long* idx_out) {
+inline void arg_answer(const ::dace::arg_pair<T, long long>& got, T* val_out, int64_t* idx_out) {
   if (val_out != nullptr) *val_out = got.__ar_v;
   *idx_out = got.__ar_i;
 }
@@ -284,7 +285,7 @@ inline void arg_answer(const ::dace::arg_pair<T, long long>& got, T* val_out, lo
 /// Arg-reduction over a device sequence, answered on the host. ``val_out`` may be null; ties break toward
 /// the lower index, or the higher one under :struct:`ArgPairOp`.
 template <typename Op, typename InIt, typename T>
-inline gpuError_t arg_reduce(InIt in, T* val_out, long long* idx_out, long long items, gpuStream_t stream) {
+inline gpuError_t arg_reduce(InIt in, T* val_out, int64_t* idx_out, long long items, gpuStream_t stream) {
   using Buf = typename Op::template Buf<T>;
   size_t needed = 0;
   gpuError_t status = Op::call(nullptr, needed, in, (Buf*)nullptr, items, stream);

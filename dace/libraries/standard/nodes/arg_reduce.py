@@ -323,7 +323,7 @@ class ExpandArgReduceCUDA(ExpandTransformation):
         stride_param = ", long long __ar_stride" if gathers else ""
         prototype = (
             f"DACE_EXPORTED gpuError_t __dace_argreduce_{idstr}(const {vt} *__ar_in{stride_param}, "
-            f"{vt} *__ar_val, long long *__ar_idx, long long __ar_items, gpuStream_t __ar_stream);"
+            f"{vt} *__ar_val, int64_t *__ar_idx, long long __ar_items, gpuStream_t __ar_stream);"
         )
         operand = (
             (f"::dace::cub::gather_iterator<::dace::cub::{_TRANSFORM_CUB[node.transform]}>(__ar_in, __ar_stride)")
@@ -335,7 +335,7 @@ class ExpandArgReduceCUDA(ExpandTransformation):
         parent_sdfg.append_global_code(
             f"{prototype}\n"
             f"gpuError_t __dace_argreduce_{idstr}(const {vt} *__ar_in{stride_param}, {vt} *__ar_val, "
-            f"long long *__ar_idx, long long __ar_items, gpuStream_t __ar_stream) {{\n"
+            f"int64_t *__ar_idx, long long __ar_items, gpuStream_t __ar_stream) {{\n"
             # No ``DACE_GPU_CHECK`` in this body: the macro reports through ``__state``, which a
             # free function in the CUDA unit does not have. The status is returned to the host
             # tasklet instead, and the ``DACE_GPU_CHECK`` around the call there reports it.
@@ -349,7 +349,7 @@ class ExpandArgReduceCUDA(ExpandTransformation):
         stride_arg = f", {sym2cpp(step)}" if gathers else ""
         val_out = "&__ar_val" if val_edge is not None else "nullptr"
         code = (
-            (f"{vt} __ar_val;\n" if val_edge is not None else "") + f"long long __ar_idx;\n"
+            (f"{vt} __ar_val;\n" if val_edge is not None else "") + f"int64_t __ar_idx;\n"
             f"DACE_GPU_CHECK(__dace_argreduce_{idstr}(_in{stride_arg}, {val_out}, &__ar_idx, "
             f"{items}, __dace_current_stream));\n"
             + ("_out_val = __ar_val;\n" if val_edge is not None else "")
