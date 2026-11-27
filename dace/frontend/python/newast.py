@@ -1011,7 +1011,7 @@ class DefinedNames(collections.abc.Mapping):
         sdfg_name = pv.variables.get(name)
         if sdfg_name in pv.sdfg.symbols:
             return pv.sdfg.symbols[sdfg_name]
-        if "." in name and name in arrays and name in pv.variables.values():
+        if isinstance(name, str) and "." in name and name in arrays and name in pv.variables.values():
             return arrays[name]
         if sdfg_name in arrays:
             return arrays[sdfg_name]
@@ -2947,6 +2947,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     or len(ssize) != len(osize)
                     or any(itertools.starmap(inequal_symbols, zip(ssize, osize)))
                     or op
+                    # A copy cannot convert: a tasklet casts each element, as numpy does
+                    or self.sdfg.arrays[target_name].dtype != self.sdfg.arrays[op_name].dtype
                 ):
                     _, all_idx_tuples, _, _, inp_idx = broadcast_to(squeezed.size(), op_subset.size())
 

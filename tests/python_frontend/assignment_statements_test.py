@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import pytest
 
@@ -238,6 +238,22 @@ def test_augassign_to_compiletime_scalar():
         obj.method()
 
 
+def test_slice_assignment_converts_the_element_type():
+    """``out[0] = x`` with a float32 ``x`` and a float64 ``out`` stores the converted values, as numpy does, also
+    without simplification (a plain copy cannot convert)."""
+
+    @dace.program
+    def upcast(x: dace.float32[10], out: dace.float64[2, 10]):
+        out[0] = x
+
+    x = np.random.rand(10).astype(np.float32)
+    out = np.zeros((2, 10))
+    with dace.config.set_temporary("optimizer", "automatic_simplification", value=False):
+        upcast(x=x, out=out)
+    assert np.array_equal(out[0], x.astype(np.float64))
+    assert not out[1].any()
+
+
 if __name__ == "__main__":
     test_single_target()
     test_single_target_parentheses()
@@ -259,3 +275,4 @@ if __name__ == "__main__":
 
     test_assign_to_compiletime_scalar()
     test_augassign_to_compiletime_scalar()
+    test_slice_assignment_converts_the_element_type()
