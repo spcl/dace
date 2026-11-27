@@ -232,17 +232,17 @@ int main() {
     long long *dev = nullptr;
     cudaMalloc(&dev, n * sizeof(long long));
 
-    long long out = -1;
+    int64_t out = -1;
     cudaMemcpy(dev, host.data(), n * sizeof(long long), cudaMemcpyHostToDevice);
     if (dace::detect_all_positive_device(dev, n, &out, 0) != cudaSuccess || out != 1) {
-        printf("FAIL all-positive: %lld\\n", out);
+        printf("FAIL all-positive: %lld\\n", static_cast<long long>(out));
         return 1;
     }
     for (long long bad : {0LL, n / 2, n - 1}) {
         host[bad] = -3;
         cudaMemcpy(dev, host.data(), n * sizeof(long long), cudaMemcpyHostToDevice);
         if (dace::detect_all_positive_device(dev, n, &out, 0) != cudaSuccess || out != 0) {
-            printf("FAIL non-positive at %lld: %lld\\n", bad, out);
+            printf("FAIL non-positive at %lld: %lld\\n", bad, static_cast<long long>(out));
             return 1;
         }
         host[bad] = 7;

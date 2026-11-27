@@ -949,7 +949,7 @@ def test_the_scatter_guard_renders_without_the_dace_runtime():
     insert_scatter_guard(sdfg, "ip")
     rendering = render_sdfg(sdfg)
     assert_standalone(rendering.code, sdfg.name)
-    assert "static inline long long detect_collision(" in rendering.code, "CPF must define the check it calls"
+    assert "static inline int64_t detect_collision(" in rendering.code, "CPF must define the check it calls"
     assert "reduction(| : c)" in rendering.code, "the verify pass must keep its OR reduction"
 
     n = 64

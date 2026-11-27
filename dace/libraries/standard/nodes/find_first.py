@@ -306,7 +306,7 @@ class ExpandFindFirstCUDA(ExpandTransformation):
         args = ", ".join(conn for conn, _decl in signature)
         prototype = (
             f"DACE_EXPORTED gpuError_t __dace_findfirst_{idstr}({params}, long long __ff_begin, "
-            f"long long __ff_end, long long *__ff_out, gpuStream_t __ff_stream);"
+            f"long long __ff_end, int64_t *__ff_out, gpuStream_t __ff_stream);"
         )
 
         sdfg.append_global_code(prototype + "\n")
@@ -318,7 +318,7 @@ class ExpandFindFirstCUDA(ExpandTransformation):
             f"}};\n"
             f"{prototype}\n"
             f"gpuError_t __dace_findfirst_{idstr}({params}, long long __ff_begin, long long __ff_end, "
-            f"long long *__ff_out, gpuStream_t __ff_stream) {{\n"
+            f"int64_t *__ff_out, gpuStream_t __ff_stream) {{\n"
             f"    __ff_pred_{idstr} __ff_pred{{{args}}};\n"
             f"    return ::dace::find_first_index_device(__ff_begin, __ff_end, __ff_pred, __ff_out, __ff_stream);\n"
             f"}}\n",
@@ -327,7 +327,7 @@ class ExpandFindFirstCUDA(ExpandTransformation):
 
         begin, end = sym2cpp(node.begin), sym2cpp(node.end)
         code = (
-            f"long long __ff_result;\n"
+            f"int64_t __ff_result;\n"
             f"DACE_GPU_CHECK(__dace_findfirst_{idstr}({args}, ({begin}), ({end}), &__ff_result, "
             f"__dace_current_stream));\n"
             f"{OUTPUT_CONNECTOR_NAME} = __ff_result;"

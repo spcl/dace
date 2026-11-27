@@ -948,7 +948,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         data_name: str | None = None,
     ) -> str:
         # A rendering that places its heap transients in the caller's workspace points into it instead.
-        slot = cpf_lowering.workspace_slot(alloc_name, data_name, nodedesc, ctype, arrsize)
+        slot = cpf_lowering.workspace_slot(alloc_name, data_name, nodedesc, ctype)
         if slot is not None:
             return slot
         # The base aligned ``operator new[]``, with the count through an ``<array>_size`` helper when one

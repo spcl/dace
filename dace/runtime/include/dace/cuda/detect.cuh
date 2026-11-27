@@ -133,7 +133,7 @@ __global__ void find_first_kernel(long long begin, long long end, Pred pred, uns
  * initialization. The answer lands in ``*out`` on the host, so the call synchronizes ``stream``.
  */
 template <typename T, typename TagT>
-inline gpuError_t detect_collision_device(const T* idx, long long n, TagT* owner, long long capacity, long long* out,
+inline gpuError_t detect_collision_device(const T* idx, long long n, TagT* owner, long long capacity, int64_t* out,
                                           gpuStream_t stream) {
   *out = 0;
   if (n <= 0) return gpuSuccess;
@@ -156,7 +156,7 @@ inline gpuError_t detect_collision_device(const T* idx, long long n, TagT* owner
   status = gpuMemcpyAsync(&host_flag, flag, sizeof(unsigned long long), gpuMemcpyDeviceToHost, stream);
   if (status != gpuSuccess) return status;
   status = gpuStreamSynchronize(stream);
-  *out = static_cast<long long>(host_flag != 0);
+  *out = static_cast<int64_t>(host_flag != 0);
   return status;
 }
 
@@ -194,7 +194,7 @@ __global__ void detect_hash_kernel(const T* idx, long long n, unsigned long long
  * device reduction plus a round trip before the check can even start.
  */
 template <typename T>
-inline gpuError_t detect_collision_device(const T* idx, long long n, long long capacity, long long* out,
+inline gpuError_t detect_collision_device(const T* idx, long long n, long long capacity, int64_t* out,
                                           gpuStream_t stream) {
   gpuError_t status = gpuSuccess;
   long long* owner = static_cast<long long*>(::dace::cub::get_scratch<::dace::cub::DetectOwnerTag>(
@@ -211,7 +211,7 @@ inline gpuError_t detect_collision_device(const T* idx, long long n, long long c
  * the scattered array's domain is known.
  */
 template <typename T>
-inline gpuError_t detect_collision_device(const T* idx, long long n, long long* out, gpuStream_t stream) {
+inline gpuError_t detect_collision_device(const T* idx, long long n, int64_t* out, gpuStream_t stream) {
   *out = 0;
   if (n <= 0) return gpuSuccess;
 
@@ -239,7 +239,7 @@ inline gpuError_t detect_collision_device(const T* idx, long long n, long long* 
   status = gpuMemcpyAsync(&host_flag, flag, sizeof(unsigned long long), gpuMemcpyDeviceToHost, stream);
   if (status != gpuSuccess) return status;
   status = gpuStreamSynchronize(stream);
-  *out = static_cast<long long>(host_flag != 0);
+  *out = static_cast<int64_t>(host_flag != 0);
   return status;
 }
 
@@ -247,7 +247,7 @@ inline gpuError_t detect_collision_device(const T* idx, long long n, long long* 
  * :cpp:func:`dace::detect_all_positive` on the device: ``*out`` is 1 iff every element is > 0.
  */
 template <typename T>
-inline gpuError_t detect_all_positive_device(const T* a, long long n, long long* out, gpuStream_t stream) {
+inline gpuError_t detect_all_positive_device(const T* a, long long n, int64_t* out, gpuStream_t stream) {
   *out = 1;
   if (n <= 0) return gpuSuccess;
 
@@ -267,7 +267,7 @@ inline gpuError_t detect_all_positive_device(const T* a, long long n, long long*
   status = gpuMemcpyAsync(&host_bad, bad, sizeof(unsigned long long), gpuMemcpyDeviceToHost, stream);
   if (status != gpuSuccess) return status;
   status = gpuStreamSynchronize(stream);
-  *out = static_cast<long long>(host_bad == 0);
+  *out = static_cast<int64_t>(host_bad == 0);
   return status;
 }
 
@@ -280,7 +280,7 @@ inline gpuError_t detect_all_positive_device(const T* a, long long n, long long*
  * global code next to the wrapper that instantiates this.
  */
 template <typename Pred>
-inline gpuError_t find_first_index_device(long long begin, long long end, Pred pred, long long* out,
+inline gpuError_t find_first_index_device(long long begin, long long end, Pred pred, int64_t* out,
                                           gpuStream_t stream) {
   *out = end;
   if (begin >= end) return gpuSuccess;

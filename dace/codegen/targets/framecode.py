@@ -379,7 +379,9 @@ class DaCeCodeGenerator:
         # every copy is issued on. So the struct is emitted, the entry function declares it as a
         # local (:func:`~dace.cpf_lowering.device_entry_prologue`), and the generated body reaches
         # it through the same ``__state`` it always did.
-        if not standalone or (cpf_lowering.device() and backend == "frame"):
+        # Without boilerplate the struct is emitted only while something still lives in it.
+        keep_struct = not cpf_lowering.no_boilerplate() or bool(self.statestruct)
+        if not standalone or (cpf_lowering.device() and backend == "frame" and keep_struct):
             structstr = "\n".join(self.statestruct)
             global_stream.write(
                 f"""
@@ -417,10 +419,10 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         # standalone preamble (system headers plus the inline definitions the unit actually calls)
         # is prepended afterwards by :func:`~dace.codegen.cpf.render`, which is the only place that
         # can see the finished text and therefore which helpers it uses.
-        if cpf_lowering.standalone():
-            global_stream.write("/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n", sdfg)
-        else:
+        if not cpf_lowering.standalone():
             global_stream.write("/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n" + "#include <dace/dace.h>\n", sdfg)
+        elif not cpf_lowering.no_boilerplate():  # a unit without boilerplate is the agent's to edit
+            global_stream.write("/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n", sdfg)
 
         # Write header required by environments
         for env in self.environments:
@@ -715,6 +717,9 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
                 + ", which runs outside the entry function and has no place to run in a "
                 "single self-contained translation unit"
             )
+        if cpf_lowering.no_boilerplate():
+            # What the drain guard did: nothing the entry launched is still running when it returns.
+            callsite_stream.write("DACE_GPU_CHECK(gpuDeviceSynchronize());\n", sdfg)
         callsite_stream.write("}", sdfg)
 
     def generate_external_memory_management(self, sdfg: SDFG, callsite_stream: CodeIOStream):
@@ -1471,13 +1476,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 sdfg,
             )
 
-        # The running offset the workspace arrays among them are carved at (a CPF entry with a workspace). A device
-        # entry declares it above its prologue instead, whose state allocations carve from it first.
-        offset_declaration = (
-            cpf_lowering.workspace_offset_declaration() if is_top_level and not cpf_lowering.device() else ""
-        )
-        if offset_declaration:
-            callsite_stream.write(offset_declaration, sdfg)
+        # A CPF entry with a workspace refuses one too small for its layout before any array points into it. A device
+        # entry checks above its prologue instead, whose state allocations take their slots first.
+        workspace_check = cpf_lowering.workspace_check() if is_top_level and not cpf_lowering.device() else ""
+        if workspace_check:
+            callsite_stream.write(workspace_check, sdfg)
         # Allocate outer-level transients
         self.allocate_arrays_in_scope(sdfg, sdfg, sdfg, global_stream, callsite_stream)
 
@@ -1621,9 +1624,12 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     # which a single entry point has nowhere to put but here. The generated body
                     # then reads ``__state->gpu_context->streams`` exactly as it always did, so
                     # nothing downstream of this line knows the state is a local.
-                    function_signature += "\n" + cpf_lowering.workspace_offset_declaration()
+                    function_signature += "\n" + cpf_lowering.workspace_check()
                     function_signature += cpf_lowering.device_entry_prologue(
-                        mangle_dace_state_struct_name(sdfg), self._initcode.getvalue(), self._exitcode.getvalue()
+                        mangle_dace_state_struct_name(sdfg),
+                        self._initcode.getvalue(),
+                        self._exitcode.getvalue(),
+                        has_state=bool(self.statestruct),
                     )
             else:
                 if params:

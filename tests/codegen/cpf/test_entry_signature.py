@@ -193,16 +193,17 @@ def host_arguments_and_a_device_map() -> dace.SDFG:
     return sdfg
 
 
-def test_a_device_entry_declares_the_workspace_offset_before_its_prologue_carves():
+def test_a_device_entry_checks_the_workspace_before_its_prologue_carves():
     """A device entry's prologue allocates its state, which carves the host transients the workspace holds, so the
-    running offset is declared above it: declared in the body, it came after its first use and the unit did not
-    build (column_scan_nproma_nlev finalized by NestForge, #98)."""
+    workspace's size check comes above it (column_scan_nproma_nlev finalized by NestForge, #98)."""
     order = ("x", "y", "N", *WORKSPACE)
     result = render(host_arguments_and_a_device_map(), language="cuda", signature=with_workspace("x", "y", "N"))
-    offsets = [line.strip() for line in result.code.splitlines() if "workspace_off" in line]
+    lines = [line.strip() for line in result.code.splitlines()]
+    checks = [n for n, line in enumerate(lines) if line.startswith("if (workspace_size <")]
+    slots = [n for n, line in enumerate(lines) if "(workspace + " in line]
 
     assert entry_names(result.code, "cpf_sig_host_ws_device_map") == order
-    assert offsets[0] == "size_t workspace_off = 0;" and len(offsets) == 2, offsets
+    assert len(checks) == 1 and slots and checks[0] < slots[0], (checks, slots)
     nvcc = shutil.which("nvcc")
     if nvcc is None:
         return
@@ -255,7 +256,8 @@ def test_a_heap_transient_lives_in_the_workspace(language):
     name = f"cpf_sig_carve_{'cpp' if language == 'c++' else 'c'}"
     result = rendered(cpf_sig_reverse, name, language, with_workspace("dst", "src", "N"))
     assert heap_allocations(result.code) == []
-    assert "tmp = (double *)(workspace + workspace_off); workspace_off += " in result.code
+    slot = "tmp = (double *)(workspace + 0);" if language == "c" else "tmp = reinterpret_cast<double *>(workspace + 0);"
+    assert slot in result.code
     n = 50
     needed = int(eval(result.workspace_bytes, {"N": n}))  # noqa: S307 -- an expression the renderer wrote
     assert needed >= 8 * n

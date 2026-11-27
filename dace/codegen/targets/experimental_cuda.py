@@ -55,8 +55,10 @@ from dace.sdfg.narrowing import as_access, as_range, config_int, config_str
 from dace.sdfg.scope import is_in_scope, scope_contains_scope
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView, SymbolResolver
 from dace.transformation.passes import gpu_shared_memory
+from dace.transformation.passes.gpu_specialization.bind_default_stream import BindDefaultStream, DropExitStreamSync
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUCodegenPreprocessPipeline
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
+from dace.transformation.passes.workspace_carving import CarveTransientsFromWorkspace, DemotePersistentTransients
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -172,12 +174,20 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 and node.map.schedule not in dtypes.EXPERIMENTAL_GPU_SCHEDULES
             ):
                 raise NotImplementedError(f"GPU code generation does not implement {node.map.schedule} maps yet")
-        context_type = "cpf_gpu_context" if cpf_lowering.device() else "dace::cuda::Context"
-        self._frame.statestruct.append(f"{context_type} *gpu_context;")
+        # Without boilerplate every stream is the default one, ``nullptr``, so there is no context to reach it through.
+        if not cpf_lowering.no_boilerplate():
+            context_type = "cpf_gpu_context" if cpf_lowering.device() else "dace::cuda::Context"
+            self._frame.statestruct.append(f"{context_type} *gpu_context;")
         self._dispatcher._used_targets.add(self)
 
         pipeline_results: dict[str, Any] = {}
         GPUCodegenPreprocessPipeline().apply_pass(sdfg, pipeline_results)
+        if cpf_lowering.no_boilerplate():
+            DemotePersistentTransients().apply_pass(sdfg, {})
+            BindDefaultStream().apply_pass(sdfg, {})
+            # The entry's closing device synchronization waits for the default stream.
+            DropExitStreamSync().apply_pass(sdfg, {})
+            place_device_transients(sdfg)
         self._globalcode.write(plan_shared_memory(sdfg))
 
         # AddThreadBlockMaps returns the kernel-dimension map and the set of kernels it
@@ -381,6 +391,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
     ):
 
         scope_entry = scope_map_entry(dfg_scope)
+        # Without boilerplate the kernel launches at its call site, after its code is generated
+        # (:meth:`generate_kernel_wrapper`); there is no launcher to declare or call.
+        if cpf_lowering.no_boilerplate():
+            return
 
         kernel_spec = self.current_kernel_spec
         kernel_name = kernel_spec.kernel_name
@@ -401,7 +415,26 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 scope_entry,
             )
 
-        # Wrap the invocation in a block so dynamic-input local declarations don't leak.
+        self.invoke_at_call_site(
+            sdfg,
+            cfg,
+            state_id,
+            scope_entry,
+            callsite_stream,
+            "__dace_runkernel_%s(%s);\n" % (kernel_name, ", ".join(kernel_wrapper_args_as_input)),
+        )
+
+    def invoke_at_call_site(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        state_id: int,
+        scope_entry: nodes.MapEntry,
+        callsite_stream: CodeIOStream,
+        invocation: str,
+    ) -> None:
+        """Write ``invocation`` (the launcher call, or the launch itself) at the kernel's call site, after the
+        definitions of the kernel's dynamic map inputs, in a block of its own so those definitions do not leak."""
         state = cfg.state(state_id)
         dyn_inputs = list(dace.sdfg.dynamic_map_inputs(state, scope_entry))
         has_dyn_inputs = len(dyn_inputs) > 0
@@ -418,12 +451,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 scope_entry,
             )
 
-        callsite_stream.write(
-            "__dace_runkernel_%s(%s);\n" % (kernel_name, ", ".join(kernel_wrapper_args_as_input)),
-            cfg,
-            state_id,
-            scope_entry,
-        )
+        callsite_stream.write(invocation, cfg, state_id, scope_entry)
 
         if has_dyn_inputs:
             callsite_stream.write("}", cfg, state_id, scope_entry)
@@ -449,6 +477,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         block_dims = kernel_spec.block_dims
         gdims = ", ".join(sym2cpp(grid_dims))
         bdims = ", ".join(sym2cpp(block_dims))
+
+        if cpf_lowering.no_boilerplate():
+            self.launch_at_call_site(sdfg, cfg, state_id, scope_entry, callsite_stream)
+            return
 
         self._localcode.write(
             f"""
@@ -518,6 +550,44 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 state_id,
                 scope_entry,
             )
+
+    def launch_at_call_site(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        state_id: int,
+        scope_entry: nodes.MapEntry,
+        callsite_stream: CodeIOStream,
+    ) -> None:
+        """Launch the current kernel where the host code calls it, on the default stream, without a launcher.
+
+        The rendering without boilerplate (:func:`~dace.cpf_lowering.no_boilerplate`) keeps the kernels and the entry
+        in one unit, so the entry can name the kernel: ``kernel<<<grid, block, shared>>>(args)``, then the launch
+        check. A grid that may be empty is skipped by a guard around the launch, as the launcher returned early.
+        """
+        kernel_spec = self.current_kernel_spec
+        kernel_name = kernel_spec.kernel_name
+        if scope_entry.map.cooperative:
+            raise NotImplementedError(
+                f"{kernel_name}: a cooperative kernel launches through its launcher; render it with boilerplate"
+            )
+        grid_dims = kernel_spec.grid_dims
+        facts = SymbolResolver().facts_at(cfg.state(state_id), scope_entry)
+        maybe_empty = [f"({sym2cpp(gdim)}) > 0" for gdim in grid_dims if not symbolic.provably_positive(gdim, facts)]
+        gdims = ", ".join(sym2cpp(grid_dims))
+        bdims = ", ".join(sym2cpp(kernel_spec.block_dims))
+        dynsmem_size = vars(scope_entry)["_cuda_dynamic_shared_memory"]  # set on the entry by gpu_shared_memory
+        arguments = ", ".join(kernel_spec.kernel_args_as_input)
+        request = dynamic_shared_memory_request(kernel_name, scope_entry)
+        launch = (
+            (f"{request}\n" if request else "")
+            + f"{kernel_name}<<<dim3({gdims}), dim3({bdims}), {sym2cpp(dynsmem_size)}>>>({arguments});\n"
+            + f"DACE_GPU_CHECK({self.backend}GetLastError());\n"
+            + generate_sync_debug_call()
+        )
+        if maybe_empty:
+            launch = f"if ({' && '.join(maybe_empty)}) {{\n{launch}}}\n"
+        self.invoke_at_call_site(sdfg, cfg, state_id, scope_entry, callsite_stream, launch)
 
     def copy_memory(
         self,
@@ -1008,7 +1078,11 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # call that needs more, freed at exit. The entry drains the device before it returns, so the next call never
         # races the last one's kernels.
         holder = self.persistent_device_holder(node.data, nodedesc)
-        if holder is not None:
+        slot = cpf_lowering.workspace_slot(dataname, node.data, nodedesc, nodedesc.dtype.ctype)
+        if slot is not None:
+            # A slot of the caller's workspace (``CarveTransientsFromWorkspace``): no allocation, nothing to free.
+            allocation_stream.write(slot, cfg, state_id, node)
+        elif holder is not None:
             holder = self.register_persistent_device_holder(holder, nodedesc, function_stream, cfg, state_id, node)
             count = sym2cpp(nodedesc.total_size)
             allocation_stream.write(
@@ -1053,7 +1127,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if holder is not None:
             return holder
         persistent = nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.Global)
-        if cpf_lowering.standalone() and nodedesc.transient and persistent:
+        # A no-boilerplate unit keeps no buffer across calls: what the workspace cannot hold is allocated per call.
+        if cpf_lowering.standalone() and not cpf_lowering.no_boilerplate() and nodedesc.transient and persistent:
             return f"__cpf_persistent_{name}"
         return None
 
@@ -1187,7 +1262,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             assert isinstance(nodedesc, (dt.Array, dt.Scalar))
-            if self.persistent_device_holder(node.data, nodedesc) is not None:
+            if cpf_lowering.carved_from_workspace(nodedesc):
+                pass  # a slot of the caller's workspace (prepare_GPU_Global_array)
+            elif self.persistent_device_holder(node.data, nodedesc) is not None:
                 pass  # a file-scope ``static`` pointer, freed at exit (prepare_GPU_Global_array)
             elif nodedesc.pool:
                 # Pooled arrays whose release point was picked up by compute_pool_release are
@@ -1265,6 +1342,18 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
     def process_out_memlets(self, *args, **kwargs):
         self._cpu_codegen.process_out_memlets(*args, codegen=self, **kwargs)
+
+
+def place_device_transients(sdfg: SDFG) -> None:
+    """Lay out the device workspace of a unit without boilerplate (:func:`~dace.cpf_lowering.no_boilerplate`).
+
+    Here rather than with the rendering's host layout: the GPU pipeline that just ran still adds device buffers
+    (``MoveArrayOutOfKernel``) and promotes them, so only now are the ones the entry allocates known.
+    """
+    request = cpf_lowering.workspace_request()
+    if request is None or sdfg.arrays[request.workspace].storage is not dtypes.StorageType.GPU_Global:
+        return
+    request.layout = CarveTransientsFromWorkspace(request.workspace, request.size).apply_pass(sdfg, {})
 
 
 class KernelSpec:
@@ -1359,11 +1448,11 @@ class KernelSpec:
         # expansion), launch on the default stream (CUDA stream 0 / ``nullptr``).
         stream_arg = str(gpustream_input[0].dst_conn) if gpustream_input else "nullptr"
 
-        self.kernel_wrapper_args_as_input: list[str] = (
-            ["__state"]
-            + [ptr(name, data, sdfg, cudaCodeGen._frame) for name, data in self.arglist.items()]
-            + [stream_arg]
-        )
+        #: The host-side names of the kernel's arguments, as the launcher and a launch at the call site pass them.
+        self.kernel_args_as_input: list[str] = [
+            ptr(name, data, sdfg, cudaCodeGen._frame) for name, data in self.arglist.items()
+        ]
+        self.kernel_wrapper_args_as_input: list[str] = ["__state", *self.kernel_args_as_input, stream_arg]
 
         self.kernel_wrapper_args_typed: list[str] = (
             [f"{mangle_dace_state_struct_name(cudaCodeGen._global_sdfg)} *__state"]

@@ -45,6 +45,7 @@ from dace.transformation.passes.canonicalize.hoist_loop_range_calls import Hoist
 from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated
 from dace.transformation.passes.canonicalize.pipeline import run_structural_cleanup
 from dace.transformation.passes.canonicalize.shrink_map_local_transients import ShrinkMapLocalTransients
+from dace.transformation.passes.canonicalize.skew_loop_into_diagonal_map import SkewLoopIntoDiagonalMap
 from dace.transformation.passes.canonicalize.split_map_local_transients import SplitMapLocalTransients
 from dace.transformation.passes.canonicalize.transpose_into_blas_flag import transposes_as_blas_flags
 from dace.transformation.passes.cpu_specialization.chunk_stream_compaction import GPU_BLOCK, ChunkStreamCompaction
@@ -785,6 +786,8 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType) -> None:
         # A sequential loop over maps of one lane axis becomes one parallel map over it, the loop inside
         InterchangeLoopsIntoLaneMaps().apply_pass(sdfg, {})
     else:
+        # A row loop over a kernel whose dependences all lie on one diagonal: one kernel over the diagonals instead
+        SkewLoopIntoDiagonalMap().apply_pass(sdfg, {})
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
     # The target's specialization, before the library selection reads its schedules. Both are idempotent.

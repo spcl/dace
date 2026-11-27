@@ -152,7 +152,7 @@ class ExpandExtremeIndexCUDABlock(ExpandTransformation):
 
         def code(arrays: dict[str, data.Data]) -> str:
             x, idx = arrays["_x"], arrays["_idx"]
-            vt, pair = x.dtype.ctype, f"dace::arg_pair<{x.dtype.ctype}, long long>"
+            vt, pair = x.dtype.ctype, f"dace::arg_pair<{x.dtype.ctype}, int64_t>"
             count = sym2cpp(prod(x.shape))
             selected = f"{linear_element('__b_mask', arrays['_mask'], '__bri')} != 0" if "_mask" in arrays else "true"
             fold = (
@@ -167,14 +167,14 @@ class ExpandExtremeIndexCUDABlock(ExpandTransformation):
             )
             return (
                 f"{pair} __xi_best = {{{vt}(), -1LL}};\n"
-                f"for (long long __bri = threadIdx.x; __bri < (long long)({count}); __bri += {BLOCK_COLLECTIVE_THREADS}) {{\n"
+                f"for (int64_t __bri = threadIdx.x; __bri < ({count}); __bri += {BLOCK_COLLECTIVE_THREADS}) {{\n"
                 f"    if (!({selected})) continue;\n"
                 f"    const {vt} __xi_x = {linear_element('__b_x', x, '__bri')};\n"
                 f"    if (__xi_best.__ar_i >= 0) __xi_best = dace::arg_{kind}_step(__xi_best, __xi_x, __bri);\n"
                 f"    else if (__xi_x == __xi_x) __xi_best = {{__xi_x, __bri}};\n"
                 f"}}\n"
                 + block_allreduce_code(idstr, pair, BLOCK_COLLECTIVE_THREADS, "__xi_best", fold, "__xi_best")
-                + f"\nconst long long __xi_pos = __xi_best.__ar_i < 0 ? (long long)({no_match}) : __xi_best.__ar_i;\n"
+                + f"\nconst int64_t __xi_pos = __xi_best.__ar_i < 0 ? ({no_match}) : __xi_best.__ar_i;\n"
                 + decode
             )
 

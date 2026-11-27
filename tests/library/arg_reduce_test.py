@@ -415,7 +415,7 @@ def test_the_cuda_expansion_gathers_a_strided_or_transformed_operand(subset, tra
         f"the {subset!r}/{transform or 'identity'} read did not reach CUB through a gather iterator"
     )
     assert "long long __ar_stride" in code, "the wrapper does not take the stride as an argument"
-    assert f"(long long)({stride})" in code, (
+    assert f", {stride}, &__ar_val, " in code, (
         f"the host tasklet does not hand the wrapper the stride {stride!r}, which is the only place "
         f"the symbol it is written in is in scope"
     )

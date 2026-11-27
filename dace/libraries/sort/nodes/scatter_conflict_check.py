@@ -273,13 +273,13 @@ class ExpandCUDA(ExpandTransformation):
         cap_arg = "" if owner is None else ", __sc_capacity"
         prototype = (
             f"DACE_EXPORTED gpuError_t __dace_scatter_conflict_{idstr}(const {ct} *__sc_idx, "
-            f"long long __sc_n{cap_param}, long long *__sc_out, gpuStream_t __sc_stream);"
+            f"long long __sc_n{cap_param}, int64_t *__sc_out, gpuStream_t __sc_stream);"
         )
         sdfg.append_global_code(prototype + "\n")
         sdfg.append_global_code(
             f"{prototype}\n"
             f"gpuError_t __dace_scatter_conflict_{idstr}(const {ct} *__sc_idx, long long __sc_n{cap_param}, "
-            f"long long *__sc_out, gpuStream_t __sc_stream) {{\n"
+            f"int64_t *__sc_out, gpuStream_t __sc_stream) {{\n"
             f"    return ::dace::detect_collision_device(__sc_idx, __sc_n{cap_arg}, __sc_out, __sc_stream);\n"
             f"}}\n",
             "cuda",
@@ -288,7 +288,7 @@ class ExpandCUDA(ExpandTransformation):
         cap_call = "" if owner is None else f", ({owner[1]})"
         code = (
             "{\n"
-            "long long __sc_result;\n"
+            "int64_t __sc_result;\n"
             f"DACE_GPU_CHECK(__dace_scatter_conflict_{idstr}({INPUT_CONNECTOR_NAME}, ({n}){cap_call}, "
             f"&__sc_result, __dace_current_stream));\n"
             f"{OUTPUT_CONNECTOR_NAME} = __sc_result;\n"

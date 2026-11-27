@@ -57,6 +57,10 @@ def expose_as_input(sdfg: SDFG, name: str) -> None:
     others = [n for n in state.data_nodes() if n.data == name and state.in_degree(n) > 0]
     if len(written) != 1 or len(others) != 1:
         return
+    # A transient is the program's own intermediate (bicgstab's row sums): reading it in would carry a value from an
+    # earlier iteration into the row and keep it an N-sized buffer filled by a loop of its own
+    if state.sdfg.arrays[state.memlet_path(written[0])[-1].dst.data].transient:
+        return
     entries = []
     entry = state.entry_node(node)
     while entry is not None:

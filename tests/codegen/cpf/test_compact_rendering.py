@@ -218,19 +218,19 @@ def run_with_canary(result: Rendering, name: str, language: str, n: int) -> tupl
 
 
 @pytest.mark.parametrize("language", ["c++", "c"])
-def test_the_workspace_is_carved_at_a_running_offset_taken_once_per_call(language):
-    """``tmp`` and ``tmp2`` are allocated in the loop body, yet each takes its slot once, at the top of the entry:
-    a slot taken per iteration would walk the offset past the declared size."""
+def test_the_workspace_is_carved_at_fixed_offsets_taken_once_per_call(language):
+    """``tmp`` and ``tmp2`` are allocated in the loop body, yet each points at its slot once, at the top of the entry:
+    a slot taken per iteration would reach past the declared size."""
     name = f"cpf_compact_carve_{'cpp' if language == 'c++' else 'c'}"
     result = render(loop_scratch_sdfg(name, zeroed=False), language=language, signature=WORKSPACE)
     code = result.code
-    assert code.count("size_t workspace_off = 0;") == 1
+    cast = r"\(double \*\)\(" if language == "c" else r"reinterpret_cast<double \*>\("
     for scratch in ("tmp", "tmp2"):
-        slot = re.search(
-            rf"\b{scratch} = \(double \*\)\(workspace \+ workspace_off\); workspace_off \+= .*;$", code, re.MULTILINE
+        # The carve declares the slot pointer where it takes it: ``double* restrict tmp = (double *)(workspace + 0);``
+        slots = re.findall(
+            rf"^\s*(?:double\* (?:__restrict__|restrict) )?{scratch} = {cast}workspace \+ .*\);$", code, re.MULTILINE
         )
-        assert slot is not None and code.index(slot.group(0)) < code.index("for (int64_t t ="), code
-    assert code.count("workspace_off +=") == 2
+        assert len(slots) == 1 and code.index(slots[0].strip()) < code.index("for (int64_t t ="), code
     a, out = run_with_canary(result, name, language, n=33)
     assert_matches({"out": sum(a[::-1] + t for t in range(3))}, {"out": out}, name)
 
@@ -239,7 +239,8 @@ def test_an_array_zeroed_on_each_allocation_keeps_its_own_allocation():
     """Allocated once at the top it would be zeroed once, and the loop would accumulate into stale values."""
     name = "cpf_compact_carve_zeroed"
     result = render(loop_scratch_sdfg(name, zeroed=True), language="c", signature=WORKSPACE)
-    assert re.search(r"\btmp2 = \(double \*\)\(workspace \+ workspace_off\)", result.code), result.code
+    # The carve takes the slot at its fixed offset: ``double* restrict tmp2 = (double *)(workspace + 0);``
+    assert re.search(r"\btmp2 = \(double \*\)\(workspace \+ \d+\)", result.code), result.code
     assert not re.search(r"\btmp = \(double \*\)\(workspace", result.code), result.code
     a, out = run_with_canary(result, name, "c", n=33)
     assert_matches({"out": 3 * a}, {"out": out}, name)
@@ -331,8 +332,8 @@ if __name__ == "__main__":
     test_an_index_helper_takes_only_the_indices_its_body_reads("c++")
     test_an_index_helper_takes_only_the_indices_its_body_reads("c")
     test_an_extent_named_like_an_index_keeps_the_helper_indices_apart()
-    test_the_workspace_is_carved_at_a_running_offset_taken_once_per_call("c++")
-    test_the_workspace_is_carved_at_a_running_offset_taken_once_per_call("c")
+    test_the_workspace_is_carved_at_fixed_offsets_taken_once_per_call("c++")
+    test_the_workspace_is_carved_at_fixed_offsets_taken_once_per_call("c")
     test_an_array_zeroed_on_each_allocation_keeps_its_own_allocation()
     test_a_block_that_only_groups_loses_its_braces_and_blank_lines()
     for text in KEPT_BLOCKS.values():

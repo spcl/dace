@@ -37,6 +37,7 @@ Names absent from all three tables are NOT silently passed through: see :func:`l
 
 import contextlib
 import ctypes.util
+import dataclasses
 import enum
 import functools
 import os
@@ -411,6 +412,33 @@ def tasklet_labels_scope(on: bool):
         labels_in_force = previous
 
 
+#: Whether a device rendering leaves out the DaCe runtime scaffolding (see :func:`no_boilerplate_scope`).
+no_boilerplate_in_force = False
+
+
+def no_boilerplate() -> bool:
+    """Whether the device rendering in force is one unit without DaCe scaffolding (:func:`no_boilerplate_scope`)."""
+    return no_boilerplate_in_force and device()
+
+
+@contextlib.contextmanager
+def no_boilerplate_scope(on: bool):
+    """Render a device form without the DaCe runtime scaffolding for the duration of the block.
+
+    The unit then has no GPU context, no stream variables (every launch, copy and wait is on the default stream,
+    ``nullptr``), no state struct, no ``__cpf_runkernel_*`` launchers (each kernel launches where the entry calls
+    it) and no persistent buffers: a device array the entry allocates lives in the caller's workspace. The host
+    entry and the kernels are one translation unit.
+    """
+    global no_boilerplate_in_force
+    previous = no_boilerplate_in_force
+    no_boilerplate_in_force = on
+    try:
+        yield on
+    finally:
+        no_boilerplate_in_force = previous
+
+
 def hint_detail() -> HintDetail:
     """The hint detail currently in force (see :func:`hint_detail_scope`)."""
     return _hint_detail
@@ -495,55 +523,81 @@ def provenance_scope(provenance: dict[str, tuple[str, str]]):
         _provenance = previous
 
 
-#: The heap transients a standalone rendering places in the caller's workspace instead of allocating, as data
-#: name -> descriptor, and the workspace's name; empty outside :func:`workspace_carve_scope`.
-carved_workspace_arrays: dict[str, Any] = {}
-carved_workspace_name: str = ""
+@dataclasses.dataclass
+class WorkspaceRequest:
+    """The caller's workspace pair of the rendering in force (:func:`workspace_scope`), and the layout chosen for it.
 
-#: Each array placed in the workspace starts on this boundary, the alignment its own allocation had.
-WORKSPACE_ALIGNMENT = 64
+    The layout (a :class:`~dace.transformation.passes.workspace_carving.WorkspaceLayout`) is chosen once the arrays it
+    places are known: by the rendering for a host workspace, by the GPU generator after its own pipeline for a device
+    one, since that pipeline still adds and promotes device buffers. ``None`` until then, and when nothing is placed.
+    """
+
+    workspace: str
+    size: str
+    layout: Any = None
+
+
+#: The workspace of the rendering in force; ``None`` outside :func:`workspace_scope` or without a workspace.
+workspace_request_in_force: WorkspaceRequest | None = None
 
 
 @contextlib.contextmanager
-def workspace_carve_scope(workspace: str, carve: dict[str, Any]):
-    """Make ``carve`` the ambient workspace layout for the duration of the block (:func:`workspace_slot`)."""
-    global carved_workspace_arrays, carved_workspace_name
-    previous = carved_workspace_arrays, carved_workspace_name
-    carved_workspace_arrays, carved_workspace_name = carve, workspace
+def workspace_scope(request: WorkspaceRequest | None):
+    """Make ``request`` the ambient workspace for the duration of the block (:func:`workspace_slot`)."""
+    global workspace_request_in_force
+    previous = workspace_request_in_force
+    workspace_request_in_force = request
     try:
-        yield carve
+        yield request
     finally:
-        carved_workspace_arrays, carved_workspace_name = previous
+        workspace_request_in_force = previous
 
 
-def workspace_offset_name(workspace: str) -> str:
-    """The running byte offset into ``workspace`` the entry carves its arrays at."""
-    return f"{workspace}_off"
+def workspace_request() -> WorkspaceRequest | None:
+    """The workspace of the standalone rendering in force, else ``None``."""
+    return workspace_request_in_force if standalone() else None
 
 
-def workspace_offset_declaration() -> str:
-    """``size_t <workspace>_off = 0;`` at the top of an entry that carves arrays out of its workspace, else ``''``."""
-    if not standalone() or not carved_workspace_arrays:
-        return ""
-    return f"size_t {workspace_offset_name(carved_workspace_name)} = 0;\n"
+def workspace_layout() -> Any:
+    """The layout chosen for the workspace in force, else ``None``."""
+    request = workspace_request()
+    return request.layout if request is not None else None
 
 
-def workspace_slot(alloc_name: str, name: str | None, desc: Any, ctype: str, count: str) -> str | None:
-    """The statement pointing ``alloc_name`` at the next free slot of the workspace and moving the running offset
-    past it, rounded up to :data:`WORKSPACE_ALIGNMENT`, for a heap transient the rendering carves out of the
-    workspace; ``None`` for any other array.
-
-    Matched on the descriptor itself, so a nested SDFG's array of the same name keeps its own allocation. The
-    rendering allocates every carved array once, at the top of the entry (``cpf.render_unit``), so each slot is
-    taken exactly once per call.
-    """
-    if not standalone() or name is None or carved_workspace_arrays.get(name) is not desc:
+def workspace_slot(alloc_name: str, name: str | None, desc: Any, ctype: str) -> str | None:
+    """The statement pointing ``alloc_name`` at its slot of the workspace, for an array the layout placed under
+    ``name``; ``None`` for any other array. Matched on the descriptor too, so a nested SDFG's array of the same name
+    keeps its own allocation."""
+    layout = workspace_layout()
+    offset = layout.offset(name, desc) if layout is not None else None
+    if offset is None:
         return None
-    offset = workspace_offset_name(carved_workspace_name)
-    align = WORKSPACE_ALIGNMENT
+    from dace.codegen.common import sym2cpp  # the code generators import this module
+
+    address = f"{layout.workspace} + {sym2cpp(offset)}"
+    if standalone_c():
+        return f"{alloc_name} = ({ctype} *)({address});\n"
+    return f"{alloc_name} = reinterpret_cast<{ctype} *>({address});\n"
+
+
+def carved_from_workspace(desc: Any) -> bool:
+    """Whether ``desc`` lives in the workspace, so freeing it frees nothing."""
+    layout = workspace_layout()
+    return layout is not None and layout.holds(desc)
+
+
+def workspace_check() -> str:
+    """The entry's refusal of a workspace smaller than its layout needs (``Rendering.workspace_bytes``), before any
+    array points into it; ``''`` when nothing is placed."""
+    layout = workspace_layout()
+    if layout is None or not layout.offsets:
+        return ""
+    from dace.codegen.common import sym2cpp  # the code generators import this module
+
+    abort = "abort()" if standalone_c() else "std::abort()"
     return (
-        f"{alloc_name} = ({ctype} *)({carved_workspace_name} + {offset}); "
-        f"{offset} += (sizeof({ctype}) * (size_t)({count}) + {align - 1}) / {align} * {align};\n"
+        f"// {layout.workspace} holds the arrays that point into it below.\n"
+        f"if ({layout.size} < {sym2cpp(layout.size_bytes)}) {{\n{abort};\n}}\n"
     )
 
 
@@ -574,11 +628,6 @@ def persistent_static(name: str | None, desc: Any) -> str | None:
 def persistent_static_desc(desc: Any) -> bool:
     """Whether ``desc`` lives in a persistent ``static`` pointer, so freeing it at the end of a call frees nothing."""
     return standalone() and any(held is desc for held in _persistent_static.values())
-
-
-def carved_from_workspace(desc: Any) -> bool:
-    """Whether ``desc`` lives in the workspace, so freeing it frees nothing."""
-    return standalone() and any(carved is desc for carved in carved_workspace_arrays.values())
 
 
 #: Runtime function -> the ``std`` function with identical semantics and arity.
@@ -766,60 +815,60 @@ INLINE_DEFINITIONS: dict[str, str] = {
     "find_first_chunk": "#ifdef _OPENMP\n"
     "#include <omp.h>\n"
     "#endif\n"
-    "static inline long long find_first_chunk(long long span, bool parallel) {\n"
+    "static inline int64_t find_first_chunk(int64_t span, bool parallel) {\n"
     "    // Grows as sqrt(span): too big a chunk scans past the answer on one thread, too small a\n"
     "    // one pays dispatch on chunks the answer makes dead. The floor binds below ~64k elements.\n"
     "    constexpr double chunk_scale = 8.0;\n"
-    "    constexpr long long chunks_per_thread = 4;\n"
-    "    long long chunk = (long long)(chunk_scale * std::sqrt((double)span));\n"
-    "    long long threads = 1;\n"
+    "    constexpr int64_t chunks_per_thread = 4;\n"
+    "    int64_t chunk = static_cast<int64_t>(chunk_scale * std::sqrt(static_cast<double>(span)));\n"
+    "    int64_t threads = 1;\n"
     "#ifdef _OPENMP\n"
-    "    if (parallel) threads = (long long)omp_get_max_threads();\n"
+    "    if (parallel) threads = omp_get_max_threads();\n"
     "#endif\n"
-    "    long long ceiling = span / (chunks_per_thread * threads);\n"
+    "    int64_t ceiling = span / (chunks_per_thread * threads);\n"
     "    if (ceiling < 1) ceiling = 1;\n"
     "    if (chunk > ceiling) chunk = ceiling;\n"
     "    if (chunk < 1) chunk = 1;\n"
     "    return chunk;\n"
     "}",
     "find_first_index": "template <typename Pred>\n"
-    "static inline long long find_first_index(long long begin, long long end, Pred pred, bool parallel) {\n"
+    "static inline int64_t find_first_index(int64_t begin, int64_t end, Pred pred, bool parallel) {\n"
     "    // The answer is a min-reduction and is exact; the hint is shared and races by design --\n"
     "    // every value it takes is a real firing index, so a lost update costs pruning, never\n"
     "    // correctness. Folding the two into one word is exactly that lost-update bug.\n"
-    "    constexpr long long simd_block = 64;\n"
+    "    constexpr int64_t simd_block = 64;\n"
     "    if (begin >= end) return end;\n"
-    "    const long long span = end - begin;\n"
-    "    const long long chunk = find_first_chunk(span, parallel);\n"
-    "    const long long nchunks = (span + chunk - 1) / chunk;\n"
-    "    long long best = end;\n"
-    "    long long hint = end;\n"
+    "    const int64_t span = end - begin;\n"
+    "    const int64_t chunk = find_first_chunk(span, parallel);\n"
+    "    const int64_t nchunks = (span + chunk - 1) / chunk;\n"
+    "    int64_t best = end;\n"
+    "    int64_t hint = end;\n"
     "    #pragma omp parallel for schedule(dynamic, 1) if (parallel : parallel) reduction(min : best)\n"
-    "    for (long long c = 0; c < nchunks; ++c) {\n"
-    "        long long seen;\n"
+    "    for (int64_t c = 0; c < nchunks; ++c) {\n"
+    "        int64_t seen;\n"
     "        #pragma omp atomic read\n"
     "        seen = hint;\n"
-    "        const long long lo = begin + c * chunk;\n"
+    "        const int64_t lo = begin + c * chunk;\n"
     "        if (lo >= seen) continue;\n"
-    "        long long hi = lo + chunk;\n"
+    "        int64_t hi = lo + chunk;\n"
     "        if (hi > end) hi = end;\n"
     "        if (hi > seen) hi = seen;\n"
-    "        long long found = end;\n"
-    "        for (long long b = lo; b < hi; b += simd_block) {\n"
-    "            long long be = b + simd_block;\n"
+    "        int64_t found = end;\n"
+    "        for (int64_t b = lo; b < hi; b += simd_block) {\n"
+    "            int64_t be = b + simd_block;\n"
     "            if (be > hi) be = hi;\n"
-    "            long long block = end;\n"
+    "            int64_t block = end;\n"
     "            // A vectorized loop cannot break, so the block is the early-exit granularity.\n"
     "            #pragma omp simd reduction(min : block)\n"
-    "            for (long long i = b; i < be; ++i) {\n"
-    "                const long long v = pred(i) ? i : end;\n"
+    "            for (int64_t i = b; i < be; ++i) {\n"
+    "                const int64_t v = pred(i) ? i : end;\n"
     "                block = v < block ? v : block;\n"
     "            }\n"
     "            if (block < end) { found = block; break; }\n"
     "        }\n"
     "        if (found < end) {\n"
     "            if (found < best) best = found;\n"
-    "            long long cur;\n"
+    "            int64_t cur;\n"
     "            #pragma omp atomic read\n"
     "            cur = hint;\n"
     "            if (found < cur) {\n"
@@ -840,23 +889,23 @@ INLINE_DEFINITIONS: dict[str, str] = {
     "#include <omp.h>\n"
     "#endif\n"
     "template <typename T, typename TagT>\n"
-    "static inline long long detect_collision(const T *idx, long long n, TagT *owner, long long capacity,\n"
-    "                                         bool parallel) {\n"
+    "static inline int64_t detect_collision(const T *idx, int64_t n, TagT *owner, int64_t capacity,\n"
+    "                                       bool parallel) {\n"
     "#ifdef _OPENMP\n"
     "    if (parallel && omp_get_max_threads() == 1) return 1;  // one thread: in order is correct, skip the check\n"
     "#else\n"
     "    if (parallel) return 1;\n"
     "#endif\n"
-    "    long long c = 0;\n"
+    "    int64_t c = 0;\n"
     "    #pragma omp parallel for if (parallel : parallel)\n"
-    "    for (long long i = 0; i < n; ++i) {\n"
-    "        const long long v = (long long)idx[i];\n"
-    "        if (v >= 0 && v < capacity) owner[v] = (TagT)i;\n"
+    "    for (int64_t i = 0; i < n; ++i) {\n"
+    "        const int64_t v = idx[i];\n"
+    "        if (v >= 0 && v < capacity) owner[v] = static_cast<TagT>(i);\n"
     "    }\n"
     "    #pragma omp parallel for simd if (parallel : parallel) reduction(| : c)\n"
-    "    for (long long i = 0; i < n; ++i) {\n"
-    "        const long long v = (long long)idx[i];\n"
-    "        if (v >= 0 && v < capacity) c |= ((long long)owner[v] != i) ? 1LL : 0LL;\n"
+    "    for (int64_t i = 0; i < n; ++i) {\n"
+    "        const int64_t v = idx[i];\n"
+    "        if (v >= 0 && v < capacity) c |= (static_cast<int64_t>(owner[v]) != i) ? 1LL : 0LL;\n"
     "    }\n"
     "    return c;\n"
     "}\n"
@@ -864,21 +913,21 @@ INLINE_DEFINITIONS: dict[str, str] = {
     "// collision, which is the answer that is never unsafe: the guard then takes its sequential\n"
     "// path instead of parallelizing a scatter nothing proved conflict-free.\n"
     "template <typename T>\n"
-    "static inline long long detect_collision(const T *idx, long long n, bool parallel) {\n"
+    "static inline int64_t detect_collision(const T *idx, int64_t n, bool parallel) {\n"
     "#ifdef _OPENMP\n"
     "    if (parallel && omp_get_max_threads() == 1) return 1;  // one thread: in order is correct, skip the check\n"
     "#else\n"
     "    if (parallel) return 1;\n"
     "#endif\n"
-    "    long long mx = 0;\n"
+    "    int64_t mx = 0;\n"
     "    #pragma omp parallel for simd if (parallel : parallel) reduction(max : mx)\n"
-    "    for (long long i = 0; i < n; ++i) {\n"
-    "        const long long v = (long long)idx[i];\n"
+    "    for (int64_t i = 0; i < n; ++i) {\n"
+    "        const int64_t v = idx[i];\n"
     "        mx = v > mx ? v : mx;\n"
     "    }\n"
-    "    long long *owner = (long long *)malloc((size_t)(mx + 1) * sizeof(long long));\n"
+    "    int64_t *owner = static_cast<int64_t *>(malloc(sizeof(int64_t) * (mx + 1)));\n"
     "    if (owner == nullptr) return 1;\n"
-    "    const long long c = detect_collision(idx, n, owner, mx + 1, parallel);\n"
+    "    const int64_t c = detect_collision(idx, n, owner, mx + 1, parallel);\n"
     "    free(owner);\n"
     "    return c;\n"
     "}",
@@ -1595,7 +1644,7 @@ DEVICE_CORE: str = """\
 //: A failed GPU call ends the program, naming the call site.
 [[maybe_unused]] static inline void cpf_gpu_check(gpuError_t status, const char *file = __builtin_FILE(), int line = __builtin_LINE()) {
     if (status != gpuSuccess) {
-        fprintf(stderr, "%s:%d: GPU error %d (%s)\\n", file, line, (int)status, gpuGetErrorString(status));
+        fprintf(stderr, "%s:%d: GPU error (%s)\\n", file, line, gpuGetErrorString(status));
         abort();
     }
 }
@@ -1685,7 +1734,8 @@ static inline void cpf_kernel_launch_check(gpuError_t err, const char *name, lon
 //: that cannot grant it ends the program, naming the kernel and the request.
 template <typename K>
 static inline void cpf_request_dynamic_shared_memory(K kernel, const char *name, long long bytes) {
-    const gpuError_t err = gpuFuncSetAttribute((const void *)kernel, gpuFuncAttributeMaxDynamicSharedMemorySize, (int)bytes);
+    const gpuError_t err = gpuFuncSetAttribute(reinterpret_cast<const void *>(kernel), gpuFuncAttributeMaxDynamicSharedMemorySize,
+                                               static_cast<int>(bytes));
     if (err != gpuSuccess) {
         fprintf(stderr, "%s requests %lld bytes of dynamic shared memory: %s\\n", name, bytes, gpuGetErrorString(err));
         abort();
@@ -1836,6 +1886,7 @@ DEVICE_BLOCK_DEPENDENCIES: dict[str, tuple[str, ...]] = {
 #: unit -- ``tsvc_2_s323`` failed on ``gpuMemcpyDeviceToHost`` that way.
 GPU_ALIASES: dict[str, str] = {
     "gpuDeviceSynchronize": "hipDeviceSynchronize",
+    "gpuErrorInvalidValue": "hipErrorInvalidValue",
     "gpuEventSynchronize": "hipEventSynchronize",
     "gpuFree": "hipFree",
     "gpuFuncAttributeMaxDynamicSharedMemorySize": "hipFuncAttributeMaxDynamicSharedMemorySize",
@@ -1993,6 +2044,10 @@ def cuda_std_spell_out_lines(text: str) -> str:
     )
 
 
+#: The name one line of :data:`DEVICE_TYPES` defines.
+DEVICE_ALIAS: "re.Pattern" = re.compile(r"(?:using|inline constexpr gpuError_t) (\w+)")
+
+
 def device_preamble(code: str, dialect: Dialect) -> str:
     """``dialect``'s :data:`DEVICE_TYPES` and :data:`DEVICE_CORE`, plus the blocks ``code`` reaches for.
 
@@ -2010,15 +2065,22 @@ def device_preamble(code: str, dialect: Dialect) -> str:
             continue
         needed.add(name)
         pending.extend(dep for dep in DEVICE_BLOCK_DEPENDENCIES.get(name, ()) if dep not in needed)
+    types, core = DEVICE_TYPES[dialect], DEVICE_CORE
+    # The flag itself, not :func:`no_boilerplate`: the preamble is written after the dialect's scope has closed.
+    if no_boilerplate_in_force:
+        # No context; of the backend aliases, only those the unit or the check names.
+        core = core.partition("\n//: The one stream")[0] + "\n"
+        used = code + core + "".join(blocks[name] for name in needed)
+        types = "".join(
+            line + "\n" for line in types.splitlines() if re.search(rf"\b{DEVICE_ALIAS.match(line).group(1)}\b", used)
+        )
     return device_spell_out(
-        "\n".join(
-            [DEVICE_TYPES[dialect] + DEVICE_CORE] + [blocks[name] for name in DEVICE_BLOCK_ORDER if name in needed]
-        ),
+        "\n".join([types + core] + [blocks[name] for name in DEVICE_BLOCK_ORDER if name in needed]),
         dialect,
     )
 
 
-def device_entry_prologue(state_struct: str, init_code: str = "", exit_code: str = "") -> str:
+def device_entry_prologue(state_struct: str, init_code: str = "", exit_code: str = "", has_state: bool = True) -> str:
     """The device setup CPF's single entry function opens with.
 
     An ordinary build does this in ``__dace_init_<name>`` and undoes it in ``__dace_exit_<name>``,
@@ -2038,6 +2100,8 @@ def device_entry_prologue(state_struct: str, init_code: str = "", exit_code: str
     :param state_struct: the mangled state struct name the generated body dereferences.
     :param init_code: the state's setup, the code ``__dace_init`` would run.
     :param exit_code: the state's teardown, the code ``__dace_exit`` would run.
+    :param has_state: whether the state struct has any field; without boilerplate (:func:`no_boilerplate`) an empty
+                      one is not emitted, so there is no state to declare.
     :returns: the prologue lines, indented one level.
     """
     teardown = ""
@@ -2050,6 +2114,12 @@ def device_entry_prologue(state_struct: str, init_code: str = "", exit_code: str
         }}
     }} __cpf_exit_guard{{__state}};
 """
+    if no_boilerplate():
+        # No context and no drain guard: every stream is ``nullptr`` and the footer synchronizes the device.
+        state = (
+            f"    {state_struct} __cpf_state{{}};\n    {state_struct} *__state = &__cpf_state;\n" if has_state else ""
+        )
+        return f"{state}{init_code}{teardown}"
     return f"""\
     // The device handshake, which a single entry point has nowhere else to put.
     cpf_gpu_context __cpf_context{{}};
@@ -4111,7 +4181,7 @@ HIP_DEVICE_INLINE_DEFINITIONS: dict[str, str] = {
     "//: The runtime pre-allocates and releases it from the entry points a repeated invocation\n"
     "//: shares; one self-contained call has neither, so the buffer owns itself and frees at\n"
     "//: static destruction. It is also not keyed by stream, as the runtime pool is: a CPF unit\n"
-    "//: issues every launch on the one stream (see cpf_gpu_context), so its calls are ordered.\n"
+    "//: issues every launch on one stream, so its calls are ordered.\n"
     "struct ScanTag {};\n"
     "struct DetectFlagTag {};\n"
     "struct DetectOwnerTag {};\n"
@@ -4148,44 +4218,43 @@ HIP_DEVICE_INLINE_DEFINITIONS: dict[str, str] = {
     "//: ``pred`` is a FUNCTOR and not a lambda so no caller needs --extended-lambda: the\n"
     "//: expansion appends the struct to the device code beside the wrapper that instantiates it.\n"
     "template <typename Pred>\n"
-    "__global__ void find_first_kernel(long long begin, long long end, Pred pred,\n"
-    "                                  unsigned long long *result) {\n"
-    "    const long long stride = (long long)gridDim.x * (long long)blockDim.x;\n"
-    "    long long i = begin + (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x;\n"
+    "__global__ void find_first_kernel(int64_t begin, int64_t end, Pred pred, unsigned long long *result) {\n"
+    "    const int64_t stride = gridDim.x * blockDim.x;\n"
+    "    int64_t i = begin + blockIdx.x * blockDim.x + threadIdx.x;\n"
     "    for (; i < end; i += stride) {\n"
     "        // Every index below this thread's next one is another thread's, so the first hit it\n"
     "        // finds walking upwards is the smallest it can contribute: it is done either way.\n"
-    "        if (i >= (long long)*(volatile unsigned long long *)result) return;\n"
-    "        if (pred(i)) { atomicMin(result, (unsigned long long)i); return; }\n"
+    "        if (i >= static_cast<int64_t>(*static_cast<volatile unsigned long long *>(result))) return;\n"
+    "        if (pred(i)) { atomicMin(result, static_cast<unsigned long long>(i)); return; }\n"
     "    }\n"
     "}\n"
     "template <typename Pred>\n"
-    "static inline gpuError_t find_first_index_device(long long begin, long long end, Pred pred, long long *out,\n"
-    "                                                gpuStream_t stream) {\n"
+    "static inline gpuError_t find_first_index_device(int64_t begin, int64_t end, Pred pred, int64_t *out,\n"
+    "                                              gpuStream_t stream) {\n"
     "    constexpr int block_threads = 256;\n"
-    "    constexpr long long max_blocks = 1024;\n"
+    "    constexpr int64_t max_blocks = 1024;\n"
     "    *out = end;\n"
     "    if (begin >= end) return gpuSuccess;\n"
     "    gpuError_t status = gpuSuccess;\n"
-    "    unsigned long long *result = (unsigned long long *)get_scratch<DetectFlagTag>(\n"
-    "        sizeof(unsigned long long), stream, &status);\n"
+    "    unsigned long long *result =\n"
+    "        static_cast<unsigned long long *>(get_scratch<DetectFlagTag>(sizeof(unsigned long long), stream, &status));\n"
     "    if (result == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;\n"
-    "    const unsigned long long sentinel = (unsigned long long)end;\n"
+    "    const unsigned long long sentinel = static_cast<unsigned long long>(end);\n"
     "    status = gpuMemcpyAsync(result, &sentinel, sizeof(sentinel), gpuMemcpyHostToDevice, stream);\n"
     "    if (status != gpuSuccess) return status;\n"
     "    // ``sentinel`` is a local, so the copy has to be done before this frame goes away.\n"
     "    status = gpuStreamSynchronize(stream);\n"
     "    if (status != gpuSuccess) return status;\n"
-    "    long long blocks = (end - begin + block_threads - 1) / block_threads;\n"
+    "    int64_t blocks = (end - begin + block_threads - 1) / block_threads;\n"
     "    if (blocks > max_blocks) blocks = max_blocks;\n"
-    "    find_first_kernel<<<(unsigned)blocks, block_threads, 0, stream>>>(begin, end, pred, result);\n"
+    "    find_first_kernel<<<static_cast<unsigned>(blocks), block_threads, 0, stream>>>(begin, end, pred, result);\n"
     "    status = gpuGetLastError();\n"
     "    if (status != gpuSuccess) return status;\n"
     "    unsigned long long found = sentinel;\n"
     "    status = gpuMemcpyAsync(&found, result, sizeof(found), gpuMemcpyDeviceToHost, stream);\n"
     "    if (status != gpuSuccess) return status;\n"
     "    status = gpuStreamSynchronize(stream);\n"
-    "    *out = (long long)found;\n"
+    "    *out = static_cast<int64_t>(found);\n"
     "    return status;\n"
     "}",
     "detect_collision_device": "//: The scatter guard's duplicate check ON THE DEVICE, the device side of detect_collision: pass 1\n"
@@ -4195,19 +4264,19 @@ HIP_DEVICE_INLINE_DEFINITIONS: dict[str, str] = {
     "//: the guarded scatter never writes those slots. The tag buffer is device scratch (get_scratch) and\n"
     "//: needs no initialization: pass 2 reads only slots pass 1 wrote.\n"
     "template <typename T>\n"
-    "__global__ void detect_tag_kernel(const T *idx, long long n, long long *owner, long long capacity) {\n"
-    "    const long long stride = (long long)gridDim.x * (long long)blockDim.x;\n"
-    "    for (long long i = (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x; i < n; i += stride) {\n"
-    "        const long long v = (long long)idx[i];\n"
+    "__global__ void detect_tag_kernel(const T *idx, int64_t n, int64_t *owner, int64_t capacity) {\n"
+    "    const int64_t stride = gridDim.x * blockDim.x;\n"
+    "    for (int64_t i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += stride) {\n"
+    "        const int64_t v = idx[i];\n"
     "        if (v >= 0 && v < capacity) owner[v] = i;\n"
     "    }\n"
     "}\n"
     "template <typename T>\n"
-    "__global__ void detect_verify_kernel(const T *idx, long long n, const long long *owner, long long capacity,\n"
+    "__global__ void detect_verify_kernel(const T *idx, int64_t n, const int64_t *owner, int64_t capacity,\n"
     "                                     unsigned long long *flag) {\n"
-    "    const long long stride = (long long)gridDim.x * (long long)blockDim.x;\n"
-    "    for (long long i = (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x; i < n; i += stride) {\n"
-    "        const long long v = (long long)idx[i];\n"
+    "    const int64_t stride = gridDim.x * blockDim.x;\n"
+    "    for (int64_t i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += stride) {\n"
+    "        const int64_t v = idx[i];\n"
     "        // One write of the same value per tripping lane: no fold is needed for a flag.\n"
     "        if (v >= 0 && v < capacity && owner[v] != i) { *flag = 1ull; return; }\n"
     "    }\n"
@@ -4216,13 +4285,13 @@ HIP_DEVICE_INLINE_DEFINITIONS: dict[str, str] = {
     "//: ~0 is empty; a non-negative value can never be ~0. Memory follows n, not the values, so an index array\n"
     "//: of huge or uninitialized values cannot make the check allocate past the device.\n"
     "template <typename T>\n"
-    "__global__ void detect_hash_kernel(const T *idx, long long n, unsigned long long *keys, unsigned long long mask,\n"
+    "__global__ void detect_hash_kernel(const T *idx, int64_t n, unsigned long long *keys, unsigned long long mask,\n"
     "                                   unsigned long long *flag) {\n"
-    "    const long long stride = (long long)gridDim.x * (long long)blockDim.x;\n"
-    "    for (long long i = (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x; i < n; i += stride) {\n"
-    "        const long long v = (long long)idx[i];\n"
+    "    const int64_t stride = gridDim.x * blockDim.x;\n"
+    "    for (int64_t i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += stride) {\n"
+    "        const int64_t v = idx[i];\n"
     "        if (v < 0) continue;\n"
-    "        const unsigned long long key = (unsigned long long)v;\n"
+    "        const unsigned long long key = static_cast<unsigned long long>(v);\n"
     "        unsigned long long slot = (key * 0x9E3779B97F4A7C15ull) & mask;\n"
     "        while (true) {\n"
     "            const unsigned long long seen = atomicCAS(&keys[slot], ~0ull, key);\n"
@@ -4232,62 +4301,62 @@ HIP_DEVICE_INLINE_DEFINITIONS: dict[str, str] = {
     "        }\n"
     "    }\n"
     "}\n"
-    "static inline long long cpf_detect_blocks(long long n) {\n"
-    "    const long long blocks = (n + 255) / 256;\n"
+    "static inline int64_t cpf_detect_blocks(int64_t n) {\n"
+    "    const int64_t blocks = (n + 255) / 256;\n"
     "    return blocks > 4096 ? 4096 : blocks;\n"
     "}\n"
     "//: 1 in *out when idx[0:n] holds a value twice within [0, capacity), else 0. Synchronizes stream.\n"
     "template <typename T>\n"
-    "static inline gpuError_t detect_collision_device(const T *idx, long long n, long long capacity, long long *out,\n"
-    "                                                gpuStream_t stream) {\n"
+    "static inline gpuError_t detect_collision_device(const T *idx, int64_t n, int64_t capacity, int64_t *out,\n"
+    "                                              gpuStream_t stream) {\n"
     "    *out = 0;\n"
     "    if (n <= 0 || capacity <= 0) return gpuSuccess;\n"
     "    gpuError_t status = gpuSuccess;\n"
-    "    long long *owner = (long long *)get_scratch<DetectOwnerTag>((size_t)capacity * sizeof(long long), stream, &status);\n"
+    "    int64_t *owner = static_cast<int64_t *>(get_scratch<DetectOwnerTag>(sizeof(int64_t) * capacity, stream, &status));\n"
     "    if (owner == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;\n"
-    "    unsigned long long *flag = (unsigned long long *)get_scratch<DetectFlagTag>(sizeof(unsigned long long), stream,\n"
-    "                                                                               &status);\n"
+    "    unsigned long long *flag =\n"
+    "        static_cast<unsigned long long *>(get_scratch<DetectFlagTag>(sizeof(unsigned long long), stream, &status));\n"
     "    if (flag == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;\n"
-    "    const long long blocks = cpf_detect_blocks(n);\n"
+    "    const int64_t blocks = cpf_detect_blocks(n);\n"
     "    status = gpuMemsetAsync(flag, 0, sizeof(unsigned long long), stream);\n"
     "    if (status != gpuSuccess) return status;\n"
-    "    detect_tag_kernel<<<(unsigned)blocks, 256, 0, stream>>>(idx, n, owner, capacity);\n"
-    "    detect_verify_kernel<<<(unsigned)blocks, 256, 0, stream>>>(idx, n, owner, capacity, flag);\n"
+    "    detect_tag_kernel<<<static_cast<unsigned>(blocks), 256, 0, stream>>>(idx, n, owner, capacity);\n"
+    "    detect_verify_kernel<<<static_cast<unsigned>(blocks), 256, 0, stream>>>(idx, n, owner, capacity, flag);\n"
     "    status = gpuGetLastError();\n"
     "    if (status != gpuSuccess) return status;\n"
     "    unsigned long long host_flag = 0;\n"
     "    status = gpuMemcpyAsync(&host_flag, flag, sizeof(host_flag), gpuMemcpyDeviceToHost, stream);\n"
     "    if (status != gpuSuccess) return status;\n"
     "    status = gpuStreamSynchronize(stream);\n"
-    "    *out = (long long)(host_flag != 0);\n"
+    "    *out = host_flag != 0;\n"
     "    return status;\n"
     "}\n"
     "//: The same check where the scattered array's extent is unknown: a hash table of the values, one pass.\n"
     "template <typename T>\n"
-    "static inline gpuError_t detect_collision_device(const T *idx, long long n, long long *out, gpuStream_t stream) {\n"
+    "static inline gpuError_t detect_collision_device(const T *idx, int64_t n, int64_t *out, gpuStream_t stream) {\n"
     "    *out = 0;\n"
     "    if (n <= 0) return gpuSuccess;\n"
     "    unsigned long long slots = 1;\n"
-    "    while (slots < 2ull * (unsigned long long)n) slots <<= 1;\n"
+    "    while (slots < 2ull * static_cast<unsigned long long>(n)) slots <<= 1;\n"
     "    gpuError_t status = gpuSuccess;\n"
-    "    unsigned long long *keys = (unsigned long long *)get_scratch<DetectOwnerTag>(slots * sizeof(unsigned long long),\n"
-    "                                                                             stream, &status);\n"
+    "    unsigned long long *keys = static_cast<unsigned long long *>(\n"
+    "        get_scratch<DetectOwnerTag>(sizeof(unsigned long long) * slots, stream, &status));\n"
     "    if (keys == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;\n"
-    "    unsigned long long *flag = (unsigned long long *)get_scratch<DetectFlagTag>(sizeof(unsigned long long), stream,\n"
-    "                                                                               &status);\n"
+    "    unsigned long long *flag =\n"
+    "        static_cast<unsigned long long *>(get_scratch<DetectFlagTag>(sizeof(unsigned long long), stream, &status));\n"
     "    if (flag == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;\n"
-    "    status = gpuMemsetAsync(keys, 0xFF, slots * sizeof(unsigned long long), stream);\n"
+    "    status = gpuMemsetAsync(keys, 0xFF, sizeof(unsigned long long) * slots, stream);\n"
     "    if (status != gpuSuccess) return status;\n"
     "    status = gpuMemsetAsync(flag, 0, sizeof(unsigned long long), stream);\n"
     "    if (status != gpuSuccess) return status;\n"
-    "    detect_hash_kernel<<<(unsigned)cpf_detect_blocks(n), 256, 0, stream>>>(idx, n, keys, slots - 1, flag);\n"
+    "    detect_hash_kernel<<<static_cast<unsigned>(cpf_detect_blocks(n)), 256, 0, stream>>>(idx, n, keys, slots - 1, flag);\n"
     "    status = gpuGetLastError();\n"
     "    if (status != gpuSuccess) return status;\n"
     "    unsigned long long host_flag = 0;\n"
     "    status = gpuMemcpyAsync(&host_flag, flag, sizeof(host_flag), gpuMemcpyDeviceToHost, stream);\n"
     "    if (status != gpuSuccess) return status;\n"
     "    status = gpuStreamSynchronize(stream);\n"
-    "    *out = (long long)(host_flag != 0);\n"
+    "    *out = host_flag != 0;\n"
     "    return status;\n"
     "}",
     "inclusive_affine": "//: The linear recurrence out[k] = c[k]*out[k-s] + d[k], class r entered at out[r-s] = seed[r].\n"
@@ -4312,54 +4381,57 @@ HIP_DEVICE_INLINE_DEFINITIONS: dict[str, str] = {
     "template <typename E, typename C, typename D, typename S>\n"
     "__global__ void cpf_affine_pack_kernel(const C *__restrict__ c, const D *__restrict__ d,\n"
     "                                       cpf_affine_map<E> *__restrict__ m, const S *__restrict__ seed_ptr,\n"
-    "                                       E seed_val, long long n, long long stride, long long len) {\n"
-    "    const long long slot = (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x;\n"
+    "                                       E seed_val, int64_t n, int64_t stride, int64_t len) {\n"
+    "    const int64_t slot = blockIdx.x * blockDim.x + threadIdx.x;\n"
     "    if (slot >= stride * len) return;\n"
-    "    const long long r = slot / len, j = slot % len, k = r + j * stride;\n"
+    "    const int64_t r = slot / len, j = slot % len, k = r + j * stride;\n"
     "    if (k >= n) {\n"
-    "        m[slot] = cpf_affine_map<E>{(E)1, (E)0};  // the identity pads a short class\n"
+    "        m[slot] = cpf_affine_map<E>{E(1), E(0)};  // the identity pads a short class\n"
     "        return;\n"
     "    }\n"
-    "    const E ck = (E)c[k];\n"
-    "    const E dk = (E)d[k];\n"
+    "    const E ck = E(c[k]);\n"
+    "    const E dk = E(d[k]);\n"
     "    // A device-resident seed arrives as a pointer, one per class; a host-readable one by value.\n"
     "    if (j == 0) {\n"
-    "        const E s = (seed_ptr != nullptr) ? (E)seed_ptr[r] : seed_val;\n"
-    "        m[slot] = cpf_affine_map<E>{(E)0, ck * s + dk};\n"
+    "        const E s = (seed_ptr != nullptr) ? E(seed_ptr[r]) : seed_val;\n"
+    "        m[slot] = cpf_affine_map<E>{E(0), ck * s + dk};\n"
     "    } else {\n"
     "        m[slot] = cpf_affine_map<E>{ck, dk};\n"
     "    }\n"
     "}\n"
     "template <typename E>\n"
     "__global__ void cpf_affine_unpack_kernel(const cpf_affine_map<E> *__restrict__ m, E *__restrict__ out,\n"
-    "                                         long long n, long long stride, long long len) {\n"
-    "    const long long slot = (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x;\n"
+    "                                         int64_t n, int64_t stride, int64_t len) {\n"
+    "    const int64_t slot = blockIdx.x * blockDim.x + threadIdx.x;\n"
     "    if (slot >= stride * len) return;\n"
-    "    const long long k = slot / len + (slot % len) * stride;\n"
+    "    const int64_t k = slot / len + (slot % len) * stride;\n"
     "    if (k < n) out[k] = m[slot].b;  // every composed prefix is constant, so b IS the value\n"
     "}\n"
     "template <typename E, typename C, typename D, typename S>\n"
     "static inline gpuError_t inclusive_affine(const C *coef, const D *delta, const S *seed_ptr, E seed_val,\n"
-    "                                          E *out, long long n, long long stride, gpuStream_t stream) {\n"
+    "                                          E *out, int64_t n, int64_t stride, gpuStream_t stream) {\n"
     "    using M = cpf_affine_map<E>;\n"
     "    constexpr int block_threads = 256;\n"
     "    if (n <= 0) return gpuSuccess;\n"
     "    if (stride > n) stride = n;\n"
-    "    const long long len = (n + stride - 1) / stride;\n"
-    "    const long long slots = stride * len;\n"
+    "    const int64_t len = (n + stride - 1) / stride;\n"
+    "    const int64_t slots = stride * len;\n"
+    "    // One thread per slot, indexed in 32 bits: a scan with more slots than that is refused.\n"
+    "    const int64_t grid = (slots + block_threads - 1) / block_threads;\n"
+    "    if (grid * block_threads > UINT32_MAX) return gpuErrorInvalidValue;\n"
     "    cpf_affine_compose<E> op;\n"
     "    size_t cub_bytes = 0;\n"
-    "    gpuError_t status = gpucub::DeviceScan::InclusiveScan(nullptr, cub_bytes, (M *)nullptr, (M *)nullptr,\n"
-    "                                                         op, slots, stream);\n"
+    "    gpuError_t status = gpucub::DeviceScan::InclusiveScan(nullptr, cub_bytes, static_cast<M *>(nullptr),\n"
+    "                                                         static_cast<M *>(nullptr), op, slots, stream);\n"
     "    if (status != gpuSuccess) return status;\n"
     "    // 256-byte alignment for the workspace that follows: cub assumes an allocation at least as\n"
     "    // aligned as gpuMalloc gives, and the maps sit in front of it in the one block.\n"
-    "    const size_t map_bytes = (((size_t)slots * sizeof(M)) + 255u) & ~(size_t)255u;\n"
+    "    const size_t map_bytes = ((sizeof(M) * slots) + 255u) & ~size_t{255};\n"
     "    void *scratch = get_scratch<ScanTag>(map_bytes + cub_bytes, stream, &status);\n"
     "    if (scratch == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;\n"
-    "    M *maps = (M *)scratch;\n"
-    "    void *workspace = (char *)scratch + map_bytes;\n"
-    "    const unsigned blocks = (unsigned)((slots + block_threads - 1) / block_threads);\n"
+    "    M *maps = static_cast<M *>(scratch);\n"
+    "    void *workspace = static_cast<char *>(scratch) + map_bytes;\n"
+    "    const unsigned blocks = static_cast<unsigned>(grid);\n"
     "    cpf_affine_pack_kernel<E, C, D, S><<<blocks, block_threads, 0, stream>>>(coef, delta, maps, seed_ptr,\n"
     "                                                                            seed_val, n, stride, len);\n"
     "    status = gpuGetLastError();\n"
@@ -4377,21 +4449,21 @@ HIP_DEVICE_INLINE_DEFINITIONS: dict[str, str] = {
     "//: and every block rescans its chunk entered with the total before it. Block b is scan b % count of\n"
     "//: chunk b / count.\n"
     "struct cpf_segments {\n"
-    "    long n, count, pitch, step, cap;\n"
-    "    __host__ __device__ long length(long k) const {\n"
-    "        const long first = k * pitch;\n"
+    "    int64_t n, count, pitch, step, cap;\n"
+    "    __host__ __device__ int64_t length(int64_t k) const {\n"
+    "        const int64_t first = k * pitch;\n"
     "        if (first >= n) return 0;\n"
-    "        const long m = (n - first + step - 1) / step;\n"
+    "        const int64_t m = (n - first + step - 1) / step;\n"
     "        return m < cap ? m : cap;\n"
     "    }\n"
     "};\n"
     "template <typename T, typename Op>\n"
-    "__global__ void cpf_per_class_scan_kernel(const T *__restrict__ in, T *__restrict__ out, long n, long s, Op op) {\n"
-    "    const long k = (long)blockIdx.x * (long)blockDim.x + (long)threadIdx.x;\n"
+    "__global__ void cpf_per_class_scan_kernel(const T *__restrict__ in, T *__restrict__ out, int64_t n, int64_t s, Op op) {\n"
+    "    const int64_t k = blockIdx.x * blockDim.x + threadIdx.x;\n"
     "    if (k >= s || k >= n) return;\n"
     "    T acc = in[k];\n"
     "    out[k] = acc;\n"
-    "    for (long j = k + s; j < n; j += s) { acc = op(acc, in[j]); out[j] = acc; }\n"
+    "    for (int64_t j = k + s; j < n; j += s) { acc = op(acc, in[j]); out[j] = acc; }\n"
     "}\n"
     "template <typename T, typename Op>\n"
     "struct cpf_scan_carry {\n"
@@ -4401,13 +4473,13 @@ HIP_DEVICE_INLINE_DEFINITIONS: dict[str, str] = {
     "};\n"
     "//: m elements spaced step apart, scanned by the whole block with seed folded in front.\n"
     "template <typename T, typename Op, int BLOCK>\n"
-    "__device__ void cpf_block_scan(const T *__restrict__ in, T *__restrict__ out, long m, long step, Op op, T identity,\n"
+    "__device__ void cpf_block_scan(const T *__restrict__ in, T *__restrict__ out, int64_t m, int64_t step, Op op, T identity,\n"
     "                               T seed) {\n"
     "    typedef gpucub::BlockScan<T, BLOCK> BlockScanT;\n"
     "    __shared__ typename BlockScanT::TempStorage storage;\n"
     "    cpf_scan_carry<T, Op> carry{seed, op};\n"
-    "    for (long base = 0; base < m; base += BLOCK) {\n"
-    "        const long g = base + (long)threadIdx.x;\n"
+    "    for (int64_t base = 0; base < m; base += BLOCK) {\n"
+    "        const int64_t g = base + threadIdx.x;\n"
     "        T value = (g < m) ? in[g * step] : identity;  // every lane reaches the barrier in the scan\n"
     "        BlockScanT(storage).InclusiveScan(value, value, op, carry);\n"
     "        if (g < m) out[g * step] = value;\n"
@@ -4415,20 +4487,20 @@ HIP_DEVICE_INLINE_DEFINITIONS: dict[str, str] = {
     "    }\n"
     "}\n"
     "//: Where this block's chunk starts in the buffer, and how many elements of its scan it holds.\n"
-    "__device__ inline void cpf_chunk_of_block(const cpf_segments &seg, long chunk, long *offset, long *count) {\n"
-    "    const long k = (long)blockIdx.x % seg.count;\n"
-    "    const long begin = ((long)blockIdx.x / seg.count) * chunk;\n"
-    "    const long m = seg.length(k);\n"
+    "__device__ inline void cpf_chunk_of_block(const cpf_segments &seg, int64_t chunk, int64_t *offset, int64_t *count) {\n"
+    "    const int64_t k = blockIdx.x % seg.count;\n"
+    "    const int64_t begin = (blockIdx.x / seg.count) * chunk;\n"
+    "    const int64_t m = seg.length(k);\n"
     "    *offset = k * seg.pitch + begin * seg.step;\n"
     "    *count = (m > begin) ? ((m - begin < chunk) ? (m - begin) : chunk) : 0;\n"
     "}\n"
     "template <typename T, typename Op, int BLOCK>\n"
-    "__global__ void cpf_chunk_totals_kernel(const T *__restrict__ in, T *__restrict__ totals, cpf_segments seg, long chunk,\n"
+    "__global__ void cpf_chunk_totals_kernel(const T *__restrict__ in, T *__restrict__ totals, cpf_segments seg, int64_t chunk,\n"
     "                                        Op op, T identity) {\n"
-    "    long offset, count;\n"
+    "    int64_t offset, count;\n"
     "    cpf_chunk_of_block(seg, chunk, &offset, &count);\n"
     "    T acc = identity;\n"
-    "    for (long g = (long)threadIdx.x; g < count; g += BLOCK) acc = op(acc, in[offset + g * seg.step]);\n"
+    "    for (int64_t g = threadIdx.x; g < count; g += BLOCK) acc = op(acc, in[offset + g * seg.step]);\n"
     "    typedef gpucub::BlockReduce<T, BLOCK> BlockReduceT;\n"
     "    __shared__ typename BlockReduceT::TempStorage storage;\n"
     "    const T total = BlockReduceT(storage).Reduce(acc, op);\n"
@@ -4437,75 +4509,77 @@ HIP_DEVICE_INLINE_DEFINITIONS: dict[str, str] = {
     "template <typename T, typename Op, int BLOCK>\n"
     "__global__ void cpf_segment_scan_kernel(const T *__restrict__ in, T *__restrict__ out, cpf_segments seg, Op op,\n"
     "                                        T identity) {\n"
-    "    const long k = (long)blockIdx.x;\n"
+    "    const int64_t k = blockIdx.x;\n"
     "    cpf_block_scan<T, Op, BLOCK>(in + k * seg.pitch, out + k * seg.pitch, seg.length(k), seg.step, op, identity,\n"
     "                                 identity);\n"
     "}\n"
     "template <typename T, typename Op, int BLOCK>\n"
     "__global__ void cpf_chunk_scan_kernel(const T *__restrict__ in, T *__restrict__ out, const T *__restrict__ totals,\n"
-    "                                      cpf_segments seg, long chunk, Op op, T identity) {\n"
-    "    long offset, count;\n"
+    "                                      cpf_segments seg, int64_t chunk, Op op, T identity) {\n"
+    "    int64_t offset, count;\n"
     "    cpf_chunk_of_block(seg, chunk, &offset, &count);\n"
-    "    const T seed = ((long)blockIdx.x >= seg.count) ? totals[(long)blockIdx.x - seg.count] : identity;\n"
+    "    const T seed = (blockIdx.x >= seg.count) ? totals[blockIdx.x - seg.count] : identity;\n"
     "    cpf_block_scan<T, Op, BLOCK>(in + offset, out + offset, count, seg.step, op, identity, seed);\n"
     "}\n"
     "template <typename T, typename Op>\n"
     "static inline gpuError_t segments_inclusive(const T *in, T *out, cpf_segments seg, Op op, T identity,\n"
     "                                            gpuStream_t stream) {\n"
     "    constexpr int block = 256;\n"
-    "    constexpr long chunk = 16L * block;\n"
+    "    constexpr int64_t chunk = 16L * block;\n"
     "    if (seg.count <= 0 || seg.n <= 0) return gpuSuccess;\n"
     "    if (seg.pitch == 1 && seg.count >= 4096) {\n"
-    "        cpf_per_class_scan_kernel<T, Op><<<(unsigned)((seg.count + block - 1) / block), block, 0, stream>>>(\n"
-    "            in, out, seg.n, seg.step, op);\n"
+    "        // One thread per class, indexed in 32 bits: more classes than that are refused.\n"
+    "        const int64_t grid = (seg.count + block - 1) / block;\n"
+    "        if (grid * block > UINT32_MAX) return gpuErrorInvalidValue;\n"
+    "        cpf_per_class_scan_kernel<T, Op><<<static_cast<unsigned>(grid), block, 0, stream>>>(in, out, seg.n, seg.step, op);\n"
     "        return gpuGetLastError();\n"
     "    }\n"
-    "    const long chunks = (seg.length(0) + chunk - 1) / chunk;\n"
+    "    const int64_t chunks = (seg.length(0) + chunk - 1) / chunk;\n"
     "    if (chunks <= 1) {\n"
-    "        cpf_segment_scan_kernel<T, Op, block><<<(unsigned)seg.count, block, 0, stream>>>(in, out, seg, op, identity);\n"
+    "        cpf_segment_scan_kernel<T, Op, block><<<static_cast<unsigned>(seg.count), block, 0, stream>>>(in, out, seg, op, identity);\n"
     "        return gpuGetLastError();\n"
     "    }\n"
     "    gpuError_t status = gpuSuccess;\n"
-    "    T *totals = (T *)get_scratch<ScanTag>((size_t)(chunks * seg.count) * sizeof(T), stream, &status);\n"
+    "    T *totals = static_cast<T *>(get_scratch<ScanTag>(sizeof(T) * (chunks * seg.count), stream, &status));\n"
     "    if (totals == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;\n"
-    "    const unsigned blocks = (unsigned)(chunks * seg.count);\n"
+    "    const unsigned blocks = static_cast<unsigned>(chunks * seg.count);\n"
     "    cpf_chunk_totals_kernel<T, Op, block><<<blocks, block, 0, stream>>>(in, totals, seg, chunk, op, identity);\n"
     "    const cpf_segments of_totals{chunks * seg.count, seg.count, 1, seg.count, chunks};\n"
-    "    cpf_segment_scan_kernel<T, Op, block><<<(unsigned)seg.count, block, 0, stream>>>(totals, totals, of_totals, op,\n"
-    "                                                                                    identity);\n"
+    "    cpf_segment_scan_kernel<T, Op, block><<<static_cast<unsigned>(seg.count), block, 0, stream>>>(totals, totals, of_totals,\n"
+    "                                                                                                  op, identity);\n"
     "    cpf_chunk_scan_kernel<T, Op, block><<<blocks, block, 0, stream>>>(in, out, totals, seg, chunk, op, identity);\n"
     "    return gpuGetLastError();\n"
     "}",
     "strided_inclusive_sum": "template <typename T>\n"
-    "static inline gpuError_t strided_inclusive_sum(const T *in, T *out, long n, long s, gpuStream_t stream) {\n"
+    "static inline gpuError_t strided_inclusive_sum(const T *in, T *out, int64_t n, int64_t s, gpuStream_t stream) {\n"
     "    return segments_inclusive(in, out, cpf_segments{n, s, 1, s, n}, cpf_cub_plus(), T(0), stream);\n"
     "}",
     "segmented_inclusive_sum": "template <typename T>\n"
-    "static inline gpuError_t segmented_inclusive_sum(const T *in, T *out, long n, long s, gpuStream_t stream) {\n"
+    "static inline gpuError_t segmented_inclusive_sum(const T *in, T *out, int64_t n, int64_t s, gpuStream_t stream) {\n"
     "    return segments_inclusive(in, out, cpf_segments{n, s, n / s, 1, n / s}, cpf_cub_plus(), T(0), stream);\n"
     "}",
     "strided_inclusive_product": "template <typename T>\n"
-    "static inline gpuError_t strided_inclusive_product(const T *in, T *out, long n, long s, gpuStream_t stream) {\n"
+    "static inline gpuError_t strided_inclusive_product(const T *in, T *out, int64_t n, int64_t s, gpuStream_t stream) {\n"
     "    return segments_inclusive(in, out, cpf_segments{n, s, 1, s, n}, cpf_cub_multiplies(), T(1), stream);\n"
     "}",
     "segmented_inclusive_product": "template <typename T>\n"
-    "static inline gpuError_t segmented_inclusive_product(const T *in, T *out, long n, long s, gpuStream_t stream) {\n"
+    "static inline gpuError_t segmented_inclusive_product(const T *in, T *out, int64_t n, int64_t s, gpuStream_t stream) {\n"
     "    return segments_inclusive(in, out, cpf_segments{n, s, n / s, 1, n / s}, cpf_cub_multiplies(), T(1), stream);\n"
     "}",
     "strided_inclusive_min": "template <typename T>\n"
-    "static inline gpuError_t strided_inclusive_min(const T *in, T *out, long n, long s, gpuStream_t stream) {\n"
+    "static inline gpuError_t strided_inclusive_min(const T *in, T *out, int64_t n, int64_t s, gpuStream_t stream) {\n"
     "    return segments_inclusive(in, out, cpf_segments{n, s, 1, s, n}, cpf_cub_minimum(), min_identity<T>(), stream);\n"
     "}",
     "segmented_inclusive_min": "template <typename T>\n"
-    "static inline gpuError_t segmented_inclusive_min(const T *in, T *out, long n, long s, gpuStream_t stream) {\n"
+    "static inline gpuError_t segmented_inclusive_min(const T *in, T *out, int64_t n, int64_t s, gpuStream_t stream) {\n"
     "    return segments_inclusive(in, out, cpf_segments{n, s, n / s, 1, n / s}, cpf_cub_minimum(), min_identity<T>(), stream);\n"
     "}",
     "strided_inclusive_max": "template <typename T>\n"
-    "static inline gpuError_t strided_inclusive_max(const T *in, T *out, long n, long s, gpuStream_t stream) {\n"
+    "static inline gpuError_t strided_inclusive_max(const T *in, T *out, int64_t n, int64_t s, gpuStream_t stream) {\n"
     "    return segments_inclusive(in, out, cpf_segments{n, s, 1, s, n}, cpf_cub_maximum(), max_identity<T>(), stream);\n"
     "}",
     "segmented_inclusive_max": "template <typename T>\n"
-    "static inline gpuError_t segmented_inclusive_max(const T *in, T *out, long n, long s, gpuStream_t stream) {\n"
+    "static inline gpuError_t segmented_inclusive_max(const T *in, T *out, int64_t n, int64_t s, gpuStream_t stream) {\n"
     "    return segments_inclusive(in, out, cpf_segments{n, s, n / s, 1, n / s}, cpf_cub_maximum(), max_identity<T>(), stream);\n"
     "}",
     # ``ArgReduce``'s CUDA expansion calls ``dace::cub::arg_reduce`` and, for a strided or transformed read,
@@ -4521,11 +4595,11 @@ HIP_DEVICE_INLINE_DEFINITIONS: dict[str, str] = {
     "template <typename T, typename Xf>\n"
     "struct cpf_strided_read {\n"
     "    const T *base;\n"
-    "    long long stride;\n"
-    "    __host__ __device__ T operator[](long long j) const { return Xf()(base[j * stride]); }\n"
+    "    int64_t stride;\n"
+    "    __host__ __device__ T operator[](int64_t j) const { return Xf()(base[j * stride]); }\n"
     "};\n"
     "template <typename Xf, typename T>\n"
-    "static inline cpf_strided_read<T, Xf> gather_iterator(const T *base, long long stride) {\n"
+    "static inline cpf_strided_read<T, Xf> gather_iterator(const T *base, int64_t stride) {\n"
     "    return cpf_strided_read<T, Xf>{base, stride};\n"
     "}",
     "arg_reduce": "//: The device arg-reduction, answered on the host: each lane folds its grid-strided elements into a\n"
@@ -4555,32 +4629,32 @@ HIP_DEVICE_INLINE_DEFINITIONS: dict[str, str] = {
     "    if (threadIdx.x == 0) *out = lanes[0];\n"
     "}\n"
     "template <bool Max, bool Last, typename InIt, typename T>\n"
-    "__global__ void __launch_bounds__(256) arg_reduce_kernel(InIt in, long long items, arg_pair<T, long long> *partial) {\n"
-    "    arg_pair<T, long long> mine{T(), -1};\n"
-    "    for (long long j = (long long)blockIdx.x * 256 + threadIdx.x; j < items; j += (long long)gridDim.x * 256) {\n"
+    "__global__ void __launch_bounds__(256) arg_reduce_kernel(InIt in, int64_t items, arg_pair<T, int64_t> *partial) {\n"
+    "    arg_pair<T, int64_t> mine{T(), -1};\n"
+    "    for (int64_t j = blockIdx.x * 256 + threadIdx.x; j < items; j += gridDim.x * 256) {\n"
     "        const T x = in[j];\n"
-    "        if (j == 0 || x == x) mine = mine.__ar_i < 0 ? arg_pair<T, long long>{x, j}\n"
-    "                                                   : arg_combine<Max, Last>(mine, arg_pair<T, long long>{x, j});\n"
+    "        if (j == 0 || x == x) mine = mine.__ar_i < 0 ? arg_pair<T, int64_t>{x, j}\n"
+    "                                                   : arg_combine<Max, Last>(mine, arg_pair<T, int64_t>{x, j});\n"
     "    }\n"
     "    arg_block_fold<Max, Last>(mine, &partial[blockIdx.x]);\n"
     "}\n"
     "template <bool Max, bool Last, typename T>\n"
-    "__global__ void __launch_bounds__(256) arg_reduce_blocks(arg_pair<T, long long> *partial, long long blocks) {\n"
-    "    arg_pair<T, long long> mine{T(), -1};\n"
-    "    for (long long b = threadIdx.x; b < blocks; b += 256) mine = arg_lane_fold<Max, Last>(mine, partial[b]);\n"
+    "__global__ void __launch_bounds__(256) arg_reduce_blocks(arg_pair<T, int64_t> *partial, int64_t blocks) {\n"
+    "    arg_pair<T, int64_t> mine{T(), -1};\n"
+    "    for (int64_t b = threadIdx.x; b < blocks; b += 256) mine = arg_lane_fold<Max, Last>(mine, partial[b]);\n"
     "    arg_block_fold<Max, Last>(mine, &partial[0]);\n"
     "}\n"
     "template <typename Op, typename InIt>\n"
-    "static inline gpuError_t arg_reduce(InIt in, std::decay_t<decltype(in[0])> *val_out, long long *idx_out,\n"
-    "                                    long long items, gpuStream_t stream) {\n"
+    "static inline gpuError_t arg_reduce(InIt in, std::decay_t<decltype(in[0])> *val_out, int64_t *idx_out,\n"
+    "                                    int64_t items, gpuStream_t stream) {\n"
     "    using T = std::decay_t<decltype(in[0])>;\n"
-    "    using P = arg_pair<T, long long>;\n"
-    "    long long blocks = (items + 255) / 256;\n"
+    "    using P = arg_pair<T, int64_t>;\n"
+    "    int64_t blocks = (items + 255) / 256;\n"
     "    if (blocks > 1024) blocks = 1024;\n"
     "    gpuError_t status = gpuSuccess;\n"
-    "    P *partial = (P *)get_scratch<ReduceTag>((size_t)blocks * sizeof(P), stream, &status);\n"
+    "    P *partial = static_cast<P *>(get_scratch<ReduceTag>(sizeof(P) * blocks, stream, &status));\n"
     "    if (partial == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;\n"
-    "    arg_reduce_kernel<Op::max, Op::last><<<(unsigned)blocks, 256, 0, stream>>>(in, items, partial);\n"
+    "    arg_reduce_kernel<Op::max, Op::last><<<static_cast<unsigned>(blocks), 256, 0, stream>>>(in, items, partial);\n"
     "    arg_reduce_blocks<Op::max, Op::last><<<1, 256, 0, stream>>>(partial, blocks);\n"
     "    status = gpuGetLastError();\n"
     "    if (status != gpuSuccess) return status;\n"
