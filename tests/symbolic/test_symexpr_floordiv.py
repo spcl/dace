@@ -1,10 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``SymExpr`` floor division builds ``int_floor``.
+"""``SymExpr`` floor division builds ``py_floor`` (Python's ``//``).
 
 ``SymExpr.__floordiv__`` used to apply Python ``//`` to its sympy operands, which sympy evaluates
 as ``floor(a / b)`` over rationals: ``SymExpr(N - 1, N) // 8`` became ``floor(N/8 - 1/8)``. That is
 the wrong tree -- a pass matching ``int_floor``, or any ``subs`` or equality against the integer
-form, no longer sees it -- and the split rationals truncate term by term in C++.
+form, no longer sees it -- and the split rationals truncate term by term in C++. ``int_floor`` is C's truncating
+``/``, so Python's ``//`` builds ``py_floor``.
 """
 
 import pytest
@@ -17,11 +18,11 @@ M = symbol("M")
 
 
 @pytest.mark.parametrize("divisor", [8, "8", M, SymExpr(M - 1, M)], ids=["int", "str", "symbolic", "symexpr"])
-def test_floordiv_builds_int_floor(divisor):
+def test_floordiv_builds_py_floor(divisor):
     """Every operand kind takes the integer-division form, on both the main and approx expression."""
     result = SymExpr(N - 1, N) // divisor
-    assert result.expr.func.__name__ == "int_floor"
-    assert result.approx.func.__name__ == "int_floor"
+    assert result.expr.func.__name__ == "py_floor"
+    assert result.approx.func.__name__ == "py_floor"
 
 
 @pytest.mark.parametrize("divisor", [8, "8", M, SymExpr(M - 1, M)], ids=["int", "str", "symbolic", "symexpr"])
@@ -41,6 +42,6 @@ def test_floordiv_still_folds_an_exact_division():
 
 if __name__ == "__main__":
     for d in (8, "8", M, SymExpr(M - 1, M)):
-        test_floordiv_builds_int_floor(d)
+        test_floordiv_builds_py_floor(d)
         test_floordiv_leaves_no_sympy_floor(d)
     test_floordiv_still_folds_an_exact_division()

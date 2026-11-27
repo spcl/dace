@@ -371,7 +371,8 @@ PYFUNC_TO_ARITHMETICS = {
     "math.sqrt": 1,
     "sqrt": 1,
     "cbrt": 1,
-    "int_floor": 1,  # integer (floor) division
+    "int_floor": 1,  # C integer division
+    "py_floor": 1,  # Python floor division
     "int_ceil": 1,  # integer (ceil) division
     "min": 0,
     "max": 0,

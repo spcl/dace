@@ -550,9 +550,9 @@ class SymExpr:
 
     def __floordiv__(self, other):
         if isinstance(other, SymExpr):
-            return SymExpr(int_floor(self.expr, other.expr), int_floor(self.approx, other.approx))
+            return SymExpr(py_floor(self.expr, other.expr), py_floor(self.approx, other.approx))
         if isinstance(other, sympy.Expr):
-            return SymExpr(int_floor(self.expr, other), int_floor(self.approx, other))
+            return SymExpr(py_floor(self.expr, other), py_floor(self.approx, other))
         return self // pystr_to_symbolic(other)
 
     def __mod__(self, other):
@@ -1196,15 +1196,21 @@ def sympy_numeric_fix(expr):
 
 
 class int_floor(sympy.Function):
+    """C's integer division ``x / y``, which truncates toward zero. Python's ``//`` is :class:`py_floor`; the two
+    agree on a nonnegative dividend and a positive divisor."""
+
     @classmethod
     def eval(cls, x, y):
         """
-        Evaluates integer floor division (``floor(x / y)``).
+        Evaluates truncating integer division (``x / y`` in C).
 
         :param x: Numerator.
         :param y: Denominator.
         :return: Return value (literal or symbolic).
         """
+        if x.is_Integer and y.is_Integer and y != 0:
+            quotient = abs(x) // abs(y)
+            return quotient if (x >= 0) == (y > 0) else -quotient
         if x.is_Number and y.is_Number:
             return x // y
         if y.is_Number:
@@ -1222,12 +1228,28 @@ class int_floor(sympy.Function):
         return True
 
 
-class __int_floor(int_floor):
-    """Operator-derived variant of ``int_floor``: the Python ``//`` parses to this so
-    it round-trips to ``//`` (Python) / ``/`` (C++), while an explicit
-    ``int_floor(a, b)`` keeps its function spelling."""
+class py_floor(sympy.Function):
+    """Python's floor division ``x // y``, the meaning of ``//`` in an SDFG. It becomes :class:`int_floor` (C's
+    ``/``) where the two agree, a nonnegative dividend and a positive divisor."""
 
-    pass
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Number and y.is_Number and y != 0:
+            return x // y
+        if y.is_Number and y == 1:
+            return x
+        quotient = x / y
+        if quotient.is_integer:
+            return quotient
+        if x.is_nonnegative and y.is_positive:
+            return int_floor(x, y)
+
+    def _eval_is_integer(self):
+        return True
+
+
+# Serialized expressions name Python's ``//`` ``__int_floor``
+__int_floor = py_floor
 
 
 class CMod(sympy.Function):
@@ -1564,6 +1586,7 @@ def sympy_intdiv_fix(expr):
     e = sympy.Wild("e", properties=[lambda k: isinstance(k, sympy.Basic) and not isinstance(k, sympy.Atom)])
     int_ceil = sympy.Function("int_ceil")
     int_floor = sympy.Function("int_floor")
+    py_floor = sympy.Function("py_floor")
 
     processed = 1
     while processed > 0:
@@ -1608,25 +1631,25 @@ def sympy_intdiv_fix(expr):
             # Simple floor
             m = floor.match(sympy.floor(a / b))
             if m is not None:
-                nexpr = nexpr.subs(floor, int_floor(m[a], m[b]))
+                nexpr = nexpr.subs(floor, py_floor(m[a], m[b]))
                 processed += 1
                 continue
             # Floor of floor: "floor(floor(c/d) / b)"
-            m = floor.match(sympy.floor(int_floor(c, d) / b))
+            m = floor.match(sympy.floor(py_floor(c, d) / b))
             if m is not None:
-                nexpr = nexpr.subs(floor, int_floor(int_floor(m[c], m[d]), m[b]))
+                nexpr = nexpr.subs(floor, py_floor(py_floor(m[c], m[d]), m[b]))
                 processed += 1
                 continue
             # Floor of floor: "floor(a / floor(c/d))"
-            m = floor.match(sympy.floor(a / int_floor(c, d)))
+            m = floor.match(sympy.floor(a / py_floor(c, d)))
             if m is not None:
-                nexpr = nexpr.subs(floor, int_floor(m[a], int_floor(m[c], m[d])))
+                nexpr = nexpr.subs(floor, py_floor(m[a], py_floor(m[c], m[d])))
                 processed += 1
                 continue
             # floor with composite expression
             m = floor.match(sympy.floor(e / b))
             if m is not None:
-                nexpr = nexpr.subs(floor, int_floor(m[e], m[b]))
+                nexpr = nexpr.subs(floor, py_floor(m[e], m[b]))
                 processed += 1
                 continue
     return nexpr
@@ -1807,7 +1830,7 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         ast.Invert: "__bitwise_invert",
         ast.LShift: "__left_shift",
         ast.RShift: "__right_shift",
-        ast.FloorDiv: "__int_floor",
+        ast.FloorDiv: "py_floor",
         ast.Mod: "CMod",
     }
 
@@ -2123,7 +2146,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         ast.Div: _binop_div,
         ast.Pow: _binop_pow,
         ast.Mod: _binop_mod,
-        ast.FloorDiv: lambda a, b: _construct_function_uncached(int_floor, a, b),
+        ast.FloorDiv: lambda a, b: _construct_function_uncached(py_floor, a, b),
     }
     _unaryops = {
         ast.UAdd: lambda a: +a,
@@ -2163,6 +2186,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         "Lt": sympy.Lt,
         "Le": sympy.Le,
         "int_floor": int_floor,
+        "py_floor": py_floor,
         "int_ceil": int_ceil,
         "ipow": ipow,
         "IfExpr": IfExpr,
@@ -2561,6 +2585,7 @@ _PYSTR2SYM_locals = {
     "__left_shift": __left_shift,
     "__right_shift": __right_shift,
     "int_floor": int_floor,
+    "py_floor": py_floor,
     "__int_floor": __int_floor,
     "int_ceil": int_ceil,
     "ipow": ipow,
@@ -2755,15 +2780,12 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         binop = {"bitwise_and": "&", "bitwise_or": "|", "bitwise_xor": "^", "left_shift": "<<", "right_shift": ">>"}
         if base in binop and as_operator:
             return f"(({self._print(expr.args[0])}) {binop[base]} ({self._print(expr.args[1])}))"
-        # ``int_floor`` divides with ``//`` in Python and ``/`` in C++ (the bare name
-        # keeps its ``int_floor(a, b)`` spelling in Python so it round-trips).
-        # C's ``/`` truncates and agrees with floor only on a nonnegative dividend and a positive divisor.
-        if base == "int_floor" and as_operator:
-            dividend, divisor = expr.args
-            if self.cpp_mode and not (dividend.is_nonnegative and divisor.is_positive):
-                return f"py_floor({self._print(dividend)}, {self._print(divisor)})"
-            op = "/" if self.cpp_mode else "//"
-            return f"(({self._print(expr.args[0])}) {op} ({self._print(expr.args[1])}))"
+        # ``py_floor`` is Python's ``//``; ``int_floor`` is C's truncating ``/`` and keeps its function spelling in Python
+        if base == "py_floor":
+            dividend, divisor = (self._print(a) for a in expr.args)
+            return f"py_floor({dividend}, {divisor})" if self.cpp_mode else f"(({dividend}) // ({divisor}))"
+        if base == "int_floor" and self.cpp_mode:
+            return f"(({self._print(expr.args[0])}) / ({self._print(expr.args[1])}))"
         if str(expr.func) == "ipow" and self.cpp_mode:
             return f"dace::math::ipow({self._print(expr.args[0])}, {self._print(expr.args[1])})"
         if str(expr.func) == "IfExpr":
