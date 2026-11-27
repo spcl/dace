@@ -1175,7 +1175,9 @@ class OffloadToAccelerator(ppl.Pass):
 
     @staticmethod
     def nested_body_with_maps(children: list[nodes.Node]) -> nodes.NestedSDFG | None:
-        """The nested SDFG that is a kernel's whole body, if two or more of its top-level blocks hold maps."""
+        """The nested SDFG that is a kernel's whole body, if two or more of its top-level blocks hold maps and no
+        transient of the body links two of them: fission would widen that kernel-local buffer into a global one per
+        kernel instance (the column buffer a zero fill hands the level loop)."""
         inside = [node for node in children if not isinstance(node, nodes.MapExit)]
         if len(inside) != 1 or not isinstance(inside[0], nodes.NestedSDFG):
             return None
@@ -1185,7 +1187,21 @@ class OffloadToAccelerator(ppl.Pass):
             for block in body.sdfg.nodes()
             if any(isinstance(node, nodes.MapEntry) for node, parent in block.all_nodes_recursive())
         ]
-        return body if len(holding) >= 2 else None
+        if len(holding) < 2:
+            return None
+        seen: set[str] = set()
+        for block in body.sdfg.nodes():
+            names = {
+                node.data
+                for node, parent in block.all_nodes_recursive()
+                if isinstance(node, nodes.AccessNode)
+                and parent.sdfg is body.sdfg
+                and body.sdfg.arrays[node.data].transient
+            }
+            if names & seen:
+                return None
+            seen |= names
+        return body
 
     @staticmethod
     def inline_part_body(state: SDFGState, part: nodes.MapEntry) -> None:
