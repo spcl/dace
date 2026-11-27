@@ -163,6 +163,12 @@ def test_a_strided_thread_block_extent_overapproximates_to_its_full_tile() -> No
     assert symbolic.overapproximate(extent) == 64
 
 
+# Reproducer: ``E1`` parsed as sympy's exponential integral, so ``E1 + 1`` raised TypeError.
+def test_a_symbol_named_e1_is_a_symbol():
+    expr = pystr_to_symbolic("E0 * E1 + 1")
+    assert {str(s) for s in expr.free_symbols} == {"E0", "E1"}
+
+
 if __name__ == "__main__":
     test_simplify_ext_min()
     test_shapes_equal_compares_by_name()
@@ -172,3 +178,4 @@ if __name__ == "__main__":
     test_relax_int_floor_hands_the_solver_a_head_it_can_invert()
     test_a_floor_of_a_floor_by_an_integer_is_one_floor()
     test_a_strided_thread_block_extent_overapproximates_to_its_full_tile()
+    test_a_symbol_named_e1_is_a_symbol()
