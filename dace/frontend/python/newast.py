@@ -2947,6 +2947,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     or len(ssize) != len(osize)
                     or any(itertools.starmap(inequal_symbols, zip(ssize, osize)))
                     or op
+                    # A copy cannot convert: a tasklet casts each element, as numpy does
+                    or self.sdfg.arrays[target_name].dtype != self.sdfg.arrays[op_name].dtype
                 ):
                     _, all_idx_tuples, _, _, inp_idx = broadcast_to(squeezed.size(), op_subset.size())
 
