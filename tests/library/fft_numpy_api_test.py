@@ -279,5 +279,21 @@ def test_non_floating_inputs_promote_as_numpy_does(implementation):
     np.testing.assert_allclose(got, np.fft.rfft(halves), rtol=1e-5, atol=1e-5)
 
 
+# Reproducer: the pure DFT subscripted the value a one-element memlet binds, which did not compile.
+def test_a_one_point_axis_is_a_scaled_copy():
+    @dace.program
+    def forward_column(x: dace.complex128[6, 1]):
+        return np.fft.fft(x)
+
+    @dace.program
+    def inverse_point(x: dace.complex128[1]):
+        return np.fft.ifft(x, norm="ortho")
+
+    column = np.arange(6.0).reshape(6, 1) + 1j
+    np.testing.assert_allclose(forward_column(x=column), np.fft.fft(column))
+    point = np.array([2.0 + 1j])
+    np.testing.assert_allclose(inverse_point(x=point), np.fft.ifft(point, norm="ortho"))
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

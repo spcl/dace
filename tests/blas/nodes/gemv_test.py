@@ -209,6 +209,25 @@ def test_pure_float_zero_beta_never_reads_y():
     assert np.allclose(y, A.T @ x)
 
 
+# Reproducer: a symbolic ``beta`` such as ``"s - 3"`` raised SympifyError in the Gemv constructor.
+def test_pure_gemv_scales_by_a_symbolic_expression():
+    sdfg = dace.SDFG("gemv_symbolic_scales")
+    sdfg.add_symbol("s", dace.float64)
+    sdfg.add_array("A", [2, 2], dace.float64)
+    sdfg.add_array("x", [2], dace.float64)
+    sdfg.add_array("y", [2], dace.float64)
+    state = sdfg.add_state()
+    node = blas.Gemv("gemv", alpha="s + 1", beta="s - 3")
+    node.implementation = "pure"
+    state.add_edge(state.add_read("A"), None, node, "_A", Memlet("A"))
+    state.add_edge(state.add_read("x"), None, node, "_x", Memlet("x"))
+    state.add_edge(state.add_read("y"), None, node, "_y", Memlet("y"))
+    state.add_edge(node, "_y", state.add_write("y"), None, Memlet("y"))
+    A, x, y = np.full((2, 2), 5.0), np.full(2, 7.0), np.full(2, 11.0)
+    sdfg(A=A, x=x, y=y, s=2.0)
+    assert np.allclose(y, 3.0 * A @ x - 11.0)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("M", type=int, nargs="?", default=256)
@@ -229,3 +248,4 @@ if __name__ == "__main__":
     test_column_major_non_square_keeps_the_blas_extents()
     test_blas_gemv_empty_contraction_never_reads_y()
     test_pure_float_zero_beta_never_reads_y()
+    test_pure_gemv_scales_by_a_symbolic_expression()

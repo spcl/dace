@@ -1015,16 +1015,18 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
         # connector points at that box's first element, and a whole-array shape runs past the end
         # of the caller's array as soon as the box starts at an offset (an out-of-bounds memlet
         # once the wrapper is inlined).
-        boxes = {e.dst_conn: e.data.subset for e in state.in_edges(node) if e.dst_conn in ("_a", "_b")}
-        boxes["_c"] = next(e for e in state.out_edges(node) if e.src_conn == "_c").data.subset
+        # Densification may have rewired an operand to a dense copy, so each box reads its edge's current array.
+        boxes = {e.dst_conn: e.data for e in state.in_edges(node) if e.dst_conn in ("_a", "_b")}
+        boxes["_c"] = next(e for e in state.out_edges(node) if e.src_conn == "_c").data
         nsdfg = dace.SDFG("nested_gemm")
-        for name, desc in [("_a", adesc), ("_b", bdesc), ("_c", cdesc)]:
+        for name in ("_a", "_b", "_c"):
+            desc = sdfg.arrays[boxes[name].data]
             if isinstance(desc, dt.View):
                 dcopy = desc.as_array()
             else:
                 dcopy = dc(desc)
             dcopy.transient = False
-            dcopy.set_shape(boxes[name].size(), strides=desc.strides)
+            dcopy.set_shape(boxes[name].subset.size(), strides=desc.strides)
             nsdfg.add_datadesc(name, dcopy)
             if needs_copy:
                 dcopy_gpu = dc(dcopy)

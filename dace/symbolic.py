@@ -3869,6 +3869,8 @@ _PYSTR2SYM_locals = {
     "arg": sympy.Symbol("arg"),
     # sympy's ``poly`` function would swallow a variable of that name (a CRC polynomial)
     "poly": sympy.Symbol("poly"),
+    # sympy's exponential integral ``E1`` would swallow a variable of that name (an extent ``E1``)
+    "E1": sympy.Symbol("E1"),
     "Is": Is,
     "IsNot": IsNot,
     "BitwiseAnd": bitwise_and,
