@@ -4,7 +4,7 @@
 import warnings
 from typing import Any
 
-from dace import SDFG, Memlet, dtypes, nodes, properties
+from dace import SDFG, Memlet, SDFGState, dtypes, nodes, properties
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
@@ -126,6 +126,55 @@ def apply_thread_block_maps(sdfg: SDFG, xform: transformation.SingleStateTransfo
                 None,
             ) from err
     return applied
+
+
+#: The thread-level schedules a map below a megakernel cannot keep: its body already runs per thread.
+THREAD_LEVEL_MAP_SCHEDULES = (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
+
+
+def maps_below(kernel: nodes.MapEntry, state: SDFGState) -> list[nodes.MapEntry]:
+    """Every map below ``kernel``, through nested SDFGs."""
+    below: list[nodes.MapEntry] = []
+    for node in state.scope_subgraph(kernel).nodes():
+        if isinstance(node, nodes.MapEntry) and node is not kernel:
+            below.append(node)
+        elif isinstance(node, nodes.NestedSDFG):
+            below.extend(n for n, _ in node.sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+    return below
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class SequentialMegakernelBodies(ppl.Pass):
+    """Keep the body of a kernel whose grid is final (``explicit_sync``, a megakernel) per thread.
+
+    Such a kernel spans threads, each running its own grid-stride iterations, so it has no thread-block level: a
+    thread-block map below it (the default schedule of a map in a ``GPU_Device`` scope, or a library node expanded
+    inside it) runs sequentially in its thread instead. Left a thread-block map, it stops ``AddThreadBlockMaps`` from
+    tiling the kernel, and the launch then takes the kernel's thread range for its grid (qe_vexx_k: 256 times more
+    blocks than a cooperative launch holds).
+    """
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nodes
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
+        demoted = 0
+        for node, state in sdfg.all_nodes_recursive():
+            if (
+                isinstance(node, nodes.MapEntry)
+                and node.map.schedule == dtypes.ScheduleType.GPU_Device
+                and node.map.explicit_sync
+            ):
+                for inner in maps_below(node, state):
+                    if inner.map.schedule in THREAD_LEVEL_MAP_SCHEDULES:
+                        inner.map.schedule = dtypes.ScheduleType.Sequential
+                        inner.map.gpu_force_syncthreads = False
+                        demoted += 1
+        return demoted or None
 
 
 @properties.make_properties

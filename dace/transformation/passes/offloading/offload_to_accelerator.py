@@ -2364,8 +2364,16 @@ class OffloadToAccelerator(ppl.Pass):
             # never written already matches on the device, and when it is a nested SDFG's input
             # connector the copy is not merely wasted -- it writes a container the body may only read
             # (npbench scattering_self_energies' ``neigh_idx``).
+            # An argument whose entry value nothing reads needs no copy IN, the host-to-device fill of a host
+            # array's device twin. For an argument whose home is the device, the same direction is the copy BACK
+            # of what its host twin computed, which is the result: a host library node writing a host connector
+            # (ScatterConflictCheck's flag and scratch) left the device argument unwritten without it.
             cpu_set, gpu_set = self.exit_sets(node)
-            gpu_copies = {name for name in cpu_set & next.gpu_set if name not in self._no_copy_in_needed}
+            gpu_copies = {
+                name
+                for name in cpu_set & next.gpu_set
+                if name not in self._no_copy_in_needed or is_array_stored_on_GPU(sdfg, name)
+            }
             if gpu_copies:
                 place_copy(node_block, next_block, gpu_copies, to_gpu=True)
 

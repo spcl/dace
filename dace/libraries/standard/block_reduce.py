@@ -280,6 +280,14 @@ def enclosing_maps(node: nodes.Node, state: SDFGState) -> list[nodes.MapEntry]:
     return [s for s in get_parent_map_and_loop_scopes(state.sdfg, node, state) if isinstance(s, nodes.MapEntry)]
 
 
+def runs_per_thread(entry: nodes.MapEntry) -> bool:
+    """Whether the body of ``entry`` is thread-level code although the map is a ``GPU_Device`` map: a kernel whose
+    grid is final (``explicit_sync``, a megakernel) spans threads, each running its own grid-stride iterations. A
+    block collective there adds a thread-block map, after which the launch takes the thread range for the grid
+    (qe_vexx_k's ``copy_psi_to_tg``: 256 times more blocks than a cooperative launch holds)."""
+    return entry.map.schedule == dtypes.ScheduleType.GPU_Device and entry.map.explicit_sync
+
+
 def in_kernel_block_implementation(
     node: nodes.LibraryNode, state: SDFGState, share_private_outputs: bool = False
 ) -> str | None:
@@ -296,7 +304,7 @@ def in_kernel_block_implementation(
     maps = enclosing_maps(node, state)
     if not any(m.map.schedule == dtypes.ScheduleType.GPU_Device for m in maps):
         return None
-    if any(m.map.schedule in THREAD_LEVEL_SCHEDULES for m in maps):
+    if any(m.map.schedule in THREAD_LEVEL_SCHEDULES or runs_per_thread(m) for m in maps):
         return None
     # One thread's work: a block of lanes would idle over a handful of elements
     if small_operands(node, state):

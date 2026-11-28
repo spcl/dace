@@ -20,6 +20,7 @@ import pytest
 import dace
 from dace import data as dt
 from dace.codegen.cpf import CUDA_BUILD_FLAGS, Rendering, render
+from dace.cpf_lowering import HIP_DEVICE_BLOCKS, device_entry_prologue
 from dace.frontend.python.parser import DaceProgram
 from dace.libraries.standard.nodes.scan import ScanOp
 from tests.codegen.cpf.conftest import (
@@ -122,8 +123,6 @@ def test_the_conflict_atomic_compiles_for_one_and_two_byte_accumulators(tmp_path
     nvcc = shutil.which("nvcc")
     if nvcc is None:
         pytest.skip("nvcc is not on PATH")
-    from dace.cpf_lowering import HIP_DEVICE_BLOCKS
-
     source = tmp_path / "atomic.cu"
     source.write_text(
         "#include <cstdint>\n#include <cstring>\n#include <type_traits>\n#include <cuda_fp16.h>\n"
@@ -709,3 +708,42 @@ def test_a_kernel_with_a_check_builds_with_nvcc_and_computes_what_numpy_computes
     entry(*[ctypes.c_void_p(device[arg].data.ptr) if arg in device else 1000 for arg in rendering.sdfg.arglist()])
 
     np.testing.assert_allclose(cupy.asnumpy(device["b"]), 2.0 * host, rtol=0, atol=0)
+
+
+def test_a_device_entry_binds_its_context_by_name():
+    """The entry value-initializes its state and binds the context to the ``gpu_context`` field by name: brace
+    initialization assumed the field came first, and nvcc rejected it as ``too many initializer values`` on a unit
+    whose state had no field at all (Tactics' GPU ``ScatterConflictCheck`` kernels, T48-37)."""
+    rendering = render_gpu(vector_add, "cpf_cuda_context_by_name", language="cuda")
+    assert "cpf_cuda_context_by_name_state_t __cpf_state{};" in rendering.code
+    assert "__cpf_state.gpu_context = &__cpf_context;" in rendering.code
+    assert "__cpf_state{&__cpf_context}" not in rendering.code
+
+
+def test_a_device_entry_with_no_context_field_binds_none():
+    """A state with no ``gpu_context`` field gets no binding, which would name a member that does not exist."""
+    prologue = device_entry_prologue("k_state_t", has_state=False, has_context=False)
+    assert "k_state_t __cpf_state{};" in prologue
+    assert ".gpu_context = " not in prologue
+
+
+@pytest.mark.parametrize("functor", ["cpf_cub_plus", "cpf_cub_multiplies", "cpf_cub_minimum", "cpf_cub_maximum"])
+def test_a_cub_functor_deduces_an_accumulator_over_two_types(tmp_path: pathlib.Path, functor: str):
+    """CUB deduces a scan's accumulator from ``op(init, input)``: dbcsr's ``int8_t`` scan into ``int64_t`` called it on
+    ``(int64_t, int8_t)``, which a one-type template cannot deduce (``AccumT=<error-type>``). Checked with the host
+    compiler, the device qualifiers spelled away; a same-type call keeps its type."""
+    from dace.cpf_lowering import HIP_DEVICE_BLOCKS
+
+    compiler = shutil.which("c++")
+    if compiler is None:
+        pytest.skip("no host C++ compiler")
+    source = tmp_path / "functor.cpp"
+    source.write_text(
+        "#include <cstdint>\n#include <type_traits>\n#define __host__\n#define __device__\n"
+        + HIP_DEVICE_BLOCKS[functor]
+        + f"static_assert(std::is_same_v<std::invoke_result_t<{functor}, const int64_t&, const int8_t&>, int64_t>);\n"
+        + f"static_assert(std::is_same_v<std::invoke_result_t<{functor}, const int8_t&, const int8_t&>, int8_t>);\n"
+        + f"static_assert(std::is_same_v<std::invoke_result_t<{functor}, const float&, const double&>, double>);\n"
+    )
+    result = subprocess.run([compiler, "-std=c++17", "-fsyntax-only", str(source)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

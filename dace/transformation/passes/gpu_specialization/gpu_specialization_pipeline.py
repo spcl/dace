@@ -103,6 +103,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             ExpandLibraryNodes,
             InferDefaultSchedulesAndStorages,
             ReinferConnectorTypes,
+            SequentialMegakernelBodies,
             SynchronizeStreamUnawareGPUCallbacks,
         )
         from dace.transformation.passes.gpu_specialization.grid_stride_kernels import GridStrideKernels
@@ -120,6 +121,8 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         # Order constraints:
         #   * NestedGPUDeviceMapLowering first -- everything downstream assumes one-level kernels.
         #   * scheduler after ExpandLibraryNodes -- it would miss opaque libnodes.
+        #   * SequentialMegakernelBodies after ExpandLibraryNodes and before AddThreadBlockMaps -- an expansion or the
+        #     default schedule can put a thread-block map in a megakernel, which would then go untiled.
         #   * PromoteWarpTiles before AddThreadBlockMaps -- canonicalize promotes a pending ``is_warp_tile``
         #     before choosing a block size; a graph that reaches codegen with one still pending gets its
         #     thread-block level from the tile, not a second one on top of it.
@@ -159,6 +162,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
                 InsertExplicitCopies(),
                 *copy_selection,
                 ExpandLibraryNodes(),
+                SequentialMegakernelBodies(),
                 strategy,
                 GPUStreamWiring(strategy),
                 SynchronizeStreamUnawareGPUCallbacks(),

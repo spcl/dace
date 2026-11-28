@@ -1696,6 +1696,26 @@ def bfloat16_overloads(vendor: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def cub_functor(name: str, body: str) -> str:
+    """A CUB binary operator ``name`` computing ``body`` (``{a}`` and ``{b}`` the operands) on one type, and on two.
+
+    CUB deduces a scan's accumulator from ``op(init, input)``: an ``int8_t`` scan into ``int64_t`` with an ``int64_t``
+    initial value calls it on two types, which a one-type template cannot deduce (``AccumT=<error-type>``, dbcsr).
+    The mixed overload works in the common type; the one-type template is more specialized and still wins on equal
+    types, so a same-type scan is unchanged.
+    """
+    same = body.format(a="a", b="b")
+    mixed = body.format(a="C(a)", b="C(b)")
+    return (
+        f"struct {name} {{\n"
+        "    template <typename T>\n"
+        f"    __host__ __device__ T operator()(const T& a, const T& b) const {{ return {same}; }}\n"
+        "    template <typename T, typename U, typename C = std::common_type_t<T, U>>\n"
+        f"    __host__ __device__ C operator()(const T& a, const U& b) const {{ return {mixed}; }}\n"
+        "};\n"
+    )
+
+
 #: Device preamble blocks only SOME units need, keyed by the identifier that pulls each one in.
 #:
 #: Same principle as :func:`helpers_used`, and for the same reason: what a unit needs is a property
@@ -1761,22 +1781,10 @@ __host__ __device__ inline T cpf_narrow(const V &value) {
 //: keeps the functor structs CCCL 3 dropped, and a unit built by hipcc is never built against CCCL.
 namespace gpucub = hipcub;
 """,
-    "cpf_cub_multiplies": "struct cpf_cub_multiplies {\n"
-    "    template <typename T>\n"
-    "    __host__ __device__ T operator()(const T& a, const T& b) const { return a * b; }\n"
-    "};\n",
-    "cpf_cub_plus": "struct cpf_cub_plus {\n"
-    "    template <typename T>\n"
-    "    __host__ __device__ T operator()(const T& a, const T& b) const { return a + b; }\n"
-    "};\n",
-    "cpf_cub_minimum": "struct cpf_cub_minimum {\n"
-    "    template <typename T>\n"
-    "    __host__ __device__ T operator()(const T& a, const T& b) const { return a < b ? a : b; }\n"
-    "};\n",
-    "cpf_cub_maximum": "struct cpf_cub_maximum {\n"
-    "    template <typename T>\n"
-    "    __host__ __device__ T operator()(const T& a, const T& b) const { return a > b ? a : b; }\n"
-    "};\n",
+    "cpf_cub_multiplies": cub_functor("cpf_cub_multiplies", "{a} * {b}"),
+    "cpf_cub_plus": cub_functor("cpf_cub_plus", "{a} + {b}"),
+    "cpf_cub_minimum": cub_functor("cpf_cub_minimum", "{a} < {b} ? {a} : {b}"),
+    "cpf_cub_maximum": cub_functor("cpf_cub_maximum", "{a} > {b} ? {a} : {b}"),
     "cpf_gpu_atomic": """\
 //: A conflicting accumulation, applied atomically under any binary operator.
 //:
@@ -2080,7 +2088,9 @@ def device_preamble(code: str, dialect: Dialect) -> str:
     )
 
 
-def device_entry_prologue(state_struct: str, init_code: str = "", exit_code: str = "", has_state: bool = True) -> str:
+def device_entry_prologue(
+    state_struct: str, init_code: str = "", exit_code: str = "", has_state: bool = True, has_context: bool = True
+) -> str:
     """The device setup CPF's single entry function opens with.
 
     An ordinary build does this in ``__dace_init_<name>`` and undoes it in ``__dace_exit_<name>``,
@@ -2102,6 +2112,8 @@ def device_entry_prologue(state_struct: str, init_code: str = "", exit_code: str
     :param exit_code: the state's teardown, the code ``__dace_exit`` would run.
     :param has_state: whether the state struct has any field; without boilerplate (:func:`no_boilerplate`) an empty
                       one is not emitted, so there is no state to declare.
+    :param has_context: whether the state struct has the ``gpu_context`` field the generated body reaches the
+                        stream through; a unit with no device code has none.
     :returns: the prologue lines, indented one level.
     """
     teardown = ""
@@ -2120,12 +2132,15 @@ def device_entry_prologue(state_struct: str, init_code: str = "", exit_code: str
             f"    {state_struct} __cpf_state{{}};\n    {state_struct} *__state = &__cpf_state;\n" if has_state else ""
         )
         return f"{state}{init_code}{teardown}"
+    # By name, not as the first initializer: the context is not always the struct's first field, and a unit with no
+    # device code has no field for it (an empty struct takes no initializer at all).
+    link = "    __cpf_state.gpu_context = &__cpf_context;\n" if has_context else ""
     return f"""\
     // The device handshake, which a single entry point has nowhere else to put.
     cpf_gpu_context __cpf_context{{}};
     __cpf_context.streams[0] = nullptr;
-    {state_struct} __cpf_state{{&__cpf_context}};
-    {state_struct} *__state = &__cpf_state;
+    {state_struct} __cpf_state{{}};
+{link}    {state_struct} *__state = &__cpf_state;
 {init_code}
 {teardown}    struct __cpf_drain {{
         ~__cpf_drain() {{ cpf_gpu_check(gpuDeviceSynchronize()); }}

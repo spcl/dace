@@ -1274,6 +1274,20 @@ def overapproximate(expr):
     return _overapproximate(expr)
 
 
+def _integer_valued(expr) -> bool:
+    """Whether ``expr`` is an integer for every value of its symbols: sympy says so, or it is a polynomial with integer
+    coefficients in DaCe symbols of an integer type (a map index plus a tile offset, ``g + 15``)."""
+    if expr.is_integer:
+        return True
+    names = expr.free_symbols
+    if not names or not all(isinstance(s, symbol) and s.dtype in dtypes.INTEGER_TYPES for s in names):
+        return False
+    try:
+        return all(c.is_Integer for c in sympy.Poly(expr, *names).coeffs())
+    except sympy.PolynomialError:
+        return False
+
+
 @lru_cache(maxsize=2048, typed=True)
 def _overapproximate(expr):
     if isinstance(expr, SymExpr):
@@ -1302,6 +1316,13 @@ def _overapproximate(expr):
     # first (measured 4.6x on the miss path). NOT gated on ``is_Add``: the trailing ``+ c`` is a
     # Wild that happily binds 0, so ``Min(4, N)`` matches the first pattern with no Add in sight.
     if expr.has(sympy.Min):
+        # ``ceiling`` is monotonic, so ``ceiling(Min(x, y))`` IS ``Min(ceiling(x), ceiling(y))``: spelled that way, a
+        # tile clipped by a ceiling-valued bound (stockham_fft's ``-g + ceiling(Min(g + 15, ceiling(R**k) - 1)) + 1``)
+        # reaches the ``Min(a, b) + c`` rule below.
+        expr = expr.replace(
+            lambda e: isinstance(e, sympy.ceiling) and isinstance(e.args[0], sympy.Min),
+            lambda e: sympy.Min(*(arg if _integer_valued(arg) else sympy.ceiling(arg) for arg in e.args[0].args)),
+        )
         a = sympy.Wild("a")
         b = sympy.Wild("b")
         c = sympy.Wild("c")

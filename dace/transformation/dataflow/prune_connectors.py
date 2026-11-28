@@ -125,6 +125,19 @@ class PruneConnectors(pm.SingleStateTransformation):
             prune_in -= symbolic_uses
             prune_out -= symbolic_uses
 
+        # A container whose access node carries only empty memlets (an ordering anchor) is neither read nor written,
+        # so ``read_and_write_sets`` leaves it out, but ``apply`` cannot remove a descriptor a node still names
+        # (npbench nbody's ``softening`` in a CPF unit: ``Cannot remove data descriptor softening``). Keep it.
+        if prune_in or prune_out:
+            anchored = {
+                node.data
+                for inner_state in nsdfg.sdfg.states()
+                for node in inner_state.data_nodes()
+                if node.data not in all_data_used
+            }
+            prune_in -= anchored
+            prune_out -= anchored
+
         return prune_in, prune_out, all_data_used
 
     def apply(self, state: SDFGState, sdfg: SDFG):

@@ -163,6 +163,16 @@ def test_a_strided_thread_block_extent_overapproximates_to_its_full_tile() -> No
     assert symbolic.overapproximate(extent) == 64
 
 
+def test_a_tile_clipped_by_a_ceiling_bound_overapproximates_to_its_full_tile() -> None:
+    """stockham_fft on GPU: a 16-wide tile clipped at ``ceiling(R**k) - 1`` has 16 threads; the ``ceiling`` around the
+    clip hid that, and the extent then conflicted with the kernel's ``gpu_block_size`` of 16."""
+    g, r, k = symbol("g"), symbol("R"), symbol("k")
+    extent = -g + sympy.ceiling(Min(g + 15, sympy.ceiling(r**k) - 1)) + 1
+    assert symbolic.overapproximate(extent) == 16
+    # Only an integer-valued argument loses its ceiling: a fractional one still rounds up.
+    assert symbolic.overapproximate(sympy.ceiling(Min(symbol("N"), sympy.Rational(9, 2)))) == 5
+
+
 # Reproducer: ``E1`` parsed as sympy's exponential integral, so ``E1 + 1`` raised TypeError.
 def test_a_symbol_named_e1_is_a_symbol():
     expr = pystr_to_symbolic("E0 * E1 + 1")
