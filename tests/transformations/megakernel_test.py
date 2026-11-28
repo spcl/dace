@@ -11,11 +11,15 @@ import numpy as np
 import pytest
 
 import dace
+from dace.codegen.cpf import render
+from dace.libraries.standard.block_reduce import in_kernel_block_implementation, runs_per_thread
 from dace.libraries.standard.nodes import ComputePersistentKernelRange
 from dace.libraries.standard.nodes.sync import Sync
 from dace.properties import CodeBlock
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.megakernel import MegaKernelOptimization
 from dace.transformation.passes.megakernel.discovery import GPU, find_chains, linear_chain
 from dace.transformation.passes.megakernel.gather_kernels import hoist_host_scalar_states
@@ -798,3 +802,54 @@ if __name__ == "__main__":
     test_a_column_keys_whichever_dimension_it_indexes()
     test_a_column_only_one_stage_scope_touches_stays_per_thread()
     test_a_per_thread_column_matches_the_kernels()
+
+
+N_ROWS, M_COLS = dace.symbol("N_ROWS"), dace.symbol("M_COLS")
+
+
+@dace.program
+def transpose_then_flip(
+    a: dace.float64[N_ROWS, M_COLS, M_COLS],
+    b: dace.float64[N_ROWS, M_COLS, M_COLS],
+    c: dace.float64[N_ROWS, M_COLS, M_COLS],
+):
+    for i in dace.map[0:N_ROWS]:
+        b[i] = np.transpose(a[i])
+    for i in dace.map[0:N_ROWS]:
+        c[i] = b[N_ROWS - 1 - i] * 2.0
+
+
+def megakernel_with_a_library_node() -> dace.SDFG:
+    """Two kernels, the first holding a ``Transpose`` per iteration, as one cooperative megakernel."""
+    sdfg = transpose_then_flip.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, validate_all=False, target="gpu")
+    offload_to_gpu(sdfg)
+    sdfg = finalize_for_target(sdfg, "gpu", validate=True) or sdfg
+    MegaKernelOptimization().apply_pass(sdfg, {})
+    return sdfg
+
+
+def test_a_megakernel_body_keeps_no_thread_block_map_and_launches_its_resident_blocks():
+    """A megakernel spans threads, so a map below it (a library node's expansion, a map's default schedule) runs per
+    thread. Left a thread-block map, the kernel was not tiled and the launch took its thread range ``256 * nblk`` for
+    the grid, which no cooperative launch holds (qe_vexx_k on GPU, T48-50) or which conflicted with the block size."""
+    with dace.config.set_temporary("compiler", "cuda", "device_multiprocessors", value=132):
+        rendering = render(megakernel_with_a_library_node(), language="cuda")
+    grids = re.findall(r"LaunchCooperativeKernel\([^;]*?, dim3\((.*?)\), dim3\((\d+), 1, 1\)", rendering.device_code)
+    assert len(grids) == 1, "one cooperative launch"
+    grid, block = grids[0]
+    assert block == "256" and "256" not in grid, f"the grid is the resident block count, not {grid}"
+
+
+def test_a_library_node_in_a_megakernel_takes_no_block_collective():
+    """Inside a kernel whose grid is final, every thread runs its own iterations: no block of lanes is there to share
+    one node, so the in-kernel lowering is not the block collective."""
+    sdfg = megakernel_with_a_library_node()
+    kernel = next(
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and n.map.explicit_sync
+    )
+    assert runs_per_thread(kernel)
+    libs = [(n, st) for n, st in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.LibraryNode)]
+    assert libs, "the transpose is still a library node before expansion"
+    for node, state in libs:
+        assert in_kernel_block_implementation(node, state) is None
