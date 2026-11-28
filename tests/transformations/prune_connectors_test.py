@@ -625,6 +625,38 @@ def test_prune_connectors_keeps_tasklet_code_reference():
     sdfg.validate()
 
 
+def test_prune_connectors_keeps_a_connector_an_ordering_node_names():
+    """A connector whose inner access node carries only empty memlets must survive, and pruning must not raise.
+
+    The node orders two tasklets and reads nothing, so ``read_and_write_sets`` reports the container unused and
+    the connector was pruned; the descriptor could then not be removed while the node still named it (npbench
+    nbody's ``softening`` in CPF's ``prepare``: ``Cannot remove data descriptor softening``).
+    """
+    sdfg = dace.SDFG("ordering_anchor_tester")
+    sdfg.add_scalar("s", dace.float64)
+    sdfg.add_array("A", [1], dace.float64)
+
+    nsdfg = dace.SDFG("nested")
+    nsdfg.add_scalar("s", dace.float64)
+    nsdfg.add_array("A", [1], dace.float64)
+    nstate = nsdfg.add_state("body", is_start_block=True)
+    anchor = nstate.add_access("s")
+    first = nstate.add_tasklet("first", {}, {"__out"}, "__out = 1.0")
+    second = nstate.add_tasklet("second", {}, {}, "")
+    nstate.add_nedge(first, anchor, dace.Memlet())
+    nstate.add_nedge(anchor, second, dace.Memlet())
+    nstate.add_edge(first, "__out", nstate.add_write("A"), None, dace.Memlet("A[0]"))
+
+    state = sdfg.add_state()
+    nsdfg_node = state.add_nested_sdfg(nsdfg, inputs={"s"}, outputs={"A"})
+    state.add_edge(state.add_read("s"), None, nsdfg_node, "s", dace.Memlet("s[0]"))
+    state.add_edge(nsdfg_node, "A", state.add_write("A"), None, dace.Memlet("A[0]"))
+
+    assert 0 == sdfg.apply_transformations_repeated(PruneConnectors)
+    assert "s" in nsdfg_node.in_connectors
+    sdfg.validate()
+
+
 def test_prune_connectors_drops_input_the_body_only_writes():
     """An in/out container the body only writes loses its input connector: an access node is not a read."""
     sdfg = dace.SDFG("write_only_tester")
