@@ -1630,6 +1630,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         self._initcode.getvalue(),
                         self._exitcode.getvalue(),
                         has_state=bool(self.statestruct),
+                        has_context=any(field.endswith(" *gpu_context;") for field in self.statestruct),
                     )
             else:
                 if params:

@@ -709,3 +709,22 @@ def test_a_kernel_with_a_check_builds_with_nvcc_and_computes_what_numpy_computes
     entry(*[ctypes.c_void_p(device[arg].data.ptr) if arg in device else 1000 for arg in rendering.sdfg.arglist()])
 
     np.testing.assert_allclose(cupy.asnumpy(device["b"]), 2.0 * host, rtol=0, atol=0)
+
+
+def test_a_device_entry_binds_its_context_by_name():
+    """The entry value-initializes its state and binds the context to the ``gpu_context`` field by name: brace
+    initialization assumed the field came first, and nvcc rejected it as ``too many initializer values`` on a unit
+    whose state had no field at all (Tactics' GPU ``ScatterConflictCheck`` kernels, T48-37)."""
+    rendering = render_gpu(vector_add, "cpf_cuda_context_by_name", language="cuda")
+    assert "cpf_cuda_context_by_name_state_t __cpf_state{};" in rendering.code
+    assert "__cpf_state.gpu_context = &__cpf_context;" in rendering.code
+    assert "__cpf_state{&__cpf_context}" not in rendering.code
+
+
+def test_a_device_entry_with_no_context_field_binds_none():
+    """A state with no ``gpu_context`` field gets no binding, which would name a member that does not exist."""
+    from dace.cpf_lowering import device_entry_prologue
+
+    prologue = device_entry_prologue("k_state_t", has_state=False, has_context=False)
+    assert "k_state_t __cpf_state{};" in prologue
+    assert ".gpu_context = " not in prologue
