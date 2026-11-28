@@ -451,8 +451,15 @@ class SplitPure(ONNXForward):
         nsdfg = dace.SDFG(node.label + "_expansion")
         nstate = nsdfg.add_state()
 
-        split_dim = node.axis
         idesc = in_desc_with_name(node, state, sdfg, "input")
+
+        # Normalize a possibly-negative axis (e.g. ONNX export of torch.unbind emits
+        # Split with axis=-2). Without this, the `j != split_dim` check below never
+        # matches the intended dimension and every output aliases the first slice.
+        split_dim = node.axis
+        if split_dim < 0:
+            split_dim += len(idesc.shape)
+
         nsdfg.add_datadesc("input", copy.deepcopy(idesc))
         nsdfg.arrays["input"].transient = False
 
@@ -542,7 +549,8 @@ class PureShape(ONNXForward):
             copy.deepcopy(data_desc),
         )
         nsdfg.arrays["data"].transient = False
-        nsdfg.add_array("shape", shape_val.shape, dtype=dace.int64)
+        nsdfg.add_datadesc("shape", copy.deepcopy(out_desc_with_name(node, state, sdfg, "shape")))
+        nsdfg.arrays["shape"].transient = False
         s = nstate.add_write("shape")
 
         for i, v in enumerate(shape_val):

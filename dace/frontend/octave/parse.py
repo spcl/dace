@@ -676,7 +676,8 @@ def p_error(p):
     raise ValueError("Unexpected EOF")
 
 
-parser = yacc.yacc(start="top")
+# Tables are built in memory: parallel importers rewriting ``parsetab.py`` read each other's half-written file
+parser = yacc.yacc(start="top", write_tables=False, debug=False)
 
 
 def parse(buf, debug=False):

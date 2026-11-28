@@ -22,6 +22,8 @@ class CommF2c(CommNode):
     a Fortran caller) stands for, as ``MPI_Comm_f2c``. It is the ``_comm`` of the nodes that communicate over it.
     """
 
+    # a query of the communicator: nothing another rank sees
+    side_effects = False
     implementations = {"MPI": ExpandCommF2cMPI}
     default_implementation = "MPI"
 

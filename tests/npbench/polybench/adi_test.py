@@ -214,6 +214,11 @@ def run_adi(device_type: dace.dtypes.DeviceType):
         # Parse the SDFG and apply auto-opt
         sdfg = adi_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
+        if device_type == dace.dtypes.DeviceType.CPU:
+            # ~240 tiny maps per timestep: an OpenMP team per map dominates the run on a shared node.
+            for node, _ in sdfg.all_nodes_recursive():
+                if isinstance(node, dace.nodes.MapEntry):
+                    node.map.schedule = dace.ScheduleType.Sequential
         sdfg(TSTEPS=TSTEPS, u=dace_u, N=N)
     else:
         raise ValueError(f"Unsupported device type: {device_type}")

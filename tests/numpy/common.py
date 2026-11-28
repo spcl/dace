@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import contextlib
 import inspect
-import itertools
 from collections import OrderedDict
 from collections.abc import Callable
 from copy import deepcopy as dc
@@ -124,7 +123,7 @@ def compare_numpy_output(
                 if validation_func:
                     # Works only with 1D inputs of the same size!
                     reference_input = [arr.tolist() for arr in inputs.values()]
-                    reference_result = list(itertools.starmap(validation_func, zip(*reference_input)))
+                    reference_result = [validation_func(*inp_args) for inp_args in zip(*reference_input)]
                 else:
                     with contextmgr:
                         reference_result = func(**reference_input)
@@ -148,16 +147,22 @@ def compare_numpy_output(
                     raise AssertionError(
                         f"dace threw {type(dace_thrown).__name__}: {dace_thrown}, but numpy threw {type(numpy_thrown).__name__}: {numpy_thrown}"
                     ) from raise_from
-            elif not isinstance(reference_result, (tuple, list)):
-                reference_result = [reference_result]
-                dace_result = [dace_result]
-                for ref, val in zip(reference_result, dace_result):
+            else:
+                # A validation function yields one value per element; a tuple result is one output per entry.
+                if validation_func:
+                    reference_result = [np.array(reference_result)]
+                    dace_result = [dace_result]
+                elif not isinstance(reference_result, (tuple, list)):
+                    reference_result = [reference_result]
+                    dace_result = [dace_result]
+                assert len(dace_result) == len(reference_result), (len(dace_result), len(reference_result))
+                for position, (ref, val) in enumerate(zip(reference_result, dace_result)):
                     if ref.dtype == np.float32:
-                        assert np.allclose(ref, val, equal_nan=True, rtol=1e-3, atol=1e-5)
+                        assert np.allclose(ref, val, equal_nan=True, rtol=1e-3, atol=1e-5), (position, ref, val)
                     else:
-                        assert np.allclose(ref, val, equal_nan=True)
+                        assert np.allclose(ref, val, equal_nan=True), (position, ref, val)
                     if check_dtype and not validation_func:
-                        assert ref.dtype == val.dtype
+                        assert ref.dtype == val.dtype, (position, ref.dtype, val.dtype)
 
         return test
 

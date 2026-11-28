@@ -56,6 +56,14 @@ def create_vector_ddt(memlet, data):
 
     if is_access_contiguous(memlet, data):
         return None
+    if len(data.shape) == 1:
+        # A strided vector, such as a view of a column: one element per block
+        return dict(
+            blocklen="1",
+            oldtype=str(MPI_DDT(data.dtype)),
+            count=sym2cpp(memlet.subset.num_elements_exact()),
+            stride=sym2cpp(data.strides[0] * memlet.subset[0][2]),
+        )
     if len(data.shape) != 2:
         raise ValueError("Dimensionality of access not supported atm.")
     # Rows run along the dimension of unit stride: the last of a row-major array, the first of a column-major one

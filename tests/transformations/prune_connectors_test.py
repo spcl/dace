@@ -431,6 +431,31 @@ def test_prune_connectors_with_dependencies():
     assert np.allclose(np_d, np_d_)
 
 
+def test_pruning_the_only_input_keeps_the_body_in_its_map():
+    inner = dace.SDFG("prune_only_input_inner")
+    inner.add_array("unused", [4], dace.float64)
+    inner.add_array("out", [4], dace.float64)
+    inner.add_symbol("i", dace.int64)
+    body = inner.add_state()
+    body.add_edge(
+        body.add_tasklet("one", {}, {"o"}, "o = 1.0"), "o", body.add_write("out"), None, dace.Memlet("out[i]")
+    )
+
+    sdfg = dace.SDFG("prune_only_input")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("m", dict(i="0:4"))
+    nsdfg = state.add_nested_sdfg(inner, {"unused": None}, {"out": None}, symbol_mapping={"i": "i"})
+    state.add_memlet_path(state.add_read("A"), entry, nsdfg, dst_conn="unused", memlet=dace.Memlet("A[0:4]"))
+    state.add_memlet_path(nsdfg, exit_node, state.add_write("B"), src_conn="out", memlet=dace.Memlet("B[0:4]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(PruneConnectors) == 1
+    assert state.scope_dict()[nsdfg] is entry
+    sdfg.validate()
+
+
 def test_read_write():
     sdfg, nsdfg = _make_read_write_sdfg(True)
     assert not PruneConnectors.can_be_applied_to(nsdfg=nsdfg, sdfg=sdfg, expr_index=0, permissive=False)
@@ -484,6 +509,269 @@ def test_prune_connectors_with_conditional_block():
     assert 0 == sdfg.apply_transformations_repeated(PruneConnectors)
 
 
+def test_prune_connectors_keeps_inner_wcr_accumulator():
+    """An in/out connector whose read is materialised by a WCR INSIDE the nested SDFG must survive.
+
+    ``a (CR: Sum)= b`` reads ``a``, but ``read_and_write_sets`` is pure dataflow and reports ``a``
+    write-only, so the accumulator lands in the prune set. The pre-existing WCR exemption only
+    inspects the OUTER boundary edge, which carries no WCR here. Pruning ``a`` silently turns
+    ``a[i] += b[i]`` into ``a[i] = b[i]`` (tsvc ``vpv`` miscompiled exactly this way).
+    """
+    sdfg = dace.SDFG("inner_wcr_tester")
+    A, A_desc = sdfg.add_array("A", [4], dace.float64)
+    B, B_desc = sdfg.add_array("B", [4], dace.float64)
+
+    nsdfg = dace.SDFG("nested")
+    a, _ = nsdfg.add_scalar("a", A_desc.dtype)
+    b, _ = nsdfg.add_scalar("b", B_desc.dtype)
+    nstate = nsdfg.add_state("body", is_start_block=True)
+    tasklet = nstate.add_tasklet("copy", {"__in"}, {"__out"}, "__out = __in")
+    nstate.add_edge(nstate.add_access(b), None, tasklet, "__in", dace.Memlet("b[0]"))
+    # The WCR lives on this INNER edge; nothing on the outer boundary carries it.
+    nstate.add_edge(tasklet, "__out", nstate.add_access(a), None, dace.Memlet("a[0]", wcr="lambda x, y: x + y"))
+
+    state = sdfg.add_state()
+    nsdfg_node = state.add_nested_sdfg(nsdfg, inputs={a, b}, outputs={a})
+    me, mx = state.add_map("map", dict(i="0:4"))
+    state.add_memlet_path(state.add_access(A), me, nsdfg_node, dst_conn=a, memlet=dace.Memlet(f"{A}[i]"))
+    state.add_memlet_path(state.add_access(B), me, nsdfg_node, dst_conn=b, memlet=dace.Memlet(f"{B}[i]"))
+    state.add_memlet_path(nsdfg_node, mx, state.add_access(A), src_conn=a, memlet=dace.Memlet(f"{A}[i]"))
+
+    assert 0 == sdfg.apply_transformations_repeated(PruneConnectors)
+    assert a in nsdfg_node.in_connectors
+
+
+def test_prune_connectors_keeps_memlet_subset_index():
+    """A connector used ONLY as an index inside a memlet subset must survive.
+
+    ``src[idx]`` never names ``idx`` as the memlet's data, so ``read_and_write_sets`` cannot see
+    it. ``SDFG.free_symbols`` does not catch it either: while the connector exists the name is a
+    DESCRIPTOR, not a symbol -- it only becomes a free symbol once the data is removed, which is
+    when ``NestedSDFG.validate`` raises "Missing symbols on nested SDFG" (tsvc_2_5 gather kernels).
+    """
+    sdfg = dace.SDFG("subset_index_tester")
+    SRC, SRC_desc = sdfg.add_array("SRC", [4], dace.float64)
+    IDX, IDX_desc = sdfg.add_array("IDX", [4], dace.int64)
+    OUT, OUT_desc = sdfg.add_array("OUT", [4], dace.float64)
+
+    nsdfg = dace.SDFG("nested")
+    src, _ = nsdfg.add_array("src", [4], SRC_desc.dtype)
+    idx, _ = nsdfg.add_scalar("idx", IDX_desc.dtype)
+    out, _ = nsdfg.add_scalar("out", OUT_desc.dtype)
+    nstate = nsdfg.add_state("body", is_start_block=True)
+    tasklet = nstate.add_tasklet("gather", {"__in"}, {"__out"}, "__out = __in")
+    # ``idx`` appears only here, inside the SUBSET -- never as the memlet's data.
+    nstate.add_edge(nstate.add_access(src), None, tasklet, "__in", dace.Memlet(f"{src}[{idx}]"))
+    nstate.add_edge(tasklet, "__out", nstate.add_access(out), None, dace.Memlet("out[0]"))
+
+    state = sdfg.add_state()
+    nsdfg_node = state.add_nested_sdfg(nsdfg, inputs={src, idx}, outputs={out})
+    me, mx = state.add_map("map", dict(i="0:4"))
+    state.add_memlet_path(state.add_access(SRC), me, nsdfg_node, dst_conn=src, memlet=dace.Memlet(f"{SRC}[0:4]"))
+    outer_idx, _ = sdfg.add_scalar(idx, IDX_desc.dtype, transient=True)
+    idx_access = state.add_access(outer_idx)
+    state.add_memlet_path(state.add_access(IDX), me, idx_access, memlet=dace.Memlet(f"{IDX}[i]"))
+    state.add_edge(idx_access, None, nsdfg_node, idx, dace.Memlet(f"{outer_idx}[0]"))
+    sdfg.add_scalar(out, OUT_desc.dtype, transient=True)
+    out_access = state.add_access(out)
+    state.add_edge(nsdfg_node, out, out_access, None, dace.Memlet(f"{out}[0]"))
+    state.add_memlet_path(out_access, mx, state.add_access(OUT), memlet=dace.Memlet(f"{OUT}[i]"))
+
+    assert 0 == sdfg.apply_transformations_repeated(PruneConnectors)
+    assert idx in nsdfg_node.in_connectors
+    sdfg.validate()
+
+
+def test_prune_connectors_keeps_tasklet_code_reference():
+    """A connector named only by a TASKLET's code must survive.
+
+    A scalar NSDFG input can be consumed symbolically -- bound into an interstate assignment that
+    symbol/constant propagation then folds into the tasklet's code (``__out = a * b``, the shape an
+    integer explicit-map elementwise kernel lowers to). No memlet names ``a``/``b`` any more, so
+    ``read_and_write_sets`` reports them dead; pruning them drops the operands and leaves the
+    tasklet reading two undefined names, which surfaces much later as a ``KeyError`` while
+    ``SDFG.arglist`` builds the scalar arguments.
+    """
+    sdfg = dace.SDFG("tasklet_code_tester")
+    A, A_desc = sdfg.add_array("A", [4], dace.int64)
+    B, B_desc = sdfg.add_array("B", [4], dace.int64)
+    C, C_desc = sdfg.add_array("C", [4], dace.int64)
+
+    nsdfg = dace.SDFG("nested")
+    a, _ = nsdfg.add_scalar("a", A_desc.dtype)
+    b, _ = nsdfg.add_scalar("b", B_desc.dtype)
+    c, _ = nsdfg.add_scalar("c", C_desc.dtype)
+    nstate = nsdfg.add_state("body", is_start_block=True)
+    # ``a`` and ``b`` appear only inside the tasklet CODE -- no connector, no memlet names them.
+    tasklet = nstate.add_tasklet("folded", {}, {"__out"}, f"__out = ({a} * {b})")
+    nstate.add_edge(tasklet, "__out", nstate.add_access(c), None, dace.Memlet("c[0]"))
+
+    state = sdfg.add_state()
+    nsdfg_node = state.add_nested_sdfg(nsdfg, inputs={a, b}, outputs={c})
+    me, mx = state.add_map("map", dict(i="0:4"))
+    for outer, inner in ((A, a), (B, b)):
+        sdfg.add_scalar(inner, nsdfg.arrays[inner].dtype, transient=True)
+        scalar_access = state.add_access(inner)
+        state.add_memlet_path(state.add_access(outer), me, scalar_access, memlet=dace.Memlet(f"{outer}[i]"))
+        state.add_edge(scalar_access, None, nsdfg_node, inner, dace.Memlet(f"{inner}[0]"))
+    sdfg.add_scalar(c, C_desc.dtype, transient=True)
+    c_access = state.add_access(c)
+    state.add_edge(nsdfg_node, c, c_access, None, dace.Memlet(f"{c}[0]"))
+    state.add_memlet_path(c_access, mx, state.add_access(C), memlet=dace.Memlet(f"{C}[i]"))
+
+    assert 0 == sdfg.apply_transformations_repeated(PruneConnectors)
+    assert a in nsdfg_node.in_connectors
+    assert b in nsdfg_node.in_connectors
+    sdfg.validate()
+
+
+def test_prune_connectors_drops_input_the_body_only_writes():
+    """An in/out container the body only writes loses its input connector: an access node is not a read."""
+    sdfg = dace.SDFG("write_only_tester")
+    A, A_desc = sdfg.add_array("A", [4], dace.float64)
+    B, B_desc = sdfg.add_array("B", [4], dace.float64)
+
+    nsdfg = dace.SDFG("nested")
+    a, _ = nsdfg.add_scalar("a", A_desc.dtype)
+    b, _ = nsdfg.add_scalar("b", B_desc.dtype)
+    nstate = nsdfg.add_state("body", is_start_block=True)
+    tasklet = nstate.add_tasklet("copy", {"__in": None}, {"__out": None}, "__out = __in")
+    nstate.add_edge(nstate.add_access(b), None, tasklet, "__in", dace.Memlet("b[0]"))
+    nstate.add_edge(tasklet, "__out", nstate.add_access(a), None, dace.Memlet("a[0]"))
+
+    state = sdfg.add_state()
+    nsdfg_node = state.add_nested_sdfg(nsdfg, inputs={a: None, b: None}, outputs={a: None})
+    me, mx = state.add_map("map", dict(i="0:4"))
+    for outer, inner in ((A, a), (B, b)):
+        sdfg.add_scalar(inner, nsdfg.arrays[inner].dtype, transient=True)
+        scalar_access = state.add_access(inner)
+        state.add_memlet_path(state.add_access(outer), me, scalar_access, memlet=dace.Memlet(f"{outer}[i]"))
+        state.add_edge(scalar_access, None, nsdfg_node, inner, dace.Memlet(f"{inner}[0]"))
+    a_written = state.add_access(a)
+    state.add_edge(nsdfg_node, a, a_written, None, dace.Memlet(f"{a}[0]"))
+    state.add_memlet_path(a_written, mx, state.add_access(A), memlet=dace.Memlet(f"{A}[i]"))
+
+    assert 1 == sdfg.apply_transformations_repeated(PruneConnectors)
+    assert a not in nsdfg_node.in_connectors
+    assert a in nsdfg_node.out_connectors
+    assert b in nsdfg_node.in_connectors
+    sdfg.validate()
+
+    np_a = np.zeros(4)
+    np_b = np.random.random(4)
+    sdfg(A=np_a, B=np_b)
+    assert np.array_equal(np_a, np_b)
+
+
+def _map_with_unwritten_output_through_access_node(read_after: bool) -> tuple[dace.SDFG, dace.SDFGState]:
+    """``map i: body -> b_local -> exit -> B``, where ``body`` declares ``out`` but never writes it."""
+    inner = dace.SDFG("prune_unwritten_via_node_inner")
+    inner.add_array("inp", [4], dace.float64)
+    inner.add_array("res", [4], dace.float64)
+    inner.add_array("out", [4], dace.float64)
+    inner.add_symbol("i", dace.int64)
+    body = inner.add_state()
+    copy_tasklet = body.add_tasklet("copy", {"x"}, {"y"}, "y = x")
+    body.add_edge(body.add_read("inp"), None, copy_tasklet, "x", dace.Memlet("inp[i]"))
+    body.add_edge(copy_tasklet, "y", body.add_write("res"), None, dace.Memlet("res[i]"))
+
+    sdfg = dace.SDFG("prune_unwritten_via_node")
+    for name in ("A", "B", "C", "D"):
+        sdfg.add_array(name, [4], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("m", dict(i="0:4"))
+    nsdfg = state.add_nested_sdfg(inner, {"inp": None}, {"res": None, "out": None}, symbol_mapping={"i": "i"})
+    state.add_memlet_path(state.add_read("A"), entry, nsdfg, dst_conn="inp", memlet=dace.Memlet("A[0:4]"))
+    state.add_memlet_path(nsdfg, exit_node, state.add_write("C"), src_conn="res", memlet=dace.Memlet("C[0:4]"))
+    local = state.add_access("B")
+    state.add_edge(nsdfg, "out", local, None, dace.Memlet("B[0:4]"))
+    state.add_memlet_path(local, exit_node, state.add_write("B"), memlet=dace.Memlet("B[i]"))
+    if read_after:
+        t = state.add_tasklet("use", {"v"}, {"w"}, "w = v")
+        state.add_edge(local, None, t, "v", dace.Memlet("B[i]"))
+        state.add_memlet_path(t, exit_node, state.add_write("D"), src_conn="w", memlet=dace.Memlet("D[i]"))
+    sdfg.validate()
+    return sdfg, state
+
+
+def test_pruning_an_output_drops_its_write_back_through_an_access_node():
+    """The pruned output fed an access node inside the map that only wrote back through the exit: that node and its
+    write-back go, instead of staying as an input-less node inside the scope (``scope_dict`` raised)."""
+    sdfg, state = _map_with_unwritten_output_through_access_node(read_after=False)
+    assert sdfg.apply_transformations(PruneConnectors) == 1
+    state.scope_dict()
+    sdfg.validate()
+    assert not any(isinstance(n, dace.nodes.AccessNode) and n.data == "B" for n in state.nodes())
+    A = np.arange(4, dtype=np.float64)
+    B = np.full(4, 7.0)
+    C = np.zeros(4)
+    D = np.zeros(4)
+    sdfg(A=A, B=B, C=C, D=D)
+    assert np.array_equal(C, A) and np.array_equal(B, np.full(4, 7.0))
+
+
+def test_pruning_an_output_keeps_an_access_node_the_body_reads():
+    """An access node the map body still reads after the pruned output reads the container's current value: it stays,
+    tied to the map entry, so it remains inside the scope."""
+    sdfg, state = _map_with_unwritten_output_through_access_node(read_after=True)
+    assert sdfg.apply_transformations(PruneConnectors) == 1
+    sd = state.scope_dict()
+    entry = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry))
+    local = next(
+        n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == "B" and sd[n] is not None
+    )
+    assert sd[local] is entry
+    sdfg.validate()
+    A = np.arange(4, dtype=np.float64)
+    B = np.full(4, 7.0)
+    C = np.zeros(4)
+    D = np.zeros(4)
+    sdfg(A=A, B=B, C=C, D=D)
+    assert np.array_equal(C, A) and np.array_equal(D, np.full(4, 7.0))
+
+
+def test_pruning_an_input_keeps_the_access_node_it_read_inside_the_scope():
+    """An access node the map body writes, whose only reader was a pruned input, still reaches the map exit: a
+    dead end inside the scope made the scope's exit unreachable from it, and the experimental CUDA codegen took
+    the node for the scope's exit."""
+    inner = dace.SDFG("prune_unread_input_inner")
+    inner.add_array("inp", [4], dace.float64)
+    inner.add_array("unused", [1], dace.float64)
+    inner.add_array("res", [4], dace.float64)
+    inner.add_symbol("i", dace.int64)
+    body = inner.add_state()
+    copy_tasklet = body.add_tasklet("copy", {"x"}, {"y"}, "y = x")
+    body.add_edge(body.add_read("inp"), None, copy_tasklet, "x", dace.Memlet("inp[i]"))
+    body.add_edge(copy_tasklet, "y", body.add_write("res"), None, dace.Memlet("res[i]"))
+
+    sdfg = dace.SDFG("prune_unread_input")
+    for name in ("A", "C"):
+        sdfg.add_array(name, [4], dace.float64)
+    sdfg.add_scalar("t", dace.float64, transient=True)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("m", dict(i="0:4"))
+    nsdfg = state.add_nested_sdfg(inner, {"inp", "unused"}, {"res"}, symbol_mapping={"i": "i"})
+    read_a = state.add_read("A")
+    state.add_memlet_path(read_a, entry, nsdfg, dst_conn="inp", memlet=dace.Memlet("A[0:4]"))
+    double = state.add_tasklet("double", {"v"}, {"w"}, "w = 2 * v")
+    state.add_memlet_path(read_a, entry, double, dst_conn="v", memlet=dace.Memlet("A[i]"))
+    t = state.add_access("t")
+    state.add_edge(double, "w", t, None, dace.Memlet("t[0]"))
+    state.add_edge(t, None, nsdfg, "unused", dace.Memlet("t[0]"))
+    state.add_memlet_path(nsdfg, exit_node, state.add_write("C"), src_conn="res", memlet=dace.Memlet("C[0:4]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(PruneConnectors) == 1
+    assert "unused" not in nsdfg.in_connectors
+    entry = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry))
+    assert state.scope_subgraph(entry).sink_nodes() == [state.exit_node(entry)]
+    sdfg.validate()
+    A = np.arange(4, dtype=np.float64)
+    C = np.zeros(4)
+    sdfg(A=A, C=C)
+    assert np.array_equal(C, A)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--N", default=64)
@@ -499,3 +787,11 @@ if __name__ == "__main__":
     test_read_write_1()
     test_read_write_2()
     test_prune_connectors_with_conditional_block()
+    test_prune_connectors_keeps_inner_wcr_accumulator()
+    test_prune_connectors_keeps_memlet_subset_index()
+    test_prune_connectors_keeps_tasklet_code_reference()
+    test_prune_connectors_drops_input_the_body_only_writes()
+    test_pruning_the_only_input_keeps_the_body_in_its_map()
+    test_pruning_an_output_drops_its_write_back_through_an_access_node()
+    test_pruning_an_output_keeps_an_access_node_the_body_reads()
+    test_pruning_an_input_keeps_the_access_node_it_read_inside_the_scope()

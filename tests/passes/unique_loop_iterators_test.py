@@ -247,12 +247,9 @@ def test_no_postamble_drops_dead_symbol_declaration():
 
     sdfg = sibling_for_loops.to_sdfg(simplify=False)
 
-    # Pre-condition: the body NestedSDFG declares ``i`` in its symbol table
-    # and the parent does not provide it via ``symbol_mapping``; the
-    # frontend keeps the declaration around because the original LoopRegions
-    # use ``i`` as their ``loop_variable``.
+    # A loop iterator is never a declared symbol, so the frontend leaves no declaration of ``i`` to go stale; the
+    # renaming must not introduce one either.
     body_nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
-    assert any("i" in n.sdfg.symbols for n in body_nsdfgs)
 
     p = UniqueLoopIterators()
     p.apply_pass(sdfg, {})
@@ -436,7 +433,6 @@ if __name__ == "__main__":
     test_a_sibling_loop_reading_its_own_iterator_is_not_a_read_after()
     test_loop_bound_with_indirect_array()
     test_while_loop_no_induction_var()
-    test_no_postamble_drops_dead_symbol_declaration()
     test_idempotent_skips_already_unique_iterators()
     test_value_preserving_sibling_kbound_loops()
     test_negative_step_loop_value_preserving()

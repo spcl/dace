@@ -1,9 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
+
 import dace
 import dace.sdfg.utils as sdutil
 from dace.codegen.control_flow import LoopRegion
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock
+
+N = dace.symbolic.symbol("N")
 
 
 def _get_sdfg_for_dynamic_map_input():
@@ -52,6 +56,7 @@ def _get_sdfg_with_symbol_use_in_if():
         dtype=dace.float64,
         transient=False,
     )
+    sdfg.add_symbol("nlev", dace.int32)
     cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
     sdfg.add_node(cb, is_start_block=True)
     cfg = dace.ControlFlowRegion(label="cfg1", sdfg=cb.sdfg, parent=cb)
@@ -133,6 +138,60 @@ def test_use_in_if_block():
     assert "nlev" not in cb.branches[0][0].as_string
 
 
+def _get_sdfg_with_symbol_use_in_multi_arm_if():
+    """Conditional with two guards plus an else, each arm carrying a distinguishable body."""
+    sdfg = dace.SDFG("multi_arm")
+    _, A = sdfg.add_array(
+        name="A",
+        shape=[
+            5,
+        ],
+        dtype=dace.float64,
+        transient=False,
+    )
+    sdfg.add_array(
+        name="B",
+        shape=[
+            5,
+        ],
+        dtype=dace.float64,
+        transient=False,
+    )
+    sdfg.add_scalar(name="nlev", dtype=dace.int64)
+    cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
+    sdfg.add_node(cb, is_start_block=True)
+    for label, condition in (("low", "nlev < 100"), ("high", "nlev > 200"), ("otherwise", None)):
+        cfg = dace.ControlFlowRegion(label=f"cfg_{label}", sdfg=sdfg, parent=cb)
+        cb.add_branch(condition=None if condition is None else CodeBlock(condition), branch=cfg)
+        s = cfg.add_state(label=f"s_{label}")
+        s.add_edge(s.add_access("A"), None, s.add_access("B"), None, dace.memlet.Memlet.from_array("A", A))
+    return sdfg, cb
+
+
+def test_use_in_multi_arm_if_block():
+    """Every arm of a multi-arm conditional is rewritten, and arm 0 is not overwritten by a later arm.
+
+    The loop over ``branches`` used to assign to ``branches[0]`` regardless of the iteration index, so
+    arm 0 was replaced once per guarded arm -- ending up holding the *last* arm's guard and body -- and
+    arms 1.. kept their unspecialized guards. A single-arm conditional cannot tell the two apart.
+    """
+    sdfg, cb = _get_sdfg_with_symbol_use_in_multi_arm_if()
+    bodies_before = [branch for _, branch in cb.branches]
+    sdfg.validate()
+
+    sdutil.specialize_scalar(sdfg=sdfg, scalar_name="nlev", scalar_val="90")
+    sdfg.validate()
+
+    assert len(cb.branches) == 3
+    # Guards of every conditional arm are specialized, not just the first one.
+    assert cb.branches[0][0].as_string == "(90 < 100)", cb.branches[0][0].as_string
+    assert cb.branches[1][0].as_string == "(90 > 200)", cb.branches[1][0].as_string
+    # The else arm has no guard and stays untouched.
+    assert cb.branches[2][0] is None
+    # No arm's body was displaced onto another arm.
+    assert [branch for _, branch in cb.branches] == bodies_before
+
+
 def test_use_in_for_cfg():
     sdfg = _get_sdfg_with_symbol_use_in_for_cfg()
     sdfg.validate()
@@ -175,9 +234,136 @@ def test_interstate_read():
     assert len(s1.nodes()) == 0
 
 
+@dace.program
+def scale_by_scalar(A: dace.float64[N], C: dace.float64[N], scale: dace.float64):
+    for i in dace.map[0:N]:
+        C[i] = A[i] * scale
+
+
+@dace.program
+def divide_by_scalar(A: dace.float64[N], C: dace.float64[N], n: dace.int64):
+    for i in dace.map[0:N]:
+        C[i] = A[i] / n
+
+
+def get_sdfg_with_uncast_division(language: dace.dtypes.Language):
+    """Map tasklet dividing an array element by a scalar, with no type cast around the divisor."""
+    code = {
+        dace.dtypes.Language.Python: "__out = (__in1 / __in2)",
+        dace.dtypes.Language.CPP: "__out = (__in1 / __in2);",
+    }[language]
+    sdfg = dace.SDFG(f"uncast_division_{language.name.lower()}")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("C", [N], dace.float64)
+    sdfg.add_scalar("n", dace.float64 if language == dace.dtypes.Language.CPP else dace.int64)
+    state = sdfg.add_state("s0")
+    state.add_mapped_tasklet(
+        name="divide",
+        map_ranges={"i": "0:N"},
+        inputs={"__in1": dace.Memlet("A[i]"), "__in2": dace.Memlet("n[0]")},
+        code=code,
+        language=language,
+        outputs={"__out": dace.Memlet("C[i]")},
+        external_edges=True,
+    )
+    return sdfg
+
+
+def test_float64_value_survives_bit_exactly():
+    """A baked float64 must reach the generated code bit-exactly.
+
+    The previous sympy round-trip (``SymExpr(rhs).subs(...)`` -> ``sympy.pycode``) printed
+    ``sympy.Float`` at 15 significant digits, which drops the low bits of a float64.
+    """
+    scale = 3.141592653589793  # needs 16 significant digits to round-trip
+    sdfg = scale_by_scalar.to_sdfg(simplify=True)
+    sdutil.specialize_scalar(sdfg=sdfg, scalar_name="scale", scalar_val=scale)
+    sdfg.validate()
+
+    A = np.full(4, 1.0, dtype=np.float64)
+    C = np.zeros(4, dtype=np.float64)
+    sdfg(A=A, C=C, N=4, scale=scale)
+
+    # Compare bit patterns, not printed strings.
+    assert C.tobytes() == np.full(4, scale, dtype=np.float64).tobytes()
+
+
+def test_baked_integer_does_not_become_integer_division():
+    """Baking an integer into a division must stay true division.
+
+    ``sympy.pycode`` folded ``__in1 / __in2`` with ``__in2 = 2`` into ``(1 / 2) * __in1``.
+    That is true division in Python but *integer* division once the C++ backend emits it
+    verbatim, so the whole term collapsed to zero.
+    """
+    sdfg = get_sdfg_with_uncast_division(dace.dtypes.Language.Python)
+    sdutil.specialize_scalar(sdfg=sdfg, scalar_name="n", scalar_val=2)
+    sdfg.validate()
+
+    A = np.full(4, 3.0, dtype=np.float64)
+    C = np.zeros(4, dtype=np.float64)
+    sdfg(A=A, C=C, N=4, n=2)
+
+    # 3.0 / 2 is exact in binary floating point, so this is an equality check, not a tolerance.
+    assert C.tobytes() == np.full(4, 1.5, dtype=np.float64).tobytes()
+
+
+def test_non_python_tasklet_accepts_numeric_value():
+    """The non-Python branch used to hand a raw float to a string join and raise ``TypeError``."""
+    sdfg = get_sdfg_with_uncast_division(dace.dtypes.Language.CPP)
+    sdutil.specialize_scalar(sdfg=sdfg, scalar_name="n", scalar_val=0.5)
+    sdfg.validate()
+
+    A = np.full(4, 3.0, dtype=np.float64)
+    C = np.zeros(4, dtype=np.float64)
+    sdfg(A=A, C=C, N=4, n=0.5)
+
+    assert C.tobytes() == np.full(4, 6.0, dtype=np.float64).tobytes()
+
+
+def test_tasklet_with_type_cast():
+    """Frontend tasklets wrap divisors in ``dace.float64(...)``; ``sympy.pycode`` could not print it."""
+    sdfg = divide_by_scalar.to_sdfg(simplify=True)
+    sdutil.specialize_scalar(sdfg=sdfg, scalar_name="n", scalar_val=2)
+    sdfg.validate()
+
+    A = np.full(4, 3.0, dtype=np.float64)
+    C = np.zeros(4, dtype=np.float64)
+    sdfg(A=A, C=C, N=4, n=2)
+
+    assert C.tobytes() == np.full(4, 1.5, dtype=np.float64).tobytes()
+
+
+def test_copy_out_of_the_scalar_keeps_the_value():
+    """A copy from the baked scalar into another container still writes the value into that container."""
+    sdfg = dace.SDFG("copy_out_of_specialized_scalar")
+    sdfg.add_scalar("flag", dace.int32)
+    sdfg.add_scalar("staged", dace.int32, transient=True)
+    sdfg.add_array("out", [1], dace.int32)
+    state = sdfg.add_state()
+    staged = state.add_access("staged")
+    state.add_nedge(state.add_read("flag"), staged, dace.Memlet("flag[0]"))
+    read = state.add_tasklet("read", {"__in"}, {"__out"}, "__out = __in + 1")
+    state.add_edge(staged, None, read, "__in", dace.Memlet("staged[0]"))
+    state.add_edge(read, "__out", state.add_write("out"), None, dace.Memlet("out[0]"))
+
+    sdutil.specialize_scalars(sdfg, {"flag": 7})
+    sdfg.validate()
+    assert "staged" in {n.data for n in state.data_nodes()}
+
+    out = np.zeros(1, dtype=np.int32)
+    sdfg(out=out, flag=np.int32(0))
+    assert out[0] == 8
+
+
 if __name__ == "__main__":
     test_specialize_with_dynamic_input()
     test_use_in_if_block()
+    test_use_in_multi_arm_if_block()
     test_interstate_assignment()
     test_interstate_read()
     test_use_in_for_cfg()
+    test_float64_value_survives_bit_exactly()
+    test_baked_integer_does_not_become_integer_division()
+    test_non_python_tasklet_accepts_numeric_value()
+    test_tasklet_with_type_cast()
+    test_copy_out_of_the_scalar_keeps_the_value()

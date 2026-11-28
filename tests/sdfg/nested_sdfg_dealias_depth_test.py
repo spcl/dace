@@ -119,7 +119,7 @@ def _check(kinds, symbolic_top: bool = False):
     memlet = _innermost_write(sdfg)
     assert memlet.data == "A", f"{'/'.join(kinds)}: writes {memlet.data}, not the top container"
     begin = memlet.subset[0][0]
-    assert symbolic.simplify(begin - symbolic.pystr_to_symbolic(expected)) == 0, (
+    assert symbolic.simplify(begin - symbolic.pystr_to_symbolic(expected), sdfg.facts()) == 0, (
         f"{'/'.join(kinds)}: writes A[{begin}], expected A[{expected}]"
     )
 

@@ -84,6 +84,13 @@ class FillLibraryNode(nodes.LibraryNode):
 
         return name, desc, subset
 
+    def scalar_code(self, state) -> str | None:
+        from dace.libraries.standard.nodes.fill.common import python_literal  # Avoid import loop
+
+        _, out, _ = self.validate(state.sdfg, state)
+        value = self.VALUE_CONNECTOR_NAME if self.value_edge(state) else python_literal(self.value, out.dtype)
+        return f"{self.OUTPUT_CONNECTOR_NAME} = {value}"
+
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> tuple[str, dace.data.Data, dace.subsets.Range]:
         """Validate wiring and resolve the output edge.
 

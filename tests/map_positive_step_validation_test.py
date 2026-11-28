@@ -114,5 +114,22 @@ def test_symbolic_positive_step_runs_in_debug_build():
     )
 
 
+def test_the_step_assertion_names_no_map_label():
+    """The assertion text is in the rendered C an agent reads; a DaCe map label there is a name the code never uses."""
+    N = dace.symbol("N")
+    S = dace.symbol("S")
+
+    @dace.program
+    def labelled_step(a: dace.float64[N], b: dace.float64[N]):
+        for i in dace.map[0:N:S]:
+            b[i] = a[i] + 1.0
+
+    sdfg = labelled_step.to_sdfg(simplify=True)
+    (entry,) = [n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+    code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    (line,) = [line for line in code.splitlines() if "requires a positive step" in line]
+    assert entry.map.label not in line, line
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

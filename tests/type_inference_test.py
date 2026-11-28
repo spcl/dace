@@ -88,6 +88,28 @@ class TestTypeInference(unittest.TestCase):
         else:
             self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.float32))
 
+        # C / numpy dtype aliases used as cast constructors (``double``, ``single``,
+        # ``short``) name a concrete type but are not attributes of ``dtypes``; a bare
+        # cast ``double(N)`` must type as its target, not fall through to ``None`` and
+        # get mistyped by its argument (e.g. ``sqrt(double(N))`` truncating on an int N).
+        code_str = "value = double(N)"
+        inf_symbols = type_inference.infer_types(code_str, {"N": dtypes.int32})
+        self.assertEqual(inf_symbols["value"], dtypes.float64)
+
+        code_str = "value = single(N)"
+        inf_symbols = type_inference.infer_types(code_str, {"N": dtypes.int32})
+        self.assertEqual(inf_symbols["value"], dtypes.float32)
+
+        code_str = "value = short(N)"
+        inf_symbols = type_inference.infer_types(code_str, {"N": dtypes.int32})
+        self.assertEqual(inf_symbols["value"], dtypes.int16)
+
+        # A non-dtype call (a math function) must NOT be mistaken for a cast: it stays
+        # unresolved (``None``) so operand promotion, not a bogus dtype, types the result.
+        code_str = "value = sqrt(x)"
+        inf_symbols = type_inference.infer_types(code_str, {"x": dtypes.float64})
+        self.assertIsNone(inf_symbols["value"])
+
     def testInferExpr(self):
 
         code_str = "5 + 3.5"
@@ -304,6 +326,76 @@ value3=5000000000"""
         prev_symbols = {"float_var": dtypes.typeclass(float)}
         inf_symbols = type_inference.infer_types(stmt, prev_symbols)
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(float))
+
+    def testResultTypeOfBoolPromotion(self):
+        # ``bool`` is NumPy's lowest-rank numeric operand: an arithmetic op mixing bool
+        # with a numeric promotes to the numeric (``np.bool_(True) * np.int32(3) ==
+        # int32(3)``). Regression: ``result_type_of`` used to return ``bool`` for
+        # ``bool * int`` (bool is not ``issubdtype(_, integer)``, so it fell through the
+        # float-precedence branch), truncating the integer to 0/1 -- the nussinov
+        # fp_factor ``c*t + (1-c)*e`` miscompile. Cross-checked against numpy.result_type.
+        b = dtypes.typeclass(np.bool_)
+        for other in (np.int8, np.int32, np.int64, np.uint8, np.float32, np.float64):
+            o = dtypes.typeclass(other)
+            self.assertEqual(dtypes.result_type_of(b, o), o, f"bool * {other.__name__}")
+            self.assertEqual(dtypes.result_type_of(o, b), o, f"{other.__name__} * bool")
+            self.assertEqual(dtypes.result_type_of(b, o).type, np.result_type(np.bool_, other).type)
+        # bool * bool stays bool.
+        self.assertEqual(dtypes.result_type_of(b, b), b)
+
+    def testComplexParts(self):
+        # The real and imaginary parts of complex numbers are real numbers of the same precision
+        symbols = {"a": dtypes.complex128, "b": dtypes.complex64, "x": dtypes.float32}
+        self.assertEqual(type_inference.infer_expr_type("a.real", symbols), dtypes.float64)
+        self.assertEqual(type_inference.infer_expr_type("b.imag", symbols), dtypes.float32)
+        self.assertEqual(type_inference.infer_expr_type("a.real * x", symbols), dtypes.float64)
+        self.assertEqual(type_inference.infer_expr_type(ast.parse("b.real", mode="eval").body, symbols), dtypes.float32)
+        # A type name that is already translated to C++
+        call = ast.parse("complex64(x, x)", mode="eval").body
+        call.func.id = "dace::complex64"
+        self.assertEqual(type_inference.infer_expr_type(call, symbols), dtypes.complex64)
+        # An element of a pointer, as code generation names subscripts of connectors
+        element = ast.Name(id="p[i + 1]")
+        self.assertEqual(
+            type_inference.infer_expr_type(element, {"p": dtypes.pointer(dtypes.complex128)}), dtypes.complex128
+        )
+
+
+def test_the_sympy_spellings_of_abs_min_and_max_are_typed():
+    """An interstate assignment printed from a symbolic expression spells these as sympy does
+    (``Abs(A[i])``), and a symbol whose type is left unknown stops code generation."""
+    symbols = {"a": dtypes.float64, "i": dtypes.int64}
+    assert type_inference.infer_expr_type("Abs(a[i])", symbols) == dtypes.float64
+    assert type_inference.infer_expr_type("Max(i, 3)", symbols) == dtypes.int64
+    assert type_inference.infer_expr_type("Min(a[i], 2.0)", symbols) == dtypes.float64
+
+
+def test_abs_of_a_complex_operand_is_its_real_magnitude():
+    """cegterg's lifted ``__inl9_av = Abs(z)`` was declared ``double _Complex``, and C refused ``av > max_val``."""
+    cases = [
+        (dtypes.complex128, dtypes.float64),
+        (dtypes.complex64, dtypes.float32),
+        (dtypes.float64, dtypes.float64),
+        (dtypes.int32, dtypes.int32),
+    ]
+    for spelling in ("abs(z)", "Abs(z)"):
+        for operand, magnitude in cases:
+            assert type_inference.infer_expr_type(spelling, {"z": operand}) == magnitude, (spelling, operand)
+
+
+def test_the_sympy_spelling_of_round_is_typed():
+    """A ``round`` assignment reads back from a saved SDFG as sympy's ``ROUND`` (distribution_search's
+    ``round_0_005_p_size = ROUND(__tmp0)``); left untyped, the C rendering of the loaded SDFG crashed."""
+    for spelling in ("round(x)", "ROUND(x)"):
+        assert type_inference.infer_expr_type(spelling, {"x": dtypes.float64}) == dtypes.typeclass(int), spelling
+
+
+def test_infinity_and_nan_are_typed_as_float():
+    """paged_attention's ``qk_max = -np.inf`` becomes an interstate assignment that sympy spells ``-inf``, and
+    typing the name ``inf`` raised ``data type 'inf' not understood`` during simplification."""
+    assert type_inference.infer_expr_type("-inf", {}) == dtypes.float64
+    assert type_inference.infer_expr_type("nan", {}) == dtypes.float64
+    assert type_inference.infer_expr_type("True", {}) == dtypes.bool_
 
 
 if __name__ == "__main__":

@@ -5,5 +5,6 @@ from dace.libraries.standard.nodes.fill.node import FillLibraryNode  # noqa: F40
 from dace.libraries.standard.nodes.fill.expansions.auto import ExpandAuto
 from dace.libraries.standard.nodes.fill.expansions.cpu import ExpandCPU
 from dace.libraries.standard.nodes.fill.expansions.cuda import ExpandCUDA
+from dace.libraries.standard.nodes.fill.expansions.cuda_block import ExpandCUDABlock
 from dace.libraries.standard.nodes.fill.expansions.mapped_tasklet import ExpandPure
 from dace.libraries.standard.nodes.fill.expansions.tasklet import ExpandTasklet

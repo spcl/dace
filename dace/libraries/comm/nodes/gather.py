@@ -150,6 +150,10 @@ class ExpandBlockGatherMPI(ExpandTransformation):
 
 @library.node
 class BlockGather(CommNode):
+    #: shortcut: the MPI subarray types of this node describe its whole descriptor, so a slice keeps its View;
+    #: size the buffers from the memlet when a program slices one.
+    operand_subsets = None
+
     # Global properties
     implementations = {
         "MPI": ExpandBlockGatherMPI,

@@ -12,6 +12,7 @@ import dace
 from dace.codegen import compiler, targets
 from dace.codegen.codeobject import CodeObject
 from dace.libraries.torch import PyTorch
+from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
 from tests.utils import torch_tensors_close
 
 op_source = """
@@ -95,19 +96,23 @@ def test_extension():
 
 
 @pytest.mark.torch
-def test_module_with_constant():
+@pytest.mark.parametrize("device", DEVICES)
+def test_module_with_constant(device):
 
-    @dace.ml.module(sdfg_name="test_module_with_constant")
+    dev = torch_device(device)
+
+    @dace.ml.module(sdfg_name=f"test_module_with_constant_{device}", cuda=is_gpu(device))
     class Module(nn.Module):
         def forward(self, x):
             return x + 1
 
-    inp = torch.ones((5, 5))
-    output = Module()(inp)
+    inp = torch.ones((5, 5)).to(dev)
+    with experimental_cuda():
+        output = Module()(inp)
 
-    torch_tensors_close("output", inp + 1, output.cpu())
+    torch_tensors_close("output", (inp + 1).cpu(), output.cpu())
 
 
 if __name__ == "__main__":
     test_extension()
-    test_module_with_constant()
+    test_module_with_constant(device="cpu")

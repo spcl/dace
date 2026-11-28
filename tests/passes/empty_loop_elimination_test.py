@@ -1,4 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
+
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
@@ -229,6 +231,32 @@ def test_empty_loop_with_symbolic_bounds():
     assert len(loop_nodes) == 0
 
 
+def test_an_assignment_after_the_loop_reads_the_one_before_it():
+    sdfg = dace.SDFG("empty_loops_in_a_chain")
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_symbol("s", dace.int64)
+    sdfg.add_array("out", [1], dace.int64)
+    first = sdfg.add_state("first", is_start_block=True)
+    loops = []
+    for name in ("a", "b"):
+        loop = LoopRegion(name, f"{name} < 3", name, f"{name} = 0", f"{name} = {name} + 1")
+        loop.add_state(f"{name}_body", is_start_block=True)
+        sdfg.add_node(loop)
+        loops.append(loop)
+    last = sdfg.add_state("last")
+    write = last.add_tasklet("write", {}, {"o"}, "o = s")
+    last.add_edge(write, "o", last.add_write("out"), None, dace.Memlet("out[0]"))
+    sdfg.add_edge(first, loops[0], dace.InterstateEdge(assignments={"n": "7"}))
+    sdfg.add_edge(loops[0], loops[1], dace.InterstateEdge())
+    sdfg.add_edge(loops[1], last, dace.InterstateEdge(assignments={"s": "n + 1"}))
+
+    assert EmptyLoopElimination().apply_pass(sdfg, {}) == 2
+    sdfg.validate()
+    out = np.zeros(1, np.int64)
+    sdfg(out=out)
+    assert out[0] == 8
+
+
 if __name__ == "__main__":
     test_regular_loop()
     test_negative()
@@ -239,3 +267,4 @@ if __name__ == "__main__":
     test_loop_with_return()
     test_partially_nested_empty_loops()
     test_empty_loop_with_symbolic_bounds()
+    test_an_assignment_after_the_loop_reads_the_one_before_it()

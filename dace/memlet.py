@@ -50,15 +50,30 @@ class Memlet:
         category="Semantics",
         desc="Is the number of elements moved determined at runtime (e.g., data dependent)",
     )
-    subset = SubsetProperty(
-        allow_none=True, category="Semantics", desc="Subset of elements to move from the data attached to this edge."
-    )
-    other_subset = SubsetProperty(
-        allow_none=True,
-        category="Semantics",
-        desc="Subset of elements after reindexing to the data not attached "
-        "to this edge (e.g., for offsets and reshaping).",
-    )
+    if TYPE_CHECKING:
+        # Type-only view of the SubsetProperty descriptors below: reads are Optional[Subset], writes also take strings.
+        # fmt: off
+        @property
+        def subset(self) -> subsets.Subset | None: ...
+        @subset.setter
+        def subset(self, value: str | subsets.Subset | None) -> None: ...
+        @property
+        def other_subset(self) -> subsets.Subset | None: ...
+        @other_subset.setter
+        def other_subset(self, value: str | subsets.Subset | None) -> None: ...
+        # fmt: on
+    else:
+        subset = SubsetProperty(
+            allow_none=True,
+            category="Semantics",
+            desc="Subset of elements to move from the data attached to this edge.",
+        )
+        other_subset = SubsetProperty(
+            allow_none=True,
+            category="Semantics",
+            desc="Subset of elements after reindexing to the data not attached "
+            "to this edge (e.g., for offsets and reshaping).",
+        )
     data = DataProperty(category="General", desc="Data descriptor attached to this memlet")
     wcr = LambdaProperty(
         allow_none=True,
@@ -523,7 +538,9 @@ class Memlet:
             if str(symbol) != str(repl_dict[symbol]):
                 intermediate = symbolic.symbol("__dacesym_" + str(symbol))
                 repl_to_intermediate[symbolic.symbol(symbol)] = intermediate
-                repl_to_final[intermediate] = repl_dict[symbol]
+                # ``subs`` would parse a string into plain SymPy symbols, which no DaCe analysis sees
+                value = repl_dict[symbol]
+                repl_to_final[intermediate] = symbolic.pystr_to_symbolic(value) if isinstance(value, str) else value
 
         if len(repl_to_intermediate) > 0:
             if self.volume is not None and symbolic.issymbolic(self.volume):
@@ -644,6 +661,20 @@ class Memlet:
         """Returns a set of symbols used in this edge's properties."""
         return self.used_symbols(all_symbols=True)
 
+    def subset_containers(self) -> set[str]:
+        """The containers this memlet's subsets read through a ``Subscript`` (``off`` in ``B[i + off[0]]``).
+
+        :attr:`free_symbols` does not report them: a ``Subscript``'s container is a data access, not a symbol. A
+        pass that moves or prunes containers by what the memlets name must ask for these too.
+        """
+        names: set[str] = set()
+        for sub in (self.subset, self.other_subset):
+            if isinstance(sub, subsets.Range):
+                for dim in sub.ranges:
+                    for bound in dim:
+                        names |= symbolic.arrays(bound.expr if isinstance(bound, symbolic.SymExpr) else bound)
+        return names
+
     def get_free_symbols_by_indices(self, indices_src: list[int], indices_dst: list[int]) -> set[str]:
         """
         Returns set of free symbols used in this edges properties but only taking certain indices of the src and dst
@@ -675,7 +706,9 @@ class Memlet:
         if self.data is None:
             return symbolic.pystr_to_symbolic("0")
 
-        param = symbolic.symbol(map.params[dim])
+        # Must be the very instance the subset carries: symbol identity includes the dtype, and one minted
+        # from the bare name would not cancel out in the difference below.
+        param = symbolic.resolve_symbol(map.params[dim], symbolic.symbols_in([self.subset]))
         array = sdfg.arrays[self.data]
 
         # Flatten the subset to a 1D-offset (using the array strides) at some iteration

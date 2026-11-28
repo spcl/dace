@@ -8,6 +8,7 @@ import pytest
 
 import dace
 from dace.libraries.blas import Gemm
+from dace.library import change_default
 
 M = dace.symbol("M")
 K = dace.symbol("K")
@@ -22,8 +23,6 @@ O = dace.symbol("O")
 )
 def test_gemm_no_c(implementation):
 
-    Gemm.default_implementation = implementation
-
     @dace.program
     def simple_gemm(A: dace.float64[10, 15], B: dace.float64[15, 3]):
         return A @ B
@@ -31,10 +30,9 @@ def test_gemm_no_c(implementation):
     A = np.random.rand(10, 15)
     B = np.random.rand(15, 3)
 
-    result = simple_gemm(A, B)
+    with change_default(Gemm, implementation):
+        result = simple_gemm(A, B)
     assert np.allclose(result, A @ B)
-
-    Gemm.default_implementation = None
 
 
 def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB, alpha, beta, implementation, sdfg_name):
@@ -248,6 +246,54 @@ def test_gemm_symbolic_1():
         sdfg.validate()
 
 
+# Row-wise (ikj) pure expansion: ``for i (parallel): for k (seq): for j (vector)``.
+# Selected by canonicalization for known-small GEMMs (see
+# dace/transformation/passes/canonicalize/finalize.py).
+_rowwise_params = [
+    dict(M=8, N=6, K=5),  # plain, non-square (catches index/transpose swaps); beta=1 -> C accumulate
+    dict(M=8, N=6, K=5, transA=True),
+    dict(M=8, N=6, K=5, transB=True),
+    dict(M=8, N=6, K=5, transA=True, transB=True),
+    dict(M=8, N=6, K=5, alpha=0.5, beta=0.0),  # alpha scaling, no C
+    dict(M=8, N=6, K=5, alpha=0.5, beta=0.25),  # alpha/beta scaling + C accumulate
+    dict(M=8, N=6, K=5, complex=True, alpha=complex(0.5, 0.5), beta=0.25),
+]
+
+
+@pytest.mark.parametrize("params", _rowwise_params)
+def test_gemm_rowwise_preserves_value(params):
+    """The 'rowwise' (ikj) GEMM expansion matches numpy across trans / alpha / beta / complex."""
+    _do_test_gemm("rowwise", params)
+
+
+def test_gemm_rowwise_loop_structure():
+    """'rowwise' expands to a 3-deep i/k/j map nest with exactly the two inner (k, j) maps
+    Sequential -- the outer i-map stays parallel. This is what makes j (unit-stride) vectorize
+    and keeps K a sequential accumulation rather than a per-element WCR."""
+    sdfg = create_gemm_sdfg(
+        dace.float64,
+        [8, 5],
+        [5, 6],
+        [8, 6],
+        [8, 6],
+        transA=False,
+        transB=False,
+        alpha=1.0,
+        beta=0.0,
+        implementation="rowwise",
+        sdfg_name="rowwise_struct",
+    )
+    sdfg.expand_library_nodes()
+    unidim = [
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.MapEntry) and len(n.map.params) == 1
+    ]
+    # The contraction nest is exactly i / k / j (the beta=0 init map is 2D, excluded).
+    assert len(unidim) == 3
+    seq = [me for me in unidim if me.map.schedule == dace.ScheduleType.Sequential]
+    # k and j are the sequential inner maps; the outer i-map stays parallel.
+    assert len(seq) == 2
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "gpu":
         for params in _test_params:
@@ -256,3 +302,6 @@ if __name__ == "__main__":
     # test_library_gemm('MKL')
     test_gemm_symbolic()
     test_gemm_symbolic_1()
+    for params in _rowwise_params:
+        test_gemm_rowwise_preserves_value(params)
+    test_gemm_rowwise_loop_structure()

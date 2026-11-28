@@ -22,7 +22,8 @@ Staging one non-transient means:
 * the signature descriptor ``alpha`` (a length-1 ``Array``) is KEPT,
 * a fresh transient ``Scalar`` ``scal_alpha`` is introduced and every body reference to ``alpha`` is
   repointed to it,
-* a copy-IN ``scal_alpha = alpha[0]`` is prepended in a new start state (only if ``alpha`` is read),
+* a copy-IN ``scal_alpha = alpha[0]`` is prepended in a new start state (if ``alpha`` is read or written:
+  a write the body may skip must leave the caller's value for the copy-out),
 * a copy-OUT ``alpha[0] = scal_alpha`` is appended in a new sink state (only if ``alpha`` is written).
 
 The whole SDFG body then computes on the plain scalar while the signature is unchanged. The inverse
@@ -37,14 +38,18 @@ The HLFIR Fortran frontend uses ``ConvertLengthOneArraysToScalars`` as a post-ge
 
 import ast
 import itertools
+import re
 from collections.abc import Callable
+from collections.abc import Set as AbstractSet
 
 import dace
 from dace import Memlet, dtypes, properties, subsets, symbolic
+from dace.libraries.standard.nodes.reduce import Reduce
+from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.sdfg.state import ConditionalBlock, LoopRegion, is_read
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
@@ -104,12 +109,23 @@ def rewrite_code_slots(sdfg: SDFG, rewrite: CodeSlotRewriter) -> None:
                 text = value if isinstance(value, str) else str(value)
                 rewritten = rewrite(text)
                 if rewritten != text:
-                    node.symbol_mapping[key] = rewritten
+                    # Parse the text that ``rewrite`` returns into a symbolic expression before storing
+                    # it. The mapping is declared to hold symbolic expressions, and code that asks a raw
+                    # string whether it is symbolic is told no. Stored as text, ``'nat * nh'`` looks
+                    # like a constant to ``ConstantPropagation``, which then substitutes the caller's
+                    # symbol names into a nest that has no mapping for them (npbench ``vexx_k``). The
+                    # rewrite is an AST round trip, so it reprints even an untouched value and this
+                    # branch is taken far more often than a rename actually happens.
+                    node.symbol_mapping[key] = symbolic.pystr_to_symbolic(rewritten)
 
 
 class ScalarRefRewriter(ast.NodeTransformer):
-    """Collapse ``old[0]`` (any index that folds to zero, e.g. ``old[1 - 1]``) to ``new`` and rename a bare
-    ``old`` to ``new``.
+    """Collapse ``old[i]`` to ``new`` and rename a bare ``old`` to ``new``.
+
+    Any element index collapses, literal or computed, one per dimension of an all-ones array: the array has
+    one element, so whatever the index expressions are, they name element 0. A computed index left in place
+    would subscript the new scalar, as in ``scal_index_xk[index_xkq_index]`` on npbench ``vexx_k``, which does
+    not compile.
 
     :param rename: Mapping from each rewritten descriptor's old name to its new name.
     """
@@ -122,8 +138,7 @@ class ScalarRefRewriter(ast.NodeTransformer):
         if (
             isinstance(node.value, ast.Name)
             and node.value.id in self.rename
-            and not isinstance(index, (ast.Slice, ast.Tuple))
-            and symbolic.pystr_to_symbolic(ast.unparse(index)) == 0
+            and not any(isinstance(i, ast.Slice) for i in (index.elts if isinstance(index, ast.Tuple) else [index]))
         ):
             return ast.copy_location(ast.Name(id=self.rename[node.value.id], ctx=node.ctx), node)
         return self.generic_visit(node)
@@ -228,34 +243,136 @@ def repoint_memlet_to_element(edge: "dace.sdfg.graph.MultiConnectorEdge", rename
         mem.other_subset = subsets.Range.from_string("0")
 
 
-def descriptor_is_read(sdfg: SDFG, name: str) -> bool:
-    """True if ``name`` is read anywhere in ``sdfg``: by an AccessNode with an out-edge, or by control flow (an
-    interstate edge or a loop or branch condition), whose references staging repoints at the scalar too."""
+#: A bare identifier, not preceded by a word character or ``.``: every name a code slot can reference.
+IDENTIFIER_RE = re.compile(r"(?<![\w.])([A-Za-z_]\w*)")
+
+
+def one_element(desc: "dace.data.Data") -> bool:
+    """Whether every extent of ``desc`` is 1, symbolic extents that simplify to 1 included."""
+    return all(symbolic.equal(dim, 1) is True for dim in desc.shape)
+
+
+#: The library connectors that write one result element: a dot product's, a LAPACK routine's ``info``.
+RESULT_CONNECTORS = frozenset({"_result", "_res"})
+
+
+def single_result(edge: "dace.sdfg.graph.MultiConnectorEdge", lib: nodes.LibraryNode) -> bool:
+    """Whether ``lib`` writes one element through ``edge``: its expansion declares that output a ``(1,)`` array, which a
+    Scalar feeds (``Array.is_equivalent``)."""
+    if edge.src is not lib or edge.data.wcr is not None:
+        return False
+    if edge.src_conn not in RESULT_CONNECTORS and not (isinstance(lib, Reduce) and edge.src_conn == "_out"):
+        return False
+    # A GPU expansion (``CUDA (block)``, ``GPUAuto``) is raw C++ that indexes its output ``out[0]``
+    if lib.schedule in dtypes.GPU_SCHEDULES or (lib.implementation or "").startswith(("CUDA", "GPU")):
+        return False
+    return symbolic.equal(edge.data.subset.num_elements(), 1) is True
+
+
+def scalarize_descriptor(sdfg: SDFG, name: str) -> None:
+    """Turn the one-element array ``name`` of ``sdfg`` into a Scalar of the same transience in place, and index it
+    as one in every memlet and code slot of ``sdfg``."""
+    arr = sdfg.arrays[name]
+    sdfg.remove_data(name, validate=False)
+    sdfg.add_scalar(
+        name,
+        dtype=arr.dtype,
+        storage=dtypes.StorageType.Default if arr.storage == dtypes.StorageType.CPU_Heap else arr.storage,
+        transient=arr.transient,
+        lifetime=arr.lifetime,
+        debuginfo=arr.debuginfo,
+        find_new_name=False,
+    )
+    rename = {name: name}
     for state in sdfg.states():
-        for node in state.nodes():
-            if isinstance(node, nodes.AccessNode) and node.data == name and state.out_degree(node) > 0:
-                return True
-    if any(name in edge.data.read_symbols() for edge in sdfg.all_interstate_edges()):
-        return True
-    for region in sdfg.all_control_flow_regions():
-        if isinstance(region, LoopRegion):
-            codes = (region.init_statement, region.loop_condition, region.update_statement)
-        elif isinstance(region, ConditionalBlock):
-            codes = tuple(condition for condition, _ in region.branches)
-        else:
-            continue
-        if any(code is not None and name in code.get_free_symbols() for code in codes):
-            return True
-    return False
+        for edge in state.edges():
+            repoint_memlet_to_element(edge, rename)
+    rewrite_code_slots(sdfg, lambda text: rewrite_refs(text, rename))
+
+
+def control_flow_reads(sdfg: SDFG) -> OrderedSet[str]:
+    """Names ``sdfg`` reads from control flow: gate conditions, loop bounds, assignment right-hand sides.
+
+    Staging repoints those references at the staged descriptor, so they count as reads for the copy-in
+    decision although no AccessNode exists; without them a gate scalar is declared, read and never written.
+    """
+    names: OrderedSet[str] = OrderedSet()
+
+    def collect(src: str) -> str:
+        names.update(IDENTIFIER_RE.findall(src))
+        return src
+
+    rewrite_code_slots(sdfg, collect)
+    return names
 
 
 def descriptor_is_written(sdfg: SDFG, name: str) -> bool:
-    """True if ``name`` is written anywhere in ``sdfg`` (some AccessNode of it has an in-edge)."""
+    """True if ``name`` is written anywhere in ``sdfg`` (some AccessNode of it has a non-empty in-edge).
+
+    An empty-memlet in-edge only orders the node after its source and moves no data.
+    """
     for state in sdfg.states():
         for node in state.nodes():
-            if isinstance(node, nodes.AccessNode) and node.data == name and state.in_degree(node) > 0:
+            if (
+                isinstance(node, nodes.AccessNode)
+                and node.data == name
+                and any(not edge.data.is_empty() for edge in state.in_edges(node))
+            ):
                 return True
     return False
+
+
+def descriptor_access_summary(sdfg: SDFG) -> tuple[set[str], set[str], set[str]]:
+    """``(read, written, written_by_gpu_map)`` name sets for every descriptor of ``sdfg``, in one
+    walk -- the same answers as the three predicates above, asked for all names at once."""
+    read: set[str] = set()
+    written: set[str] = set()
+    gpu_written: set[str] = set()
+    for state in sdfg.states():
+        for node in state.nodes():
+            if not isinstance(node, nodes.AccessNode):
+                continue
+            if is_read(state, node):
+                read.add(node.data)
+            in_edges = state.in_edges(node)
+            if any(not e.data.is_empty() for e in in_edges):
+                written.add(node.data)
+                if any(
+                    isinstance(e.src, nodes.MapExit) and e.src.map.schedule in dtypes.GPU_SCHEDULES for e in in_edges
+                ):
+                    gpu_written.add(node.data)
+    return read, written, gpu_written
+
+
+def staging_access_summary(sdfg: SDFG, stage_nontransients: bool) -> tuple[set[str], set[str], set[str]]:
+    """:func:`descriptor_access_summary`, with control-flow reads counted as reads when staging."""
+    read, written, gpu_written = descriptor_access_summary(sdfg)
+    if stage_nontransients:
+        read = read | control_flow_reads(sdfg)
+    return read, written, gpu_written
+
+
+#: Label prefixes of the states staging creates; ``add_state`` uniquifies, so match by prefix.
+STAGING_STATE_PREFIXES = ("stage_copyin", "stage_copyout")
+
+
+def restaging_skips(sdfg: SDFG, read: set[str], written: set[str]) -> OrderedSet[str]:
+    """Signature names staging leaves alone: unreferenced ones, and ones only earlier staging states reference.
+
+    Staging keeps the signature array, so without the second group a re-run finds it eligible again and
+    chains another copy hop onto the first.
+    """
+    in_staging: OrderedSet[str] = OrderedSet()
+    elsewhere: OrderedSet[str] = OrderedSet()
+    for state in sdfg.states():
+        names = in_staging if state.label.startswith(STAGING_STATE_PREFIXES) else elsewhere
+        names.update(node.data for node in state.data_nodes())
+    staged_only = in_staging - elsewhere
+    return OrderedSet(
+        name
+        for name, desc in sdfg.arrays.items()
+        if not desc.transient and (name in staged_only or (name not in read and name not in written))
+    )
 
 
 def _copyin_state(sdfg: SDFG) -> SDFGState:
@@ -341,7 +458,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         self,
         recursive: bool = True,
         preserve_abi: bool = False,
-        filter: "set[str] | None" = None,
+        filter: "AbstractSet[str] | None" = None,
         single_element: bool = False,
         skip_gpu_outputs: bool = False,
     ):
@@ -358,55 +475,49 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _blocked_sources(self, sdfg: SDFG) -> set[str]:
-        """Descriptor names that must stay ``Array`` regardless of shape: a ``View`` cannot carry the
-        ``views`` alias edge, and a length-1 array that BACKS a view must stay an aliasable source."""
-        blocked: set[str] = set()
-        for state in sdfg.states():
-            for node in state.nodes():
-                if not isinstance(node, nodes.AccessNode):
-                    continue
-                if isinstance(sdfg.arrays.get(node.data), dace.data.View):
-                    ve = sdutil.get_view_edge(state, node)
-                    if ve is None:
-                        continue
-                    other = ve.src if ve.dst is node else ve.dst
-                    if isinstance(other, nodes.AccessNode):
-                        blocked.add(other.data)
-        return blocked
+    def _blocked_descriptors(self, sdfg: SDFG) -> set[str]:
+        """Descriptor names that must stay ``Array`` regardless of shape.
 
-    def _blocked_by_unscalarizable_neighbors(self, sdfg: SDFG) -> set[str]:
-        """Descriptor names that must stay ``Array`` because a neighbor generates code we cannot
-        rewrite from ``buf[0]`` to ``buf``: an unexpanded library node, a non-Python (C++) tasklet,
-        or a GPU-scheduled map that uses the buffer as a multi-thread collective.
+        Two reasons, decided in one walk over the access nodes:
+
+        * a ``View`` cannot carry the ``views`` alias edge, so a length-1 array that BACKS a view
+          must stay an aliasable source;
+        * a neighbor generates code we cannot rewrite from ``buf[0]`` to ``buf``: an unexpanded
+          library node, a non-Python (C++) tasklet, or a GPU-scheduled map that uses the buffer as a
+          multi-thread collective;
+        * a nested SDFG takes a higher-rank single-element array through a connector.
 
         For GPU maps we only block the *input* side (edges into a ``MapEntry``) and the *partial* side
         (edges from an inside node into a ``MapExit``). A ``MapExit``-to-outside edge is a normal map
-        output; it can be scalarized and is widened back by ``PromoteGPUScalarsToArrays`` when needed."""
+        output; it can be scalarized and is widened back by ``PromoteGPUScalarsToArrays`` when needed.
+        """
         blocked: set[str] = set()
         for state in sdfg.states():
             for node in state.nodes():
                 if not isinstance(node, nodes.AccessNode):
                     continue
                 arr = sdfg.arrays.get(node.data)
+                if isinstance(arr, dace.data.View):
+                    ve = sdutil.get_view_edge(state, node)
+                    if ve is not None:
+                        other = ve.src if ve.dst is node else ve.dst
+                        if isinstance(other, nodes.AccessNode):
+                            blocked.add(other.data)
                 if not isinstance(arr, dace.data.Array):
                     continue
                 for edge in itertools.chain(state.in_edges(node), state.out_edges(node)):
                     nb = edge.src if edge.dst is node else edge.dst
-                    if isinstance(nb, nodes.LibraryNode):
-                        blocked.add(node.data)
-                        break
-                    if isinstance(nb, nodes.Tasklet) and nb.language != dtypes.Language.Python:
+                    if self.neighbor_keeps_array(state, edge, nb, node.data):
                         blocked.add(node.data)
                         break
                     if isinstance(nb, nodes.MapEntry) and nb.map.schedule in dtypes.GPU_SCHEDULES:
-                        # Block arrays that feed the map entry (node -> MapEntry) or that live inside the
-                        # map body and receive an input from the entry (MapEntry -> node).
+                        # Blocks arrays feeding the entry (node -> MapEntry) and arrays living inside
+                        # the body that receive an input from it (MapEntry -> node).
                         blocked.add(node.data)
                         break
                     if isinstance(nb, nodes.MapExit) and nb.map.schedule in dtypes.GPU_SCHEDULES:
-                        # Partial WCR outputs from inside the map body (node -> MapExit) are always
-                        # blocked because the code generator cannot emit them as a scalar collective.
+                        # Partial WCR outputs from inside the body (node -> MapExit) are always
+                        # blocked: codegen cannot emit them as a scalar collective.
                         if edge.src is node:
                             blocked.add(node.data)
                             break
@@ -417,10 +528,63 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                         if self.skip_gpu_outputs and edge.dst is node and not arr.transient:
                             blocked.add(node.data)
                             break
-                        if edge.src is node:
-                            blocked.add(node.data)
-                            break
         return blocked
+
+    def connector_follows(
+        self, state: SDFGState, nest: nodes.NestedSDFG, edge: "dace.sdfg.graph.MultiConnectorEdge", name: str
+    ) -> bool:
+        """Whether the descriptor ``nest`` takes ``name`` through can become a Scalar with it: one element, a
+        connector that carries ``name`` alone, and nothing inside ``nest`` that keeps it an array."""
+        conn = edge.dst_conn if edge.dst is nest else edge.src_conn
+        inner = nest.sdfg.arrays.get(conn)
+        if any(e.data.data != name for e in state.all_edges(nest) if conn in (e.dst_conn, e.src_conn)):
+            return False
+        if type(inner) is dace.data.Scalar:
+            return True
+        if type(inner) is not dace.data.Array or not one_element(inner) or isinstance(inner.dtype, dtypes.opaque):
+            return False
+        return conn not in self._blocked_descriptors(nest.sdfg)
+
+    def neighbor_keeps_array(
+        self, state: SDFGState, edge: "dace.sdfg.graph.MultiConnectorEdge", nb: nodes.Node, name: str
+    ) -> bool:
+        """Whether ``nb``, at the other end of ``edge``, generates code that needs ``name`` to stay an array: a library
+        node other than one writing a single result, a non-Python tasklet, a nested SDFG whose connector cannot
+        follow."""
+        if isinstance(nb, nodes.LibraryNode):
+            return not single_result(edge, nb)
+        if isinstance(nb, nodes.Tasklet):
+            return nb.language != dtypes.Language.Python
+        # A connector takes a Scalar for a ``(1,)`` array only (``Array.is_equivalent``): a higher rank needs the
+        # nested SDFG's own descriptor to become a Scalar with it.
+        return isinstance(nb, nodes.NestedSDFG) and not self.nest_takes(state, nb, edge, name)
+
+    def nest_takes(
+        self, state: SDFGState, nest: nodes.NestedSDFG, edge: "dace.sdfg.graph.MultiConnectorEdge", name: str
+    ) -> bool:
+        """Whether ``nest`` still takes ``name`` once it is a Scalar: a ``(1,)`` array connector does as it is."""
+        return len(state.sdfg.arrays[name].shape) == 1 or self.connector_follows(state, nest, edge, name)
+
+    def scalarize_connectors(self, sdfg: SDFG, names: set[str]) -> None:
+        """Make each one-element descriptor through which a nested SDFG of ``sdfg`` takes one of ``names`` a
+        Scalar, and so on into the nests inside it: the caller passes ``&s``, the callee reads ``s``."""
+        for state in sdfg.states():
+            for nest in [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]:
+                followed: set[str] = set()
+                for edge in state.all_edges(nest):
+                    conn = edge.dst_conn if edge.dst is nest else edge.src_conn
+                    if edge.data.data not in names or conn in followed:
+                        continue
+                    if not self.connector_follows(state, nest, edge, edge.data.data):
+                        continue
+                    if type(nest.sdfg.arrays[conn]) is dace.data.Array:
+                        scalarize_descriptor(nest.sdfg, conn)
+                    for connectors in (nest.in_connectors, nest.out_connectors):
+                        if conn in connectors:
+                            connectors[conn] = nest.sdfg.arrays[conn].dtype
+                    followed.add(conn)
+                if followed:
+                    self.scalarize_connectors(nest.sdfg, followed)
 
     def _is_eligible(
         self, sdfg: SDFG, arr_name: str, arr: "dace.data.Data", blocked: set[str], apply_filter: bool
@@ -434,8 +598,8 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
             return False
         if arr_name in blocked:
             return False
-        is_len1 = arr.shape == (1,) or arr.shape == [1]
-        is_single = self.single_element and len(arr.shape) >= 1 and all(d == 1 for d in arr.shape)
+        is_len1 = len(arr.shape) == 1 and one_element(arr)
+        is_single = self.single_element and len(arr.shape) >= 1 and one_element(arr)
         if not (is_len1 or is_single):
             return False
         if isinstance(arr.dtype, dace.dtypes.opaque):
@@ -454,9 +618,14 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         :param apply_filter: Whether the top-level ``filter`` set gates the rewrite here (``False`` in
             the nested-SDFG recursion: the filter names outer-level descriptors).
         :param stage_nontransients: Whether to stage non-transient arrays (top level only).
-        :returns: Names of the descriptors that are now scalar-referenced in the body.
+        :returns: Names of the descriptors that are now scalar-referenced in the body, nested SDFGs included.
         """
-        blocked = self._blocked_sources(sdfg) | self._blocked_by_unscalarizable_neighbors(sdfg)
+        blocked = self._blocked_descriptors(sdfg)
+        # Hoisted: the loop below only calls ``remove_data`` / ``add_scalar``; the state rewrite is
+        # after it, so no access node moves and these name sets cannot go stale.
+        is_read_set, is_written_set, gpu_written_set = staging_access_summary(sdfg, stage_nontransients)
+        # Re-staging an already staged signature array would chain a second copy hop onto the first.
+        blocked.update(restaging_skips(sdfg, is_read_set, is_written_set))
         # rename[old] = the name the body should reference after the rewrite (== old for a transient
         # scalarized in place; a fresh scalar name for a staged non-transient). staged carries the
         # kept signature array plus its read/write direction so copy-in/out can be wired afterwards.
@@ -471,7 +640,8 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                 sdfg.add_scalar(
                     arr_name,
                     dtype=arr.dtype,
-                    storage=arr.storage,
+                    # A heap scalar is a new/delete per allocation scope; storage inference puts a Default one on the stack.
+                    storage=dtypes.StorageType.Default if arr.storage == dtypes.StorageType.CPU_Heap else arr.storage,
                     transient=True,
                     lifetime=arr.lifetime,
                     debuginfo=arr.debuginfo,
@@ -479,14 +649,18 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                 )
                 rename[arr_name] = arr_name
             elif stage_nontransients:
-                is_read = descriptor_is_read(sdfg, arr_name)
-                is_written = descriptor_is_written(sdfg, arr_name)
+                # The copy-out writes the staged value back on every path: a write the body may skip needs the copy-in.
+                is_written = arr_name in is_written_set
+                is_read = is_written or arr_name in is_read_set
+                # The staged scalar is what the BODY accesses, and the copy edges below are the
+                # transfer; inheriting device storage makes every host reference to it invalid.
+                storage = arr.storage if arr_name in gpu_written_set else dtypes.StorageType.Default
                 # Fresh name every time (find_new_name): a re-run over an already-staged array never
                 # collides with the scalar an earlier run created.
                 scal_name, _ = sdfg.add_scalar(
                     f"scal_{arr_name}",
                     dtype=arr.dtype,
-                    storage=arr.storage,
+                    storage=storage,
                     transient=True,
                     lifetime=arr.lifetime,
                     debuginfo=arr.debuginfo,
@@ -528,8 +702,12 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                 continue
             prefixes = [f"offset_{a}_d" for a in rename] + [f"{a}_d" for a in rename]
             if any(nm.startswith(p) for p in prefixes):
-                sdfg.symbols.pop(nm, None)
+                sdfg.symbol_repo.remove(nm)
 
+        # A nested SDFG's connector descriptor follows the array it takes, so no single-element array is left.
+        self.scalarize_connectors(sdfg, set(rename.values()))
+
+        rewritten = set(rename)
         if self.recursive:
             for state in sdfg.states():
                 for node in state.nodes():
@@ -537,9 +715,9 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                         # Nested-SDFG recursion is transient-only (a non-transient inner arg belongs to
                         # the parent's signature) and the filter names outer descriptors, so neither
                         # staging nor filtering applies inside.
-                        self._rewrite(node.sdfg, apply_filter=False, stage_nontransients=False)
+                        rewritten |= self._rewrite(node.sdfg, apply_filter=False, stage_nontransients=False)
 
-        return set(rename)
+        return rewritten
 
     def apply_pass(self, sdfg: SDFG, _: dict) -> set[str] | None:
         rewritten = self._rewrite(sdfg, apply_filter=True, stage_nontransients=self.preserve_abi)
@@ -585,7 +763,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
         "restriction; an empty set rewrites nothing. Does not gate the nested-SDFG recursion.",
     )
 
-    def __init__(self, recursive: bool = True, preserve_abi: bool = False, filter: "set[str] | None" = None):
+    def __init__(self, recursive: bool = True, preserve_abi: bool = False, filter: "AbstractSet[str] | None" = None):
         super().__init__()
         self.recursive = recursive
         self.preserve_abi = preserve_abi
@@ -603,10 +781,12 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
         :param sdfg: SDFG to rewrite.
         :param apply_filter: Whether the top-level ``filter`` set gates the rewrite here.
         :param stage_nontransients: Whether to stage non-transient scalars (top level only).
-        :returns: Names of the descriptors that are now array-referenced in the body.
+        :returns: Names of the descriptors that are now array-referenced in the body, nested SDFGs included.
         """
         rename: dict[str, str] = {}
         staged: list[tuple[str, str, bool, bool]] = []  # (scalar_name, array_name, is_read, is_written)
+        # Hoisted for the same reason as in the forward pass.
+        is_read_set, is_written_set, _ = staging_access_summary(sdfg, stage_nontransients)
 
         for name, desc in list(sdfg.arrays.items()):
             if not isinstance(desc, dace.data.Scalar) or isinstance(desc.dtype, dace.dtypes.opaque):
@@ -627,8 +807,9 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                 )
                 rename[name] = name
             elif stage_nontransients:
-                is_read = descriptor_is_read(sdfg, name)
-                is_written = descriptor_is_written(sdfg, name)
+                # The copy-out writes the staged value back on every path: a write the body may skip needs the copy-in.
+                is_written = name in is_written_set
+                is_read = is_written or name in is_read_set
                 # ``find_new_name`` makes add_array return ``(name, desc)``; binding the tuple as the
                 # name leaves every rename target a tuple and the first Memlet built from it raises
                 # ``Invalid type "tuple" for property data``. The forward pass unpacks the same way.
@@ -668,12 +849,13 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                     s = copyout.add_write(scal_name)
                     copyout.add_nedge(a, s, Memlet(data=arr_name, subset="0"))
 
+        rewritten = set(rename)
         if self.recursive:
             for state in sdfg.states():
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
-                        self._rewrite(node.sdfg, apply_filter=False, stage_nontransients=False)
-        return set(rename)
+                        rewritten |= self._rewrite(node.sdfg, apply_filter=False, stage_nontransients=False)
+        return rewritten
 
     def apply_pass(self, sdfg: SDFG, _: dict) -> set[str] | None:
         rewritten = self._rewrite(sdfg, apply_filter=True, stage_nontransients=self.preserve_abi)

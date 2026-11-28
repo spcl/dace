@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+from typing import TYPE_CHECKING
 
 # DaCe imports
 import dace
@@ -10,6 +11,9 @@ from dace.autodiff.base_abc import AutoDiffException
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import state as dstate
 from dace.sdfg.state import LoopRegion
+
+if TYPE_CHECKING:
+    from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 
 
 def resolve_overwrite_with_recomputation(
@@ -25,7 +29,7 @@ def resolve_overwrite_with_recomputation(
     """
 
     # Add the nsdfg where it is required
-    _connect_recomputation_nsdfg(
+    connect_recomputation_nsdfg(
         forward_state=forward_state,
         backward_state=backward_state,
         nsdfg=recomputation_nsdfg,
@@ -35,7 +39,7 @@ def resolve_overwrite_with_recomputation(
     )
 
 
-def _connect_recomputation_nsdfg(
+def connect_recomputation_nsdfg(
     bwd_generator: "BackwardPassGenerator",
     forward_state: SDFGState,
     backward_state: SDFGState,
@@ -109,7 +113,7 @@ def _connect_recomputation_nsdfg(
     backward_state.add_edge(nsdfg, nsdfg_out_conn, new_recomp_node, None, memlet)
 
     # Connect the new AccessNode to the required computation
-    bwd_generator._connect_forward_accessnode_not_overwritten(
+    bwd_generator.connect_forward_accessnode_not_overwritten(
         forward_state=forward_state,
         backward_state=backward_state,
         forward_node=target_an,
@@ -119,7 +123,7 @@ def _connect_recomputation_nsdfg(
     )
 
 
-def _prune_descendants_recomputation_nsdfg(
+def prune_descendants_recomputation_nsdfg(
     forward_state: SDFGState, target_an: nodes.AccessNode, nsdfg: nodes.NestedSDFG
 ):
     """
@@ -182,7 +186,7 @@ def _prune_descendants_recomputation_nsdfg(
                 forward_state.remove_node(node)
 
 
-def _prune_recomputation_sdfg(forward_state: SDFGState, target_an: nodes.AccessNode, nsdfg: nodes.NestedSDFG):
+def prune_recomputation_sdfg(forward_state: SDFGState, target_an: nodes.AccessNode, nsdfg: nodes.NestedSDFG):
     """
     1: From this Nested-SDFG, we remove everything that will be executed after the target access node to be recomputed
     2: Prune the unnecessary computation inside the forward state
@@ -191,10 +195,10 @@ def _prune_recomputation_sdfg(forward_state: SDFGState, target_an: nodes.AccessN
     """
 
     # 1 and 2
-    _prune_descendants_recomputation_nsdfg(forward_state=forward_state, target_an=target_an, nsdfg=nsdfg)
+    prune_descendants_recomputation_nsdfg(forward_state=forward_state, target_an=target_an, nsdfg=nsdfg)
 
 
-def _rename_descriptors_for_recomputation_nsdfg(forward_sdfg: SDFG, nsdfg: nodes.NestedSDFG):
+def rename_descriptors_for_recomputation_nsdfg(forward_sdfg: SDFG, nsdfg: nodes.NestedSDFG):
     """ """
     # Get all the nodes to rename in the NestedSDFG
     to_rename = []
@@ -304,9 +308,9 @@ def get_recomputation_nsdfg(
     assert nb_occurrences == 1
     assert nsdfg_target_node
 
-    _prune_recomputation_sdfg(nsdfg=nsdfg, forward_state=nsdfg_forward_state, target_an=nsdfg_target_node)
+    prune_recomputation_sdfg(nsdfg=nsdfg, forward_state=nsdfg_forward_state, target_an=nsdfg_target_node)
 
     # Change descriptors if the inputs are written to
-    _rename_descriptors_for_recomputation_nsdfg(forward_sdfg=bwd_generator.sdfg, nsdfg=nsdfg)
+    rename_descriptors_for_recomputation_nsdfg(forward_sdfg=bwd_generator.sdfg, nsdfg=nsdfg)
 
     return nsdfg

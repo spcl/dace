@@ -14,7 +14,7 @@ sdfg = dace.SDFG("cflow")
 # Add global arrays and the symbol from above to the SDFG
 sdfg.add_array("A", [2], dace.float32)
 sdfg.add_array("B", [2], dace.float32)
-sdfg.add_symbol("T", T.dtype)
+sdfg.add_symbol(T)
 
 
 # Sample state contents

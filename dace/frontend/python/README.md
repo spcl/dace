@@ -42,6 +42,35 @@ The Python-Frontend currently supports a limited subset of NumPy:
 - Reduction routines `sum`, `mean`, `amax`, `amin`, `argmax`, `argmin` (input positional and `axis` keyword arguments supported)
 - Type conversion routines, e.g., `int32`, `complex64`, etc.
 
+### Routines lowered onto library nodes
+
+Some routines are not expanded into Maps by the frontend at all: they are emitted as a library
+node, so each backend picks its own implementation (an optimized CPU/GPU library call, or a
+portable loop) instead of inheriting whatever shape the frontend happened to write.
+
+| Routine | Library node | Notes |
+| --- | --- | --- |
+| `matmul`, `dot`, `@` | `MatMul`, `BatchedMatMul`, `Gemv`, `Ger`, `Dot` | picked by the operand ranks |
+| `transpose`, `.T` | `Transpose`, `TensorTranspose` | 2-D goes to `Transpose`, N-D to `TensorTranspose` |
+| `tensordot` | `TensorDot` | |
+| `einsum` | `Einsum` | |
+| `linalg.cholesky`, `linalg.inv`, `linalg.solve` | `Cholesky`, `Inv`, `Solve` | LAPACK-backed |
+| `fft.fft`, `fft.ifft`, `fft.fftn`, `fft.ifftn` | `FFT`, `IFFT` | |
+| `cumsum`, `cumprod` | `Scan` | inclusive scan along the last axis (or a 1-D operand); see below |
+| `roll` | `CShift` | one node per `(shift, axis)` pair, chained in numpy's order; see below |
+
+`cumsum` / `cumprod` scan the LAST axis. A rank > 1 operand becomes a Map over the leading axes
+with the scan inside, so the batch stays parallel and only the recurrence is sequential. numpy's
+integer widening applies (signed to `int64`, unsigned to `uint64`; floats keep their dtype). An
+inner axis, and an axis-less scan over a rank > 1 operand, are refused rather than silently
+scanned along the last axis.
+
+`roll` builds its nodes with `ShiftDirection.NUMPY`. `CShift` is Fortran `CSHIFT` by default and
+rotates the OTHER WAY (`CSHIFT(x, s)(i)` reads `x(mod(i + s, n))`, `roll(x, s)[i]` reads
+`x[(i - s) % n]`), so the direction is named on the node rather than negated by the caller.
+`axis=None` over a rank > 1 operand is refused: numpy flattens there, which is a reshape only when
+the operand is contiguous.
+
 There is also upcoming support for NumPy ufuncs. You may preview ufunc support with `add`, `subtract`, `multiply`, and `minimum`. The following are supported:
 - Ufunc call with optional `out`, `where`, and `dtype` keyword arguments. Standard NumPy broadcasting rules are applied.
 - Ufunc `reduce` method with optional `out`, `keepdims`, `axis`, and `initial` keyword arguments.

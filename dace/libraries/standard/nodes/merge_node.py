@@ -5,7 +5,7 @@ taken from its own memlet, which covers Fortran's scalar ``MERGE`` variants too.
 
 import dace
 from dace import library, nodes
-from dace.libraries.standard.helper import broadcast_indices, broadcast_map_expansion
+from dace.libraries.standard.helper import broadcast_indices, broadcast_map_expansion, in_kernel_block_or
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -28,13 +28,27 @@ class ExpandPure(ExpandTransformation):
         )
 
 
+@library.expansion
+class ExpandCUDABlock(ExpandTransformation):
+    """In-kernel lowering: the ``pure`` map spread over the block's lanes."""
+
+    runs_inside_kernel = True
+    environments: list[type] = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        from dace.libraries.standard.block_reduce import spread_over_lanes
+
+        return spread_over_lanes(ExpandPure.expansion(node, parent_state, parent_sdfg), node.label)
+
+
 @library.node
 class MergeLibraryNode(nodes.LibraryNode):
     """Per-element select: ``_mrg_out = _mrg_t if _mrg_mask else _mrg_f``, each input broadcast against
     the result."""
 
-    implementations = {"pure": ExpandPure}
-    default_implementation = "pure"
+    implementations = {"Auto": in_kernel_block_or(ExpandPure), "pure": ExpandPure, "CUDA (block)": ExpandCUDABlock}
+    default_implementation = "Auto"
 
     TRUE_CONNECTOR_NAME = "_mrg_t"
     FALSE_CONNECTOR_NAME = "_mrg_f"

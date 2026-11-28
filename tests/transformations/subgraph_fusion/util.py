@@ -67,6 +67,10 @@ def fusion(sdfg: dace.SDFG, graph: dace.SDFGState, subgraph: SubgraphView | list
         setattr(map_fusion, property, val)
 
     for sg in subgraph:
+        # ``fuse`` does not ask, so ask first: a refused subgraph stays as it is
+        view = sg if isinstance(sg, SubgraphView) else SubgraphView(graph, graph.nodes())
+        if not map_fusion.can_be_applied(sdfg, view):
+            continue
         map_entries = helpers.get_outermost_scope_maps(sdfg, graph, sg)
         # remove map_entries and their corresponding exits from the subgraph
         # already before applying transformation

@@ -23,13 +23,11 @@ from dace.codegen.targets.cpp import cpp_array_expr, cpp_offset_expr
 from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.sdfg import nodes
 
+# Frontend imports and helpers
+# Transformations
 # Type hints
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
-
-# Frontend imports and helpers
-# Transformations
-from dace.transformation.interstate import GPUTransformSDFG
 
 ############################################################################
 # Tensor core code generator
@@ -320,7 +318,7 @@ if __name__ == "__main__":
 
     # Transform the code to run on the GPU, while ensuring that the warp map
     # in the example runs within a single thread-block.
-    sdfg.apply_transformations(GPUTransformSDFG, options=dict(sequential_innermaps=False))
+    sdfg.apply_gpu_transformations()
 
     sdfg(A=A, B=B, C=C, N=1024)
 

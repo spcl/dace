@@ -10,8 +10,8 @@ import warnings
 
 import sympy
 
-from dace import Config, dtypes
-from dace.properties import make_properties
+from dace import Config, dtypes, symbolic
+from dace.properties import Property, make_properties
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import helpers, transformation
@@ -42,6 +42,20 @@ def to_3d_dims(dim_sizes: list) -> list:
     dim_sizes += [1] * (3 - len(dim_sizes))
 
     return dim_sizes
+
+
+def spill_block_threads(block_size: list, domain: list) -> list:
+    """Move threads a block dimension cannot use (its extent is a constant at most half the block) to the next
+    dimension of the domain, halving and doubling; ``[256, 1, 1]`` over ``[8, N]`` becomes ``[8, 32, 1]``."""
+    block = list(block_size)
+    for d in range(2):
+        extent = domain[d]
+        if symbolic.issymbolic(extent) or domain[d + 1] == 1:
+            continue
+        while block[d] % 2 == 0 and 2 * int(extent) <= block[d]:
+            block[d] //= 2
+            block[d + 1] *= 2
+    return block
 
 
 def product(iterable):
@@ -109,6 +123,9 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
     """
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
+    divides_evenly = Property(
+        dtype=bool, default=False, allow_none=False, desc="If the tblock-map devides the maps evenly"
+    )
 
     @classmethod
     def expressions(cls):
@@ -126,6 +143,11 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
 
         # Only applicable to GPU_Device maps
         if map_entry.map.schedule != dtypes.ScheduleType.GPU_Device:
+            return False
+        # A CUDA Tile C++ kernel runs one tile block per iteration and has no threads to map
+        from dace.codegen.python.dialects.cuda_tile_cpp import is_tile_kernel
+
+        if is_tile_kernel(state, map_entry):
             return False
 
         # Check if any inner maps are GPU-scheduled (e.g., GPU_ThreadBlock)
@@ -165,9 +187,6 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         gpu_block_size = self.preprocess_default_dims()
         kernel_map_entry = self.map_entry
 
-        # Reverse for map tiling to prioritize later dimensions for better memory/performance
-        reversed_block_size = gpu_block_size[::-1]
-
         # Get tile size
         num_dims = len(kernel_map_entry.map.params)
 
@@ -185,7 +204,13 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         # Apply map tiling transformation
         MapTiling.apply_to(
             sdfg=sdfg,
-            options={"prefix": "b", "tile_sizes": tile_sizes, "tile_trivial": True, "skew": False},
+            options={
+                "prefix": "b",
+                "tile_sizes": tile_sizes,
+                "tile_trivial": True,
+                "skew": False,
+                "divides_evenly": self.divides_evenly,
+            },
             map_entry=kernel_map_entry,
         )
 
@@ -202,6 +227,16 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         new_kernel_entry.map.allow_chiplet_threadblock_distribution = (
             kernel_map_entry.map.allow_chiplet_threadblock_distribution
         )
+        # Instrumentation times the kernel: it moves to the kernel map, the thread-block map is not timed on its own.
+        new_kernel_entry.map.instrument = kernel_map_entry.map.instrument
+        kernel_map_entry.map.instrument = dtypes.InstrumentationType.No_Instrumentation
+        # The launch is the kernel's: its launch mode, synchronization owner and handle move to the kernel map
+        new_kernel_entry.map.cooperative = kernel_map_entry.map.cooperative
+        new_kernel_entry.map.explicit_sync = kernel_map_entry.map.explicit_sync
+        new_kernel_entry.map.kernel_handle = kernel_map_entry.map.kernel_handle
+        kernel_map_entry.map.cooperative = False
+        kernel_map_entry.map.explicit_sync = False
+        kernel_map_entry.map.kernel_handle = None
 
     def preprocess_default_dims(self):
         """
@@ -272,6 +307,7 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
                 )
             else:
                 block_size = default_block_size
+            block_size = spill_block_threads(block_size, kernel_domain_size)
 
         # Validate that the block size does not exeed any limits
         validate_block_size_limits(kernel_map_entry, block_size)

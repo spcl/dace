@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.constant_propagation import ConstantPropagation, _UnknownValue
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
@@ -653,7 +654,150 @@ def test_dependency_change_same_edge(extra_state):
     assert a[0] == ref
 
 
+def nest_with_a_string_symbol_mapping() -> dace.SDFG:
+    """``out[i] = inner[i]`` through a nest whose stride symbol is mapped to ``'rows * cols'``.
+
+    The value is a string, which is what any pass rewriting the mapping as text leaves behind. The
+    stride is the only place the symbol is used, so a reader that mistakes the text for a constant
+    substitutes the two outer names into the nest's own descriptor.
+    """
+    rows, cols = (dace.symbol(name, dtype=dace.int64) for name in ("rows", "cols"))
+    stride = dace.symbol("stride", dtype=dace.int64)
+
+    inner = dace.SDFG("view_a_row")
+    inner.add_array("src", [4], dace.float64, strides=[stride])
+    inner.add_array("dst", [4], dace.float64)
+    body = inner.add_state("copy", is_start_block=True)
+    body.add_nedge(body.add_read("src"), body.add_write("dst"), dace.Memlet("src[0:4]"))
+
+    sdfg = dace.SDFG("string_symbol_mapping")
+    sdfg.add_symbol("rows", dace.int64)
+    sdfg.add_symbol("cols", dace.int64)
+    sdfg.add_array("a", [4], dace.float64)
+    sdfg.add_array("out", [4], dace.float64)
+    state = sdfg.add_state("call", is_start_block=True)
+    nest = state.add_nested_sdfg(inner, {"src": None}, {"dst": None}, symbol_mapping={"stride": rows * cols})
+    state.add_edge(state.add_read("a"), None, nest, "src", dace.Memlet("a[0:4]"))
+    state.add_edge(nest, "dst", state.add_write("out"), None, dace.Memlet("out[0:4]"))
+    # Item assignment is how a string gets in. The constructor coerces the value; a pass that rewrites
+    # the mapping in place bypasses it.
+    nest.symbol_mapping["stride"] = "rows * cols"
+    convert_legacy_nested_sdfgs(sdfg)
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_symbolic_string_mapping_is_not_a_constant():
+    """The mapping must survive: its value names outer symbols, so it is not a constant.
+
+    ``issymbolic`` on the unparsed string ``'rows * cols'`` answers "not symbolic", so the pass used
+    to push it into the nest as an initial constant, rewrite the nest's stride to ``rows*cols`` and
+    then drop ``stride`` from the mapping. The nest was left naming two symbols that nothing binds
+    (``Missing symbols on nested SDFG: ['rows', 'cols']``). npbench ``vexx_k`` hit this on the GPU
+    canonicalize column.
+    """
+    sdfg = nest_with_a_string_symbol_mapping()
+    ConstantPropagation().apply_pass(sdfg, {})
+
+    nest = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.NestedSDFG))
+    assert "stride" in nest.symbol_mapping, f"the mapping was dropped: {nest.symbol_mapping}"
+    free = {str(sym) for sym in nest.sdfg.arrays["src"].strides[0].free_symbols}
+    assert free == {"stride"}, f"the nest's stride names symbols it cannot bind: {free}"
+    sdfg.validate()
+
+
+def test_a_literal_string_mapping_is_still_propagated():
+    """The counterpart: a mapping written as ``'8'`` has no free symbols and still folds away."""
+    sdfg = nest_with_a_string_symbol_mapping()
+    nest = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.NestedSDFG))
+    nest.symbol_mapping["stride"] = "8"
+    ConstantPropagation().apply_pass(sdfg, {})
+
+    nest = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.NestedSDFG))
+    assert "stride" not in nest.symbol_mapping, "a literal mapping was left in place"
+    assert int(nest.sdfg.arrays["src"].strides[0]) == 8, nest.sdfg.arrays["src"].strides
+    sdfg.validate()
+
+
+def test_a_deleted_assignment_of_a_symbol_still_read_elsewhere_is_reported():
+    sdfg = dace.SDFG("deleted_assignment_reported")
+    sdfg.add_array("out", [2], dace.int64)
+    sdfg.add_symbol("n", dace.int64)
+    before = sdfg.add_state("before", is_start_block=True)
+    before.add_edge(
+        before.add_tasklet("first", {}, {"o"}, "o = n"), "o", before.add_write("out"), None, dace.Memlet("out[0]")
+    )
+    after = sdfg.add_state("after")
+    after.add_edge(
+        after.add_tasklet("second", {}, {"o"}, "o = n"), "o", after.add_write("out"), None, dace.Memlet("out[1]")
+    )
+    edge = sdfg.add_edge(before, after, dace.InterstateEdge(assignments={"n": "5"}))
+
+    assert ConstantPropagation().apply_pass(sdfg, {}) is not None
+    assert not edge.data.assignments
+
+
+def test_a_join_with_a_path_that_assigns_nothing_is_not_a_constant():
+    sdfg = dace.SDFG("constant_on_one_path")
+    sdfg.add_symbol("x", dace.int64)
+    sdfg.add_symbol("c", dace.int64)
+    sdfg.add_array("out", [1], dace.int64)
+    first, taken, join = sdfg.add_state(is_start_block=True), sdfg.add_state(), sdfg.add_state()
+    sdfg.add_edge(first, join, dace.InterstateEdge("c <= 0"))
+    sdfg.add_edge(first, taken, dace.InterstateEdge("c > 0"))
+    sdfg.add_edge(taken, join, dace.InterstateEdge(assignments={"x": "7"}))
+    tasklet = join.add_tasklet("read", {}, {"o"}, "o = x")
+    join.add_edge(tasklet, "o", join.add_write("out"), None, dace.Memlet("out[0]"))
+
+    ConstantPropagation().apply_pass(sdfg, {})
+
+    assert "x" in tasklet.free_symbols
+
+
+def test_an_assignment_in_a_loop_body_stays_for_the_next_iteration():
+    sdfg = dace.SDFG("constant_in_loop_body")
+    sdfg.add_symbol("x", dace.int64)
+    loop = LoopRegion("loop", "i < 2", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    loop.add_edge(loop.add_state(is_start_block=True), loop.add_state(), dace.InterstateEdge(assignments={"x": "7"}))
+
+    ConstantPropagation().apply_pass(sdfg, {})
+
+    assert all(e.data.assignments for e in loop.edges())
+
+
+def loop_sizing_a_buffer(read_before_assignment: bool) -> dace.SDFG:
+    """``for i: [buf[0] = 1;] n = c; buf[0] = 1`` over a transient ``buf[n]``."""
+    sdfg = dace.SDFG(f"buffer_sized_in_a_loop_{read_before_assignment}")
+    sdfg.add_symbol("c", dace.int64)
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_transient("buf", ["n"], dace.int64)
+    loop = LoopRegion("loop", "i < 2", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    head, body = loop.add_state(is_start_block=True), loop.add_state()
+    loop.add_edge(head, body, dace.InterstateEdge(assignments={"n": "c + 1"}))
+    for state in (head, body) if read_before_assignment else (body,):
+        tasklet = state.add_tasklet("fill", {}, {"o"}, "o = 1")
+        state.add_edge(tasklet, "o", state.add_write("buf"), None, dace.Memlet("buf[0]"))
+    return sdfg
+
+
+def test_a_symbol_unknown_only_away_from_its_descriptor_sizes_it():
+    """The loop head does not know ``n``, but nothing accesses ``buf`` there: ``buf`` takes the value."""
+    sdfg = loop_sizing_a_buffer(False)
+    ConstantPropagation().apply_pass(sdfg, {})
+    assert [str(extent) for extent in sdfg.arrays["buf"].shape] == ["c + 1"]
+
+
+def test_a_descriptor_accessed_where_its_symbol_is_unknown_keeps_it():
+    sdfg = loop_sizing_a_buffer(True)
+    ConstantPropagation().apply_pass(sdfg, {})
+    assert [str(extent) for extent in sdfg.arrays["buf"].shape] == ["n"]
+
+
 if __name__ == "__main__":
+    test_a_symbol_unknown_only_away_from_its_descriptor_sizes_it()
+    test_a_descriptor_accessed_where_its_symbol_is_unknown_keeps_it()
     test_simple_constants()
     test_nested_constants()
     test_simple_loop()
@@ -674,3 +818,8 @@ if __name__ == "__main__":
     test_dependency_change()
     test_dependency_change_same_edge(False)
     test_dependency_change_same_edge(True)
+    test_a_symbolic_string_mapping_is_not_a_constant()
+    test_a_literal_string_mapping_is_still_propagated()
+    test_a_deleted_assignment_of_a_symbol_still_read_elsewhere_is_reported()
+    test_a_join_with_a_path_that_assigns_nothing_is_not_a_constant()
+    test_an_assignment_in_a_loop_body_stays_for_the_next_iteration()

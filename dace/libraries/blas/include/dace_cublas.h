@@ -1,8 +1,38 @@
 // Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
+#if defined(__HIPCC__) || defined(WITH_HIP)
+// HIP dialect: hipBLAS mirrors cuBLAS, so this header keeps the cuBLAS names (see dace/libraries/hip_dialect.py)
+#include <hip/hip_runtime.h>
+#include <hip/hip_fp16.h>
+#define HIPBLAS_V2  // hipComplex / hipDoubleComplex, the counterparts of cuComplex / cuDoubleComplex
+#if __has_include(<hipblas/hipblas.h>)
+#include <hipblas/hipblas.h>
+#else
+#include <hipblas.h>
+#endif
+#define cublasStatus_t hipblasStatus_t
+#define CUBLAS_STATUS_SUCCESS HIPBLAS_STATUS_SUCCESS
+#define cublasHandle_t hipblasHandle_t
+#define cublasCreate hipblasCreate
+#define cublasDestroy hipblasDestroy
+#define cublasSetPointerMode hipblasSetPointerMode
+#define CUBLAS_POINTER_MODE_DEVICE HIPBLAS_POINTER_MODE_DEVICE
+#define cuComplex hipComplex
+#define cuDoubleComplex hipDoubleComplex
+#define make_cuComplex make_hipFloatComplex
+#define make_cuDoubleComplex make_hipDoubleComplex
+#define cudaMalloc hipMalloc
+#define cudaMemset hipMemset
+#define cudaMemcpy hipMemcpy
+#define cudaMemcpyHostToDevice hipMemcpyHostToDevice
+#define cudaFree hipFree
+#define cudaGetDevice hipGetDevice
+#define cudaSuccess hipSuccess
+#else
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
+#endif
 
 #include <cstddef>    // size_t
 #include <stdexcept>  // std::runtime_error
@@ -18,6 +48,13 @@ static void CheckCublasError(cublasStatus_t const& status) {
     throw std::runtime_error("cuBLAS failed with error code: " +
                              std::to_string(status));
   }
+}
+
+// Whether the GPU runtime still answers. At process exit it may already be unloading; a handle is then the
+// driver's to reclaim, and destroying it would fail or reach into a runtime that is gone.
+static bool GpuRuntimeAlive() {
+  int device = 0;
+  return cudaGetDevice(&device) == cudaSuccess;
 }
 
 static cublasHandle_t CreateCublasHandle() {
@@ -141,7 +178,7 @@ class CublasHandle {
 
   cublasHandle_t& Get() {
     if (!handle_) {
-      auto handle = CreateCublasHandle();
+      cublasHandle_t handle = CreateCublasHandle();
       cublasSetPointerMode(handle, CUBLAS_POINTER_MODE_DEVICE);
       handle_ = handle;
     }
@@ -154,9 +191,11 @@ class CublasHandle {
   }
 
   // A destructor that throws terminates the process. Teardown failures have nowhere left to go, so
-  // they are dropped rather than turned into a crash that hides whatever the program computed.
+  // they are dropped rather than turned into a crash that hides whatever the program computed. A handle
+  // that lives across calls is destroyed at unload or at exit, where the runtime may be gone: then it is
+  // left to the driver.
   ~CublasHandle() {
-    if (handle_) CheckCublasError(cublasDestroy(*handle_));
+    if (handle_ && GpuRuntimeAlive()) (void)cublasDestroy(*handle_);
   }
 
   CublasHandle& operator=(CublasHandle const&) = delete;

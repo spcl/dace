@@ -1,12 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import re
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
-from dace import data, dtypes
+from dace import data, dtypes, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes, validation
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import Edge, SubgraphView
+from dace.sdfg.state import LoopRegion
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.utils import dfs_topological_sort
 
@@ -137,6 +139,40 @@ def infer_connector_types(sdfg: SDFG):
                     raise TypeError(f'Ambiguous or uninferable type in connector "{cname}" of node "{node}"')
 
 
+def mapped_symbol_types(
+    state: SDFGState,
+    node: nodes.NestedSDFG,
+    defined_at: Callable[[SDFGState, nodes.Node], dict[str, dtypes.typeclass]] | None = None,
+) -> Iterator[tuple[str, dtypes.typeclass, dtypes.typeclass]]:
+    """
+    Yields ``(name, declared, mapped)`` for each symbol of a nested SDFG that is declared there and whose mapped
+    expression has an inferable type.
+
+    :param state: The state that contains ``node``.
+    :param node: The nested SDFG node.
+    :param defined_at: The symbols visible at ``node``, by default ``state.symbols_defined_at``. A caller walking many
+                       nodes passes a cached oracle.
+    """
+    outer_symbols = None
+    for name, value in node.symbol_mapping.items():
+        declared = node.sdfg.symbols.get(name)
+        if declared is None:
+            continue
+        if outer_symbols is None:
+            outer_symbols = defined_at(state, node) if defined_at is not None else state.symbols_defined_at(node)
+        mapped = infer_expr_type(value, outer_symbols)
+        if mapped is not None:
+            yield name, declared, mapped
+
+
+def same_scalar_kind(declared: dtypes.typeclass, mapped: dtypes.typeclass) -> bool:
+    """Whether two dtypes are plain scalars of one kind (signed, unsigned or floating point)."""
+    return (
+        type(declared) is type(mapped) is dtypes.typeclass
+        and declared.as_numpy_dtype().kind == mapped.as_numpy_dtype().kind
+    )
+
+
 def widen_mapped_symbols(state: SDFGState, node: nodes.NestedSDFG) -> None:
     """
     Widens each symbol of a nested SDFG that is declared narrower than the expression mapped to it, e.g., one declared
@@ -146,22 +182,10 @@ def widen_mapped_symbols(state: SDFGState, node: nodes.NestedSDFG) -> None:
     :param state: The state that contains ``node``.
     :param node: The nested SDFG node.
     """
-    outer_symbols = None
-    for name, value in node.symbol_mapping.items():
-        declared = node.sdfg.symbols.get(name)
-        if declared is None:
-            continue
-        if outer_symbols is None:
-            outer_symbols = state.symbols_defined_at(node)
-        mapped = infer_expr_type(value, outer_symbols)
+    for name, declared, mapped in mapped_symbol_types(state, node):
         # Across kinds, a float value would make an integer symbol a double and an unsigned one would drop its sign
-        if (
-            mapped is not None
-            and mapped.bytes > declared.bytes
-            and type(declared) is type(mapped) is dtypes.typeclass
-            and declared.as_numpy_dtype().kind == mapped.as_numpy_dtype().kind
-        ):
-            node.sdfg.symbols[name] = mapped
+        if mapped is not None and mapped.bytes > declared.bytes and same_scalar_kind(declared, mapped):
+            node.sdfg.symbol_repo.set_type(name, mapped)
 
 
 #############################################################################
@@ -170,10 +194,10 @@ def widen_mapped_symbols(state: SDFGState, node: nodes.NestedSDFG) -> None:
 
 def set_default_schedule_and_storage_types(
     scope: SDFG | SDFGState | nodes.EntryNode,
-    parent_schedules: list[dtypes.ScheduleType] = None,
+    parent_schedules: list[dtypes.ScheduleType | None] | None = None,
     use_parent_schedule: bool = False,
-    state: SDFGState = None,
-    child_nodes: dict[nodes.Node, list[nodes.Node]] = None,
+    state: SDFGState | None = None,
+    child_nodes: dict[nodes.Node, list[nodes.Node]] | None = None,
 ):
     """
     Sets default storage and schedule types throughout SDFG in-place.
@@ -220,12 +244,19 @@ def set_default_schedule_and_storage_types(
                 child_nodes=state.scope_children(),
             )
 
-        # Take care of remaining scalars without access nodes
+        # Take care of remaining scalars without access nodes. Data WITH an access node that is still
+        # Default was left so by an undetermined parent schedule (an expansion inferred before its
+        # parent was), and belongs to the inference that later resolves that parent, not to the stack.
+        accessed = {node.data for state in scope.states() for node in state.data_nodes()}
         for aname, desc in scope.arrays.items():
             # If not transient in a nested SDFG, take storage from parent, regardless of current type
             if not desc.transient and scope.parent_sdfg is not None:
                 desc.storage = get_storage_from_parent(aname, scope)
-            elif (desc.transient or scope.parent_sdfg is None) and desc.storage == dtypes.StorageType.Default:
+            elif (
+                (desc.transient or scope.parent_sdfg is None)
+                and desc.storage == dtypes.StorageType.Default
+                and aname not in accessed
+            ):
                 # Indeterminate storage type, set to register
                 desc.storage = dtypes.StorageType.Register
         return
@@ -269,6 +300,41 @@ def set_default_schedule_and_storage_types(
         )
 
 
+def enclosing_schedules(state: SDFGState, node: nodes.Node) -> list[dtypes.ScheduleType | None]:
+    """The ``parent_schedules`` that :func:`set_default_schedule_and_storage_types` hands a nested SDFG at
+    ``node``'s position: ``None`` for the outermost SDFG, then the schedule of every scope enclosing ``node``,
+    outermost first, across the nested SDFGs around ``state``.
+
+    A kernel whose thread blocks are implicit (no thread-block map under it) runs its body once per
+    thread, so a ``GPU_ThreadBlock`` follows its ``GPU_Device``: the special case
+    :func:`_set_default_storage_in_scope` applies to the kernel's own scope, recorded where it holds. Taken
+    inside the nested SDFG instead, it would read that SDFG's own ``Default`` maps as thread-block maps.
+
+    A library expansion inferred from its node's schedule alone saw a ``Sequential`` node in a kernel as
+    host code -- ``Sequential`` defers to the scope around it, and there was none -- and placed its
+    transients in ``CPU_Heap``, allocated outside the kernel.
+
+    :param state: the state holding ``node``.
+    :param node: the node, still in ``state``.
+    :returns: the schedules, outermost first.
+    """
+    from dace.transformation.helpers import gpu_map_has_explicit_threadblocks  # Avoid import loops
+
+    chain: list[dtypes.ScheduleType | None] = []  # innermost first
+    while True:
+        scope = state.entry_node(node)
+        while scope is not None:
+            if scope.schedule == dtypes.ScheduleType.GPU_Device and not gpu_map_has_explicit_threadblocks(state, scope):
+                chain.append(dtypes.ScheduleType.GPU_ThreadBlock)
+            chain.append(scope.schedule)
+            scope = state.entry_node(scope)
+        caller, outer = state.sdfg.parent_nsdfg_node, state.sdfg.parent
+        if caller is None or not isinstance(outer, SDFGState):
+            break
+        node, state = caller, outer
+    return [None, *reversed(chain)]
+
+
 def _determine_child_schedule(parent_schedules: list[dtypes.ScheduleType]) -> dtypes.ScheduleType | None:
     for sched in reversed(parent_schedules):
         if sched is not None and sched in dtypes.SCOPEDEFAULT_SCHEDULE:
@@ -307,8 +373,16 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> dtyp
             if not e.data.is_empty() and e.src_conn and e.src_conn.startswith("OUT_")
         )
     else:
-        # Other nodes only need neighboring memlets
-        memlets = {e.data.data for e in state.all_edges(node) if not e.data.is_empty()}
+        # A library node's ``host_connectors`` are the ones its expansion writes from host code even
+        # when the rest of it runs on the device -- ArgReduce's CUB call answers into host scalars.
+        # Their storage says nothing about where the node runs, and counting it makes every such
+        # node read as conflicted, so a CUDA ArgReduce could not be compiled at all.
+        host = node.host_connectors if isinstance(node, nodes.LibraryNode) else frozenset()
+        memlets = {
+            e.data.data
+            for e in state.all_edges(node)
+            if not e.data.is_empty() and (e.dst_conn if e.dst is node else e.src_conn) not in host
+        }
 
     # From memlets, use non-scalar data descriptors for decision
     constraints: set[dtypes.ScheduleType] = set()
@@ -348,6 +422,146 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> dtyp
         child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[None]
 
     return child_schedule
+
+
+#: ``name = expression``, with the comparisons that are not assignments (``<=``, ``==``, ...) left
+#: alone, so a loop condition keeps its whole text and a loop step yields only its right-hand side.
+ASSIGNMENT = re.compile(r"^\s*[A-Za-z_]\w*\s*=(?!=)\s*(?P<rhs>.+)$", re.DOTALL)
+
+
+def assigned_expression(statement: str) -> str:
+    """The right-hand side of ``statement`` when it assigns, else ``statement`` unchanged."""
+    match = ASSIGNMENT.match(statement)
+    return match.group("rhs") if match else statement
+
+
+def symbol_origins(definitions: list[tuple[str, str]]) -> dict[str, set[str]]:
+    """``symbol -> the symbols its value is a function of``, resolved transitively.
+
+    ``definitions`` pairs a symbol with the source text that gives it a value: a nested SDFG's
+    symbol mapping, or a loop's init / condition / update. A loop iterator bounded by ``p`` is a
+    function of ``p``, which is what makes a write indexed by that iterator move with ``p``.
+    """
+    direct: dict[str, set[str]] = {}
+    for name, expression in definitions:
+        try:
+            symbols = {str(s) for s in symbolic.pystr_to_symbolic(expression).free_symbols}
+        except Exception:  # not a symbolic expression (a call, a subscript): nothing to resolve
+            symbols = set()
+        direct.setdefault(name, set()).update(symbols - {name})
+
+    origins: dict[str, set[str]] = {}
+    for name in direct:
+        reached: set[str] = set()
+        stack = list(direct[name])
+        while stack:
+            symbol = stack.pop()
+            if symbol in reached:
+                continue
+            reached.add(symbol)
+            stack.extend(direct.get(symbol, ()))
+        origins[name] = reached or {name}
+    return origins
+
+
+#: How far :func:`map_scope_carries_dependency` follows a write down through nested scopes before it
+#: gives up and refuses the schedule. Three levels reach the shape canonicalization produces (map ->
+#: NestedSDFG -> inner map or loop body).
+WRITE_DESCENT_LIMIT = 3
+
+
+def write_moves_with(state: SDFGState, edge, varying: set[str], depth: int = 0) -> bool | None:
+    """Whether the write arriving on ``edge`` moves with every symbol in ``varying``.
+
+    ``None`` means undecidable, which the caller reads as a conflict.
+
+    A memlet arriving at a scope exit FROM A NESTED SCOPE has been propagated over that scope: the
+    per-iteration ``aa[j, 0:N]`` of a row-wise map reads back as the whole ``aa[0:N, 0:N]``, whose
+    free symbols name no map parameter at all. Judging that memlet directly calls every such map a
+    carried dependency, which is how the gate below turned seven parallel TSVC kernels sequential.
+    So a write that comes out of a nested scope is followed to the accesses that produced it, and a
+    write this cannot follow stays undecided rather than being read off the widened subset.
+    """
+    memlet = edge.data
+    if isinstance(edge.src, (nodes.MapExit, nodes.NestedSDFG)) and depth >= WRITE_DESCENT_LIMIT:
+        return None
+
+    if isinstance(edge.src, nodes.MapExit):
+        inner = [e for e in state.in_edges(edge.src) if not e.data.is_empty() and e.data.data == memlet.data]
+        if not inner:
+            return None
+        verdicts = [write_moves_with(state, e, varying, depth + 1) for e in inner]
+        return None if None in verdicts else all(verdicts)
+
+    if isinstance(edge.src, nodes.NestedSDFG):
+        # Inside the nested SDFG the container is named by the connector and indexed in the nested
+        # SDFG's own symbols, so a write index is asked what its value is a FUNCTION of rather than
+        # which names it spells. A skewed wavefront writes ``a[_loop_it_0, _loop_it_1]``, whose
+        # symbols are inner loop iterators; they move with the enclosing map because the loops that
+        # define them are bounded by its parameter.
+        conn = edge.src_conn
+        if conn is None:
+            return None
+        definitions = [(str(name), str(outer)) for name, outer in edge.src.symbol_mapping.items()]
+        for region in edge.src.sdfg.all_control_flow_regions(recursive=True):
+            if not isinstance(region, LoopRegion) or not region.loop_variable:
+                continue
+            definitions.extend(
+                (region.loop_variable, assigned_expression(block.as_string))
+                for block in (region.init_statement, region.loop_condition, region.update_statement)
+                if block is not None
+            )
+        origins = symbol_origins(definitions)
+
+        verdicts = []
+        for nested_state in edge.src.sdfg.states():
+            for access in nested_state.data_nodes():
+                if access.data != conn:
+                    continue
+                for inner_edge in nested_state.in_edges(access):
+                    if inner_edge.data.is_empty() or inner_edge.data.wcr is not None:
+                        continue
+                    if inner_edge.data.subset is None:
+                        return None
+                    written_by = set()
+                    for symbol in inner_edge.data.subset.free_symbols:
+                        written_by |= origins.get(str(symbol), {str(symbol)})
+                    verdicts.append(not (varying - written_by))
+        if not verdicts:
+            return None
+        return all(verdicts)
+
+    if memlet.subset is None:
+        return None
+    return not (varying - {str(s) for s in memlet.subset.free_symbols})
+
+
+def map_scope_carries_dependency(state: SDFGState, entry: nodes.MapEntry) -> bool:
+    """Whether ``entry``'s scope reads a container it also writes at an index that does not move with
+    every map parameter -- a loop-carried dependency, which no parallel schedule preserves.
+
+    Only the edges INSIDE the scope are read. The ones outside it are propagated, so a per-iteration
+    write ``B[i]`` reads back as the whole ``B[0:N]`` and every map would look conflicted. The same
+    widening happens one level down, on a write arriving from a nested scope, and there
+    :func:`write_moves_with` follows the write to the accesses that produced it. A write that
+    carries write-conflict resolution is a reduction the code generator already makes atomic, and a
+    parameter with a single iteration cannot carry anything.
+    """
+    varying = {param for param, size in zip(entry.map.params, entry.map.range.size()) if size != 1}
+    if not varying:
+        return False
+    try:
+        exit_node = state.exit_node(entry)
+    except (KeyError, StopIteration):  # scope without an exit: undecidable, so refuse the schedule
+        return True
+    read = {e.data.data for e in state.out_edges(entry) if not e.data.is_empty()}
+    for edge in state.in_edges(exit_node):
+        memlet = edge.data
+        if memlet.is_empty() or memlet.wcr is not None or memlet.data not in read:
+            continue
+        if write_moves_with(state, edge, varying) is not True:
+            return True
+    return False
 
 
 def _set_default_schedule_in_scope(

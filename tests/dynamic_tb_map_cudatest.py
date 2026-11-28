@@ -6,9 +6,20 @@ import scipy
 
 import dace
 
+# All tests in this file rely on the GPU_ThreadBlock_Dynamic schedule, which is
+# only supported by the legacy CUDA codegen.
+pytestmark = pytest.mark.old_gpu_codegen_only
+
 W = dace.symbol("W")
 H = dace.symbol("H")
 nnz = dace.symbol("nnz")
+
+
+def run_scheduled(sdfg: dace.SDFG, fine_grained: bool, **arguments) -> None:
+    """Runs ``sdfg`` under a name of its own with the fine-grained or coarse schedule of its dynamic maps."""
+    sdfg.name = f"{sdfg.name}_{'fine_grained' if fine_grained else 'coarse'}"
+    with dace.config.set_temporary("compiler", "cuda", "dynamic_map_fine_grained", value=fine_grained):
+        sdfg(**arguments)
 
 
 @dace.program
@@ -29,17 +40,32 @@ def spmv(
 
 
 @pytest.mark.gpu
-def test_dynamic_map():
+@pytest.mark.parametrize("fine_grained", [True, False])
+@pytest.mark.parametrize(
+    "omp_schedule,chunk",
+    [
+        (dace.OMPScheduleType.Default, 0),
+        (dace.OMPScheduleType.Dynamic, 1),
+        (dace.OMPScheduleType.Dynamic, 3),
+        (dace.OMPScheduleType.Guided, 0),
+        (dace.OMPScheduleType.Guided, 2),
+    ],
+)
+def test_dynamic_map(fine_grained: bool, omp_schedule: dace.OMPScheduleType, chunk: int):
+    """The rows of a CSR product come out right whatever share of a range a block or warp round takes."""
     height = 1024
     width = 1024
 
     # Prepare spmv SDFG for GPU
     sdfg = spmv.to_sdfg()
+    sdfg.name = f"{sdfg.name}_{omp_schedule.name}_{chunk}"
     sdfg.apply_gpu_transformations()
 
     for node in sdfg.all_nodes_recursive():
         if isinstance(node[0], dace.sdfg.nodes.MapEntry) and node[0].schedule == dace.dtypes.ScheduleType.Sequential:
             node[0].schedule = dace.dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
+            node[0].map.omp_schedule = omp_schedule
+            node[0].map.omp_chunk_size = chunk
 
     # Fill input data
     # each row has up (including) 256 elements
@@ -60,7 +86,18 @@ def test_dynamic_map():
     x = np.random.rand(width).astype(dace.float32.type)
     b = np.zeros(height, dtype=dace.float32.type)
 
-    sdfg(A_row=A_row, A_col=A_col, A_val=A_val, x=x, b=b, H=A_sparse.shape[0], W=A_sparse.shape[1], nnz=A_sparse.nnz)
+    run_scheduled(
+        sdfg,
+        fine_grained,
+        A_row=A_row,
+        A_col=A_col,
+        A_val=A_val,
+        x=x,
+        b=b,
+        H=A_sparse.shape[0],
+        W=A_sparse.shape[1],
+        nnz=A_sparse.nnz,
+    )
 
     diff = np.linalg.norm(A_sparse.dot(x) - b) / float(height)
     print("Difference:", diff)
@@ -69,7 +106,8 @@ def test_dynamic_map():
 
 
 @pytest.mark.gpu
-def test_dynamic_maps():
+@pytest.mark.parametrize("fine_grained", [True, False])
+def test_dynamic_maps(fine_grained: bool):
     """Tests the case of multiple dynamic maps in a row that share dynamic inputs."""
 
     W = dace.symbol("W")
@@ -143,8 +181,18 @@ def test_dynamic_maps():
     b = np.zeros(height, dtype=dace.float32.type)
     c = np.zeros(height, dtype=dace.float32.type)
 
-    sdfg(
-        A_row=A_row, A_col=A_col, A_val=A_val, x=x, b=b, c=c, H=A_sparse.shape[0], W=A_sparse.shape[1], nnz=A_sparse.nnz
+    run_scheduled(
+        sdfg,
+        fine_grained,
+        A_row=A_row,
+        A_col=A_col,
+        A_val=A_val,
+        x=x,
+        b=b,
+        c=c,
+        H=A_sparse.shape[0],
+        W=A_sparse.shape[1],
+        nnz=A_sparse.nnz,
     )
 
     diff0 = np.linalg.norm(A_sparse.dot(x) - b) / float(height)
@@ -154,7 +202,8 @@ def test_dynamic_maps():
 
 
 @pytest.mark.gpu
-def test_nested_dynamic_map():
+@pytest.mark.parametrize("fine_grained", [True, False])
+def test_nested_dynamic_map(fine_grained: bool):
     """Tests the case where the dynamic map inputs are defined in an outer scope."""
 
     M = dace.symbol("M")
@@ -210,7 +259,9 @@ def test_nested_dynamic_map():
     val = np.zeros_like(A.data)
     ref = np.empty_like(A.data)
 
-    sdfg(
+    run_scheduled(
+        sdfg,
+        fine_grained,
         D_vals=val,
         A2_crd=A.indices.copy(),
         A2_pos=A.indptr.copy(),
@@ -232,7 +283,8 @@ def test_nested_dynamic_map():
 
 
 @pytest.mark.gpu
-def test_dynamic_map_with_step():
+@pytest.mark.parametrize("fine_grained", [True, False])
+def test_dynamic_map_with_step(fine_grained: bool):
 
     M = dace.symbol("M")
     N = dace.symbol("N")
@@ -291,7 +343,9 @@ def test_dynamic_map_with_step():
     val = np.zeros_like(A.data)
     ref = np.empty_like(A.data)
 
-    sdfg(
+    run_scheduled(
+        sdfg,
+        fine_grained,
         D_vals=val,
         A2_crd=A.indices.copy(),
         A2_pos=A.indptr.copy(),
@@ -312,6 +366,7 @@ def test_dynamic_map_with_step():
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses GPU_ThreadBlock_Dynamic schedule (not supported by experimental codegen)
 def test_dynamic_multidim_map():
 
     @dace.program
@@ -359,6 +414,7 @@ def test_dynamic_nested_map():
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses GPU_ThreadBlock_Dynamic schedule (not supported by experimental codegen)
 def test_dynamic_default_schedule():
     N = dace.symbol("N")
 
@@ -379,10 +435,13 @@ def test_dynamic_default_schedule():
 
 
 if __name__ == "__main__":
-    test_dynamic_map()
-    test_dynamic_maps()
-    test_nested_dynamic_map()
-    test_dynamic_map_with_step()
+    test_dynamic_map(True)
+    test_dynamic_map(False)
+    test_dynamic_maps(True)
+    test_dynamic_maps(False)
+    test_nested_dynamic_map(True)
+    test_nested_dynamic_map(False)
+    test_dynamic_map_with_step(True)
+    test_dynamic_map_with_step(False)
     test_dynamic_multidim_map()
-    # test_dynamic_nested_map()
     test_dynamic_default_schedule()

@@ -3,6 +3,7 @@ import numpy as np
 
 import dace
 from dace import nodes
+from dace.sdfg import propagation
 
 
 def test_decreasing_propagation():
@@ -36,5 +37,82 @@ def test_decreasing_propagation():
     assert np.allclose(q, ref)
 
 
+def test_decreasing_propagation_with_a_symbolic_bound():
+    """The same decreasing access, with a bound that is a symbol rather than a literal.
+
+    Constant bounds hide this: ``Range`` normalises a begin that came out above its end, so the
+    literal case above answers correctly even when the propagation put them the wrong way round. A
+    symbolic one cannot be normalised, and the wrong order stays -- ``a[N - i:N]`` over ``i`` in
+    ``0:N`` propagated to ``(N, N - 1)``, an EMPTY range where the union is ``(1, N - 1)``. An empty
+    read at a scope boundary copies nothing, so the kernel reads whatever was already there.
+
+    npbench ludcmp reaches this through its back-substitution loop, whose row shrinks by one each
+    iteration.
+    """
+    N = dace.symbol("N")
+
+    sdfg = dace.SDFG("decreasing_symbolic")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [N], dace.float64)
+    state = sdfg.add_state("s")
+    entry, exit_ = state.add_map("m", {"i": "0:N"})
+    tasklet = state.add_tasklet("first", {"inp"}, {"out"}, "out = inp[0]")
+    state.add_memlet_path(state.add_read("a"), entry, tasklet, dst_conn="inp", memlet=dace.Memlet("a[N - i:N]"))
+    state.add_memlet_path(tasklet, exit_, state.add_write("b"), src_conn="out", memlet=dace.Memlet("b[i]"))
+
+    propagation.propagate_memlets_sdfg(sdfg)
+
+    read = next(e.data for e in state.in_edges(entry) if e.data.data == "a")
+    begin, end, _ = read.subset.ranges[0]
+    assert (end - begin + 1).simplify() != 0, f"propagated an empty read: a{read.subset}"
+    assert read.subset.ranges == [(1, N - 1, 1)], f"expected a[1:N], got a{read.subset}"
+
+
+def test_decreasing_propagation_reads_every_element_it_should():
+    """The numbers behind the range above, at a size small enough to check by hand.
+
+    The kernel writes the LAST element of the suffix it is given, so every output is ``a[N - 1]``
+    -- but only if the boundary memlet actually brought the suffix in. An empty one leaves the
+    kernel reading uninitialised memory, which is a wrong answer and not a crash.
+    """
+    N = dace.symbol("N")
+
+    @dace.program
+    def suffix_last(a: dace.float64[N], b: dace.float64[N]):
+        for i in dace.map[1:N]:
+            b[i] = a[N - i]
+
+    n = 6
+    a = np.arange(1.0, n + 1.0)
+    b = np.zeros(n)
+    suffix_last(a=a, b=b, N=n)
+
+    expected = np.zeros(n)
+    for i in range(1, n):
+        expected[i] = a[n - i]
+    assert np.allclose(b, expected), f"{b} != {expected}"
+
+
+def test_a_decreasing_range_access_propagates_to_its_whole_image():
+    """``A[-2*p + 40 : -2*p + 44]`` over ``p = 2:9`` reads ``A[22:40]``, not an inverted range (a wavefront tile)."""
+    from dace import subsets, symbolic
+
+    p = dace.symbol("p")
+    inner = subsets.Range([(-2 * p + 40, -2 * p + 44, 1)])
+    out = propagation.propagate_subset(
+        [dace.Memlet(data="A", subset=inner)],
+        dace.data.Array(dace.float64, [100]),
+        ["p"],
+        subsets.Range([(2, 9, 1)]),
+        symbolic.Facts((), frozenset({"p"})),
+    )
+    ((begin, end, step),), (tile,) = out.subset.ranges, out.subset.tile_sizes
+    covered = {x + k for x in range(int(begin), int(end) + 1, int(step)) for k in range(int(tile))}
+    assert {-2 * q + 40 + k for q in range(2, 10) for k in range(5)} <= covered
+
+
 if __name__ == "__main__":
     test_decreasing_propagation()
+    test_decreasing_propagation_with_a_symbolic_bound()
+    test_decreasing_propagation_reads_every_element_it_should()
+    test_a_decreasing_range_access_propagates_to_its_whole_image()

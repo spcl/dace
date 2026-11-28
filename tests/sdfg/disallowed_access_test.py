@@ -72,8 +72,31 @@ def test_gpu_access_on_device_interstate_edge_default():
     sdfg.validate()
 
 
+def test_an_invalid_edge_inside_a_loop_is_reported_at_that_edge():
+    """The edge's index is its index among the edges of the region that OWNS it. Looked up among the
+    SDFG's own edges -- none here, the loop is the only block -- formatting the message raised
+    ``IndexError`` instead of naming the edge (HB kmp's GPU render), and with more top-level edges it
+    named the wrong one."""
+    sdfg = dace.SDFG("loop_reading_device_memory_on_the_host")
+    sdfg.add_array("A", [20], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_symbol("s", dace.float64)
+    loop = dace.sdfg.state.LoopRegion("over_i", "i < 20", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    first = loop.add_state("first", is_start_block=True)
+    second = loop.add_state("second")
+    third = loop.add_state("third")
+    loop.add_edge(first, second, dace.InterstateEdge())
+    loop.add_edge(second, third, dace.InterstateEdge(assignments=dict(s="A[i]")))
+
+    with pytest.raises(InvalidSDFGInterstateEdgeError) as raised:
+        sdfg.validate()
+    assert "(at edge second -> third)" in str(raised.value), str(raised.value)
+    assert raised.value.to_json()["cfg_id"] == loop.cfg_id
+
+
 if __name__ == "__main__":
     test_gpu_access_on_host_interstate_ok()
     test_gpu_access_on_host_interstate_invalid()
     test_gpu_access_on_host_tasklet()
     test_gpu_access_on_device_interstate_edge_default()
+    test_an_invalid_edge_inside_a_loop_is_reported_at_that_edge()

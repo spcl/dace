@@ -96,16 +96,28 @@ class TaskletFusion(pm.SingleStateTransformation):
         if t1.language != t2.language:
             return False
 
-        # The AccessNode between the Tasklets must be a scalar.
-        if data.desc(sdfg).total_size != 1:
+        # The AccessNode between the Tasklets must be a scalar, and a transient: a write to an argument (a nested
+        # SDFG's output) is read outside the SDFG, so it cannot be folded away.
+        if data.desc(sdfg).total_size != 1 or not data.desc(sdfg).transient:
             return False
 
         # Neither the first Tasklet nor the AccessNode may be used anywhere else.
         if graph.out_degree(t1) != 1 or graph.out_degree(data) != 1:
             return False
+        # Besides the first Tasklet's write, the AccessNode may only be the target of ordering (empty) edges, which
+        # the fused Tasklet takes over.
+        if any(e.src is not t1 and not e.data.is_empty() for e in graph.in_edges(data)):
+            return False
         access_node_count = sum(1 for s in sdfg.nodes() for n in s.data_nodes() if n.data == data.data)
         access_node_count += sum(1 for e in sdfg.edges() if data.data in e.data.free_symbols)
         if access_node_count > 1:
+            return False
+        # A read in control flow (a branch condition, a nested region's interstate edge) has no access node (srad).
+        if any(data.data in e.data.free_symbols for e in sdfg.all_interstate_edges()):
+            return False
+        if any(
+            data.data in r.used_symbols(all_symbols=True, with_contents=False) for r in sdfg.all_control_flow_regions()
+        ):
             return False
 
         # Try to parse the code to check that there is not more than one assignment.
@@ -231,9 +243,15 @@ class TaskletFusion(pm.SingleStateTransformation):
                     continue
             graph.add_edge(in_edge.src, in_edge.src_conn, new_tasklet, in_edge.dst_conn, in_edge.data)
 
+        # An ordering edge into the folded AccessNode orders its reader before the value is consumed: keep it.
+        for in_edge in graph.in_edges(data):
+            if in_edge.src is not t1:
+                graph.add_nedge(in_edge.src, new_tasklet, dace.Memlet())
+
         for in_edge in graph.in_edges(t2):
-            # Only connect if there is no edge connected to that connector yet.
-            if len(list(graph.in_edges_by_connector(new_tasklet, in_edge.dst_conn))) == 0:
+            # Only connect if there is no edge connected to that connector yet. Ordering (empty) edges share the ``None``
+            # connector, and each one orders a different node: keep all of them.
+            if in_edge.dst_conn is None or len(list(graph.in_edges_by_connector(new_tasklet, in_edge.dst_conn))) == 0:
                 graph.add_edge(in_edge.src, in_edge.src_conn, new_tasklet, in_edge.dst_conn, in_edge.data)
             else:
                 graph.remove_memlet_path(in_edge)
@@ -270,10 +288,9 @@ def _merge_sets(a: set[Any] | None, b: set[Any] | None):
 
 
 def _merge_debuginfo(a: dace.DebugInfo | None, b: dace.DebugInfo | None):
-    if a is None and b is not None:
-        return b
-    if b is None and a is not None:
-        return a
+    if a is None or b is None:
+        # Either side alone, or neither: two tasklets without debug info fuse into one without it.
+        return b if a is None else a
 
     if a.filename != b.filename:
         # TODO: Support multiple files in debuginfo
