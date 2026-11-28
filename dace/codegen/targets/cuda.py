@@ -2993,7 +2993,9 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
                     if is_persistent and not has_tbmap:
                         stride = "{} * {}".format(_widen_register("gridDim.x", index_types[v]), _topy(block_dims[i]))
                     elif is_persistent and has_tbmap:
-                        stride = _widen_register("gridDim.x", index_types[v])
+                        stride = "{} * {}".format(
+                            _widen_register("gridDim.x", index_types[v]), _topy(device_map_range[i][2])
+                        )
                     else:
                         stride = self._grid_dims[i] if has_tbmap else (kmap_max[i] + 1 - kmap_min[i])
 
