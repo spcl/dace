@@ -8,10 +8,11 @@ import sympy
 import dace
 from dace import Memlet, config, dtypes, symbolic
 from dace import data as dt
+from dace.libraries.blas.environments import intel_mkl as mkl
 
 # Environments
-from dace.libraries.blas.environments import intel_mkl as mkl
 from dace.libraries.blas.environments import openblas
+from dace.libraries.fft import environments as fft_environments
 from dace.sdfg import SDFG, infer_types, nodes
 from dace.sdfg import graph as gr
 from dace.sdfg.graph import SubgraphView
@@ -369,9 +370,10 @@ def find_fast_library(device: dtypes.DeviceType) -> list[str]:
             backend = "none"
 
         if backend == "cuda":
-            return ["cuBLAS", "cuSolverDn", "GPUAuto", "cuTENSOR", "CUB", "pure"]
+            return ["cuBLAS", "cuSolverDn", "GPUAuto", "cuTENSOR", "cuFFT", "CUB", "pure"]
         elif backend == "hip":
-            return ["rocBLAS", "GPUAuto", "pure"]
+            # The ROCm packages that ship hipBLAS ship hipSOLVER, hipTensor and hipFFT too
+            return ["hipBLAS", "hipSolverDn", "GPUAuto", "hipTensor", "hipFFT", "pure"]
         else:
             return ["GPUAuto", "pure"]
     elif device == dtypes.DeviceType.CPU:
@@ -382,6 +384,9 @@ def find_fast_library(device: dtypes.DeviceType) -> list[str]:
             result.append("MKL")
         if openblas.OpenBLAS.is_installed():
             result.append("OpenBLAS")
+        # FFT: after MKL, whose FFTW3 interface serves the FFT nodes wherever MKL is installed
+        if fft_environments.FFTW3.is_installed():
+            result.append("FFTW3")
 
         return result + ["pure"]
 

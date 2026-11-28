@@ -113,6 +113,7 @@ dace = [
     "external/cub/LICENSE.TXT",
     "runtime/include/**/*",
     "libraries/**/include/**/*",
+    "libraries/**/*.cmake",
     "viewer/webclient/dist/*.js",
     "viewer/webclient/external_libs/**/*",
     "viewer/webclient/*.css",
