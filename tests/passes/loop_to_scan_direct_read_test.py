@@ -89,8 +89,38 @@ def test_a_scan_over_a_computed_delta_reads_a_copy(distance: int) -> None:
     np.testing.assert_allclose(a, expected, rtol=1e-9, atol=1e-11)
 
 
+def carried_sum_of_a_column(columns: int) -> dace.SDFG:
+    @dace.program
+    def program(a: dace.float64[N], x: dace.float64[N, columns]):
+        for i in range(1, N):
+            a[i] = a[i - 1] + x[i, 0]
+
+    sdfg = program.to_sdfg(simplify=True)
+    sdfg.name = f"column_sum_{columns}"
+    return sdfg
+
+
+@pytest.mark.parametrize(("columns", "in_place"), [(1, True), (3, False)])
+def test_a_scan_over_a_unit_stride_column_reads_it_in_place(columns: int, in_place: bool) -> None:
+    """A scalar-expanded ``s[i, 0]`` of shape ``(N, 1)`` (the CPF running example) is one contiguous run and is read
+    in place; a column of an ``(N, 3)`` array has stride 3 and keeps the copy."""
+    sut = lifted(carried_sum_of_a_column(columns))
+    assert scan_inputs(sut) == (["x"] if in_place else copies(sut))
+    assert len(copies(sut)) == (0 if in_place else 1)
+    rng = np.random.default_rng(columns)
+    n = 4096 * 3 + 5
+    x, a = rng.uniform(-1.0, 1.0, (n, columns)), rng.uniform(-1.0, 1.0, n)
+    expected = a.copy()
+    for i in range(1, n):
+        expected[i] = expected[i - 1] + x[i, 0]
+    sut(a=a, x=x, N=n)
+    np.testing.assert_allclose(a, expected, rtol=1e-9, atol=1e-11)
+
+
 if __name__ == "__main__":
     for distance in (1, 2, 3):
         test_a_scan_over_an_array_the_loop_does_not_write_reads_it_in_place(distance)
     for distance in (1, 2):
         test_a_scan_over_a_computed_delta_reads_a_copy(distance)
+    for columns, in_place in ((1, True), (3, False)):
+        test_a_scan_over_a_unit_stride_column_reads_it_in_place(columns, in_place)

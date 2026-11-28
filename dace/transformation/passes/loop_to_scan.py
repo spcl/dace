@@ -3588,10 +3588,11 @@ class ScanSource(NamedTuple):
 def direct_scan_source(loop: LoopRegion, info: _Scan, sdfg: SDFG) -> ScanSource | None:
     """The scan input, when the scan can read it in place instead of from a ``_scan_in`` copy.
 
-    It can when the delta is a plain unit-stride read ``src[i + d]`` of a contiguous 1-D array that no state of
-    ``loop`` writes, reaching the scan-update tasklet through copies only, and the tasklet's result reaches the
-    carried write through copies only: then ``src[start + d : start + d + trip]`` already holds the delta
-    sequence, and nothing changes it between the loop and the scan.
+    It can when the delta is a plain unit-stride read ``src[i + d]`` of an array that no state of ``loop`` writes,
+    reaching the scan-update tasklet through copies only, and the tasklet's result reaches the carried write through
+    copies only: then ``src[start + d : start + d + trip]`` already holds the delta sequence, and nothing changes it
+    between the loop and the scan. Every other axis of ``src`` must sit at a loop-invariant index and the iterated
+    axis must have unit stride, so the span is one contiguous run (a scalar-expanded ``s[i, 0]`` of shape ``(N, 1)``).
     """
     if info.literal_delta is not None or info.delta_in_conn is None or info.inner_loop is not None:
         return None
@@ -3602,24 +3603,34 @@ def direct_scan_source(loop: LoopRegion, info: _Scan, sdfg: SDFG) -> ScanSource 
     chain = _collect_output_chain(state, tasklet, info.out_conn)
     if len(delta_edges) != 1 or not chain or chain[-1] is not _find_carried_write_an(state, info.out_name):
         return None
-    name, subset = _resolve_input(state, delta_edges[0])
+    source = delta_edges[0].src
+    if isinstance(source, nodes.AccessNode) and state.in_degree(source) == 0:
+        # A plain read of a container, transient or not (a scalar-expanded ``s`` the loop only reads).
+        name, subset = source.data, delta_edges[0].data.subset
+    else:
+        name, subset = _resolve_input(state, delta_edges[0])
     if name is None or name == info.out_name or subset is None:
         return None
     desc = sdfg.arrays[name]
-    if type(desc) is not data.Array or len(desc.shape) != 1 or desc.strides[0] != 1 or desc.may_alias:
+    if type(desc) is not data.Array or desc.may_alias or block_writes(loop, name):
         return None
-    if block_writes(loop, name):
+    if any(step != 1 or symbolic.simplify(begin - end) != 0 for begin, end, step in subset.ranges):
         return None
-    begin, end, step = subset.ranges[0]
-    # the loop variable as ``begin`` spells it: symbol identity includes the dtype
-    loop_vars = [sym for sym in symbolic.pystr_to_symbolic(begin).free_symbols if str(sym) == loop.loop_variable]
-    if step != 1 or symbolic.simplify(begin - end) != 0 or len(loop_vars) != 1:
+    # the loop variable as each index spells it: symbol identity includes the dtype
+    loop_vars = [
+        [sym for sym in symbolic.pystr_to_symbolic(begin).free_symbols if str(sym) == loop.loop_variable]
+        for begin, _, _ in subset.ranges
+    ]
+    axes = [axis for axis, found in enumerate(loop_vars) if found]
+    if len(axes) != 1 or len(loop_vars[axes[0]]) != 1 or desc.strides[axes[0]] != 1:
         return None
-    offset = symbolic.simplify(begin - loop_vars[0])
+    axis = axes[0]
+    offset = symbolic.simplify(subset.ranges[axis][0] - loop_vars[axis][0])
     if any(str(sym) == loop.loop_variable for sym in offset.free_symbols):
         return None
-    first = symbolic.simplify(info.iter_start + offset)
-    return ScanSource(name, subsets.Range([(first, symbolic.simplify(info.iter_end + offset), 1)]))
+    ranges = list(subset.ranges)
+    ranges[axis] = (symbolic.simplify(info.iter_start + offset), symbolic.simplify(info.iter_end + offset), 1)
+    return ScanSource(name, subsets.Range(ranges))
 
 
 def rewrite_scan_loop(
