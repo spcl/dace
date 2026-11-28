@@ -13,10 +13,11 @@ from dace import SDFG, dtypes, properties, subsets, symbolic
 from dace.sdfg import nodes, propagation
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState, StateSubgraphView
+from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.transformation import helpers, transformation
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.map_fission import MapFission
+from dace.transformation.passes.codegen.lower_dynamic_thread_block_maps import guard_block
 
 InnerMap = tuple[SDFGState, nodes.MapEntry]
 
@@ -91,10 +92,8 @@ def same_iteration(inner_maps: list[InnerMap]) -> bool:
     return True
 
 
-def separate_device_maps(sdfg: SDFG) -> bool:
-    """Moves each top-level ``GPU_Device`` map of a state of ``sdfg``, with what it needs, into a state of its own
-    ahead of the rest; returns whether any state was split."""
-    split = False
+def separate_device_maps(sdfg: SDFG) -> None:
+    """Moves each top-level ``GPU_Device`` map of a state of ``sdfg``, with what it needs, into a state of its own."""
     for state in list(sdfg.states()):
         while True:
             entries = [
@@ -108,8 +107,6 @@ def separate_device_maps(sdfg: SDFG) -> bool:
             part.update(n for n in sdutil.find_upstream_nodes(first, state) if not isinstance(n, nodes.ExitNode))
             part.update(e.dst for e in state.out_edges(exit_) if isinstance(e.dst, nodes.AccessNode))
             helpers.state_fission(SubgraphView(state, list(part)))
-            split = True
-    return split
 
 
 def bound_check(map_entry: nodes.MapEntry) -> str:
@@ -155,12 +152,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         )
         inner = nsdfg_node.sdfg
         body_state = inner.start_block
-        guard = ConditionalBlock(f"bound_check_{map_entry.map.label}", sdfg=inner, parent=inner)
-        branch = ControlFlowRegion(f"body_{map_entry.map.label}", sdfg=inner, parent=guard)
-        inner.remove_node(body_state)
-        branch.add_node(body_state, is_start_block=True)
-        guard.add_branch(condition=properties.CodeBlock(bound_check(map_entry)), branch=branch)
-        inner.add_node(guard, is_start_block=True)
+        guard_block(inner, body_state, bound_check(map_entry))
 
         for sym in sorted(inner.free_symbols & defined.keys()):
             if sym not in inner.symbols:
