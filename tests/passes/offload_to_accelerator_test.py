@@ -22,6 +22,10 @@ import pytest
 
 import dace
 from dace import dtypes
+from dace.libraries.sort.nodes.scatter_conflict_check import INPUT_CONNECTOR_NAME as SCATTER_INPUT
+from dace.libraries.sort.nodes.scatter_conflict_check import OUTPUT_CONNECTOR_NAME as SCATTER_FLAG
+from dace.libraries.sort.nodes.scatter_conflict_check import SCRATCH_CONNECTOR_NAME as SCATTER_SCRATCH
+from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.libraries.standard.nodes.find_first import INDEX_NAME, OUTPUT_CONNECTOR_NAME, FindFirst
 from dace.libraries.standard.nodes.merge_node import MergeLibraryNode
@@ -30,6 +34,7 @@ from dace.libraries.standard.nodes.scan import Scan, ScanOp
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.utils import dfs_topological_sort
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.auto.auto_optimize import set_fast_implementations
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
@@ -253,6 +258,45 @@ def test_a_host_pinned_library_node_keeps_its_operands_on_the_host():
                 assert state.sdfg.arrays[edge.data.data].storage not in GPU_RESIDENT_STORAGES, (
                     f"{connector} ({edge.data.data}) was moved off the host"
                 )
+
+
+def host_pinned_outputs_into_device_arguments() -> dace.SDFG:
+    """A ``ScatterConflictCheck`` whose flag and scratch are DEVICE arguments, written in full and never read:
+    the body a caller that keeps every argument in device memory offloads (one kernel of a program, with its
+    arguments placed where the program holds them)."""
+    extent, values = dace.symbol("N"), dace.symbol("M")
+    sdfg = dace.SDFG("host_pinned_outputs_into_device_arguments")
+    for name, shape in (("idx", [extent]), ("flag", [1]), ("owner", [values])):
+        sdfg.add_array(name, shape, dace.int64, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state("check")
+    node = ScatterConflictCheck("check")
+    node.add_out_connector(SCATTER_SCRATCH)
+    state.add_node(node)
+    state.add_edge(state.add_read("idx"), None, node, SCATTER_INPUT, dace.Memlet("idx[0:N]"))
+    state.add_edge(node, SCATTER_FLAG, state.add_write("flag"), None, dace.Memlet("flag[0]"))
+    state.add_edge(node, SCATTER_SCRATCH, state.add_write("owner"), None, dace.Memlet("owner[0:M]"))
+    return sdfg
+
+
+def test_a_host_pinned_result_is_copied_back_into_its_device_argument():
+    """A device argument a host connector writes is computed in its host twin, so it needs the copy back.
+
+    It is also overwritten before any read, which is what spares a host argument the fill of its device twin; the
+    same direction is this argument's copy BACK. Elided as a copy-in, it left the argument unwritten, and with no
+    other effect the whole body was dead code, so the unit rendered an empty entry (T48-37, Tactics on ilu0's GPU
+    target: the kernel ``extcall_lib_sort0``)."""
+    sdfg = host_pinned_outputs_into_device_arguments()
+    OffloadToAccelerator().apply_pass(sdfg, {})
+    sdfg.validate()
+    order = list(dfs_topological_sort(sdfg, [sdfg.start_block]))
+    check = next(i for i, state in enumerate(order) if any(isinstance(n, ScatterConflictCheck) for n in state.nodes()))
+    written_after = {
+        edge.dst.data
+        for state in order[check + 1 :]
+        for edge in state.edges()
+        if isinstance(edge.dst, nodes.AccessNode) and edge.dst.data in ("flag", "owner")
+    }
+    assert written_after == {"flag", "owner"}, f"only {sorted(written_after)} are copied back after the check"
 
 
 def test_a_scatter_dispatcher_copies_only_inside_its_sequential_arm():
